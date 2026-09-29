@@ -5,6 +5,30 @@
 
 ---
 
+## 2026-09-29 — P3.1 影子 pass（自建光空间矩阵 + 阴影贴图渲染 + 可视化链）
+
+- **本次改了什么**：
+  1. `bridge/FrameApi.java`：占位矩阵升级为**真实光空间 view-projection** —— 固定光照方向 `dir=(0.48,-0.8,0.36)`（单位化 `(0.6,-1,0.45)`）→ 相机沿光反方向 4 单位看向原点 → `ortho([-1.2,1.2]×[-1,1], near=0.1, far=8, **zZeroToOne=true**)` × `lookAt`；每帧 `Std140Builder.putMat4f` 上传并带一次性埋点。
+  2. 帧链重构为**影子 pass 三段**（三段各用不同附件，规避已知的「同附件第二次 createRenderPass 不生效」）：**Pass 1** 几何（经光空间矩阵）→ offscreen0（其**深度**即阴影贴图）；**Pass 2** depthviz 采样阴影深度 → offscreen1 灰度；**Pass 3** offscreen1 → 主目标。图案/合成管线**本轮不进链**（阴影贴图只应含遮挡物深度），但仍注册并通过计数断言（`registered=5`）。
+  3. `FullscreenPassHook`：埋点改为 `vkdisp shadow chain executed …`（并修正占位符与参数不匹配）。
+- **为什么改**：影子 pass 的三件套是「光空间矩阵 → 阴影深度写入 → 深度读回可视化」；P2.x 解析链仍等 A/B/C 汇合，关键路径继续在 GPU 能力上推进，并按 08-TESTING §3 验收判据（**阴影贴图非全黑/非全白**）量化。
+- **⚠️ 本轮修掉的 3 个问题（均有证据）**：
+  1. **SLF4J 不支持 `%f` 格式** → 埋点打印字面量 `dir=(%.3f, …)`；改 `{}` 后正确输出 `dir=(0.48000002, -0.8, 0.35999998), eye=(-1.92, 3.2, -1.44)`。
+  2. **深度范围未对齐 Vulkan**：joml 默认 `ortho` 是 GL 约定 `[-1,1]` → 近半几何被裁、灰度挤在 16..56；改 `ortho(..., zZeroToOne=true)` 后中间调占比 **5.1% → 13.2%**、灰度中位 **≈125**（与理论 `(4−0.1)/(8−0.1)≈0.494→125` 吻合）。
+  3. 重构时误删 `CommandEncoder encoder` 声明导致编译失败（补回）。
+- **测试结果**（证据目录 `tools/vulkan-local/evidence/`，被 `.gitignore` 覆盖、不入库）：
+  - ✅ **构建/测试**：`./gradlew build` exit=**0**；`./gradlew test` 全仓库 **264 用例 0 失败**。
+  - ✅ **日志**：`p31_shadowmap_final.log`（sha256 `b878114350cf9a15…`）——`light space computed: dir=(0.48, -0.8, 0.36), eye=(-1.92, 3.2, -1.44), ortho=[-1.2,1.2]x[-1,1], near=0.1 far=8`（光空间构造可核对）、`count check: registered=5, compiled=5 (aligned)`、`shadow chain executed (854x480)`；ERROR=**2**（仍只有 WSL 环境 narrator/OpenAL），`vkdisp` ERROR=**0**。
+  - ✅ **验收判据（非全黑/非全白）**：截图 `p31_shadowmap_final.png`（sha256 `d5e8fd1b4a2ce854…`）客户区灰度采样——中间调 **14617/111135 = 13.2%**、**47 个灰度级**、区间 **102..204**、中位 **125**（= 理论线性深度）；全黑 7648（边框）、全白 88870（背景清深度 1.0）→ **非全黑非全白，且深度随距离线性分布**。
+- **未覆盖 / 存疑（不掩饰）**：
+  1. 这是**自建阴影贴图**，未接入原版 `LevelRenderer` 光空间渲染列表 —— 08-TESTING §3「光空间列表非空」在本实现中的等价证据是 `light space computed` 埋点 + 实际渲染出的贴图；与 vanilla 列表 / 多级联（CSM）对齐归 P3.1 完整交付（需 LevelRenderer mixin，关键路径后续）；
+  2. 光照方向为**固定占位**（未接世界光照/时间）；单级联、单一遮挡物（2 个四边形）；
+  3. 阴影贴图目前**只可视化**，未做世界坐标阴影采样比对（P3.3）；
+  4. 软阴影/比较采样器未做 —— 若需要属 13-GAP-REGISTRY 待判定项。
+- **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
+
+---
+
 ## 2026-09-29 — 光空间矩阵上传链路（P3.1 影子 pass 前置）
 
 - **本次改了什么**：

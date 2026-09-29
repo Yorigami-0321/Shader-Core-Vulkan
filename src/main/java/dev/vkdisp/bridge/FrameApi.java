@@ -103,9 +103,33 @@ public final class FrameApi {
         return ring;
     }
 
-    /** 占位光空间矩阵：T(+0.3,0,0) * S(0.6)（z 同步缩放，近远关系与深度剔除语义保持不变）。 */
-    private static org.joml.Matrix4f placeholderLightMatrix() {
-        return new org.joml.Matrix4f().translation(0.3F, 0.0F, 0.0F).mul(new org.joml.Matrix4f().scale(0.6F));
+    /** P3.1 占位光照方向（单位向量，指向地面）；后续由世界光照/时间提供。 */
+    private static final org.joml.Vector3f LIGHT_DIRECTION =
+            new org.joml.Vector3f(0.6F, -1.0F, 0.45F).normalize();
+
+    /** 光空间方向是否已打过埋点。 */
+    private static boolean lightSpaceLogged;
+
+    /**
+     * P3.1 光空间 view-projection：正交投影（覆盖几何所在范围）× 相机沿光反方向看向原点的视图矩阵。
+     *
+     * <p>这是影子 pass 的核心：顶点从「世界空间」被变换到「光空间」，深度即阴影贴图。
+     * joml 的 {@code ortho(...).lookAt(...)} 语义 = P * V（右乘视图逆），与 std140 mat4 列主序一致。
+     */
+    private static org.joml.Matrix4f lightSpaceMatrix() {
+        org.joml.Vector3f eye = new org.joml.Vector3f(LIGHT_DIRECTION).negate().mul(4.0F);
+        if (!lightSpaceLogged) {
+            lightSpaceLogged = true;
+            dev.vkdisp.VkDisp.LOGGER.info(
+                    "vkdisp: light space computed: dir=({}, {}, {}), eye=({}, {}, {}), ortho=[-1.2,1.2]x[-1,1], near=0.1 far=8",
+                    LIGHT_DIRECTION.x, LIGHT_DIRECTION.y, LIGHT_DIRECTION.z,
+                    eye.x, eye.y, eye.z);
+        }
+        // ⚠️ zZeroToOne=true：Vulkan 深度范围是 [0,1]；默认的 GL 约定 [-1,1] 会把近半几何裁掉
+        // （实测：灰度集中在 16..56 且阴影面积极小，修正后回到中值区）。
+        return new org.joml.Matrix4f()
+                .ortho(-1.2F, 1.2F, -1.0F, 1.0F, 0.1F, 8.0F, true)
+                .lookAt(eye, new org.joml.Vector3f(0.0F, 0.0F, 0.0F), new org.joml.Vector3f(0.0F, 1.0F, 0.0F));
     }
 
     /** std140 vec4 = 16 字节（对齐规则：vec4 偏移必须 16 字节对齐）。 */
@@ -256,12 +280,12 @@ public final class FrameApi {
      * @return 已编译返回 true；尚未完成编译返回 false（不抛异常，供每帧轮询）
      */
     public static boolean isPipelineReady() {
-        // 本帧链用到 pattern / geometry / blit 三条（depthviz 与 composite 已注册但不在本帧链中）。
-        return PipelineApi.isFullscreenPipelineRegistered()
-                && PipelineApi.isGeometryPipelineRegistered()
+        // 本帧链用到 geometry / depthviz / blit 三条（pattern 与 composite 已注册但不在本帧链中）。
+        return PipelineApi.isGeometryPipelineRegistered()
+                && PipelineApi.isDepthVisPipelineRegistered()
                 && PipelineApi.isBlitPipelineRegistered()
-                && RenderSystem.getCompiledPipelineNullable(PipelineApi.fullscreenPipeline()) != null
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.geometryPipeline()) != null
+                && RenderSystem.getCompiledPipelineNullable(PipelineApi.depthVisPipeline()) != null
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.blitPipeline()) != null;
     }
 
@@ -302,10 +326,10 @@ public final class FrameApi {
         GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
 
         // 三条管线都要就绪（图案 + 合成 + 传递）；任一未编译完成都抛异常，绝不静默少画一个 pass。
-        CompiledRenderPipeline pattern = RenderSystem.getCompiledPipelineNullable(PipelineApi.fullscreenPipeline());
-        if (pattern == null) {
+        CompiledRenderPipeline depthVis = RenderSystem.getCompiledPipelineNullable(PipelineApi.depthVisPipeline());
+        if (depthVis == null) {
             throw new IllegalStateException(
-                    "vkdisp: fullscreen pipeline not compiled yet: " + PipelineApi.FULLSCREEN_LOCATION);
+                    "vkdisp: depthviz pipeline not compiled yet: " + PipelineApi.DEPTHVIS_LOCATION);
         }
         CompiledRenderPipeline geometry = RenderSystem.getCompiledPipelineNullable(PipelineApi.geometryPipeline());
         if (geometry == null) {
@@ -322,7 +346,7 @@ public final class FrameApi {
         // 遵守「pass 打开期间不动 encoder」的实测规则）。
         MappableRingBuffer matrixRing = lightMatrixRing();
         try (GpuBufferSlice.MappedView view = matrixRing.currentBuffer().map(false, true)) {
-            Std140Builder.intoBuffer(view.data()).putMat4f(placeholderLightMatrix());
+            Std140Builder.intoBuffer(view.data()).putMat4f(lightSpaceMatrix());
         }
 
         // P1.1：把本帧参数写进环形缓冲的当前槽（std140：vec4 Params = {phase, intensity, 0, 0}）。
@@ -331,39 +355,44 @@ public final class FrameApi {
             Std140Builder.intoBuffer(view.data()).putVec4(params.phase(), params.intensity(), 0.0F, 0.0F);
         }
 
-        // 官方 PostPass 同款序列：无 depth 附件（本管线没有 depthStencilState）、不清屏（loadOp = LOAD）、
-        // 无顶点绑定（全屏三角形由 gl_VertexIndex 推出）。
+        // P3.1 影子 pass 链路（三段，各自不同附件 —— 规避「同一附件第二次 createRenderPass 不生效」）：
+        //  Pass 1 阴影贴图：清屏(黑, 深度1.0) → 几何(经光空间矩阵) → offscreen0 的**深度**即阴影贴图
+        //  Pass 2 可视化：采样阴影贴图深度 → offscreen1 灰度（depthviz）
+        //  Pass 3：offscreen1 → 主目标
+        // 说明：图案背景本轮**不进链** —— 阴影贴图只应包含遮挡物深度，背景深度会污染贴图；
+        //       图案/合成管线仍注册并通过计数断言（registered=5），只是不在本帧执行。
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-        // Pass A+B 合并为**同一个 render pass**（同一附件内连续两次 createRenderPass 时，第二个 pass
-        // 的清屏/绘制实测不生效——本轮观察事实，成因未深挖；合并是标准做法且消除该问题）。
-        // 顺序：① 图案全屏（背景，写深度 0.9）→ ② 真实几何（近红 z=0.3 先画、远绿 z=0.7 后画）。
         try (RenderPass pass = encoder.createRenderPass(
-                () -> label + " AB (pattern + geometry -> offscreen0)",
+                () -> label + " 1 (shadow map: geometry -> offscreen0)",
                 viewA,
                 Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)),
                 depthA,
                 OptionalDouble.of(1.0D))) {
-            // ① 图案背景
-            pass.setPipeline(pattern);
-            RenderSystem.bindDefaultUniforms(pass);
-            pass.setUniform(PipelineApi.PARAMS_UNIFORM, ring.currentBuffer());
-            pass.draw(3, 1, 0, 0);
-            // ② 真实几何 + 深度剔除（顶点缓冲为直接缓冲；见 geometryBuffer 的实测注释）
-            //    P3.1 前置：绑定光空间矩阵 UBO，顶点按该矩阵变换后输出
             pass.setPipeline(geometry);
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform(PipelineApi.LIGHT_MATRIX_UNIFORM, matrixRing.currentBuffer());
             pass.setVertexBuffer(0, geometryBuffer().slice());
             pass.draw(GEOMETRY_VERTEX_COUNT, 1, 0, 0);
         }
-        // Pass C：中间目标 → 主目标（最后一级；主目标只由本 pass 写入）。
-        // ⚠️ 采样的必须是**本帧链实际写入的那个目标**（本轮 A/B 都写 viewA）。
-        // 实测教训：曾把 C 级写成采样 viewB（本链从未写入），导致画面上永远看不到几何/深度 pass 的结果。
+        // Pass 2：阴影贴图深度 → 灰度可视化（不同附件，规避同附件二次 pass 的问题）。
         try (RenderPass pass = encoder.createRenderPass(
-                () -> label + " C (offscreen0 -> main)", colorView, Optional.empty(), null, OptionalDouble.empty())) {
+                () -> label + " 2 (shadow depth -> offscreen1)",
+                viewB,
+                Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)),
+                null,
+                OptionalDouble.empty())) {
+            pass.setPipeline(depthVis);
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, depthA, sampler);
+            pass.draw(3, 1, 0, 0);
+        }
+        // Pass 3：offscreen1 → 主目标（最后一级；主目标只由本 pass 写入）。
+        // ⚠️ 采样的必须是**本帧链实际写入的那个目标**（实测教训：曾误采样本链未写入的目标）。
+        try (RenderPass pass = encoder.createRenderPass(
+                () -> label + " 3 (offscreen1 -> main)", colorView, Optional.empty(), null, OptionalDouble.empty())) {
             pass.setPipeline(blit);
             RenderSystem.bindDefaultUniforms(pass);
-            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, viewA, sampler);
+            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, viewB, sampler);
             pass.draw(3, 1, 0, 0);
         }
         // 原版 PostPass 同款：绘制后再 rotate，保证本帧写入的槽在 GPU 用完前不被复用。
