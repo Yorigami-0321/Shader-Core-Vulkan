@@ -52,7 +52,7 @@ com.mojang.renderpearl.backend.vulkan.VulkanDevice  ← 原版实现，不碰
 | `pipeline/` 管线构建 | Sulkan `runtime/ShaderPipelines`（GPL） | ❄️ 冷（构建）+ 🔥 热（键查找） | 纯 Java |
 | `render/` 帧编排 | Sulkan `LevelRenderer*Mixin`（GPL） | 🔥 热 | 纯 Java（原版 API 为主） |
 | `config/` `screen/` | 原版屏幕基类 | ❄️ 冷 | 纯 Java |
-| `accel/` 加速层门面 | 见 `17-NATIVE.md` §4 | — | Java + 可选原生 |
+| `accel/` 加速层门面 | 见 `17-NATIVE.md` §4 | — | ⏸️ 计划预留，非纯 Java（未验证） |
 | `bridge/` 原版 API 隔离 | 本项目自定 | — | 纯 Java |
 
 ### 3.1 着色器包解析层（`pack/`）
@@ -168,26 +168,31 @@ screen/
   PackOptionsScreen.java  // 动态生成 OF 包选项 UI
 ```
 
-### 3.6 加速层（`accel/`）—— 🔥 热路径专用，默认不启用原生
+### 3.6 加速层（`accel/`）—— ⏸️ **计划预留，当前不建**
 
-> 纪律见 `17-NATIVE.md`：**先测后优，只做热路径，Java 保底必须始终可用。**
+> ⚠️ **现在不要建这个包，也不要配 CMake / cargo。**
+> C++/Rust 的可行性**尚未验证**（`17-NATIVE.md` 开头状态声明）。
+> 本节只记录「如果将来真要上原生，大概是这么个形状」。
+>
+> **纪律**：先测后优，只做热路径，Java 保底必须始终可用。
 > **当前状态：只有 Java 实现，没有任何原生库**（`17-NATIVE.md` §6.1 登记为 0 条）。
 
 ```java
-accel/
+accel/                    // ← ⏸️ 计划预留，暂不创建
   VecMathOps.java         // 矩阵 / 视锥运算（热）     ← 先试 Java Vector API
-  UboPacker.java          // uniform 块打包（热）       ← 天然适合 FFI（大块内存进出）
+  UboPacker.java          // uniform 块打包（热）       ← 先试直接 ByteBuffer
   PipelineKeyHasher.java  // 管线缓存键计算（热）       ← 先试预计算 / 缓存
-  AccelBackend.java       // 选择器：探测原生 → 选实现 → 打印所选后端
+  AccelBackend.java       // 选择器（若将来有原生才需要）
   backend/java/           // ✅ 永远存在，默认
-  backend/native/         // ⚠️ 可选，缺失则自动降级（N1/N2）
+  backend/native/         // ⚠️ 可选，可行性未验证
 ```
 
-**硬要求**
+**若将来真要启用，硬要求**
 - 接口签名只用纯 Java 类型（不暴露 `MemorySegment` 到业务层）
 - 原生库缺失 / 平台不匹配 → **自动降级到 Java 并打 WARN**，不许崩、不许静默
 - 启动时打印所选后端：`vkdisp: accel backend = java | native(<lib>)`
 - 每个原生模块必须有 A/B 开关（`17-NATIVE.md` N4）
+- **先过 `17-NATIVE.md` §6.2 第 0 关的可行性验证**
 
 ---
 
@@ -282,15 +287,15 @@ config = "${mod_id}.mixins.json"
 
 `gradlew` / shell 脚本：**仓库内必须放 `.gitattributes`**（`* text=auto eol=lf`）+ 仓库级 `core.autocrlf=false`，并手工 `git update-index --chmod=+x gradlew`（Windows 下 git 不跟踪可执行位）。
 
-### 5.1 原生工具链（**默认不存在，启用原生模块后才加**）
+### 5.1 原生工具链（⏸️ **当前不需要，也不要配**）
 
-> 当前项目**没有**任何原生模块（`17-NATIVE.md` §6.1 登记为 0 条）。
+> 当前项目**没有**任何原生模块，且**可行性尚未验证**（`17-NATIVE.md` 状态声明）。
 > **不要在还没有原生模块时就去配 CMake / cargo** —— 那是超前设计（`05-VERSION.md` §4.3）。
-
-启用时（必须先走完 `17-NATIVE.md` §5 六问）：
+>
+> 本节只是记录「万一将来要用」的形状。**真要启用时，先过 `17-NATIVE.md` §6.2 的第 0 关可行性验证。**
 
 ```gradle
-// 仅当引入原生模块后才有这些任务；且必须是可选的
+// 仅当引入原生模块且可行性验证通过后，才考虑下面这些
 tasks.register('buildNative') {
     // cargo / cmake 调用
 }
@@ -298,7 +303,7 @@ tasks.register('buildNative') {
 // 用单独 task，并在 CI 上按平台矩阵跑
 ```
 
-打包位置与产物校验见 `17-NATIVE.md` §6.3。
+打包位置与产物校验见 `17-NATIVE.md` §6.3（同样是假设性设计）。
 
 ---
 

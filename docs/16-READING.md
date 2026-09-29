@@ -28,7 +28,7 @@
 4. 04-SPEC.md              ← 全文，组件清单在这（含每块的参考去向与热度）
 5. 07-CONSTRAINTS.md       ← 红线 X1–X16，不可违反
 6. 08-TESTING.md           ← 验收与回归清单（含性能硬指标）
-7. 17-NATIVE.md            ← 开工前必读：参考先行 + 性能预算 + 上不上原生
+7. 17-NATIVE.md            ← 开工前必读：参考先行 + 性能预算（C++/Rust 是未验证的可选项）
 8. 06-MIGRATION.md §2      ← bridge 包隔离（从第一天就落实）
 9. 12-GAP-STRATEGY.md      ← 遇到原版没有的特性时怎么办
 10. 13-GAP-REGISTRY.md     ← 上面那份的登记表
@@ -42,7 +42,7 @@
 2. 03-DIRECTION.md §1      核心发现（原版后端 SPI）+ 附录 A 证据清单
 3. 03-DIRECTION.md §2      参考模组判定 + 许可证
 4. 04-SPEC.md §7 §8        风险 + 参考模组使用边界
-5. 17-NATIVE.md §2 §3      性能预算 + 热度分级（为什么多数模块不该上原生）
+5. 17-NATIVE.md §1 §2 §3   参考先行 + 性能预算 + 热度分级（为什么现在不该上原生）
 6. 06-MIGRATION.md §3      易变点清单
 7. 12-GAP-STRATEGY.md      特性缺口策略（授权 + 收敛 + 回退）
 8. 07-CONSTRAINTS.md §一   许可证硬约束
@@ -69,7 +69,7 @@
          ├─ 04-SPEC.md（技术规格：怎么实现）
          │    ├─ 07-CONSTRAINTS.md（工程约束：红线）
          │    ├─ 06-MIGRATION.md（bridge 隔离 + 升级流程）
-         │    ├─ 17-NATIVE.md（性能预算 + 参考先行 + 原生决策树）
+         │    ├─ 17-NATIVE.md（性能预算 + 参考先行）
          │    ├─ 12-GAP-STRATEGY.md ── 13-GAP-REGISTRY.md（特性缺口）
          │    └─ 08-TESTING.md（测试与验收标准）
          ├─ 01-DEV-LOOP.md（开发测试流程：干活前必读）
@@ -98,7 +98,7 @@
 | `13-GAP-REGISTRY.md` | ✅ | 特性缺口登记表 |
 | `15-ITERATION.md` | ✅ | 迭代维护协议（A1–A14） |
 | `16-READING.md` | ✅ | 本文 |
-| `17-NATIVE.md` | ✅ **新增** | 性能预算 + 参考先行 + 原生（C++/Rust）加速决策树 |
+| `17-NATIVE.md` | ✅ **新增** | 性能预算 + 参考先行（C++/Rust 仅作未验证的可选项） |
 | `AGENT_CONTEXT.md` | ✅ | 跨会话记忆 |
 | `_archive/*` | 📦 归档 | 07 / 08 / 10 / 15 / 17 旧方向文档 |
 | `_archive-开发计划-v2-旧方向.md` | 📦 归档 | 旧主计划 |

@@ -12,6 +12,7 @@
 详细步骤见 `01-DEV-LOOP.md`。
 
 另外两条贯穿全程的纪律：**先找参考再动手**（`17-NATIVE.md` §1）、**先测出来再优化**（`17-NATIVE.md` §2–§3）。
+（`17-NATIVE.md` 里的 C++/Rust 部分是**可选项、可行性未验证**，当前阶段一律纯 Java。）
 
 ---
 
@@ -32,7 +33,7 @@
 
 ```
 06-MIGRATION.md       ← bridge 包隔离 + 版本升级流程（第一天就要落实隔离）
-17-NATIVE.md          ← 性能预算 / 参考先行 / 原生加速决策树
+17-NATIVE.md          ← 性能预算 / 参考先行（C++/Rust 是可选项，可行性未验证）
 12-GAP-STRATEGY.md    ← 原版 Vulkan 没有的特性怎么办
 13-GAP-REGISTRY.md    ← 上面那份的登记表（先登记再实现）
 15-ITERATION.md       ← 迭代维护协议
@@ -53,13 +54,13 @@ AGENT_CONTEXT.md      ← 跨会话记忆（决策、原版 API 清单、待决�
 | `04-SPEC.md` | 组件清单（含参考/热度标注）、OF 内建 uniform、顶点格式扩展、构建配置 |
 | `05-VERSION.md` | **版本权威**：支持范围、锁定表、兼容策略 |
 | `06-MIGRATION.md` | bridge 隔离、升级步骤、回归 R1–R9 |
-| `07-CONSTRAINTS.md` | 许可证 §〇（MIT + P1/P2/P3）+ L1–L10 + 技术约束 T1–T16 + 红线 X1–X16 |
+| `07-CONSTRAINTS.md` | 许可证 §〇（MIT + P1/P2/P3）+ L1–L10 + 技术约束 T1–T16 + 红线 X1–X17 |
 | `08-TESTING.md` | 阶段验收 + **性能硬指标** + 回归清单 |
 | `12-GAP-STRATEGY.md` | 原版不支持时的自行补充规则 |
 | `13-GAP-REGISTRY.md` | 缺口登记表 |
 | `15-ITERATION.md` | 三层防乱协议（A1–A14） |
 | `16-READING.md` | 按读者类型的阅读路径 |
-| `17-NATIVE.md` | **性能预算 + 参考先行 + 原生（C++/Rust）加速决策树** |
+| `17-NATIVE.md` | **性能预算 + 参考先行**；C++/Rust 仅作未验证的可选项 |
 | `AGENT_CONTEXT.md` | 跨会话记忆 |
 | `_archive/` | 旧方向文档（07 / 08 / 10 / 15 / 17） |
 | `_archive-开发计划-v2-旧方向.md` | 旧主计划 |
