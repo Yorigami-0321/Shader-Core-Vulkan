@@ -38,6 +38,23 @@ com.mojang.renderpearl.backend.vulkan.VulkanDevice  ← 原版实现，不碰
 
 ## 3. 核心组件清单
 
+> **每个组件开工前先做参考调研**（`17-NATIVE.md` §1，`07-CONSTRAINTS.md` T13）。
+> 下表「参考」列只是**去哪找**，不代表可以搬代码 —— 本项目 MIT，默认只能读思路。
+> 「热度」列决定实现语言：❄️ 冷路径一律纯 Java；🔥 热路径先 Java + 测量，超预算才考虑原生。
+
+### 3.0 组件总览（参考 / 热度 / 语言）
+
+| 组件 | 参考（只读思路） | 热度 | 语言 |
+|---|---|---|---|
+| `pack/` 格式解析 | **Iris** `shaderpack/parsing/` | ❄️ 冷 | 纯 Java |
+| `glsl/` 预处理器（`#include`/`#define`） | **IrisShaders/glsl-preprocessor**（GPL+例外） | ❄️ 冷 | 纯 Java |
+| `glsl/` 转译（OF → M GLSL） | **IrisShaders/glsl-transformer**（自定义传染） | ❄️ 冷 | 纯 Java |
+| `pipeline/` 管线构建 | Sulkan `runtime/ShaderPipelines`（GPL） | ❄️ 冷（构建）+ 🔥 热（键查找） | 纯 Java |
+| `render/` 帧编排 | Sulkan `LevelRenderer*Mixin`（GPL） | 🔥 热 | 纯 Java（原版 API 为主） |
+| `config/` `screen/` | 原版屏幕基类 | ❄️ 冷 | 纯 Java |
+| `accel/` 加速层门面 | 见 `17-NATIVE.md` §4 | — | Java + 可选原生 |
+| `bridge/` 原版 API 隔离 | 本项目自定 | — | 纯 Java |
+
 ### 3.1 着色器包解析层（`pack/`）
 
 ```java
@@ -143,13 +160,34 @@ render/
 
 ```java
 config/
-  ModConfig.java          // 本模组自身配置（开关、选中包、质量档）
+  ModConfig.java          // 本模组自身配置（开关、选中包、质量档、加速开关）
   PackOptions.java        // 用户包声明的选项的运行时值
   OptionBinding.java      // 选项 → 着色器 #define / uniform 的绑定
 screen/
   ShaderPacksScreen.java  // 包列表（复用原版屏幕基类）
   PackOptionsScreen.java  // 动态生成 OF 包选项 UI
 ```
+
+### 3.6 加速层（`accel/`）—— 🔥 热路径专用，默认不启用原生
+
+> 纪律见 `17-NATIVE.md`：**先测后优，只做热路径，Java 保底必须始终可用。**
+> **当前状态：只有 Java 实现，没有任何原生库**（`17-NATIVE.md` §6.1 登记为 0 条）。
+
+```java
+accel/
+  VecMathOps.java         // 矩阵 / 视锥运算（热）     ← 先试 Java Vector API
+  UboPacker.java          // uniform 块打包（热）       ← 天然适合 FFI（大块内存进出）
+  PipelineKeyHasher.java  // 管线缓存键计算（热）       ← 先试预计算 / 缓存
+  AccelBackend.java       // 选择器：探测原生 → 选实现 → 打印所选后端
+  backend/java/           // ✅ 永远存在，默认
+  backend/native/         // ⚠️ 可选，缺失则自动降级（N1/N2）
+```
+
+**硬要求**
+- 接口签名只用纯 Java 类型（不暴露 `MemorySegment` 到业务层）
+- 原生库缺失 / 平台不匹配 → **自动降级到 Java 并打 WARN**，不许崩、不许静默
+- 启动时打印所选后端：`vkdisp: accel backend = java | native(<lib>)`
+- 每个原生模块必须有 A/B 开关（`17-NATIVE.md` N4）
 
 ---
 
@@ -244,17 +282,37 @@ config = "${mod_id}.mixins.json"
 
 `gradlew` / shell 脚本：**仓库内必须放 `.gitattributes`**（`* text=auto eol=lf`）+ 仓库级 `core.autocrlf=false`，并手工 `git update-index --chmod=+x gradlew`（Windows 下 git 不跟踪可执行位）。
 
+### 5.1 原生工具链（**默认不存在，启用原生模块后才加**）
+
+> 当前项目**没有**任何原生模块（`17-NATIVE.md` §6.1 登记为 0 条）。
+> **不要在还没有原生模块时就去配 CMake / cargo** —— 那是超前设计（`05-VERSION.md` §4.3）。
+
+启用时（必须先走完 `17-NATIVE.md` §5 六问）：
+
+```gradle
+// 仅当引入原生模块后才有这些任务；且必须是可选的
+tasks.register('buildNative') {
+    // cargo / cmake 调用
+}
+// 关键：原生构建失败不得让 build 失败（N1 —— Java 路径必须始终能构建）
+// 用单独 task，并在 CI 上按平台矩阵跑
+```
+
+打包位置与产物校验见 `17-NATIVE.md` §6.3。
+
 ---
 
 ## 6. 验收标准（分阶段）
 
 | 阶段 | 验收动作 | 通过标准 |
 |---|---|---|
-| **Phase 0** | 启动游戏，注册一个自定义全屏 pass | 屏幕上出现自定义图案（非黑屏、非崩） |
+| **Phase 0** | 启动游戏，注册一个自定义全屏 pass | 屏幕上出现自定义图案（非黑屏、非崩）；**不开包帧时间 ≤ +2%** |
 | **Phase 1** | 后处理链 + uniform 传递 | 能实时改参数看到画面变化；开关 pass 生效 |
-| **Phase 2** | 加载真实 OF 包的最小阶段 | 包能被识别、`#include` 能解、composite 有效果、不崩 |
-| **Phase 3** | 影子 + gbuffers + deferred | 中等复杂度包（如 Sildur's Enhanced）基本正确 |
-| **Phase 4** | 主流包兼容 + 选项 GUI | Complementary / BSL / Sildur 主要效果可用 |
+| **Phase 2** | 加载真实 OF 包的最小阶段 | 包能被识别、`#include` 能解、composite 有效果、不崩；**加载 ≤ 3 秒** |
+| **Phase 3** | 影子 + gbuffers + deferred | 中等复杂度包（如 Sildur's Enhanced）基本正确；**无 > 200ms 单帧尖刺** |
+| **Phase 4** | 主流包兼容 + 选项 GUI | Complementary / BSL / Sildur 主要效果可用；**开包帧时间 ≤ Iris+OF 的 110%** |
+
+> 性能线的口径与测量规范见 `17-NATIVE.md` §2 与 §7，验收细则见 `08-TESTING.md` §8。
 
 **每阶段必做的静默失败自检**：
 1. mixin 有没有真的生效？（在注入点打日志，不要只看"没报错"）
@@ -269,11 +327,14 @@ config = "${mod_id}.mixins.json"
 | 风险 | 概率 | 对策 |
 |---|---|---|
 | 原版 Vulkan 后端不给第三方插入 pipeline | 低 | Sulkan 已证明可行；Phase 0 最先验证 |
-| OF GLSL 转译工作量被低估 | **高** | 分阶段，Phase 2 只做 composite；UBO 语义先硬编码一组常见 uniform |
+| OF GLSL 转译工作量被低估 | **高** | 分阶段，Phase 2 只做 composite；UBO 语义先硬编码一组常见 uniform；**先读 Iris 的解析器**（`17-NATIVE.md` §1.3） |
 | 原版对 render target 数量/格式有限制 | 中 | 复用 `colortex` 语义时按需降级；给足诊断日志 |
 | 老版本 MC 没有 `renderpearl.backend.api` | — | 本方案**锁定 26.3+**，不支持更早版本 |
 | 被误认为"又一个 Iris" | 低 | README 明确写"独立实现，与 Iris/OptiFine/Sodium/Vitrail 均无关联" |
 | 误抄 GPL / LGPL 代码 | 中 | 本项目 MIT，见 `03-DIRECTION.md` §8 与 `07-CONSTRAINTS.md` §〇；VulkanMod/Sulkan 都只读思路不抄代码 |
+| **不装包也掉帧**（着色器模组最不可接受的失败） | **中** | `17-NATIVE.md` §2 把它列为 P0 必过；每阶段测帧时间 |
+| **误把冷路径当瓶颈，白写原生库** | **中** | `17-NATIVE.md` §3.2 热度分级 + §5 六问决策树 |
+| **原生库导致平台崩 / 缺库即挂** | 中 | `17-NATIVE.md` N1/N2：Java 保底必须始终可用，缺库自动降级 |
 
 ---
 

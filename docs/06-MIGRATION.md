@@ -32,10 +32,13 @@ bridge/
 **规矩**：
 - `pack/` / `glsl/` / `config/` / `screen/` 等业务包 **一律不得** `import com.mojang.renderpearl.*`
 - 只有 `bridge/` 与 `mixin/` 允许 import 原版渲染类型
+- **`accel/`（加速层）例外说明**：它的接口只用纯 Java 类型，实现里若需触碰原版类型，
+  同样必须经 `bridge/`。FFI（Panama）调用原生库不涉及原版渲染类型，因此可以直接做。
 - 升级时 grep 这两个目录就够了：
   ```bash
   grep -rl "com\.mojang\.\(renderpearl\|blaze3d\)" src/main/java | sort
   ```
+- **若含原生库**：升级时还要重建全部平台产物（`17-NATIVE.md` §6.3，回归项 R11）
 
 ### 2.2 mixin 只转发，不写业务
 
@@ -94,6 +97,9 @@ JAVAP="/c/Program Files/Java/jdk-25.0.4.1/bin/javap.exe"
                    → 补充所依赖的原版能力被移除 → 走 §7 止损
 7. 跑 §5 回归清单
 8. 回填 §6 迁移日志
+
+**若含原生库，额外一步**：重新构建全部平台的原生产物（`17-NATIVE.md` §6.3）。
+版本升级时原生库的 ABI / 依赖可能变化，必须重建并重新验证 Java 保底路径仍可用（N1）。
 ```
 
 **第 6 步不可跳过**（策略见 `12-GAP-STRATEGY.md` §5）：
@@ -119,6 +125,8 @@ JAVAP="/c/Program Files/Java/jdk-25.0.4.1/bin/javap.exe"
 | R7 | 无静默降级 | 失败必须显式报错，不允许"什么都不做" |
 | R8 | jar 内容正确 | class 数 > 0、jar 不含 `net/minecraft` / `com/mojang` / 第三方模组类、`mods.toml` 依赖表名 == modId |
 | R9 | 特性缺口已复查 | `13-GAP-REGISTRY.md` 的复查记录已回填（见 §4 第 6 步） |
+| R10 | 性能仍在预算内 | 不开包 ≤ 原版 +2%；开包 ≤ Iris+OF 110%（`17-NATIVE.md` §2） |
+| R11 | 原生库（若有）在新版本上重构建通过 | 四平台产物齐全；Java 保底路径可独立跑通（`17-NATIVE.md` §6.3） |
 
 ---
 
@@ -129,6 +137,7 @@ JAVAP="/c/Program Files/Java/jdk-25.0.4.1/bin/javap.exe"
 | `05-VERSION.md` | 版本权威 + §4.4 自行补充特性走同一套流程 |
 | `12-GAP-STRATEGY.md` | 自行补充的判定与收敛要求 |
 | `13-GAP-REGISTRY.md` | §4 第 6 步的复查对象 |
+| `17-NATIVE.md` | 性能预算；若含原生库，升级时要重建并重验 Java 保底路径（R11） |
 | `08-TESTING.md` | 日常回归清单 |
 
 ---

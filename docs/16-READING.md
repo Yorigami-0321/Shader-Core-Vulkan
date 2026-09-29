@@ -11,9 +11,9 @@
 |---|---|---|
 | 1 | **`01-DEV-LOOP.md`** | **怎么干活**：构建 → runClient → 看真实输出 → 修错 → 循环 |
 | 2 | **`05-VERSION.md`** | **版本权威**。支持范围 = MC 26.3 及之后，主线 26.3 |
-| 3 | **`02-OVERVIEW.md`** | 一句话定位 + 为什么需要它 + 要自研的四件事 |
+| 3 | **`02-OVERVIEW.md`** | 一句话定位 + 为什么需要它 + 要自研的四件事 + 性能目标 |
 | 4 | **`03-DIRECTION.md`** | 为什么可行：原版后端 SPI 的证据、参考模组可借鉴性、许可证边界 |
-| 5 | **`04-SPEC.md`** | 组件清单、OF 内建 uniform 全表、顶点格式扩展、构建配置 |
+| 5 | **`04-SPEC.md`** | 组件清单（含参考/热度标注）、OF 内建 uniform 全表、顶点格式扩展、构建配置 |
 
 ---
 
@@ -25,13 +25,14 @@
 1. 01-DEV-LOOP.md          ← 开发测试流程（先看这个，它规定了你的每一步动作）
 2. 05-VERSION.md           ← 钉版本：26.3 及之后，主线 26.3
 3. 02-OVERVIEW.md          ← 建立上下文
-4. 04-SPEC.md              ← 全文，组件清单在这
-5. 07-CONSTRAINTS.md       ← 红线 X1–X12，不可违反
-6. 08-TESTING.md           ← 验收与回归清单
-7. 06-MIGRATION.md §2      ← bridge 包隔离（从第一天就落实）
-8. 12-GAP-STRATEGY.md      ← 遇到原版没有的特性时怎么办
-9. 13-GAP-REGISTRY.md      ← 上面那份的登记表
-10. 15-ITERATION.md        ← 迭代维护协议
+4. 04-SPEC.md              ← 全文，组件清单在这（含每块的参考去向与热度）
+5. 07-CONSTRAINTS.md       ← 红线 X1–X16，不可违反
+6. 08-TESTING.md           ← 验收与回归清单（含性能硬指标）
+7. 17-NATIVE.md            ← 开工前必读：参考先行 + 性能预算 + 上不上原生
+8. 06-MIGRATION.md §2      ← bridge 包隔离（从第一天就落实）
+9. 12-GAP-STRATEGY.md      ← 遇到原版没有的特性时怎么办
+10. 13-GAP-REGISTRY.md     ← 上面那份的登记表
+11. 15-ITERATION.md        ← 迭代维护协议
 ```
 
 ### 若你是「做技术评审的人」
@@ -41,18 +42,20 @@
 2. 03-DIRECTION.md §1      核心发现（原版后端 SPI）+ 附录 A 证据清单
 3. 03-DIRECTION.md §2      参考模组判定 + 许可证
 4. 04-SPEC.md §7 §8        风险 + 参考模组使用边界
-5. 06-MIGRATION.md §3      易变点清单
-6. 12-GAP-STRATEGY.md      特性缺口策略（授权 + 收敛 + 回退）
-7. 07-CONSTRAINTS.md §一   许可证硬约束
+5. 17-NATIVE.md §2 §3      性能预算 + 热度分级（为什么多数模块不该上原生）
+6. 06-MIGRATION.md §3      易变点清单
+7. 12-GAP-STRATEGY.md      特性缺口策略（授权 + 收敛 + 回退）
+8. 07-CONSTRAINTS.md §一   许可证硬约束
 ```
 
 ### 若你是「做产品/方向判断的人」
 
 ```
 1. 02-OVERVIEW.md §1 §2    是什么、解决什么问题
-2. 03-DIRECTION.md §2      参考模组对比表（为什么这是技术空白）
-3. 05-VERSION.md §1        目标范围
-4. AGENT_CONTEXT.md §5     待决策项
+2. 02-OVERVIEW.md §7 §8    性能目标 + 成功标准分级
+3. 03-DIRECTION.md §2      参考模组对比表（为什么这是技术空白）
+4. 05-VERSION.md §1        目标范围
+5. AGENT_CONTEXT.md §5     待决策项
 ```
 
 ---
@@ -61,11 +64,12 @@
 
 ```
 05-VERSION.md（版本权威：支持 26.3+，主线 26.3）
- └─ 02-OVERVIEW.md（项目概览）
+ └─ 02-OVERVIEW.md（项目概览 + 性能目标）
      └─ 03-DIRECTION.md（总纲：方向 + 参考模组 + 许可证）
          ├─ 04-SPEC.md（技术规格：怎么实现）
          │    ├─ 07-CONSTRAINTS.md（工程约束：红线）
          │    ├─ 06-MIGRATION.md（bridge 隔离 + 升级流程）
+         │    ├─ 17-NATIVE.md（性能预算 + 参考先行 + 原生决策树）
          │    ├─ 12-GAP-STRATEGY.md ── 13-GAP-REGISTRY.md（特性缺口）
          │    └─ 08-TESTING.md（测试与验收标准）
          ├─ 01-DEV-LOOP.md（开发测试流程：干活前必读）
@@ -83,20 +87,24 @@
 |---|---|---|
 | `00-INDEX.md` | ✅ | 索引 |
 | `01-DEV-LOOP.md` | ✅ **核心** | 开发测试流程；构建 + runClient 循环 |
-| `02-OVERVIEW.md` | ✅ | 项目概览（已按新方向重写） |
+| `02-OVERVIEW.md` | ✅ | 项目概览（含性能目标与两条前置纪律） |
 | `03-DIRECTION.md` | ✅ | 方向与参考模组借鉴分析 |
-| `04-SPEC.md` | ✅ | 技术规格书 |
+| `04-SPEC.md` | ✅ | 技术规格书（含组件参考/热度表、`accel/` 层） |
 | `05-VERSION.md` | ✅ **版本权威** | 支持范围、锁定表、兼容策略 |
 | `06-MIGRATION.md` | ✅ | 版本迁移预案 |
-| `07-CONSTRAINTS.md` | ✅ | 工程约束清单（许可证 MIT） |
-| `08-TESTING.md` | ✅ | 测试与验收标准 |
+| `07-CONSTRAINTS.md` | ✅ | 工程约束清单（MIT + T1–T16 + X1–X16） |
+| `08-TESTING.md` | ✅ | 测试与验收标准（性能为硬指标） |
 | `12-GAP-STRATEGY.md` | ✅ | 特性缺口与自行补充策略 |
 | `13-GAP-REGISTRY.md` | ✅ | 特性缺口登记表 |
-| `15-ITERATION.md` | ✅ | 迭代维护协议 |
+| `15-ITERATION.md` | ✅ | 迭代维护协议（A1–A14） |
 | `16-READING.md` | ✅ | 本文 |
+| `17-NATIVE.md` | ✅ **新增** | 性能预算 + 参考先行 + 原生（C++/Rust）加速决策树 |
 | `AGENT_CONTEXT.md` | ✅ | 跨会话记忆 |
 | `_archive/*` | 📦 归档 | 07 / 08 / 10 / 15 / 17 旧方向文档 |
 | `_archive-开发计划-v2-旧方向.md` | 📦 归档 | 旧主计划 |
+
+> ⚠️ 注意：`docs/_archive/17-开发投喂说明.md` 与 **本文档包的 `17-NATIVE.md` 编号相同但内容无关**。
+> 归档区只作历史，不要把它当成 17 号文档。
 
 ---
 

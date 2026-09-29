@@ -4,7 +4,8 @@
 > 本文告诉你每一次改动之后必须做什么。按顺序做，不要跳步，不要提前下结论。
 >
 > 配套：`07-CONSTRAINTS.md`（红线，不可违反）、`05-VERSION.md`（版本，不可漂）、
-> `08-TESTING.md`（每个阶段的验收细则）、`13-GAP-REGISTRY.md`（要自行补充特性时的登记表）。
+> `08-TESTING.md`（每个阶段的验收细则）、`13-GAP-REGISTRY.md`（要自行补充特性时的登记表）、
+> `17-NATIVE.md`（性能预算 + 参考先行 + 原生加速决策树）。
 
 ---
 
@@ -29,11 +30,18 @@
 1. 读 05-VERSION.md          → 确认 gradle.properties 的版本号与它一致，没漂
 2. 读 07-CONSTRAINTS.md §四   → 把本次会触碰的红线抄进你的任务笔记
 3. 读 13-GAP-REGISTRY.md      → 判断本次改动是否需要新增缺口登记（要就先登记再写代码）
-4. git status                → 确认工作区干净；不干净先提交或说明
-5. 确认 JDK 在 PATH 上        → java -version 输出的版本要与 05-VERSION.md 一致
+4. 【参考先行】本轮要动的那部分，找到参考了吗？
+      去 17-NATIVE.md §1.3 的默认参考清单里查
+      写下：【参考调研】注释块（参考了什么 / 为什么不直接用 / 我们的差异点 / 许可证核对）
+      没写 → 不许动手（07 T13）
+5. 【性能定位】本轮改动落在热路径还是冷路径？（17-NATIVE.md §3.2）
+      冷路径 → 清晰优先，不要做性能优化
+      热路径 → 先测出基线（17-NATIVE.md §7）
+6. git status                → 确认工作区干净；不干净先提交或说明
+7. 确认 JDK 在 PATH 上        → java -version 输出的版本要与 05-VERSION.md 一致
 ```
 
-第 5 步的检查命令：
+第 7 步的检查命令：
 
 ```bash
 java -version          # 版本号必须与 05-VERSION.md 的 Java 版本一致
@@ -212,6 +220,16 @@ grep -nE "ERROR|Exception|Mixin apply failed|validation error" run/logs/latest.l
          → 资源重载路径（F3+T）清理干净了吗？
          → 状态恢复了吗？（改过的渲染状态有没有还原）
          → 切包 / 切世界的残留？
+
+第 7 步  **画面全对，但帧率不达标**
+         → 先测：是哪个环节？（17-NATIVE.md §7.2 的手段）
+         → 该环节是热路径吗？（§3.2 分级表）
+             冷路径 → 不用优化，问题在别处（大概率是重复计算 / 缓存没生效）
+             热路径 → 继续往下
+         → 有没有重复计算？（同一帧内算了几次同样的东西）
+         → 有没有不必要的分配？（每帧 new 对象 → GC 压力）
+         → 有没有走原生库？原生库真的被选中了吗？（日志应打印所选后端）
+         → 最后才考虑：上原生（必须先走 17-NATIVE.md §5 六问）
 ```
 
 ### 6.1 定位纪律
@@ -237,6 +255,8 @@ grep -nE "ERROR|Exception|Mixin apply failed|validation error" run/logs/latest.l
 [ ] 相关日志片段（必须含 §5.1 的埋点输出，不能只贴"启动成功"）
 [ ] 视觉证据：截图路径（无视觉变化就明写"本次无视觉变化"）
 [ ] 08-TESTING.md 里对应阶段的验收项逐条勾选
+[ ] 【参考调研】注释块内容（07 T13）
+[ ] 性能相关：实测数据 + 是否在 17-NATIVE.md §2 预算内（07 T14）
 [ ] 本次改动的文件清单
 [ ] 未解决 / 存疑的问题（没有就写"无"）
 ```
@@ -273,6 +293,7 @@ grep -nE "ERROR|Exception|Mixin apply failed|validation error" run/logs/latest.l
 [ ] 构建退出码 0，jar 内容六项核对通过
 [ ] runClient 真实跑过，日志无 ERROR、无 validation error
 [ ] 所有埋点都出现过，计数对得上
+[ ] 性能在 17-NATIVE.md §2 的预算内（或已记录偏差与原因）
 [ ] 回归清单（08-TESTING.md §9）全过
 [ ] 证据已按 §7 交齐
 [ ] 变更记录已写（15-ITERATION.md 第 5 步）
@@ -315,6 +336,8 @@ grep -nE "ERROR|Exception|Mixin apply failed|validation error" run/logs/latest.l
 必须有埋点才能交付
 必须一次只验证一个假设
 必须先登记再自行补充（07 T12）
+必须先找参考再动手（07 T13）
+必须先测量再优化（07 T14）
 
 禁止静默降级到"什么都不做"（07 X11）
 禁止在业务包直接 import com.mojang.renderpearl.*（07 T5）
@@ -322,12 +345,16 @@ grep -nE "ERROR|Exception|Mixin apply failed|validation error" run/logs/latest.l
 禁止把"待确认项"用猜的值填（07 X9）
 禁止吞异常让它"看起来能跑"
 禁止用"理论上"代替"实测过"
+禁止没调研就写实现（07 X13）
+禁止拿"感觉慢"当性能证据（07 X14）
+禁止把冷路径拿去写 C++/Rust（07 X15）
+禁止让原生库成为启动的必要条件（07 T15 / X16）
 ```
 
 **遇到下面四种情况，停下来问，不要自行决定：**
 
 ```
-- 需要引入新的第三方依赖
+- 需要引入新的第三方依赖（含任何 C++/Rust 原生库）
 - 需要改 bridge/ 之外的版本相关硬编码
 - 发现 OF 语义与原版能力冲突、需要自行补充
 - 任务涉及对外可见的命名 / 许可证
