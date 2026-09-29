@@ -3,6 +3,14 @@
 build/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/**/build/
+gradle-app.setting
+.gradletasknamecache
+
+### Java / JVM ###
+*.class
+*.hprof
+hs_err_pid*.log
+replay_pid*.log
 
 ### IntelliJ IDEA ###
 .idea/
@@ -29,15 +37,44 @@ bin/
 ### VS Code ###
 .vscode/
 
+### NetBeans ###
+nbproject/private/
+nbbuild/
+nbdist/
+.nb-gradle/
+
+### Visual Studio ###
+.vs/
+*.suo
+*.user
+
+### Windows ###
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
 ### Mac OS ###
 .DS_Store
+._*
+.AppleDouble
+.LSOverride
+
+### Linux ###
+*~
+.directory
 
 ### Minecraft Modding ###
 run/
 !**/src/**/run/
+runs/
+run-data/
 **/src/generated/**/.cache/
 repo/
 !**/src/**/repo/
+/crash-reports/
+/shaderpacks/
+/logs/
 
 ### 本地运行环境（免 root Vulkan 前缀等，不入库）###
 /tools/
@@ -45,7 +82,35 @@ repo/
 ### 从 Windows 复制文件进 WSL 时产生的 NTFS 附加数据流（会当普通文件落地）###
 *:Zone.Identifier
 
+### 本地工作数据（跨会话记忆 / 任务状态，不入库；需多环境共享时删掉本行）###
+.workbuddy/
+
+### 本地密钥 / 环境变量（绝不入库）###
+.env
+.env.local
+local.properties
+
 ### 构建日志（临时诊断产物，不入库）###
 /build*.log
 /build_*.log
 *.build.log
+/*.log
+
+### 其他临时产物 ###
+*.tmp
+.cache/
+
+### ⚠️ 以下文件必须入库，不要加进忽略规则 ###
+# gradlew / gradlew.bat                    构建入口
+# gradle/wrapper/gradle-wrapper.jar        wrapper 本体（缺了 clone 后无法构建）
+# gradle/wrapper/gradle-wrapper.properties wrapper 版本配置
+# gradle.properties                        mod_id / 版本号唯一数据源
+# settings.gradle                          工程配置
+# build.gradle                             构建脚本
+# LICENSE                                  MIT 署名要求，且 jar 内必须包含（P3 / L10）
+# TEMPLATE_LICENSE.txt                     MDK 模板许可证声明
+# .gitattributes                           强制 LF 行尾（Windows 下 gradlew 会被 CRLF 毁掉）
+# docs/**                                  文档包
+# CHANGE_LOG.md                            变更记录
+# src/main/templates/META-INF/neoforge.mods.toml   模板（${} 占位，构建期展开）
+# src/main/resources/assets/vkdisp/lang/*.json     语言文件
