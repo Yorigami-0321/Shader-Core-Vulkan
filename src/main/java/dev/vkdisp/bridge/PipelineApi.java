@@ -68,6 +68,9 @@ public final class PipelineApi {
     /** 传递/合成管线 location（P2 前置：把离屏渲染目标采样进主目标）。 */
     public static final String BLIT_LOCATION = "vkdisp:pipeline/blit";
 
+    /** 合成管线 location（P2 前置：中间目标 → 中间目标，多目标 ping-pong 的中间级）。 */
+    public static final String COMPOSITE_LOCATION = "vkdisp:pipeline/composite";
+
     /** 管线 location：vkdisp:pipeline/fullscreen → 注册表键。 */
     private static final Identifier FULLSCREEN_PIPELINE_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/fullscreen");
@@ -84,11 +87,22 @@ public final class PipelineApi {
     private static final Identifier BLIT_SHADER_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "blit");
 
+    /** 合成管线 location id。 */
+    private static final Identifier COMPOSITE_PIPELINE_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/composite");
+
+    /** 合成管线片元着色器 id：vkdisp:composite → assets/vkdisp/shaders/composite.fsh。 */
+    private static final Identifier COMPOSITE_SHADER_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "composite");
+
     /** 注册成功后暂存的管线实例（供 FrameApi 使用）；未注册时为 null。 */
     private static RenderPipeline fullscreenPipeline;
 
     /** 注册成功后暂存的传递管线实例；未注册时为 null。 */
     private static RenderPipeline blitPipeline;
+
+    /** 注册成功后暂存的合成管线实例；未注册时为 null。 */
+    private static RenderPipeline compositePipeline;
 
     /** 已注册管线集合（P1.2「注册数 == 编译成功数」断言的计数来源）。 */
     private static final List<RenderPipeline> REGISTERED_PIPELINES = new java.util.ArrayList<>();
@@ -159,6 +173,41 @@ public final class PipelineApi {
         event.registerPipeline(pipeline);
         blitPipeline = pipeline;
         REGISTERED_PIPELINES.add(pipeline);
+    }
+
+    /**
+     * 构建并注册 P2 前置的合成管线（中间目标 → 中间目标）。
+     *
+     * <p>结构与传递管线相同（只有采样器绑定），差别在片元着色器 {@code vkdisp:composite}；
+     * 多目标 ping-pong 链的中间级用它，最后一级用传递管线写主目标。
+     */
+    public static void registerCompositePipeline(RegisterRenderPipelinesEvent event) {
+        RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                .withLocation(COMPOSITE_PIPELINE_ID)
+                .withVertexShader(FULLSCREEN_SHADER_ID)
+                .withFragmentShader(COMPOSITE_SHADER_ID)
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
+                        .build())
+                .withColorTargetState(ColorTargetState.DEFAULT)
+                .build();
+        event.registerPipeline(pipeline);
+        compositePipeline = pipeline;
+        REGISTERED_PIPELINES.add(pipeline);
+    }
+
+    /** 合成管线是否已注册完成（纯布尔视图）。 */
+    public static boolean isCompositePipelineRegistered() {
+        return compositePipeline != null;
+    }
+
+    /** 已注册管线：合成管线（bridge 包内部使用）。 */
+    static RenderPipeline compositePipeline() {
+        RenderPipeline pipeline = compositePipeline;
+        if (pipeline == null) {
+            throw new IllegalStateException("vkdisp: composite pipeline not registered yet");
+        }
+        return pipeline;
     }
 
     /** 传递管线是否已注册完成（纯布尔视图）。 */

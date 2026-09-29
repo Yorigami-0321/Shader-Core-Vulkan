@@ -41,15 +41,23 @@ public final class FullscreenPipelineRegistrar {
         try {
             PipelineApi.registerFullscreenPipeline(event);
             VkDisp.LOGGER.info(
-                    "vkdisp: pipeline registered (1/2): {}", PipelineApi.FULLSCREEN_LOCATION);
+                    "vkdisp: pipeline registered (1/3): {}", PipelineApi.FULLSCREEN_LOCATION);
         } catch (Throwable t) {
             VkDisp.LOGGER.error(
                     "vkdisp: pipeline registration failed: {}", PipelineApi.FULLSCREEN_LOCATION, t);
         }
         try {
+            PipelineApi.registerCompositePipeline(event);
+            VkDisp.LOGGER.info(
+                    "vkdisp: pipeline registered (2/3): {}", PipelineApi.COMPOSITE_LOCATION);
+        } catch (Throwable t) {
+            VkDisp.LOGGER.error(
+                    "vkdisp: pipeline registration failed: {}", PipelineApi.COMPOSITE_LOCATION, t);
+        }
+        try {
             PipelineApi.registerBlitPipeline(event);
             VkDisp.LOGGER.info(
-                    "vkdisp: pipeline registered (2/2): {} (total={})",
+                    "vkdisp: pipeline registered (3/3): {} (total={})",
                     PipelineApi.BLIT_LOCATION,
                     PipelineApi.registeredPipelineCount());
         } catch (Throwable t) {

@@ -5,6 +5,34 @@
 
 ---
 
+## 2026-09-29 — 多目标三 pass 链（离屏 ping-pong 轮换）+ 采样翻转规则标定
+
+- **本次改了什么**：
+  1. `bridge/PipelineApi.java`：新增**合成管线** `vkdisp:pipeline/composite`（片元 `vkdisp:composite`，只有采样器绑定）；管线总数 3（图案 / 合成 / 传递）。
+  2. `bridge/FrameApi.java`：离屏目标改为**两个**（`offscreen0` / `offscreen1`，按主目标尺寸 resize）；`drawFullscreen` 改为**三 pass 链** —— Pass A：图案 → offscreen0（CLEAR）；Pass B：offscreen0 → offscreen1（合成级）；Pass C：offscreen1 → 主目标（最后一级）。
+  3. 新增 `assets/vkdisp/shaders/composite.fsh`：当前效果是刻意选择的**临时验证效应（R/B 通道互换）**，让「这一级是否真的执行、是否真的采样到上一级结果」变成可像素级判定的事实（四角黄色 → 青色）。
+  4. 注册器埋点改为 `(1/3)(2/3)(3/3) … (total=3)`；`FullscreenPassHook` 就绪判定要求三条管线都编译完成，首帧埋点改为 `3-pass chain executed … (A: pattern->offscreen0, B: offscreen0->offscreen1, C: offscreen1->main)`。
+- **为什么改**：真实 composite / deferred 链是**多级**的（`composite1 → composite2 → …`），必须证明「多级串联 + 中间目标轮换」这一机制本身正确；把验证效应做成可像素判定的通道交换，是为了避免「看到图案就以为链对了」的假阳性。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §10 **P-1f 采样翻转规则再次细化**。
+- **⭐ 本轮标定出的规则（实测，修正上一轮的单条结论）**：采样翻转**分两类**——
+  - **中间目标 → 主目标**：必须 `vec2(uv.x, 1.0-uv.y)`（`blit.fsh`）；
+  - **中间目标 → 中间目标**：用原始 `vUv`（`composite.fsh`）；
+  - 两级**同时**翻转会让整条链上下颠倒（首次三 pass 实测：底部橙色带跑到顶部；改回原样后复位）。
+  判据是双重的：图案底部方向参考带位置 + 四角标颜色。
+- **测试结果**（证据目录 `tools/vulkan-local/evidence/`，被 `.gitignore` 覆盖、不入库）：
+  - ✅ **构建/测试**：`./gradlew build` exit=**0**；`./gradlew test` 全仓库 **239 用例 0 失败**。
+  - ✅ **三条管线注册与计数对齐**：`p2_threepass_final.log`（sha256 `22e58fc5…`）——`pipeline registered (1/3) fullscreen`、`(2/3) composite`、`(3/3) blit (total=3)`、`pipeline count check: registered=3, compiled=3 (aligned)`、`vkdisp 3-pass chain executed (854x480) …`；ERROR=**2**（仍只有 WSL 环境 narrator/OpenAL），`vkdisp` ERROR=**0**。
+  - ✅ **链真的执行了（像素级硬判据）**：截图 `p2_threepass_exp.png`（sha256 `c2ecfecf…`）色块统计（客户端区抽样）——**青(0,255,255) 1584**（= 四角标，图案里本是黄色，只有 Pass B 的 R/B 交换被真实执行才会变青）、**黄(255,255,0) 92739 + 品红 93257**（= 棋盘，交换后由「品红/青」变为「品红/黄」）、**蓝(0,128,255) 5852**（= 底部参考带，图案里本是橙色）、白 3028（中轴十字）。
+  - ✅ **方向量化**：蓝带行范围 `y=520..533`（客户区底部），与图案绘制位置一致 → 链末方向正确、无上下颠倒。
+- **未覆盖 / 存疑**：
+  1. 中间/最终两级翻转规则是**实测标定**的工程结论，尚未从 renderpearl 内部实现层面解释清楚（P3.3 做更长链时会复测；已登记在 P-1f）；
+  2. 中间目标尚无**深度附件**、无多颜色附件（colortex0..N 语义）、无降采样与目标池复用——归 P3.3/RenderTargetPool；
+  3. `composite.fsh` 的 R/B 交换是**验证效应**，P2.4 起会被真实包程序替换；
+  4. 未接 pack 链（仍需 A/B/C 线汇合）。
+- **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
+
+---
+
 ## 2026-09-29 — 双 pass 渲染链（离屏目标 ping-pong 骨架）+ 方向约定重新标定
 
 - **本次改了什么**：

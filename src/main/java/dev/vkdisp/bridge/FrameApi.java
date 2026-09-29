@@ -106,14 +106,24 @@ public final class FrameApi {
      * 之所以需要离屏目标：同一 pass 内既写又采样同一纹理在 Vulkan 属非法反馈回路，
      * 真实 composite 链必须靠中间目标（ping-pong）——这就是最小可运行的 ping-pong 骨架。
      */
-    private static TextureTarget offscreenTarget;
+    private static TextureTarget offscreenTargetA;
+    private static TextureTarget offscreenTargetB;
 
-    /** 按主目标尺寸取离屏目标（尺寸变化时 resize，避免每帧重建）。 */
-    private static TextureTarget offscreenTarget(int width, int height) {
-        TextureTarget target = offscreenTarget;
+    /**
+     * 按主目标尺寸取第 {@code slot} 个离屏目标（0/1 两个，交替作为 ping-pong 的两端）。
+     *
+     * <p>尺寸变化时 resize，不每帧重建；两个目标都按主目标尺寸分配，保证中间级分辨率一致。
+     */
+    private static TextureTarget offscreenTarget(int slot, int width, int height) {
+        TextureTarget target = slot == 0 ? offscreenTargetA : offscreenTargetB;
         if (target == null) {
-            target = new TextureTarget("vkdisp offscreen", width, height, GpuFormat.RGBA8_UNORM, null);
-            offscreenTarget = target;
+            target = new TextureTarget(
+                    "vkdisp offscreen " + slot, width, height, GpuFormat.RGBA8_UNORM, null);
+            if (slot == 0) {
+                offscreenTargetA = target;
+            } else {
+                offscreenTargetB = target;
+            }
         } else if (target.width != width || target.height != height) {
             target.resize(width, height);
         }
@@ -148,8 +158,10 @@ public final class FrameApi {
      */
     public static boolean isPipelineReady() {
         return PipelineApi.isFullscreenPipelineRegistered()
+                && PipelineApi.isCompositePipelineRegistered()
                 && PipelineApi.isBlitPipelineRegistered()
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.fullscreenPipeline()) != null
+                && RenderSystem.getCompiledPipelineNullable(PipelineApi.compositePipeline()) != null
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.blitPipeline()) != null;
     }
 
@@ -179,15 +191,22 @@ public final class FrameApi {
 
         // 离屏目标与采样器必须在开启 render pass **之前**解析：pass 打开期间 encoder 不允许其它命令
         // （实测异常原文："Close the existing render pass before performing additional commands"）。
-        TextureTarget offscreen = offscreenTarget(width, height);
-        GpuTextureView samplerView = offscreen.getColorTextureView();
+        TextureTarget targetA = offscreenTarget(0, width, height);
+        TextureTarget targetB = offscreenTarget(1, width, height);
+        GpuTextureView viewA = targetA.getColorTextureView();
+        GpuTextureView viewB = targetB.getColorTextureView();
         GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
 
-        // 两条管线都要就绪（图案 + 传递）；任一未编译完成都抛异常，绝不静默少画一个 pass。
+        // 三条管线都要就绪（图案 + 合成 + 传递）；任一未编译完成都抛异常，绝不静默少画一个 pass。
         CompiledRenderPipeline pattern = RenderSystem.getCompiledPipelineNullable(PipelineApi.fullscreenPipeline());
         if (pattern == null) {
             throw new IllegalStateException(
                     "vkdisp: fullscreen pipeline not compiled yet: " + PipelineApi.FULLSCREEN_LOCATION);
+        }
+        CompiledRenderPipeline composite = RenderSystem.getCompiledPipelineNullable(PipelineApi.compositePipeline());
+        if (composite == null) {
+            throw new IllegalStateException(
+                    "vkdisp: composite pipeline not compiled yet: " + PipelineApi.COMPOSITE_LOCATION);
         }
         CompiledRenderPipeline blit = RenderSystem.getCompiledPipelineNullable(PipelineApi.blitPipeline());
         if (blit == null) {
@@ -204,10 +223,10 @@ public final class FrameApi {
         // 官方 PostPass 同款序列：无 depth 附件（本管线没有 depthStencilState）、不清屏（loadOp = LOAD）、
         // 无顶点绑定（全屏三角形由 gl_VertexIndex 推出）。
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-        // Pass A：图案 → 离屏目标（清屏为不透明黑，loadOp=CLEAR）。
+        // Pass A：图案 → 中间目标 A（清屏为不透明黑，loadOp=CLEAR）。
         try (RenderPass pass = encoder.createRenderPass(
-                () -> label + " A (offscreen)",
-                samplerView,
+                () -> label + " A (pattern -> offscreen0)",
+                viewA,
                 Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)),
                 null,
                 OptionalDouble.empty())) {
@@ -216,12 +235,24 @@ public final class FrameApi {
             pass.setUniform(PipelineApi.PARAMS_UNIFORM, ring.currentBuffer());
             pass.draw(3, 1, 0, 0);
         }
-        // Pass B：离屏目标 → 主目标（采样输入纹理；同一 encoder 上必须先关掉上一个 pass）。
+        // Pass B：中间目标 A → 中间目标 B（合成级，ping-pong 的中间一环；采样 A）。
         try (RenderPass pass = encoder.createRenderPass(
-                () -> label + " B (main)", colorView, Optional.empty(), null, OptionalDouble.empty())) {
+                () -> label + " B (offscreen0 -> offscreen1)",
+                viewB,
+                Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)),
+                null,
+                OptionalDouble.empty())) {
+            pass.setPipeline(composite);
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, viewA, sampler);
+            pass.draw(3, 1, 0, 0);
+        }
+        // Pass C：中间目标 B → 主目标（最后一级；主目标只由本 pass 写入）。
+        try (RenderPass pass = encoder.createRenderPass(
+                () -> label + " C (offscreen1 -> main)", colorView, Optional.empty(), null, OptionalDouble.empty())) {
             pass.setPipeline(blit);
             RenderSystem.bindDefaultUniforms(pass);
-            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, samplerView, sampler);
+            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, viewB, sampler);
             pass.draw(3, 1, 0, 0);
         }
         // 原版 PostPass 同款：绘制后再 rotate，保证本帧写入的槽在 GPU 用完前不被复用。
