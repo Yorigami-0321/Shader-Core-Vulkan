@@ -5,6 +5,31 @@
 
 ---
 
+## 2026-09-29 — 双 pass 渲染链（离屏目标 ping-pong 骨架）+ 方向约定重新标定
+
+- **本次改了什么**：
+  1. `bridge/PipelineApi.java`：新增**传递管线** `vkdisp:pipeline/blit`（顶点着色器复用 `vkdisp:fullscreen`，片元为新的 `vkdisp:blit`；只带采样器绑定），图案管线去掉采样器绑定（职责分离：图案只产图，传递只采样）。
+  2. `bridge/FrameApi.java`：用原版 `TextureTarget`（`RenderTarget` 子类，vanilla 内部目标同款）建**离屏渲染目标**（`RGBA8_UNORM`，尺寸随主目标 `resize`）；`drawFullscreen` 改为两个 pass —— **Pass A**：图案 → 离屏（`loadOp=CLEAR` 不透明黑）；**Pass B**：离屏 → 主目标（采样输入纹理）。
+  3. 新增 `assets/vkdisp/shaders/blit.fsh`（采样 `InSampler` + V 翻转）；`fullscreen.fsh` 增加**底部橙色方向参考带**。
+  4. `render/FullscreenPipelineRegistrar.java`：注册两条管线，埋点改为 `pipeline registered (1/2)` / `(2/2) … (total=2)`；`FullscreenPassHook`：就绪判定要求**两条管线都编译完成**，首帧埋点改为 `vkdisp 2-pass chain executed (WxH) … (A: pattern->offscreen, B: offscreen->main)`。
+- **为什么改**：composite / deferred / shadow 的本质都是「画到中间目标 → 再采样回来」，而**同一 pass 内既写又采样同一纹理在 Vulkan 属非法反馈回路**（上一轮已验证过这条约束）。先把最小可运行的 ping-pong 骨架跑通，P2.4/P3.3 才只需关心「链怎么编排」而不用同时排「中间目标机制对不对」。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §10 **P-1f 方向约定更正**（见下）。
+- **⚠️ 方向约定更正（本轮实测推翻上一轮的解释）**：上一轮把「`vUv.y=0`」记成屏幕**底部**，本轮用新增的橙色带做基准标定后证明**写反了**——正确约定是：`vUv.y=0` → NDC `y=-1` → 屏幕**顶部**（Vulkan NDC 的 y 向下）；真正需要 V 翻转的原因是 **`NativeImage` 行 0 对应采样坐标 `v=1`**（纹理原点在下）。翻转修复本身没错，错误只在解释；`blit.fsh` / `fullscreen.fsh` 注释与 `18-PARALLEL` §10 P-1f 已全部改正。
+- **测试结果**（证据目录 `tools/vulkan-local/evidence/`，被 `.gitignore` 覆盖、不入库）：
+  - ✅ **构建**：`./gradlew build` exit=**0**；`./gradlew test` 全仓库 **239 用例 0 失败**。
+  - ✅ **两条管线注册与计数对齐**：`p2_twopass_final.log`（sha256 `6b0a9e25…`）——L60 `pipeline registered (1/2): vkdisp:pipeline/fullscreen`、L61 `pipeline registered (2/2): vkdisp:pipeline/blit (total=2)`、L138 `pipeline count check: registered=2, compiled=2 (aligned)`。
+  - ✅ **双 pass 真实执行**：L139 `vkdisp 2-pass chain executed (854x480), uniform VkDispParams=0.20351306 (A: pattern->offscreen, B: offscreen->main)`；ERROR=**2**（仍为 WSL 环境 narrator/OpenAL），`vkdisp` ERROR=**0**。
+  - ✅ **链路真的经过离屏目标**：图案只由 Pass A 画到离屏、主目标仅由 Pass B 写入，因此**屏幕上能看到图案本身就证明 Pass B 采样成功**；截图 `p2_twopass.png`（sha256 `855af66b…`）。
+  - ✅ **方向量化核对**：像素扫描橙色带落在 `y=520..533`（客户区底部），与 Pass A 中 `vUv.y>0.96` 的预期位置一致 → 端到端方向一致，无上下翻转。
+- **未覆盖 / 存疑**：
+  1. 只有一个离屏目标，尚未做**多目标 ping-pong**（colortex0/1 轮换）与深度附件——归 P3.3；
+  2. 离屏目标分辨率固定等于主目标，未做降采样/RenderTargetPool 复用；
+  3. 未接 pack 链（P2.4 需要 A/B/C 线汇合后才会真正消费这条链路）；
+  4. 橙色带是**验证用参考物**，P2.4 起随正式图案一起评估是否保留。
+- **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
+
+---
+
 ## 2026-09-29 — D 线二期：gl_ 内建差异转换（真实 OF 包编译的前置）
 
 - **本次改了什么**（`src/main/java/dev/vkdisp/glsl/translate/` + 同名 test 包，均在该线独占路径内）：

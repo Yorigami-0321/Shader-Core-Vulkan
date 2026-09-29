@@ -15,9 +15,6 @@ layout(std140) uniform VkDispParams {
     vec4 Params;
 };
 
-// 采样器：名字与 BindGroupLayout.withUniform("InSampler", COMBINED_IMAGE_SAMPLER) 一致
-// （原版 core/blit_depth.fsh 的 uniform sampler2D InSampler 写法）。
-uniform sampler2D InSampler;
 
 void main() {
     // 8x8 棋盘：品红 / 青，高饱和纯色，截图一眼可辨是否被本管线覆盖。
@@ -40,11 +37,12 @@ void main() {
 
     // 采样器链路验证：用自建 16x16 四象限纹理（重复 4x4）调制亮度。
     // 采样到的是红/绿/蓝/白 → 棋盘亮度分区变化，肉眼与像素统计都可判别"纹理真的传进来了"。
-    // 一对一映射（不重复）：屏幕象限 ↔ 测试纹理象限，便于用「四象限颜色」量化判定采样是否正确。
-    // ⚠️ 实测约定（2026-09-29）：全屏三角形里 vUv.y = 0 对应屏幕**底部**（NDC 方向所致），
-    // 而 NativeImage 行 0 是顶部 → 采样前必须翻转 V，否则画面与纹理会上下颠倒（已用四象限色验证）。
-    vec3 tint = texture(InSampler, vec2(vUv.x, 1.0 - vUv.y)).rgb;
-    color *= 0.35 + 0.65 * tint;
+    // 方向参考带（实测标定 2026-09-29）：vUv.y=0 → NDC y=-1 → 屏幕**顶部**（Vulkan NDC 的 y 向下），
+    // 故 vUv.y>0.96 落在屏幕**底部**。任何一次上下翻转都能被这张截图一眼抓出。
+    // 作用：任何一次上下翻转（例如采样输入纹理时漏了 V 翻转）都能被截图/像素统计一眼抓出来。
+    if (vUv.y > 0.96) {
+        color = vec3(1.0, 0.5, 0.0);
+    }
 
     // 黑色细边框：把画面与窗口边缘区分开，便于截图确认画满整屏。
     if (toEdge.x < 0.01 || toEdge.y < 0.01) {

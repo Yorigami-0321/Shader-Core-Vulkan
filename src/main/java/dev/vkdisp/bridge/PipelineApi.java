@@ -65,6 +65,9 @@ public final class PipelineApi {
      */
     public static final String SAMPLER_UNIFORM = "InSampler";
 
+    /** 传递/合成管线 location（P2 前置：把离屏渲染目标采样进主目标）。 */
+    public static final String BLIT_LOCATION = "vkdisp:pipeline/blit";
+
     /** 管线 location：vkdisp:pipeline/fullscreen → 注册表键。 */
     private static final Identifier FULLSCREEN_PIPELINE_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/fullscreen");
@@ -73,8 +76,19 @@ public final class PipelineApi {
     private static final Identifier FULLSCREEN_SHADER_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "fullscreen");
 
+    /** 传递管线 location id。 */
+    private static final Identifier BLIT_PIPELINE_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/blit");
+
+    /** 传递管线片元着色器 id：vkdisp:blit → assets/vkdisp/shaders/blit.fsh（顶点复用 fullscreen.vsh）。 */
+    private static final Identifier BLIT_SHADER_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "blit");
+
     /** 注册成功后暂存的管线实例（供 FrameApi 使用）；未注册时为 null。 */
     private static RenderPipeline fullscreenPipeline;
+
+    /** 注册成功后暂存的传递管线实例；未注册时为 null。 */
+    private static RenderPipeline blitPipeline;
 
     /** 已注册管线集合（P1.2「注册数 == 编译成功数」断言的计数来源）。 */
     private static final List<RenderPipeline> REGISTERED_PIPELINES = new java.util.ArrayList<>();
@@ -95,10 +109,10 @@ public final class PipelineApi {
                 .withVertexShader(FULLSCREEN_SHADER_ID)
                 .withFragmentShader(FULLSCREEN_SHADER_ID)
                 // P1.1：自定义 uniform 块（POST_PROCESSING_SNIPPET 已带 GLOBALS 布局，这里是第 2 组）。
-                // 实验：UBO 与 sampler 放同一绑定组，声明顺序与 GLSL 一致。
+                // P1.1：自定义 uniform 块（POST_PROCESSING_SNIPPET 已带 GLOBALS 布局）。
+                // 实测约定（P-1f）：自定义 UBO 与 sampler 若同属一条管线，必须放同一绑定组且顺序与 GLSL 一致。
                 .withBindGroupLayout(BindGroupLayout.builder()
                         .withUniform(PARAMS_UNIFORM, UniformType.UNIFORM_BUFFER)
-                        .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
                         .build())
                 .withColorTargetState(ColorTargetState.DEFAULT)
                 .build();
@@ -124,6 +138,41 @@ public final class PipelineApi {
     /** 全屏管线是否已注册完成（纯布尔视图，业务包轮询用；未注册返回 false，不抛异常）。 */
     public static boolean isFullscreenPipelineRegistered() {
         return fullscreenPipeline != null;
+    }
+
+    /**
+     * 构建并注册 P2 前置的传递管线（采样输入纹理 → 写目标）。
+     *
+     * <p>与图案管线的区别：只有采样器绑定（无自定义 UBO），片元着色器为 {@code vkdisp:blit}。
+     * 顶点着色器复用 {@code vkdisp:fullscreen}（同一全屏三角形）。
+     */
+    public static void registerBlitPipeline(RegisterRenderPipelinesEvent event) {
+        RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                .withLocation(BLIT_PIPELINE_ID)
+                .withVertexShader(FULLSCREEN_SHADER_ID)
+                .withFragmentShader(BLIT_SHADER_ID)
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
+                        .build())
+                .withColorTargetState(ColorTargetState.DEFAULT)
+                .build();
+        event.registerPipeline(pipeline);
+        blitPipeline = pipeline;
+        REGISTERED_PIPELINES.add(pipeline);
+    }
+
+    /** 传递管线是否已注册完成（纯布尔视图）。 */
+    public static boolean isBlitPipelineRegistered() {
+        return blitPipeline != null;
+    }
+
+    /** 已注册管线：传递管线（bridge 包内部使用）。 */
+    static RenderPipeline blitPipeline() {
+        RenderPipeline pipeline = blitPipeline;
+        if (pipeline == null) {
+            throw new IllegalStateException("vkdisp: blit pipeline not registered yet");
+        }
+        return pipeline;
     }
 
     /**

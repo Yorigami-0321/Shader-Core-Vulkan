@@ -35,16 +35,26 @@ public final class FullscreenPipelineRegistrar {
     private FullscreenPipelineRegistrar() {
     }
 
-    /** 注册点埋点（01-DEV-LOOP §5.1）：成功打注册计数 + location，失败打 ERROR 原文。 */
+    /** 注册点埋点（01-DEV-LOOP §5.1）：成功打注册计数 + 两条 location，失败打 ERROR 原文。 */
     @SubscribeEvent
     static void onRegisterRenderPipelines(RegisterRenderPipelinesEvent event) {
         try {
             PipelineApi.registerFullscreenPipeline(event);
             VkDisp.LOGGER.info(
-                    "vkdisp: pipeline registered (count=1): {}", PipelineApi.FULLSCREEN_LOCATION);
+                    "vkdisp: pipeline registered (1/2): {}", PipelineApi.FULLSCREEN_LOCATION);
         } catch (Throwable t) {
             VkDisp.LOGGER.error(
                     "vkdisp: pipeline registration failed: {}", PipelineApi.FULLSCREEN_LOCATION, t);
+        }
+        try {
+            PipelineApi.registerBlitPipeline(event);
+            VkDisp.LOGGER.info(
+                    "vkdisp: pipeline registered (2/2): {} (total={})",
+                    PipelineApi.BLIT_LOCATION,
+                    PipelineApi.registeredPipelineCount());
+        } catch (Throwable t) {
+            VkDisp.LOGGER.error(
+                    "vkdisp: pipeline registration failed: {}", PipelineApi.BLIT_LOCATION, t);
         }
     }
 }

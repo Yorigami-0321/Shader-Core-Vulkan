@@ -34,19 +34,19 @@ package dev.vkdisp.bridge;
  */
 import com.mojang.blaze3d.buffers.Std140Builder;
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.platform.NativeImage;
+import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
 import com.mojang.renderpearl.api.commands.RenderPass;
-import com.mojang.renderpearl.api.device.GpuDevice;
 import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.renderpearl.api.textures.GpuSampler;
-import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
+import org.joml.Vector4f;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import net.minecraft.client.Minecraft;
@@ -98,54 +98,26 @@ public final class FrameApi {
         return ring;
     }
 
-    /** 自建的测试纹理边长（像素）；4 象限色块，采样调制后肉眼与像素统计都能看出差别。 */
-    private static final int TEST_TEXTURE_SIZE = 16;
-
-    /** 自建测试纹理与视图（懒创建；P2 阶段第一次「采样器绑定 → 采样 → 输出」链路的载体）。 */
-    private static GpuTexture testTexture;
-    private static GpuTextureView testTextureView;
-
     /**
-     * 懒创建一张 16×16 测试纹理（4 象限色块）并返回其视图。
+     * 离屏渲染目标（P2 前置：图案先画到它上面，再被下一个 pass 采样进主目标）。
      *
-     * <p>序列照原版：{@code device.createTexture(label, usage, format, w, h, depth, mips)}
-     * （usage = {@code TEXTURE_BINDING | COPY_DST}）→ {@code NativeImage} 填像素 →
-     * {@code createCommandEncoder().writeToTexture(texture, image)} → {@code createTextureView}。
-     * 用自建纹理而不是直接采样主目标，是因为「同一 pass 内既写又采样同一纹理」在 Vulkan 属非法反馈回路，
-     * 真实 composite 链要按原版做 ping-pong 目标（P3.3 交付）。
+     * <p>用原版 {@link TextureTarget}（{@code RenderTarget} 子类，vanilla 内部目标同款）：
+     * 自带颜色/深度纹理与需要时的 {@code resize}，避免手工管理 {@code GpuTexture} 生命周期。
+     * 之所以需要离屏目标：同一 pass 内既写又采样同一纹理在 Vulkan 属非法反馈回路，
+     * 真实 composite 链必须靠中间目标（ping-pong）——这就是最小可运行的 ping-pong 骨架。
      */
-    private static GpuTextureView testTextureView() {
-        GpuTextureView view = testTextureView;
-        if (view == null) {
-            GpuDevice device = RenderSystem.getDevice();
-            try (NativeImage image = new NativeImage(TEST_TEXTURE_SIZE, TEST_TEXTURE_SIZE, false)) {
-                for (int y = 0; y < TEST_TEXTURE_SIZE; y++) {
-                    for (int x = 0; x < TEST_TEXTURE_SIZE; x++) {
-                        // 象限色块：左上红、右上绿、左下蓝、右下白；ABGR 打包（原版 NativeImage 约定）。
-                        int half = TEST_TEXTURE_SIZE / 2;
-                        boolean right = x >= half;
-                        boolean bottom = y >= half;
-                        int r = (right && bottom) ? 255 : (right ? 0 : (bottom ? 0 : 255));
-                        int g = right && !bottom ? 255 : (right && bottom ? 255 : 0);
-                        int b = (!right && bottom) ? 255 : (right && bottom ? 255 : 0);
-                        image.setPixelABGR(x, y, (255 << 24) | (b << 16) | (g << 8) | r);
-                    }
-                }
-                GpuTexture texture = device.createTexture(
-                        () -> "vkdisp test pattern",
-                        GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_DST,
-                        GpuFormat.RGBA8_UNORM,
-                        TEST_TEXTURE_SIZE,
-                        TEST_TEXTURE_SIZE,
-                        1,
-                        1);
-                device.createCommandEncoder().writeToTexture(texture, image);
-                testTexture = texture;
-                view = device.createTextureView(texture);
-                testTextureView = view;
-            }
+    private static TextureTarget offscreenTarget;
+
+    /** 按主目标尺寸取离屏目标（尺寸变化时 resize，避免每帧重建）。 */
+    private static TextureTarget offscreenTarget(int width, int height) {
+        TextureTarget target = offscreenTarget;
+        if (target == null) {
+            target = new TextureTarget("vkdisp offscreen", width, height, GpuFormat.RGBA8_UNORM, null);
+            offscreenTarget = target;
+        } else if (target.width != width || target.height != height) {
+            target.resize(width, height);
         }
-        return view;
+        return target;
     }
 
     /**
@@ -176,7 +148,9 @@ public final class FrameApi {
      */
     public static boolean isPipelineReady() {
         return PipelineApi.isFullscreenPipelineRegistered()
-                && RenderSystem.getCompiledPipelineNullable(PipelineApi.fullscreenPipeline()) != null;
+                && PipelineApi.isBlitPipelineRegistered()
+                && RenderSystem.getCompiledPipelineNullable(PipelineApi.fullscreenPipeline()) != null
+                && RenderSystem.getCompiledPipelineNullable(PipelineApi.blitPipeline()) != null;
     }
 
     /**
@@ -203,20 +177,23 @@ public final class FrameApi {
         int width = colorView.getWidth(0);
         int height = colorView.getHeight(0);
 
-        // 未编译完成时抛异常（调用方应先用 isPipelineReady() 过滤，见该方法 Javadoc）。
-        // 不用 vanilla 的 getCompiledPipeline，是为了给出带管线位置的明确原文，便于定位。
-        CompiledRenderPipeline compiled =
-                RenderSystem.getCompiledPipelineNullable(PipelineApi.fullscreenPipeline());
-        if (compiled == null) {
+        // 离屏目标与采样器必须在开启 render pass **之前**解析：pass 打开期间 encoder 不允许其它命令
+        // （实测异常原文："Close the existing render pass before performing additional commands"）。
+        TextureTarget offscreen = offscreenTarget(width, height);
+        GpuTextureView samplerView = offscreen.getColorTextureView();
+        GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+
+        // 两条管线都要就绪（图案 + 传递）；任一未编译完成都抛异常，绝不静默少画一个 pass。
+        CompiledRenderPipeline pattern = RenderSystem.getCompiledPipelineNullable(PipelineApi.fullscreenPipeline());
+        if (pattern == null) {
             throw new IllegalStateException(
                     "vkdisp: fullscreen pipeline not compiled yet: " + PipelineApi.FULLSCREEN_LOCATION);
         }
-
-        // 采样器资源必须在开启 render pass **之前**解析：懒创建纹理要调 encoder.writeToTexture，
-        // 而 pass 打开期间 encoder 不允许其它命令（实测异常原文：
-        // "Close the existing render pass before performing additional commands"）。
-        GpuTextureView samplerView = testTextureView();
-        GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+        CompiledRenderPipeline blit = RenderSystem.getCompiledPipelineNullable(PipelineApi.blitPipeline());
+        if (blit == null) {
+            throw new IllegalStateException(
+                    "vkdisp: blit pipeline not compiled yet: " + PipelineApi.BLIT_LOCATION);
+        }
 
         // P1.1：把本帧参数写进环形缓冲的当前槽（std140：vec4 Params = {phase, intensity, 0, 0}）。
         MappableRingBuffer ring = paramsRing();
@@ -226,15 +203,24 @@ public final class FrameApi {
 
         // 官方 PostPass 同款序列：无 depth 附件（本管线没有 depthStencilState）、不清屏（loadOp = LOAD）、
         // 无顶点绑定（全屏三角形由 gl_VertexIndex 推出）。
-        try (RenderPass pass = RenderSystem.getDevice()
-                .createCommandEncoder()
-                .createRenderPass(
-                        () -> label, colorView, Optional.empty(), null, OptionalDouble.empty())) {
-            pass.setPipeline(compiled);
+        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+        // Pass A：图案 → 离屏目标（清屏为不透明黑，loadOp=CLEAR）。
+        try (RenderPass pass = encoder.createRenderPass(
+                () -> label + " A (offscreen)",
+                samplerView,
+                Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)),
+                null,
+                OptionalDouble.empty())) {
+            pass.setPipeline(pattern);
             RenderSystem.bindDefaultUniforms(pass);
-            // P1.1：绑定自定义 uniform 块（名字与 GLSL 块名一致）。
             pass.setUniform(PipelineApi.PARAMS_UNIFORM, ring.currentBuffer());
-            // 采样器绑定：纹理视图 + 采样器（原版 PostPass 对输入纹理的同款调用）。
+            pass.draw(3, 1, 0, 0);
+        }
+        // Pass B：离屏目标 → 主目标（采样输入纹理；同一 encoder 上必须先关掉上一个 pass）。
+        try (RenderPass pass = encoder.createRenderPass(
+                () -> label + " B (main)", colorView, Optional.empty(), null, OptionalDouble.empty())) {
+            pass.setPipeline(blit);
+            RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform(PipelineApi.SAMPLER_UNIFORM, samplerView, sampler);
             pass.draw(3, 1, 0, 0);
         }

@@ -112,8 +112,9 @@ public final class FullscreenPassHook {
             if (!notReadyLogged) {
                 notReadyLogged = true;
                 VkDisp.LOGGER.error(
-                        "vkdisp: fullscreen pipeline not compiled after client resources loaded: {}",
-                        PipelineApi.FULLSCREEN_LOCATION);
+                        "vkdisp: pipelines not compiled after client resources loaded: {} + {}",
+                        PipelineApi.FULLSCREEN_LOCATION,
+                        PipelineApi.BLIT_LOCATION);
             }
             return;
         }
@@ -143,7 +144,7 @@ public final class FullscreenPassHook {
             if (!firstFrameLogged) {
                 firstFrameLogged = true;
                 VkDisp.LOGGER.info(
-                        "vkdisp fullscreen pass executed ({}x{}), uniform {}={}",
+                        "vkdisp 2-pass chain executed ({}x{}), uniform {}={} (A: pattern->offscreen, B: offscreen->main)",
                         size.width(), size.height(), PipelineApi.PARAMS_UNIFORM, phase);
             } else if (paramLogs < 5 && frameCounter % 120 == 0) {
                 paramLogs++;
