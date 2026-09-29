@@ -51,7 +51,8 @@ unzip -l "$JAR"
 ```java
 // 启动时打这条，用户可直接核对
 LOGGER.info("vkdisp: backend={}, device={}", backendKind(), deviceInfo().name());
-// 期望：backend=VULKAN（绝不能是 OPENGL）
+// 期望：backend=Vulkan（绝不能是 OpenGL）
+// 值域注意：原版 backendName() 原值是 "Vulkan" / "OpenGL"（首字母大写，不是全大写），代码比较必须写 "Vulkan"
 ```
 
 > ⚠️ **静默失败第一定律**：mixin 没生效时游戏**不会报错**，只会「什么都没发生」。

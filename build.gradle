@@ -49,6 +49,9 @@ neoForge {
     runs {
         client {
             client()
+            // P0.2：显式强制 Vulkan 后端（--graphicsBackend 优先于游戏内设置，
+            // 见 docs/01-DEV-LOOP.md P0.2：DEFAULT 顺序先试 GL，llvmpipe 可用即被选中，永远轮不到 Vulkan）。
+            programArguments.addAll '--graphicsBackend', 'VULKAN'
             // Comma-separated list of namespaces to load gametests from. Empty = all namespaces.
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
