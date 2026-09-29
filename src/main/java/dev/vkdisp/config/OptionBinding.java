@@ -54,6 +54,32 @@ import dev.vkdisp.pack.OptionType;
  *
  * <p><b>降级纪律</b>（T11）：任何"跳过"都必须留一条 {@link OptionDiagnostic}（WARN），
  * 见 {@link #diagnostics()}；默认输出口复用 {@link PackOptions#sink()}，也可显式注入。
+ *
+ * <p><b>P-1e 真值表结论</b>（18-PARALLEL §10 P-1e 的对比材料；对比测试 =
+ * {@code dev.vkdisp.config.OptionDefineStyleTruthTableTest}，并排表可直接粘给 P4.2 / P4.3）：
+ * <ul>
+ *   <li><b>非布尔（INTEGER / FLOAT / 合法 STRING）在两种风格下逐字节相同</b> —— DefineStyle 只影响布尔选项；</li>
+ *   <li><b>布尔为真</b>：{@link DefineStyle#LITERAL} → {@code #define NAME <原始词>}
+ *       （true / on / yes / 1 / TRUE … 原样保留、不归一化）；{@link DefineStyle#IFDEF_TRUE} → {@code #define NAME}
+ *       （空替换文本）；</li>
+ *   <li><b>布尔为假</b>：{@link DefineStyle#LITERAL} → 仍出表 {@code #define NAME <原始词>}；
+ *       {@link DefineStyle#IFDEF_TRUE} → 不进 {@link #defines()}，改列 {@link #undefines()}（生成 {@code #undef NAME}）；</li>
+ *   <li><b>{@link #uniforms()} 与 {@link #diagnostics()} 与风格无关</b>：同输入逐字符相同（单测断言）；
+ *       "跳过"行为（宏名非法 / 值非法 / 自由文本 / 快照缺值）也与风格无关，两风格同一诊断码、同一顺序；</li>
+ *   <li><b>消费方式（语言事实，非猜测）</b>：{@code IFDEF_TRUE} 的空替换文本只能配 {@code #ifdef / #ifndef}
+ *       （{@code #if NAME} 下表达式为空 → 预处理器报错）；{@code LITERAL} 的宏在真假两态下都"已定义"
+ *       （{@code #ifdef NAME} 不区分真假），且 {@code #if NAME} 会把 {@code true / false} 这类非预处理器常量
+ *       带进表达式 —— 它在真实包里的实际求值行为留给 P4.2 实测，本类不下结论。</li>
+ * </ul>
+ *
+ * <p><b>仍未决（07-CONSTRAINTS X9：不填猜值）</b>：默认 {@link DefineStyle} 的选定缺真实包证据 ——
+ * 真实包里布尔选项到底用 {@code #ifdef} 还是 {@code #if} 消费尚未统计，故默认暂留 {@link DefineStyle#LITERAL}
+ * （切换是一行改动，见 {@link #of(PackOptions, DefineStyle)}）。定稿判据：P4.2 切主流包 / P4.3 选项 GUI 时
+ * 取真实包的条件编译写法据实选定，再由 env-1 同步 18-PARALLEL §10 的 P-1e 状态行。
+ *
+ * <p><b>该对比测试未覆盖</b>（18-PARALLEL §7.3 要求显式列出）：① 经 C 线拼接后的真实预处理语义
+ * （需真实包 + GPU）；② STRING 自由文本（含空白 / 引号 / 路径）如何进 GLSL —— 本类一律跳过 + WARN，
+ * 包语义留待按真实包决定；③ profile 批量套用后的表；④ 非 ASCII 宏名与超长值。
  */
 public final class OptionBinding {
 

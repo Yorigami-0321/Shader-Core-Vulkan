@@ -109,7 +109,7 @@ class ShaderPackScannerTest {
         Files.createDirectory(inventory);
         Path outer = inventory.resolve("outer");
         Files.createDirectory(outer);
-        Files.createDirectory(outer.resolve("inner").resolve("shaders"));
+        Files.createDirectories(outer.resolve("inner").resolve("shaders")); // 多级创建：outer/inner 需先存在
         var r = ShaderPackScanner.scan(inventory);
         assertTrue(r.packs().isEmpty());
         assertEquals(1, r.problems().size());
