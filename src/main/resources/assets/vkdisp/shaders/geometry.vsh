@@ -9,10 +9,18 @@
 layout(location = 0) in vec3 Position;
 layout(location = 1) in vec4 Color;
 
+// P3.1 前置：光空间矩阵（std140 mat4，块名必须与 BindGroupLayout.withUniform("LightMatrix") 一致）。
+layout(std140) uniform LightMatrix {
+    mat4 uLight;
+};
+
 layout(location = 0) out vec4 vColor;
 
 void main() {
-    // 顶点已经是 NDC 坐标（本验证不引入相机矩阵）；z 由顶点数据给定（0.3 / 0.7）。
-    gl_Position = vec4(Position, 1.0);
+    // 顶点数据可视为「世界/光空间」坐标（z 由顶点数据给定：0.3 近 / 0.7 远）；
+    // 由 uLight 变换到裁剪空间——这正是 P3.1 影子 pass 所需的「光空间矩阵 → 顶点」链路。
+    // 当前 uLight 为占位矩阵（T+0.3 / S0.6，见 FrameApi.placeholderLightMatrix）；
+    // 画面位移即为「矩阵 uniform 真的生效」的像素级证据。
+    gl_Position = uLight * vec4(Position, 1.0);
     vColor = Color;
 }

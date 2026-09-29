@@ -81,7 +81,10 @@ public final class PipelineApi {
     /** 几何管线 location（P3 前置：真实顶点缓冲 + 深度剔除验证）。 */
     public static final String GEOMETRY_LOCATION = "vkdisp:pipeline/geometry";
 
-    /** 几何顶点属性名（必须与 GLSL 声明字面一致，04-SPEC §4）。 */
+    /** 光空间矩阵 uniform 名（P3.1 前置：与 geometry.vsh 的 std140 块字面一致）。 */
+    public static final String LIGHT_MATRIX_UNIFORM = "LightMatrix";
+
+    /** 光空间矩阵 uniform 名（必须与 GLSL 声明字面一致，04-SPEC §4）。 */
     public static final String POSITION_ATTRIBUTE = "Position";
     /** 顶点色属性名。 */
     public static final String COLOR_ATTRIBUTE = "Color";
@@ -296,6 +299,10 @@ public final class PipelineApi {
                 .withVertexShader(GEOMETRY_SHADER_ID)
                 .withFragmentShader(GEOMETRY_SHADER_ID)
                 .withVertexBinding(0, GEOMETRY_VERTEX_FORMAT)
+                // P3.1 前置：光空间矩阵 UBO（mat4，64B std140）。每帧由 FrameApi 上传。
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withUniform(LIGHT_MATRIX_UNIFORM, UniformType.UNIFORM_BUFFER)
+                        .build())
                 .withCull(false)
                 // 深度测试 LESS_THAN_OR_EQUAL + 写深度：近的先画，远的后画；
                 // 重叠区若保持红色 = 深度剔除生效（被后画的远片元被剔除）。

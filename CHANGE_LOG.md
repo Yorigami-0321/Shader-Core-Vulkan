@@ -5,6 +5,36 @@
 
 ---
 
+## 2026-09-29 — 光空间矩阵上传链路（P3.1 影子 pass 前置）
+
+- **本次改了什么**：
+  1. `bridge/PipelineApi.java`：几何管线新增 `LightMatrix` UBO 绑定（`mat4`，std140 64B），常量 `LIGHT_MATRIX_UNIFORM`。
+  2. `bridge/FrameApi.java`：新增矩阵环形缓冲（`MappableRingBuffer`，`MAP_WRITE|UNIFORM`，懒创建带一次性埋点）；每帧用 `Std140Builder.putMat4f` 写入**占位光空间矩阵** `T(+0.3,0,0)·S(0.6)`（与 paramsRing 同模式，写入放在开启 pass 之前，遵守上一轮定下的 encoder 规则）；几何绘制前 `setUniform(LIGHT_MATRIX_UNIFORM, …)`。
+  3. `geometry.vsh`：新增 `layout(std140) uniform LightMatrix { mat4 uLight; };`，`gl_Position = uLight * vec4(Position, 1.0)`——顶点从「NDC 直写」升级为**经矩阵变换**。
+- **为什么改**：P3.1 影子 pass 的核心是「光空间矩阵 → 顶点」这条链路；先把矩阵 uniform 的上传与消费做成**可像素级判定**的事实（画面必然位移），P3.1 正式接入光照方向与视锥时只需替换矩阵构造，不必再同时排查链路本身。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §5 P3 前置清单（补「光空间矩阵上传链路」）。
+- **测试结果**（证据目录 `tools/vulkan-local/evidence/`，被 `.gitignore` 的 `/tools/` 覆盖、不入库）：
+  - ✅ **构建/测试**：`./gradlew build` exit=**0**；`./gradlew test` 全仓库 **264 用例 0 失败**。
+  - ✅ **日志**：`p3_lightmatrix.log`（sha256 `d7b59fd34e66a466…`）——`geometry pipeline registered: stride=28`、`count check: registered=5, compiled=5 (aligned)`、**`light matrix buffer created (translate=+0.3, scale=0.6, bytes=64)`**、`3-pass chain executed (854x480)`；ERROR=**2**（仍只有 WSL 环境 narrator/OpenAL），`vkdisp` ERROR=**0**。
+  - ✅ **矩阵生效的像素级量化**（截图 `p3_lightmatrix.png`，sha256 `31c3415b7ccd8712…`；中心行 y=300 扫描 + 纵向 x=450 扫描）：
+    
+| 边界 | 第 8 轮（NDC 直写） | 理论（T+0.3·S0.6） | 本轮实测 |
+|---|---|---|---|
+| 红区左缘 | 124 | 391 | **388** |
+| 红/绿交界 | 469 | 598 | **592** |
+| 绿区右缘 | 641 | 702 | **695** |
+| 纵向跨度 | 286 | 172 | **171** |
+    
+    四项逐项吻合 → **矩阵 uniform 真的上传并参与了顶点变换**；同时交界处仍为红色（重叠区近片元胜出）→ **深度剔除在矩阵变换下保持有效**。
+- **未覆盖 / 存疑**：
+  1. 矩阵是**占位**（平移+缩放），不是真正的光空间 view-projection——后者需要光照方向与相机信息，归 P3.1 主体；
+  2. 未验证矩阵在**动态更新**下的表现（当前每帧写同一常量矩阵；P3.1 需要每帧变化的矩阵 + 时序正确性）；
+  3. 未验证多矩阵 uniform（`shadowModelView`/`shadowProjection` 双矩阵是 04-SPEC §3.2 要求的正式形态）；
+  4. `depthviz` / `composite` 管线仍不在本帧链（前两轮各自验证过）。
+- **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
+
+---
+
 ## 2026-09-29 — 真实几何 + 深度剔除（P3 前置第二段；本轮抓出 5 个真实缺陷）
 
 - **本次改了什么**：

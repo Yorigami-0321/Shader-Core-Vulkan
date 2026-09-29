@@ -73,6 +73,41 @@ public final class FrameApi {
      */
     public record FrameParams(float phase, float intensity) {}
 
+    /** std140 mat4 = 64 字节（列主序，列间对齐 16）。 */
+    private static final int LIGHT_MATRIX_BYTES = 64;
+
+    /** 每帧上传的光空间矩阵环形缓冲（与 paramsRing 同为原版 MappableRingBuffer 模式）。 */
+    private static MappableRingBuffer lightMatrixRing;
+
+    /**
+     * 光空间矩阵环形缓冲（懒创建，渲染线程 / 设备就绪后）。
+     *
+     * <p><b>P3.1 前置的占位矩阵</b>：当前固定为「平移 +0.3、缩放 0.6」的仿射矩阵，
+     * 作用是把「矩阵 uniform 上传 → 顶点着色器变换 → 画面位移」这条链路**变成可像素级判定的事实**
+     * （与上一轮 NDC 直写相比，四边形位置必然改变）。P3.1 正式实现时，这里会换成
+     * 从光照方向构造的 view-projection 矩阵（视锥/光空间语义由主线后续交付）。
+     */
+    private static MappableRingBuffer lightMatrixRing() {
+        MappableRingBuffer ring = lightMatrixRing;
+        if (ring == null) {
+            ring = new MappableRingBuffer(
+                    () -> "vkdisp light matrix",
+                    GpuBuffer.USAGE_MAP_WRITE | GpuBuffer.USAGE_UNIFORM,
+                    LIGHT_MATRIX_BYTES);
+            lightMatrixRing = ring;
+            // 一次性埋点：矩阵上传链路启用（translate=+0.3, scale=0.6 的占位光空间矩阵）。
+            dev.vkdisp.VkDisp.LOGGER.info(
+                    "vkdisp: light matrix buffer created (translate=+0.3, scale=0.6, bytes={})",
+                    LIGHT_MATRIX_BYTES);
+        }
+        return ring;
+    }
+
+    /** 占位光空间矩阵：T(+0.3,0,0) * S(0.6)（z 同步缩放，近远关系与深度剔除语义保持不变）。 */
+    private static org.joml.Matrix4f placeholderLightMatrix() {
+        return new org.joml.Matrix4f().translation(0.3F, 0.0F, 0.0F).mul(new org.joml.Matrix4f().scale(0.6F));
+    }
+
     /** std140 vec4 = 16 字节（对齐规则：vec4 偏移必须 16 字节对齐）。 */
     private static final int PARAMS_BYTES = 16;
 
@@ -283,6 +318,13 @@ public final class FrameApi {
                     "vkdisp: blit pipeline not compiled yet: " + PipelineApi.BLIT_LOCATION);
         }
 
+        // P3.1 前置：光空间矩阵写入自己的环形缓冲（map/close 不是编码器命令，但仍在开启 pass 之前执行，
+        // 遵守「pass 打开期间不动 encoder」的实测规则）。
+        MappableRingBuffer matrixRing = lightMatrixRing();
+        try (GpuBufferSlice.MappedView view = matrixRing.currentBuffer().map(false, true)) {
+            Std140Builder.intoBuffer(view.data()).putMat4f(placeholderLightMatrix());
+        }
+
         // P1.1：把本帧参数写进环形缓冲的当前槽（std140：vec4 Params = {phase, intensity, 0, 0}）。
         MappableRingBuffer ring = paramsRing();
         try (GpuBufferSlice.MappedView view = ring.currentBuffer().map(false, true)) {
@@ -307,8 +349,10 @@ public final class FrameApi {
             pass.setUniform(PipelineApi.PARAMS_UNIFORM, ring.currentBuffer());
             pass.draw(3, 1, 0, 0);
             // ② 真实几何 + 深度剔除（顶点缓冲为直接缓冲；见 geometryBuffer 的实测注释）
+            //    P3.1 前置：绑定光空间矩阵 UBO，顶点按该矩阵变换后输出
             pass.setPipeline(geometry);
             RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform(PipelineApi.LIGHT_MATRIX_UNIFORM, matrixRing.currentBuffer());
             pass.setVertexBuffer(0, geometryBuffer().slice());
             pass.draw(GEOMETRY_VERTEX_COUNT, 1, 0, 0);
         }
