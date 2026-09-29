@@ -26,7 +26,7 @@
 2. 05-VERSION.md           ← 钉版本：26.3 及之后，主线 26.3
 3. 02-OVERVIEW.md          ← 建立上下文
 4. 04-SPEC.md              ← 全文，组件清单在这（含每块的参考去向与热度）
-5. 07-CONSTRAINTS.md       ← 红线 X1–X16，不可违反
+5. 07-CONSTRAINTS.md       ← 红线 X1–X21，不可违反
 6. 08-TESTING.md           ← 验收与回归清单（含性能硬指标）
 7. 17-NATIVE.md            ← 开工前必读：参考先行 + 性能预算（C++/Rust 是未验证的可选项）
 8. 06-MIGRATION.md §2      ← bridge 包隔离（从第一天就落实）
@@ -90,11 +90,11 @@
 | `04-SPEC.md` | ✅ | 技术规格书（含组件参考/热度表、`accel/` 层） |
 | `05-VERSION.md` | ✅ **版本权威** | 支持范围、锁定表、兼容策略 |
 | `06-MIGRATION.md` | ✅ | 版本迁移预案 |
-| `07-CONSTRAINTS.md` | ✅ | 工程约束清单（MIT + T1–T16 + X1–X16） |
+| `07-CONSTRAINTS.md` | ✅ | 工程约束清单（MIT + L1–L12 + T1–T16 + X1–X21） |
 | `08-TESTING.md` | ✅ | 测试与验收标准（性能为硬指标） |
 | `12-GAP-STRATEGY.md` | ✅ | 特性缺口与自行补充策略 |
 | `13-GAP-REGISTRY.md` | ✅ | 特性缺口登记表 |
-| `15-ITERATION.md` | ✅ | 迭代维护协议（A1–A14） |
+| `15-ITERATION.md` | ✅ | 迭代维护协议（A1–A17） |
 | `16-READING.md` | ✅ | 本文 |
 | `17-NATIVE.md` | ✅ **新增** | 性能预算 + 参考先行（C++/Rust 仅作未验证的可选项） |
 | `AGENT_CONTEXT.md` | ✅ | 跨会话记忆 |

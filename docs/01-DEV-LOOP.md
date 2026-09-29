@@ -32,8 +32,12 @@
 3. 读 13-GAP-REGISTRY.md      → 判断本次改动是否需要新增缺口登记（要就先登记再写代码）
 4. 【参考先行】本轮要动的那部分，找到参考了吗？
       去 17-NATIVE.md §1.3 的默认参考清单里查
-      写下：【参考调研】注释块（参考了什么 / 为什么不直接用 / 我们的差异点 / 许可证核对）
-      没写 → 不许动手（07 T13）
+      🔴 先做合规核对（17-NATIVE.md §1.1.1）——这是第 0 步，不是最后一步：
+         · 查参考项目的 LICENSE 文件（只信仓库里的文件，不信平台页面）
+         · 判「能否并入本项目 MIT」→ 不能就换参考，别再读它的代码
+         · 无 LICENSE 文件 = ARR = 不可用；「GPL + 例外条款」= 按禁止处理
+      然后写下：【参考调研】注释块第 0 条（合规）+ 1/2/3/4/5 条
+      没写或第 0 条写「未核实」→ 不许动手（07 T13）
 5. 【性能定位】本轮改动落在热路径还是冷路径？（17-NATIVE.md §3.2）
       冷路径 → 清晰优先，不要做性能优化
       热路径 → 先测出基线（17-NATIVE.md §7）
@@ -47,6 +51,47 @@
 java -version          # 版本号必须与 05-VERSION.md 的 Java 版本一致
 echo $JAVA_HOME
 ```
+
+### 1.1 本机环境前提：代理根证书必须导入 JDK 信任库
+
+本机通过 `127.0.0.1:12334`（Steamcommunity302 加速代理）出网，该代理对
+`github.com` / `release-assets.githubusercontent.com` 等域名做 **TLS 中间人**，
+出示自签证书。Windows 证书存储信任它（浏览器正常），但 **Java 不使用 Windows 存储**，
+只读 `$JAVA_HOME/lib/security/cacerts`。
+
+不修的话，`./gradlew` 会在**下载 Gradle 发行包**这一步就死掉——因为
+`services.gradle.org` 会把请求 307 重定向到 GitHub Release：
+
+```
+Downloading https://services.gradle.org/distributions/gradle-9.4.1-bin.zip
+javax.net.ssl.SSLHandshakeException: PKIX path building failed:
+  unable to find valid certification path to requested target
+```
+
+**修复（幂等，可反复执行）：**
+
+```bash
+fix-java-proxy-ca            # 从 Windows 存储导出代理根证书 → 导入所有 JDK 信任库
+fix-java-proxy-ca --dry-run  # 只看会做什么
+```
+
+**什么时候要重跑**：代理工具轮换根证书（如新增 `Steamcommunity302 - 20XX ECC Root`）、
+JDK 升级/重装覆盖了 `cacerts`、或构建再次报 `PKIX` / `SSLHandshakeException`。
+
+**注意**：导入后该代理 CA 可对本 JDK 做中间人，这是使用加速代理的固有代价；
+不要把它提交进仓库。
+
+**JDK 位置**：`~/jdk/jdk-25.0.4.1+1`（已写入 `~/.bashrc`，并在 `~/.local/bin` 建了
+`java`/`javac`/`keytool` 软链接，保证非交互 shell 也能找到）。
+
+**不要**在 `gradle.properties` 里加
+`-Djavax.net.ssl.trustStore=/etc/ssl/certs/java/cacerts`：系统信任库**不含**该代理 CA，
+反而会让 Gradle daemon 的依赖下载失败。
+
+> ⚠️ **已发生过一次（2026-09-29）**：P0.1 期间有人为"修 CA 问题"顺手往
+> `gradle.properties` 的 `org.gradle.jvmargs` 里加了这一行，被代码评审拦下后撤回。
+> **正确做法永远是 `fix-java-proxy-ca`（导入 JDK 信任库），不是改 Gradle 配置。**
+> 这个改动还会污染仓库 —— 代理 CA 的信任路径是本机特有的，提交上去对别人只有害处。
 
 ---
 

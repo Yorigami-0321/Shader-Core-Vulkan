@@ -104,7 +104,6 @@ git reset --hard HEAD
 | A1 | **不得复制任何第三方代码**（MIT 下不许并入 LGPL/GPL/ARR） | `07-CONSTRAINTS.md` §〇 P1/P2 + §一 |
 | A2 | 不得把「Sodium 替代品」写进对外文字 | `07-CONSTRAINTS.md` L3 |
 | A3 | 不得向 Sodium 提 PR | `07-CONSTRAINTS.md` L4 |
-| A15 | 🔴 不得在构建脚本声明 `sodium`/`caffeinemc` 依赖，或写运行时探测/集成分支 | `07-CONSTRAINTS.md` L11 + X18 |
 | A4 | 所有 GPU 操作走 `com.mojang.renderpearl.*` | `07-CONSTRAINTS.md` T2 |
 | A5 | `mixins.json` 必须 `JAVA_25` | `07-CONSTRAINTS.md` T1 |
 | A6 | 业务包不得直接 import 原版渲染类型（走 `bridge`） | `07-CONSTRAINTS.md` T5 |
@@ -116,6 +115,9 @@ git reset --hard HEAD
 | A12 | **性能相关改动必须附实测数据**（不得只说"优化了"） | `07-CONSTRAINTS.md` T14 + `17-NATIVE.md` §7 |
 | A13 | **新增模块必须先做参考调研并写【参考调研】注释块** | `07-CONSTRAINTS.md` T13 + `17-NATIVE.md` §1 |
 | A14 | **不得把冷路径（解析/预处理/转译）改用原生实现** | `07-CONSTRAINTS.md` X15 + `17-NATIVE.md` §3.2 |
+| A15 | 🔴 不得在构建脚本声明 `sodium`/`caffeinemc` 依赖，或写运行时探测/集成分支 | `07-CONSTRAINTS.md` L11 + X18 |
+| A16 | 🔴 **调研参考时先核许可证（第 0 步），判不过就换参考、不再读它的代码** | `07-CONSTRAINTS.md` L12 + X19 + `17-NATIVE.md` §1.1.1 |
+| A17 | 🔴 不得把「无 LICENSE」当可用、不得把「GPL + 例外条款」当成本项目可用 | `07-CONSTRAINTS.md` X20 / X21 |
 
 ---
 
@@ -132,5 +134,5 @@ git reset --hard HEAD
 [ ] 测试过了吗？证据留了吗？
 [ ] 变更记录写了吗？
 [ ] 改动前 commit 了吗？
-[ ] 触碰 A1–A14 任何一条红线了吗？
+[ ] 触碰 A1–A17 任何一条红线了吗？
 ```
