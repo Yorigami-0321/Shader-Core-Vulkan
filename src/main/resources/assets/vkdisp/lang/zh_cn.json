@@ -1,0 +1,7 @@
+{
+  "vkdisp.configuration.title": "Vulkan 着色器分发器",
+  "vkdisp.configuration.section.vkdisp.common.toml": "Vulkan 着色器分发器",
+  "vkdisp.configuration.section.vkdisp.common.toml.title": "Vulkan 着色器分发器",
+  "vkdisp.configuration.enabled": "启用",
+  "vkdisp.configuration.debugLog": "诊断日志"
+}

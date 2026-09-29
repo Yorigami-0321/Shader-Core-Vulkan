@@ -1,0 +1,7 @@
+{
+  "vkdisp.configuration.title": "Vulkan Shader Dispatcher",
+  "vkdisp.configuration.section.vkdisp.common.toml": "Vulkan Shader Dispatcher",
+  "vkdisp.configuration.section.vkdisp.common.toml.title": "Vulkan Shader Dispatcher",
+  "vkdisp.configuration.enabled": "Enabled",
+  "vkdisp.configuration.debugLog": "Debug Log"
+}

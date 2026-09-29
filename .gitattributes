@@ -1,0 +1,26 @@
+# 全仓库统一 LF。Windows 下若 core.autocrlf=true，gradlew / build-local.sh 检出后会变 CRLF，
+# Git Bash 下直接 bad interpreter（本项目已踩过）。
+* text=auto eol=lf
+
+# 二进制，禁止任何行尾转换
+*.jar  binary
+*.png  binary
+*.jpg  binary
+*.zip  binary
+
+# 代码与脚本显式声明
+*.java         text eol=lf
+*.gradle       text eol=lf
+*.properties   text eol=lf
+*.json         text eol=lf
+*.toml         text eol=lf
+*.md           text eol=lf
+gradlew        text eol=lf
+*.sh           text eol=lf
+*.bat          text eol=crlf
+
+# Disable autocrlf on generated files, they always generate with LF
+# Add any extra files or paths here to make git stop saying they
+# are changed when only line endings change.
+src/generated/**/.cache/* text eol=lf
+src/generated/**/*.json text eol=lf
