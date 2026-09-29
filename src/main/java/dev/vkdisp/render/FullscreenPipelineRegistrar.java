@@ -41,7 +41,7 @@ public final class FullscreenPipelineRegistrar {
         try {
             PipelineApi.registerFullscreenPipeline(event);
             VkDisp.LOGGER.info(
-                    "vkdisp: pipeline registered (1/3): {}", PipelineApi.FULLSCREEN_LOCATION);
+                    "vkdisp: pipeline registered (1/4): {}", PipelineApi.FULLSCREEN_LOCATION);
         } catch (Throwable t) {
             VkDisp.LOGGER.error(
                     "vkdisp: pipeline registration failed: {}", PipelineApi.FULLSCREEN_LOCATION, t);
@@ -49,15 +49,23 @@ public final class FullscreenPipelineRegistrar {
         try {
             PipelineApi.registerCompositePipeline(event);
             VkDisp.LOGGER.info(
-                    "vkdisp: pipeline registered (2/3): {}", PipelineApi.COMPOSITE_LOCATION);
+                    "vkdisp: pipeline registered (2/4): {}", PipelineApi.COMPOSITE_LOCATION);
         } catch (Throwable t) {
             VkDisp.LOGGER.error(
                     "vkdisp: pipeline registration failed: {}", PipelineApi.COMPOSITE_LOCATION, t);
         }
         try {
+            PipelineApi.registerDepthVisPipeline(event);
+            VkDisp.LOGGER.info(
+                    "vkdisp: pipeline registered (3/4): {}", PipelineApi.DEPTHVIS_LOCATION);
+        } catch (Throwable t) {
+            VkDisp.LOGGER.error(
+                    "vkdisp: pipeline registration failed: {}", PipelineApi.DEPTHVIS_LOCATION, t);
+        }
+        try {
             PipelineApi.registerBlitPipeline(event);
             VkDisp.LOGGER.info(
-                    "vkdisp: pipeline registered (3/3): {} (total={})",
+                    "vkdisp: pipeline registered (4/4): {} (total={})",
                     PipelineApi.BLIT_LOCATION,
                     PipelineApi.registeredPipelineCount());
         } catch (Throwable t) {

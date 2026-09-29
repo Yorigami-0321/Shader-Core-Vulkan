@@ -28,6 +28,8 @@ package dev.vkdisp.bridge;
  */
 import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.CompareOp;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.pipeline.UniformType;
 import java.util.List;
@@ -71,6 +73,9 @@ public final class PipelineApi {
     /** 合成管线 location（P2 前置：中间目标 → 中间目标，多目标 ping-pong 的中间级）。 */
     public static final String COMPOSITE_LOCATION = "vkdisp:pipeline/composite";
 
+    /** 深度可视化管线 location（P3 前置：采样深度纹理 → 灰度输出，用于验证深度附件链路）。 */
+    public static final String DEPTHVIS_LOCATION = "vkdisp:pipeline/depthviz";
+
     /** 管线 location：vkdisp:pipeline/fullscreen → 注册表键。 */
     private static final Identifier FULLSCREEN_PIPELINE_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/fullscreen");
@@ -95,6 +100,14 @@ public final class PipelineApi {
     private static final Identifier COMPOSITE_SHADER_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "composite");
 
+    /** 深度可视化管线 location id。 */
+    private static final Identifier DEPTHVIS_PIPELINE_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/depthviz");
+
+    /** 深度可视化管线片元着色器 id：vkdisp:depthviz → assets/vkdisp/shaders/depthviz.fsh。 */
+    private static final Identifier DEPTHVIS_SHADER_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "depthviz");
+
     /** 注册成功后暂存的管线实例（供 FrameApi 使用）；未注册时为 null。 */
     private static RenderPipeline fullscreenPipeline;
 
@@ -103,6 +116,9 @@ public final class PipelineApi {
 
     /** 注册成功后暂存的合成管线实例；未注册时为 null。 */
     private static RenderPipeline compositePipeline;
+
+    /** 注册成功后暂存的深度可视化管线实例；未注册时为 null。 */
+    private static RenderPipeline depthVisPipeline;
 
     /** 已注册管线集合（P1.2「注册数 == 编译成功数」断言的计数来源）。 */
     private static final List<RenderPipeline> REGISTERED_PIPELINES = new java.util.ArrayList<>();
@@ -129,6 +145,8 @@ public final class PipelineApi {
                         .withUniform(PARAMS_UNIFORM, UniformType.UNIFORM_BUFFER)
                         .build())
                 .withColorTargetState(ColorTargetState.DEFAULT)
+                // P3 前置：图案管线开深度测试 + 写深度（片段着色器写 gl_FragDepth 水平梯度）。
+                .withDepthStencilState(new DepthStencilState(CompareOp.LESS_THAN_OR_EQUAL, true))
                 .build();
         // 官方注册入口：required 管线，随原版 ShaderManager 一起编译（编译失败 = 整次资源重载失败，绝不静默）。
         event.registerPipeline(pipeline);
@@ -199,6 +217,41 @@ public final class PipelineApi {
     /** 合成管线是否已注册完成（纯布尔视图）。 */
     public static boolean isCompositePipelineRegistered() {
         return compositePipeline != null;
+    }
+
+    /**
+     * 构建并注册 P3 前置的深度可视化管线（采样深度纹理 → 灰度）。
+     *
+     * <p>结构同传递管线（只有采样器绑定），片元为 {@code vkdisp:depthviz}；
+     * 用于把「深度附件是否真被写入」变成可量化判读的图像（而非只看深度的存在性）。
+     */
+    public static void registerDepthVisPipeline(RegisterRenderPipelinesEvent event) {
+        RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                .withLocation(DEPTHVIS_PIPELINE_ID)
+                .withVertexShader(FULLSCREEN_SHADER_ID)
+                .withFragmentShader(DEPTHVIS_SHADER_ID)
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
+                        .build())
+                .withColorTargetState(ColorTargetState.DEFAULT)
+                .build();
+        event.registerPipeline(pipeline);
+        depthVisPipeline = pipeline;
+        REGISTERED_PIPELINES.add(pipeline);
+    }
+
+    /** 深度可视化管线是否已注册完成（纯布尔视图）。 */
+    public static boolean isDepthVisPipelineRegistered() {
+        return depthVisPipeline != null;
+    }
+
+    /** 已注册管线：深度可视化管线（bridge 包内部使用）。 */
+    static RenderPipeline depthVisPipeline() {
+        RenderPipeline pipeline = depthVisPipeline;
+        if (pipeline == null) {
+            throw new IllegalStateException("vkdisp: depthviz pipeline not registered yet");
+        }
+        return pipeline;
     }
 
     /** 已注册管线：合成管线（bridge 包内部使用）。 */

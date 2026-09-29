@@ -5,6 +5,29 @@
 
 ---
 
+## 2026-09-29 — 深度附件 + 深度写入 + 深度采样（P3 前置）
+
+- **本次改了什么**：
+  1. `bridge/FrameApi.java`：中间目标 0 改为**带深度附件**（`TextureTarget(..., RGBA8_UNORM, D32_FLOAT)`，槽 1 仍只有颜色）；Pass A 同时清深度（`1.0`）并挂深度视图；新增 **Pass B（深度可视化）**：采样 offscreen0 的深度纹理 → offscreen1；Pass C 写主目标。
+  2. `bridge/PipelineApi.java`：图案管线加 `DepthStencilState(LESS_THAN_OR_EQUAL, writeDepth=true)`；新增**深度可视化管线** `vkdisp:pipeline/depthviz`（片元 `vkdisp:depthviz`）。
+  3. `assets/vkdisp/shaders/fullscreen.fsh`：写 `gl_FragDepth = 0.2 + 0.6 * vUv.x`（水平梯度，便于量化判读）；新增 `assets/vkdisp/shaders/depthviz.fsh`（把深度 `r` 当灰度输出）。
+  4. 注册器埋点改为 `(1/4)…(4/4) … (total=4)`；`FullscreenPassHook` 就绪判定改看本帧链用到的三条管线（pattern / depthviz / blit）。
+- **为什么改**：deferred 与 shadow 两条链的共同地基是「深度附件 + 深度可采样」；先把它变成**可量化判读**的事实（灰度梯度），P3.1/P3.3 才不用同时排查「深度没写进去」与「链编排错」。
+- **⚠️ 本轮发现并纠正的一处自身设计错误**：初版把深度可视化 pass 直接插在合成 pass 之后、两者写同一目标，导致前一个 pass 的结果被覆盖（等同白做）。已重构为职责清晰的链：`A 图案(色+深度) → B 深度可视化 → C 主目标`；**合成管线保留注册与能力**，但本轮不进本帧链（与深度 pass 争用同一目标），合并留待 pack 链（P2.4）统一编排。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §5 主线阶梯（登记 P3.1 的深度前置已完成）。
+- **测试结果**（证据目录 `tools/vulkan-local/evidence/`，被 `.gitignore` 覆盖、不入库）：
+  - ✅ **构建/测试**：`./gradlew build` exit=**0**；`./gradlew test` 全仓库 **264 用例 0 失败**。
+  - ✅ **管线注册与计数**：`p3_depth_final.log`（sha256 `37b61b03…`）——`registered (1/4) fullscreen`、`(2/4) composite`、`(3/4) depthviz`、`(4/4) blit (total=4)`、`count check: registered=4, compiled=4 (aligned)`、`3-pass chain executed (854x480) … (A: pattern+深度 -> offscreen0, B: depth -> offscreen1, C: offscreen1 -> main)`；ERROR=**2**（仍只有 WSL 环境 narrator/OpenAL），`vkdisp` ERROR=**0**。
+  - ✅ **深度链路量化判据**：截图 `p3_depth.png`（sha256 `668f99f0…`）按列带平均灰度 **62.9 → 97.0 → 132.8 → 168.6 → 199.7**（左暗右亮，线性），与 `gl_FragDepth = 0.2 + 0.6·uv.x` 的理论值逐带吻合；抽样像素为中性灰（`(66,66,66)`/`(116,116,116)`/`(170,170,170)`，R=G=B）→ 证明**深度真的被写入、且能被采样**，而不只是"分配了深度附件"。
+- **未覆盖 / 存疑**：
+  1. 深度**测试**（depth test 剔除）尚未用真几何验证——当前是全屏三角形固定梯度，只能证明写入/采样通路；真几何与深度冲突留 P3.2（gbuffers 接管）；
+  2. 深度格式只验证了 `D32_FLOAT`，未试 `D24_UNORM_S8_UINT`（真实包可能要求 stencil）；
+  3. 采样器仍固定 ClampToEdge+NEAREST；深度比较采样器（shadow 用）未做（属 13-GAP-REGISTRY 待判定项）；
+  4. 本帧最终可见产物**暂时是深度可视化图**（能力验证态），P2.4 起由真实合成链替换。
+- **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
+
+---
+
 ## 2026-09-29 — E 线二期：多绑定槽（binding>0）与绑定布局语义
 
 - **本次改了什么**（`src/main/java/dev/vkdisp/pipeline/model/` + 同名 test 包，均在该线独占路径内）：

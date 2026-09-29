@@ -117,8 +117,14 @@ public final class FrameApi {
     private static TextureTarget offscreenTarget(int slot, int width, int height) {
         TextureTarget target = slot == 0 ? offscreenTargetA : offscreenTargetB;
         if (target == null) {
+            // 槽 0 带深度附件（P3 前置：图案 pass 写深度、depthviz pass 采样它）；
+            // 槽 1 只做颜色 ping-pong，不需要深度。
             target = new TextureTarget(
-                    "vkdisp offscreen " + slot, width, height, GpuFormat.RGBA8_UNORM, null);
+                    "vkdisp offscreen " + slot,
+                    width,
+                    height,
+                    GpuFormat.RGBA8_UNORM,
+                    slot == 0 ? GpuFormat.D32_FLOAT : null);
             if (slot == 0) {
                 offscreenTargetA = target;
             } else {
@@ -157,11 +163,12 @@ public final class FrameApi {
      * @return 已编译返回 true；尚未完成编译返回 false（不抛异常，供每帧轮询）
      */
     public static boolean isPipelineReady() {
+        // 本帧链用到 pattern / depthviz / blit 三条；composite 已注册但不在本帧链中（见 drawFullscreen 注释）。
         return PipelineApi.isFullscreenPipelineRegistered()
-                && PipelineApi.isCompositePipelineRegistered()
+                && PipelineApi.isDepthVisPipelineRegistered()
                 && PipelineApi.isBlitPipelineRegistered()
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.fullscreenPipeline()) != null
-                && RenderSystem.getCompiledPipelineNullable(PipelineApi.compositePipeline()) != null
+                && RenderSystem.getCompiledPipelineNullable(PipelineApi.depthVisPipeline()) != null
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.blitPipeline()) != null;
     }
 
@@ -194,7 +201,11 @@ public final class FrameApi {
         TextureTarget targetA = offscreenTarget(0, width, height);
         TextureTarget targetB = offscreenTarget(1, width, height);
         GpuTextureView viewA = targetA.getColorTextureView();
+        GpuTextureView depthA = targetA.getDepthTextureView();
         GpuTextureView viewB = targetB.getColorTextureView();
+        if (depthA == null) {
+            throw new IllegalStateException("vkdisp: offscreen0 depth texture view is null (expected D32_FLOAT)");
+        }
         GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
 
         // 三条管线都要就绪（图案 + 合成 + 传递）；任一未编译完成都抛异常，绝不静默少画一个 pass。
@@ -203,10 +214,10 @@ public final class FrameApi {
             throw new IllegalStateException(
                     "vkdisp: fullscreen pipeline not compiled yet: " + PipelineApi.FULLSCREEN_LOCATION);
         }
-        CompiledRenderPipeline composite = RenderSystem.getCompiledPipelineNullable(PipelineApi.compositePipeline());
-        if (composite == null) {
+        CompiledRenderPipeline depthVis = RenderSystem.getCompiledPipelineNullable(PipelineApi.depthVisPipeline());
+        if (depthVis == null) {
             throw new IllegalStateException(
-                    "vkdisp: composite pipeline not compiled yet: " + PipelineApi.COMPOSITE_LOCATION);
+                    "vkdisp: depthviz pipeline not compiled yet: " + PipelineApi.DEPTHVIS_LOCATION);
         }
         CompiledRenderPipeline blit = RenderSystem.getCompiledPipelineNullable(PipelineApi.blitPipeline());
         if (blit == null) {
@@ -223,28 +234,31 @@ public final class FrameApi {
         // 官方 PostPass 同款序列：无 depth 附件（本管线没有 depthStencilState）、不清屏（loadOp = LOAD）、
         // 无顶点绑定（全屏三角形由 gl_VertexIndex 推出）。
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-        // Pass A：图案 → 中间目标 A（清屏为不透明黑，loadOp=CLEAR）。
+        // Pass A：图案 → 中间目标 A（颜色清为不透明黑、深度清为 1.0），同时写深度。
         try (RenderPass pass = encoder.createRenderPass(
                 () -> label + " A (pattern -> offscreen0)",
                 viewA,
                 Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)),
-                null,
-                OptionalDouble.empty())) {
+                depthA,
+                OptionalDouble.of(1.0D))) {
             pass.setPipeline(pattern);
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform(PipelineApi.PARAMS_UNIFORM, ring.currentBuffer());
             pass.draw(3, 1, 0, 0);
         }
-        // Pass B：中间目标 A → 中间目标 B（合成级，ping-pong 的中间一环；采样 A）。
+        // Pass B（P3 前置）：采样 offscreen0 的**深度纹理** → offscreen1 灰度图。
+        // 这一步证明「深度附件真被写入且可被采样」，而不只是「深度附件分配了」。
+        // 说明：合成管线（R/B 交换，上一轮已验证）本轮**不在本帧链里**——它与本 pass 争用同一目标，
+        // 而本轮要验证的是深度链路；两级的合并留待 pack 链落地（P2.4）时统一编排。
         try (RenderPass pass = encoder.createRenderPass(
-                () -> label + " B (offscreen0 -> offscreen1)",
+                () -> label + " B (depth sample -> offscreen1)",
                 viewB,
                 Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)),
                 null,
                 OptionalDouble.empty())) {
-            pass.setPipeline(composite);
+            pass.setPipeline(depthVis);
             RenderSystem.bindDefaultUniforms(pass);
-            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, viewA, sampler);
+            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, depthA, sampler);
             pass.draw(3, 1, 0, 0);
         }
         // Pass C：中间目标 B → 主目标（最后一级；主目标只由本 pass 写入）。

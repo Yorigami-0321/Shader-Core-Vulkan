@@ -50,4 +50,8 @@ void main() {
     }
 
     fragColor = vec4(color, 1.0);
+
+    // P3 前置验证：写入深度（水平梯度 0.2→0.8）。管线开了 depthStencilState（LESS_THAN_OR_EQUAL + 写深度），
+    // 深度附件清为 1.0 → 梯度值全部通过测试并被写入；随后由 depthviz pass 采样出来判读。
+    gl_FragDepth = 0.2 + 0.6 * vUv.x;
 }

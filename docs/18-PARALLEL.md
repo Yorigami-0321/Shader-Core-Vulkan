@@ -206,7 +206,12 @@ F1–F4 全部落地 → 放行并行
 ✅ P0.4 bridge 包隔离落地       （业务包 `^import com\.mojang\.renderpearl` = 0 命中，仅 bridge/ 3 文件允许）
 ✅ P1.1 uniform 传递           （自定义 UBO VkDispParams；三张间隔截图 30.6%/25.8%/56.3% 像素不同）
 ✅ P1.2 管线计数对齐           （日志 registered=1, compiled=1 aligned）
-   ▶️ 下一步：P3.1 影子 pass（可独立于 pack 加载推进；P2.x 解析链由 A/B 线汇合后再接）
+🟡 P3 前置能力（关键路径上按需推进）：
+   ✅ 中间目标 + 采样器绑定 + 多级 ping-pong（双 pass / 三 pass 链，实测标定）
+   ✅ 深度附件 + 深度写入 + 深度采样（D32_FLOAT，灰度梯度量化验证）
+   ⏳ 深度测试剔除（真几何）、多颜色附件（colortex0..N）、多目标池复用
+   ▶️ P3.1 影子 pass：光空间矩阵 + 阴影贴图（深度链路已就绪）
+   ▶️ P2.x 解析链：等 A/B/C 线汇合（外部环境）
    → P2.4 composite 生效 → P3.1 shadow → P3.2 gbuffers → P3.3 deferred
    → P4.1 主流包 → P4.2 切包回归 → P4.3 选项 GUI
 ```
