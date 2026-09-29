@@ -214,7 +214,10 @@ F1–F4 全部落地 → 放行并行
    ✅ P3.1 影子 pass 基础：自建光空间 view-projection + 阴影贴图渲染与可视化（非全黑非全白达标）
    ✅ P3.3 阴影采样：世界视图渲染 + 阴影深度比较（暗/亮绿像素级判定，0.35 调暗系数精确吻合）
    ✅ 真实透视相机矩阵（fov60/zZeroToOne/lookAt，高度比 1.1429 = 理论四位小数吻合；固定占位相机）
-      ⏳ 仍缺：接原版 GameRenderer 相机、与原版 LevelRenderer 光空间列表 / CSM 集成、PCF 软阴影
+   ✅ 接原版 GameRenderer 相机（cameraRenderState 驱动视图 + 菜单显式回退 + 锚点；F5 位移 4 格 →
+      几何比值 0.505/0.510 = 理论 0.502/0.526 四位吻合；pose changed 埋点 3 条，vkdisp ERROR=0）
+      ⏳ 仍缺：yaw/pitch 连续转动的像素判据（Weston X 焦点 None，XTEST 无法重新聚焦，待可聚焦环境补跑）、
+      与原版 LevelRenderer 光空间列表 / CSM 集成、PCF 软阴影
    ⏳ 深度测试剔除（真几何）、多颜色附件（colortex0..N）、多目标池复用
    ▶️ P3.1 影子 pass：光空间矩阵 + 阴影贴图（深度链路已就绪）
    ▶️ P2.x 解析链：等 A/B/C 线汇合（外部环境）
@@ -392,8 +395,8 @@ F1–F4 全部落地 → 放行并行
 | P-1b | F1 剩余 `bridge/` 接口：`RenderApi` / `TextureApi` / `MixinTargets` + `ContractVersion` | ✅ **已完成**（`FrameApi`/`PipelineApi` 随 P0.3 落地；5 接口齐） |
 | P-1c | F4 测试基建（JUnit 5 + `src/test/` 骨架） | ✅ **已完成**（`F4InfraSmokeTest` 2/2 PASSED） |
 | P-1f | **renderpearl 实测约定（A/B/C/D/E/F 通用，避免重复踩坑）** | ✅ **已实测登记** ① `CommandEncoder.writeToTexture` **不能在 render pass 打开期间调用**（异常原文 `Close the existing render pass before performing additional commands`）→ 资源上传必须在 `createRenderPass` 之前；② 自定义 uniform 块与 sampler **放同一绑定组**（顺序与 GLSL 声明一致）才稳定采样，分属两组实测采到近似常量色；③ 方向约定（**2026-09-29 两轮实测标定**）：`vUv.y=0` → NDC `y=-1` → 屏幕**顶部**（Vulkan NDC y 向下）。采样翻转规则**分两类**：**中间目标 → 主目标** 用 `vec2(uv.x, 1.0-uv.y)`（`blit.fsh`），**中间目标 → 中间目标** 用原始 `vUv`（`composite.fsh`）——两级同时翻转会使整链上下颠倒。判据：图案底部方向参考带必须仍在底部 + 四角标颜色（通道交换后应为青色）。详见 CHANGE_LOG 的量化记录 |
-| P-1e | F 线开放点：布尔 `#define` 风格（`LITERAL` vs OF 兼容 `IFDEF_TRUE`）与自由文本 STRING 选项的 GLSL 映射 | ⏳ **待实证** —— 两种风格均已实现且有单测，缺真实包证据按 07 X9 未猜死；建议 P4.2/P4.3 用真实包定稿（换默认一行改动） |
-| P-1d | `04-SPEC.md` §4 与 OF 官方属性表的出入复核 | 🟡 **部分完成**——已核实并写入 §4 复核注记（`mc_Entity` 官方为 **vec3**；`vaUV1`=overlay / `vaUV2`=lightmap；`at_*` 三项存在）。**剩余未定项**：`mc_Entity` 的底层元素类型（float32 / int16）文档未给，直接决定字节数与 stride（E 线现值 47）→ **须在 P1.2 构建真实 `VertexFormat` 时实测对齐**，再走 §3.2 定稿；此前 F2/E 沿用旧值，任何线不许私改（07 X9） |
+| P-1e | F 线开放点：布尔 `#define` 风格（`LITERAL` vs OF 兼容 `IFDEF_TRUE`）与自由文本 STRING 选项的 GLSL 映射 | 🟡 **对比材料已就绪** —— 真值表测试 `OptionDefineStyleTruthTableTest`（13 行逐行对比 + 并排五列表 + "必须相同"断言）与结论（OptionBinding 类 javadoc 6 条）已交付；**默认风格仍留 LITERAL、缺真实包证据不改（X9）**，定稿判据留给 P4.2/P4.3（换默认一行改动） |
+| P-1d | `04-SPEC.md` §4 与 OF 官方属性表的出入复核 | 🟡 **部分完成 + 待改行清单已机器校验**——已核实并写入 §4 复核注记（`mc_Entity` 官方为 **vec3**；`vaUV1`=overlay / `vaUV2`=lightmap；`at_*` 三项存在）。**剩余未定项**：`mc_Entity` 底层元素类型（float32/int16）文档未给 → 决定 stride（E 线现值 47）→ **须 P1.2 构建真实 `VertexFormat` 实测对齐**再走 §3.2 定稿。待改行清单由 `VertexLayoutPendingAlignmentTest`（6 用例）钉死：10 条 `LineRef(file,line,content)` 断言当前行内容，漂移即红；`MC_ENTITY_ELEMENT_TYPE_AFTER_P12=null` 显式标注未实测（X9 不猜值），回填即红强制同轮更新 |
 | P-2 | 把本文登记进 `00-INDEX.md` 文档清单 | ✅ 已同步 |
 | P-3 | 是否要在 `01-DEV-LOOP.md` §10 加一句指向本文的交叉引用 | ⏳ 待拍板 |
 | P-4 | `AGENT_CONTEXT.md` 的 Q5「P0 是否开工」口径 | 🟡 P0.1 / P0.2 均已验收通过 → **Q5 已作废，应更新该文档** |

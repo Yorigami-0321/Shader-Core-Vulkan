@@ -54,6 +54,12 @@ neoForge {
             // P0.2：显式强制 Vulkan 后端（--graphicsBackend 优先于游戏内设置，
             // 见 docs/01-DEV-LOOP.md P0.2：DEFAULT 顺序先试 GL，llvmpipe 可用即被选中，永远轮不到 Vulkan）。
             programArguments.addAll '--graphicsBackend', 'VULKAN'
+            // P3.2 相机验证用（可选）：./gradlew runClient -PquickPlay 时追加原版 --quickPlaySingleplayer，
+            // 启动后自动进入 run/saves/ 下最近的单人世界 —— 相机矩阵验证必须在世界内做（菜单 level=null）。
+            // 不传 -PquickPlay 则行为与原来完全一致（进主菜单）。quickPlay 值可指定存档文件夹名，留空=最近世界。
+            if (project.hasProperty('quickPlay')) {
+                programArguments.addAll '--quickPlaySingleplayer', project.property('quickPlay').toString()
+            }
             // Comma-separated list of namespaces to load gametests from. Empty = all namespaces.
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }

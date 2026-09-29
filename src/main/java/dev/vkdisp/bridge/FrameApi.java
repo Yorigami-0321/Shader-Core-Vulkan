@@ -18,6 +18,14 @@ package dev.vkdisp.bridge;
  * 1b.（P1.1 补充）自定义 uniform 上传：原版 PostPass 用 MappableRingBuffer(usage=MAP_WRITE|UNIFORM=130)
  *    + Std140Builder 写 UBO + setUniform(name, buffer) 的官方序列；GLSL 侧块名与绑定布局 uniform 名一致
  *    （原版范本 assets/minecraft/shaders/core/clouds.vsh 的 layout(std140) uniform CloudInfo）。
+ * 1d.（P3.2 本轮）原版 GameRenderer 相机接入：参考对象 = 原版 Camera / CameraRenderState /
+ *    GameRenderState / Projection 的公开字段与方法语义（反编译源码仅作语义核实，零文本搬运；
+ *    Mojang EULA 下仅用于公开 API 互操作）。核实事实：① cameraRenderState(projectionMatrix,
+ *    viewRotationMatrix, pos, orientation, initialized) 由 Camera.extractRenderState 每帧填充，
+ *    projectionMatrix 与原版世界渲染同一份（含 zZeroToOne / 真实 FOV / 窗口宽高比）；
+ *    ② 离开世界 Camera.reset() 置 initialized=false 且 level=null → 必须显式回退占位相机（T11）。
+ *    我们的差异点：顶点是本方验证几何（非世界地形），故在相机位姿上叠加一次性「锚点」平移，
+ *    让几何停在进世界首帧的相机前方 2.5 格（与占位相机 eye 距离一致，保持前后可比）。
  * 1c.（P2 前置）纹理采样链路：原版 BindGroupLayouts.IN_SAMPLER =
  *    BindGroupLayout.builder().withUniform("InSampler", COMBINED_IMAGE_SAMPLER)（字节码核实）；
  *    GLSL 侧 uniform sampler2D InSampler（原版 core/blit_depth.fsh）；纹理创建走
@@ -135,16 +143,136 @@ public final class FrameApi {
     /** 相机矩阵环形缓冲（mat4 64B；P3.2/P3.3 真实透视视图取代占位 NDC 视图）。 */
     private static MappableRingBuffer cameraRing;
 
-    /** 相机参数埋点只打一次。 */
-    private static boolean cameraLogged;
+    /** P3.2：相机矩阵来源（原版相机 / 占位回退）——来源**变化**时打一次日志（T11 显式，不静默）。 */
+    private static boolean cameraSourceKnown;
+
+    /** P3.2：上一帧是否在世界内（与 cameraSourceKnown 一起判断来源切换）。 */
+    private static boolean lastFrameInWorld;
+
+    /** P3.2：锚点矩阵（进世界首帧捕获；换世界时重新捕获）。 */
+    private static org.joml.Matrix4f anchorMatrix;
+
+    /** P3.2：锚点所在世界（ClientLevel 引用；换世界 / 重生换维度时据此重新捕获）。 */
+    private static Object anchorLevel;
+
+    /** 位姿变化埋点计数（最多 30 条；记录上次已知位姿，变化超 epsilon 才打）。 */
+    private static int cameraPoseSamples;
+
+    private static double lastPoseX = Double.NaN;
+    private static double lastPoseY;
+    private static double lastPoseZ;
+    private static float lastPoseYaw;
+    private static float lastPosePitch;
 
     /**
-     * 真实透视相机：FOV 60°、zZeroToOne=true（Vulkan 深度）、相机位于 (0,0,-2.5) 看向原点。
+     * 占位透视相机（**菜单 / 未进世界时的显式回退分支**）：FOV 60°、zZeroToOne、eye=(0,0,-2.5) → 原点。
      *
-     * <p>验证判据：四边形 y 范围相同（±0.6）但 z 不同（0.3 / 0.7），透视下**近的红块应比远的绿块更高**
-     * （高度比 ≈ 距离比 2.8/2.2 ≈ 1.27）；恒等/正交视图下两者等高 —— 这正是「透视矩阵真实生效」的判据。
+     * <p>P3.2 起这是回退路径；世界内改用 {@link #cameraMatrix(int, int)} 的原版 GameRenderer 相机。
+     * 回退与启用的切换在日志里可见（「camera source=…」），符合 T11「降级必须显式报错或 WARN」。
      */
-    private static MappableRingBuffer cameraRing(int width, int height) {
+    private static org.joml.Matrix4f placeholderCamera(int width, int height) {
+        return new org.joml.Matrix4f()
+                .perspective((float) Math.toRadians(60.0), width / (float) height, 0.1F, 32.0F, true)
+                .lookAt(new org.joml.Vector3f(0.0F, 0.0F, -2.5F),
+                        new org.joml.Vector3f(0.0F, 0.0F, 0.0F),
+                        new org.joml.Vector3f(0.0F, 1.0F, 0.0F));
+    }
+
+    /**
+     * P3.2：每帧相机矩阵 —— 世界内取**原版 GameRenderer 相机**（与原版世界渲染同一份投影/视图），
+     * 世界外显式回退占位相机。
+     *
+     * <p><b>锚点设计</b>：本方顶点是验证用局部几何（±1 内），不是世界地形。进世界首帧捕获
+     * {@code M = T(camPos) × R(camRot) × V_placeholder}，使得**捕获帧**满足
+     * {@code P_vanilla × V_now × M ≡ P_vanilla × V_placeholder} —— 出现位置与占位版本逐像素一致；
+     * 此后相机移动/转向时 V_now 变化 → 几何在屏幕上移动（这正是「原版相机真的在驱动视图」的判据）。
+     *
+     * <p>阴影链不受影响：Pass 1/阴影采样都在**局部坐标系**内（uLight 与 vWorldPos 同系），
+     * 与相机矩阵解耦。
+     */
+    private static org.joml.Matrix4f cameraMatrix(int width, int height) {
+        Minecraft mc = Minecraft.getInstance();
+        net.minecraft.client.renderer.state.level.CameraRenderState state =
+                mc.gameRenderer.gameRenderState().levelRenderState.cameraRenderState;
+        boolean inWorld = mc.level != null && state.initialized;
+
+        // 来源切换埋点（进世界 / 回菜单各打一次；reason 写明为什么回退，T11）。
+        if (!cameraSourceKnown || inWorld != lastFrameInWorld) {
+            cameraSourceKnown = true;
+            lastFrameInWorld = inWorld;
+            if (inWorld) {
+                dev.vkdisp.VkDisp.LOGGER.info(
+                        "vkdisp: camera source=vanilla GameRenderer (level present, camera initialized)");
+            } else {
+                dev.vkdisp.VkDisp.LOGGER.info(
+                        "vkdisp: camera source=placeholder fallback (level={}, initialized={})",
+                        mc.level != null, state.initialized);
+            }
+        }
+
+        if (!inWorld) {
+            // 离开世界：释放锚点，下次进世界按新位姿重新捕获。
+            anchorMatrix = null;
+            anchorLevel = null;
+            return placeholderCamera(width, height);
+        }
+
+        // 首帧 / 换世界：捕获锚点 M = T(pos0) × R(rot0) × V_placeholder（使捕获帧 clip = P_vanilla × V_ph）。
+        // ⚠️ JOML 语义：.rotation(q) 是**赋值**（会清掉已乘的 translate），矩阵乘法必须用 .rotate(q)；
+        //    V_placeholder 只取 lookAt 视图部分（不带占位透视 —— 投影一律用原版的）。
+        if (anchorMatrix == null || anchorLevel != mc.level) {
+            anchorLevel = mc.level;
+            anchorMatrix = new org.joml.Matrix4f()
+                    .translate((float) state.pos.x, (float) state.pos.y, (float) state.pos.z)
+                    .rotate(state.orientation)
+                    .mul(new org.joml.Matrix4f().lookAt(
+                            new org.joml.Vector3f(0.0F, 0.0F, -2.5F),
+                            new org.joml.Vector3f(0.0F, 0.0F, 0.0F),
+                            new org.joml.Vector3f(0.0F, 1.0F, 0.0F)));
+            dev.vkdisp.VkDisp.LOGGER.info(
+                    "vkdisp: camera anchor captured: pos=({}, {}, {}), yaw={}, pitch={}, fov={}deg",
+                    state.pos.x, state.pos.y, state.pos.z,
+                    state.yRot, state.xRot, mc.gameRenderer.mainCamera().getFov());
+            // 位姿基线：锚点即首个已知位姿（锚点日志本身已含位姿，这里只供后续变化检测比对）。
+            lastPoseX = state.pos.x;
+            lastPoseY = state.pos.y;
+            lastPoseZ = state.pos.z;
+            lastPoseYaw = state.yRot;
+            lastPosePitch = state.xRot;
+        }
+
+        // 位姿**变化**埋点（比定时采样更硬的证据：玩家移动/转头/切视角 → 立刻留日志）。
+        // epsilon 0.001 覆盖浮点抖动；上限 30 条防刷屏。
+        boolean moved = anchorMatrix == null
+                || Math.abs(state.pos.x - lastPoseX) > 1.0e-3
+                || Math.abs(state.pos.y - lastPoseY) > 1.0e-3
+                || Math.abs(state.pos.z - lastPoseZ) > 1.0e-3
+                || Math.abs(state.yRot - lastPoseYaw) > 0.01
+                || Math.abs(state.xRot - lastPosePitch) > 0.01;
+        if (moved && cameraPoseSamples < 30) {
+            cameraPoseSamples++;
+            dev.vkdisp.VkDisp.LOGGER.info(
+                    "vkdisp: vanilla camera pose changed #{}: pos=({}, {}, {}), yaw={}, pitch={}",
+                    cameraPoseSamples, state.pos.x, state.pos.y, state.pos.z, state.yRot, state.xRot);
+            lastPoseX = state.pos.x;
+            lastPoseY = state.pos.y;
+            lastPoseZ = state.pos.z;
+            lastPoseYaw = state.yRot;
+            lastPosePitch = state.xRot;
+        }
+
+        // clip = P_vanilla × R_view × T(−pos) × M：投影与视图取原版，锚点把验证几何钉在捕获帧的屏幕上。
+        return new org.joml.Matrix4f(state.projectionMatrix)
+                .mul(state.viewRotationMatrix)
+                .translate((float) -state.pos.x, (float) -state.pos.y, (float) -state.pos.z)
+                .mul(anchorMatrix);
+    }
+
+    /**
+     * 相机矩阵环形缓冲（懒创建；与 paramsRing/lightMatrixRing 同为原版 MappableRingBuffer 模式）。
+     * 每帧 map 写入一次，绘制后由调用方 rotate。
+     */
+    private static MappableRingBuffer cameraRing() {
         MappableRingBuffer ring = cameraRing;
         if (ring == null) {
             ring = new MappableRingBuffer(
@@ -153,15 +281,8 @@ public final class FrameApi {
                     LIGHT_MATRIX_BYTES);
             cameraRing = ring;
         }
-        if (!cameraLogged) {
-            cameraLogged = true;
-            dev.vkdisp.VkDisp.LOGGER.info(
-                    "vkdisp: camera perspective: fov=60deg, aspect={}, eye=(0,0,-2.5) -> origin, zZeroToOne=true",
-                    width / (float) height);
-        }
         return ring;
     }
-
     /** std140 vec4 = 16 字节（对齐规则：vec4 偏移必须 16 字节对齐）。 */
     private static final int PARAMS_BYTES = 16;
 
@@ -372,14 +493,10 @@ public final class FrameApi {
                     "vkdisp: blit pipeline not compiled yet: " + PipelineApi.BLIT_LOCATION);
         }
 
-        // P3.2/P3.3：透视相机矩阵（每帧按主目标宽高比重建；map/close 仍在开启 pass 之前）。
-        MappableRingBuffer camRing = cameraRing(width, height);
+        // P3.2：相机矩阵（世界内=原版 GameRenderer，菜单=占位回退，来源切换见日志）；map/close 仍在开启 pass 之前。
+        MappableRingBuffer camRing = cameraRing();
         try (GpuBufferSlice.MappedView view = camRing.currentBuffer().map(false, true)) {
-            Std140Builder.intoBuffer(view.data()).putMat4f(new org.joml.Matrix4f()
-                    .perspective((float) Math.toRadians(60.0), width / (float) height, 0.1F, 32.0F, true)
-                    .lookAt(new org.joml.Vector3f(0.0F, 0.0F, -2.5F),
-                            new org.joml.Vector3f(0.0F, 0.0F, 0.0F),
-                            new org.joml.Vector3f(0.0F, 1.0F, 0.0F)));
+            Std140Builder.intoBuffer(view.data()).putMat4f(cameraMatrix(width, height));
         }
 
         // P3.1 前置：光空间矩阵写入自己的环形缓冲（map/close 不是编码器命令，但仍在开启 pass 之前执行，

@@ -5,6 +5,55 @@
 
 ---
 
+## 2026-09-29 — 并行线汇合：A+B / C+D / E+F 三组交付入主线（纯冷路径，零 GPU 改动）
+
+- **本次改了什么**（三个队友环境各交独占路径，Lead 汇合）：
+  1. **C+D 汇合（P2.3 前置）**：新增 `glsl/GlslPipeline.java`（串联 `GlslPreprocessor.analyze` → `OfGlslTranslator.translate`，失败短路 / 两阶段诊断合并 / null 归一）+ `GlslPipelineTest` 16 用例。
+  2. **E+F 开放点**：`config/OptionBinding.java` javadoc 增补 P-1e 真值表结论 6 条 + 新增 `OptionDefineStyleTruthTableTest`（13 行 LITERAL vs IFDEF_TRUE 逐行对比、并排五列表、两风格"必须相同"断言，8 用例）；新增 `VertexLayoutPendingAlignmentTest`（P-1d 待改行清单机器校验：10 条 LineRef 断言 + `MC_ENTITY_ELEMENT_TYPE_AFTER_P12=null` 显式未实测，6 用例）。
+  3. **B 线测试修复**：`ShaderPackScannerTest#nestedOuterFolder` 多级目录改 `Files.createDirectories`（原 `createDirectory` 对不存在的父目录抛 NoSuchFileException —— Lead 跑全量测试发现后派回修复）。
+  4. （A+B 汇合的 `ShaderPackService` 串联入口仍在途，见任务板 task-3，完成后另记条目。）
+- **为什么改**：A/B/C 三线已于上游入库（`897a2d5`/`8a71b59`/`cb1fed1`），本轮把 C+D、E+F 的**汇合与开放点材料**并入，解锁 P2.3（#include 编译链）与 P4.3（选项定稿）的前置条件。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §10（P-1e → 🟡 对比材料已就绪；P-1d → 待改行清单已机器校验）。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；`./gradlew test --rerun-tasks` **346 用例 0 失败 0 错误**（32 个测试类；汇合前基线 316）。
+  - ✅ **grep 自证**（三条并行线各自执行）：`com\.mojang\.(renderpearl|blaze3d)` 在 `glsl/`、`pack/`、`config/`、`pipeline/model/` → **NO MATCH**；`PipelineFactory|RenderPipeline.builder` 零实现。
+  - ✅ **【参考调研】**：全部新文件含注释块且第 0 条为合规结论（Iris glsl-preprocessor「GPL-3.0+例外」与 glsl-transformer 按**禁止**处理；OptiFine 无 LICENSE=ARR 不可用；VulkanMod/Sulkan/Beryl 零接触；JUnit 仅测试期 EPL-2.0）。
+- **未覆盖 / 存疑**：真实第三方包语料（§7.6 禁入库）；宏展开后重新生成预处理指令的病态输入；`#include` 位于被跳过分支时仍先展开（C 线 Include→Define 固定顺序语义，入口不改）；P-1e 默认风格仍 LITERAL 待 P4.2/P4.3 真实包定稿（X9）；P-1d stride=47 待 P1.2 实测对齐。
+- **是否已提交**：随本条目一并 commit 并推送至 `origin/master`。
+
+---
+
+## 2026-09-29 — P3.2 接原版 GameRenderer 相机（世界内真实位姿驱动视图；菜单显式回退）
+
+- **本次改了什么**：
+  1. `bridge/FrameApi.java`：新增 `cameraMatrix(width,height)` —— 世界内（`level != null && cameraRenderState.initialized`）取**原版 GameRenderer 相机**：`clip = P_vanilla × viewRotation × T(−pos) × M_anchor`（投影与原版世界渲染同一份，含 zZeroToOne / 真实 FOV / 窗口宽高比）；菜单/未进世界**显式回退**占位透视相机（`camera source=placeholder fallback (reason)` 埋点，T11）。
+  2. **锚点设计**：进世界首帧捕获 `M = T(camPos) × R(camRot) × V_placeholder` —— 捕获帧与占位版本视图一致；此后相机移动/转向 → 几何在屏幕上移动（「原版相机真的在驱动视图」的判据）。换世界/离开世界自动重捕。
+  3. **位姿变化埋点**：pos/yaw/pitch 任一变化超 epsilon（1e-3 / 0.01°）即打 `vanilla camera pose changed #N`（上限 30 条）。
+  4. `build.gradle`（env-1 共享文件）：新增可选 `-PquickPlay` → 追加原版 `--quickPlaySingleplayer`，runClient 启动即自动进 `run/saves` 最近世界；**不传则行为与原来完全一致**。
+  5. `tools/vulkan-local/x11_input.py`：依据系统权威头 `/usr/include/X11/extensions/xtestproto.h` 修复 XTEST 注入三处协议违例 —— ① `X_XTestFakeInput` 必须 **36 字节 / length=9**（旧发 32 字节且 length 字段被写成 keycode → server 等更多字节 → 永不应答 TimeoutError）；② byte1=扩展 minor(2)、type 在 byte4（旧把 type 放 byte1 → KeyRelease(3) 被解析成 `X_XTestGrabControl` → 请求流错位）；③ `GetInputFocus` 屏障必须 4 字节 `<BBH`（旧 `<BBHI` 多发 4 字节 → opcode=0 非法请求）；④ 查询类请求须在 `SetInputFocus` **之前**发。另新增 `xtest_fake_motion`/`xtest_fake_button`（协议正确，未在真实聚焦窗口验证）。
+- **为什么改**：18-PARALLEL §5 的头号缺口 —— 此前世界视图是**固定占位相机**（fov60/eye=(0,0,-2.5)，不随玩家视角变化）。接上原版相机后视图矩阵由真实 `CameraRenderState` 驱动，是 P3.2 gbuffers 接管与「阴影跟随玩家视角」的必要前提。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §5。
+- **测试结果**（证据目录 `tools/vulkan-local/evidence/`，被 `.gitignore` 覆盖、不入库）：
+  - ✅ **构建/测试**：`./gradlew build` exit=0；`./gradlew test --rerun-tasks` 全仓库 **346 用例 0 失败**（含 A/B/C/D/E/F 六线新用例）。
+  - ✅ **日志**（`p32_vanilla_camera2.log`，sha256 `9d80b554571fd991…`）：`camera source=placeholder fallback (level=false, initialized=false)` →（quickPlay 自动进世界）→ `camera source=vanilla GameRenderer` → `camera anchor captured: pos=(8.5, 4.389, −7.5), yaw=−30.75, pitch=90.0, fov=16.8deg` → `pose changed #1/#2` → **F5 后 `pose changed #3: y 5.62 → 9.62`**（第三人称相机上移 4 格）。`count check: registered=6, compiled=6 (aligned)`；ERROR=**2**（仅 narrator/SoundSystem 环境噪声），`vkdisp` ERROR=**0**。
+  - ✅ **像素级判据**（图 A `p32_final_A.png` sha256 `22dd9a43…` vs F5 后图 B `p32_final_B.png` sha256 `15048894…`）：
+
+| 量 | 图 A | 图 B | 实测比值 | 理论（相机 y 5.62→9.62，距离 4.03→8.03 / 4.43→8.43） |
+|---|---|---|---|---|
+| 几何宽 W | 99 px | 50 px | **0.505** | 0.502（红）/ 0.526（绿） |
+| 几何高 H | 102 px | 52 px | **0.510** | 同上 |
+
+    实测比值落在两块理论比值之间、四位有效数字吻合 → **几何尺寸可由原版相机位姿反算预测**，相机矩阵真实参与顶点变换。另目检前一轮 F5 实验（`p32_cam_B.png`）：几何整体**位移 + 旋转**（边不再水平）—— 旋转只能来自 `viewRotationMatrix`。
+- **测量口径备忘**：本次相机 pitch=90（末地出生点直视下方），几何在相机**下方** → 距离 = 相机 y − 几何 y（锚点 y 4.39 − 占位视图前向 2.8/3.2 = 1.59/1.19）；算理论比值别用水平距离。
+- **未覆盖 / 存疑（不掩饰）**：
+  1. **只验证了第三人称位移（F5），未验证 yaw/pitch 连续转动** —— Weston 环境 X 焦点为 None，首次 F5 是窗口尚有焦点时注入的，之后 XTEST motion/click 均无法重新聚焦（X 焦点层面，非协议层面）；转动视角的像素判据留待可聚焦环境补跑；
+  2. 锚点在末地出生点捕获（pitch=90 特殊姿态），常规主世界姿态未跑；
+  3. PCF/比较采样器、原版 LevelRenderer 光空间列表/CSM 集成仍缺（18-PARALLEL §5 保持 ⏳）；
+  4. `x11_input.py` 的 motion/button 注入未在真实聚焦窗口上端到端验证。
+- **是否已提交**：随本条目一并 commit 并推送至 `origin/master`。
+
+---
+
 ## 2026-09-29 — 真实透视相机矩阵（替换占位 NDC 视图，P3.2/P3.3 视图主体）
 
 - **本次改了什么**：
