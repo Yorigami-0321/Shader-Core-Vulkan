@@ -38,3 +38,8 @@ run/
 **/src/generated/**/.cache/
 repo/
 !**/src/**/repo/
+
+### 构建日志（临时诊断产物，不入库）###
+/build*.log
+/build_*.log
+*.build.log
