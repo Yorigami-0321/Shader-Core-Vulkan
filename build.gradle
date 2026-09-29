@@ -28,6 +28,8 @@ sourceSets.main.resources {
 
 repositories {
     // Add here additional repositories if required by some of the dependencies below.
+    // F4 测试基建：JUnit 5 需要 Maven Central（docs/18-PARALLEL.md §3 F4）
+    mavenCentral()
 }
 
 base {
@@ -135,6 +137,21 @@ dependencies {
     // For more info:
     // http://www.gradle.org/docs/current/userguide/artifact_dependencies_tutorial.html
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
+
+    // F4 测试基建（docs/18-PARALLEL.md §3）：JUnit 5，供并行线用单测自证。
+    // 版本用 BOM 对齐；这是 env-1 对共享文件 build.gradle 的一次性改动（§7.2）。
+    testImplementation platform('org.junit:junit-bom:5.13.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// F4：启用 JUnit Platform；测试失败 = build 失败（并行线证据规范 §7.3 要求单测全绿）
+tasks.named('test', Test).configure {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+    }
 }
 
 // This block of code expands all declared replace properties in the specified resource targets.
