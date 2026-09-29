@@ -26,12 +26,14 @@ package dev.vkdisp.bridge;
  * 4. 许可证核对：本项目 MIT；只调用公开 API 签名，无代码复制（07-CONSTRAINTS §〇 P1、L5-L8）。
  * 5. 性能基线：启动期一次性注册，冷路径，不做性能优化（17-NATIVE.md §3.2）。
  */
+import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
 import com.mojang.renderpearl.api.pipeline.CompareOp;
 import com.mojang.renderpearl.api.pipeline.DepthStencilState;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.pipeline.UniformType;
+import com.mojang.renderpearl.api.vertex.VertexFormat;
 import java.util.List;
 import dev.vkdisp.VkDisp;
 import net.minecraft.client.renderer.RenderPipelines;
@@ -76,6 +78,14 @@ public final class PipelineApi {
     /** 深度可视化管线 location（P3 前置：采样深度纹理 → 灰度输出，用于验证深度附件链路）。 */
     public static final String DEPTHVIS_LOCATION = "vkdisp:pipeline/depthviz";
 
+    /** 几何管线 location（P3 前置：真实顶点缓冲 + 深度剔除验证）。 */
+    public static final String GEOMETRY_LOCATION = "vkdisp:pipeline/geometry";
+
+    /** 几何顶点属性名（必须与 GLSL 声明字面一致，04-SPEC §4）。 */
+    public static final String POSITION_ATTRIBUTE = "Position";
+    /** 顶点色属性名。 */
+    public static final String COLOR_ATTRIBUTE = "Color";
+
     /** 管线 location：vkdisp:pipeline/fullscreen → 注册表键。 */
     private static final Identifier FULLSCREEN_PIPELINE_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/fullscreen");
@@ -108,6 +118,14 @@ public final class PipelineApi {
     private static final Identifier DEPTHVIS_SHADER_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "depthviz");
 
+    /** 几何管线 location id。 */
+    private static final Identifier GEOMETRY_PIPELINE_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/geometry");
+
+    /** 几何着色器 id：vkdisp:geometry → assets/vkdisp/shaders/geometry.vsh / .fsh。 */
+    private static final Identifier GEOMETRY_SHADER_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "geometry");
+
     /** 注册成功后暂存的管线实例（供 FrameApi 使用）；未注册时为 null。 */
     private static RenderPipeline fullscreenPipeline;
 
@@ -119,6 +137,26 @@ public final class PipelineApi {
 
     /** 注册成功后暂存的深度可视化管线实例；未注册时为 null。 */
     private static RenderPipeline depthVisPipeline;
+
+    /** 注册成功后暂存的几何管线实例；未注册时为 null。 */
+    private static RenderPipeline geometryPipeline;
+
+    /**
+     * 几何顶点格式：Position(vec3f) + Color(vec4f)，stride = 28 字节。
+     *
+     * <p>属性名与 {@code geometry.vsh} 的 {@code in} 声明**字面一致**（04-SPEC §4 的硬要求）；
+     * 与 E 线 {@code VertexLayout} 的「紧凑累加、无隐式填充」规则一致（12 + 16 = 28）。
+     */
+    private static final VertexFormat GEOMETRY_VERTEX_FORMAT = VertexFormat.builder(0)
+            .addAttribute(POSITION_ATTRIBUTE, GpuFormat.RGB32_FLOAT)
+            .addAttribute(COLOR_ATTRIBUTE, GpuFormat.RGBA32_FLOAT)
+            .build();
+
+    // ⚠️ 实测教训：VertexFormat.builder(int) 的参数是 **stepRate**，不是顶点大小
+    // （javap 反编译字段名 stepRate；原版 DefaultVertexFormat 一律传 0）。
+    // 曾误传 28（按字节数理解），导致属性按每 28 顶点推进一次 → 读出错误偏移 →
+    // 画出退化三角形，且**没有任何报错**（静默失败的典型样本）。
+    // 顶点大小由 addAttribute 累加得出（Position 12 + Color 16 = 28），不需要在此声明。
 
     /** 已注册管线集合（P1.2「注册数 == 编译成功数」断言的计数来源）。 */
     private static final List<RenderPipeline> REGISTERED_PIPELINES = new java.util.ArrayList<>();
@@ -243,6 +281,55 @@ public final class PipelineApi {
     /** 深度可视化管线是否已注册完成（纯布尔视图）。 */
     public static boolean isDepthVisPipelineRegistered() {
         return depthVisPipeline != null;
+    }
+
+    /**
+     * 构建并注册 P3 前置的几何管线（真实顶点缓冲 + 深度测试/写入）。
+     *
+     * <p>与其它管线的区别：带**顶点绑定**（{@code withVertexBinding(0, GEOMETRY_VERTEX_FORMAT)}），
+     * 片元不再是无绑定的全屏三角形，而是按顶点缓冲绘制；深度状态开测试 + 写深度。
+     * 不剔除背面（{@code withCull(false)}），避免绕序问题干扰深度剔除的验证。
+     */
+    public static void registerGeometryPipeline(RegisterRenderPipelinesEvent event) {
+        RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                .withLocation(GEOMETRY_PIPELINE_ID)
+                .withVertexShader(GEOMETRY_SHADER_ID)
+                .withFragmentShader(GEOMETRY_SHADER_ID)
+                .withVertexBinding(0, GEOMETRY_VERTEX_FORMAT)
+                .withCull(false)
+                // 深度测试 LESS_THAN_OR_EQUAL + 写深度：近的先画，远的后画；
+                // 重叠区若保持红色 = 深度剔除生效（被后画的远片元被剔除）。
+                .withDepthStencilState(new DepthStencilState(CompareOp.LESS_THAN_OR_EQUAL, true))
+                .withColorTargetState(ColorTargetState.DEFAULT)
+                .build();
+        event.registerPipeline(pipeline);
+        geometryPipeline = pipeline;
+        REGISTERED_PIPELINES.add(pipeline);
+        // 一次性埋点：确认顶点格式在 build() 后保留（getVertexFormatBindings 是定长槽位数组，
+        // size 恒为 16，故打印槽 0 的 stride 才有意义）。
+        VkDisp.LOGGER.info(
+                "vkdisp: geometry pipeline registered: stride={} topology={}",
+                GEOMETRY_VERTEX_FORMAT.getVertexSize(),
+                pipeline.getPrimitiveTopology());
+    }
+
+    /** 几何管线是否已注册完成（纯布尔视图）。 */
+    public static boolean isGeometryPipelineRegistered() {
+        return geometryPipeline != null;
+    }
+
+    /** 已注册管线：几何管线（bridge 包内部使用）。 */
+    static RenderPipeline geometryPipeline() {
+        RenderPipeline pipeline = geometryPipeline;
+        if (pipeline == null) {
+            throw new IllegalStateException("vkdisp: geometry pipeline not registered yet");
+        }
+        return pipeline;
+    }
+
+    /** 几何顶点格式的 stride（字节）——供业务层/埋点核对，与 E 线计算表口径一致。 */
+    public static int geometryVertexStride() {
+        return GEOMETRY_VERTEX_FORMAT.getVertexSize();
     }
 
     /** 已注册管线：深度可视化管线（bridge 包内部使用）。 */

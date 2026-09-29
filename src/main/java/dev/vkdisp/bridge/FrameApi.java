@@ -39,6 +39,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.commands.CommandEncoder;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline;
@@ -136,6 +137,63 @@ public final class FrameApi {
         return target;
     }
 
+    /** 几何顶点数：两个四边形 × 2 三角形 × 3 顶点 = 12。 */
+    private static final int GEOMETRY_VERTEX_COUNT = 12;
+
+    /** 几何顶点缓冲（懒创建：12 顶点 × 28 字节 = 336 字节）。 */
+    private static GpuBuffer geometryBuffer;
+
+    /**
+     * 构造并上传本验证用的几何：**近**四边形（红，z=0.3，先画）+ **远**四边形（绿，z=0.7，后画）。
+     *
+     * <p>判定设计：两块在中间区域重叠，且**远的后画**。若深度测试生效，重叠区应保持**红色**
+     * （靠近相机的片元胜出、后画的远片元被剔除）；若深度测试失效，后画的绿色会覆盖红色。
+     * 这样"深度剔除到底有没有生效"就变成可像素级判定的硬事实，不依赖主观观察。
+     *
+     * <p>顶点布局与 {@code PipelineApi.GEOMETRY_VERTEX_FORMAT} 严格对应：
+     * Position(RGB32_FLOAT, 12B, offset 0) + Color(RGBA32_FLOAT, 16B, offset 12)，stride = 28B。
+     */
+    private static GpuBuffer geometryBuffer() {
+        GpuBuffer buffer = geometryBuffer;
+        if (buffer == null) {
+            // ⚠️ 必须用**直接缓冲**：createBuffer 走 LWJGL 的本地内存路径（按地址拷贝），
+            // 传堆 ByteBuffer 会读到非法地址 → JVM 原生崩溃（实测 hs_err：SIGSEGV in
+            // StubRoutines::jbyte_disjoint_arraycopy, si_addr=0x10）。
+            java.nio.ByteBuffer data = java.nio.ByteBuffer
+                    .allocateDirect(GEOMETRY_VERTEX_COUNT * 28)
+                    .order(java.nio.ByteOrder.nativeOrder());
+            putQuad(data, -0.8F, 0.0F, -0.6F, 0.6F, 0.3F, 1.0F, 0.0F, 0.0F);
+            putQuad(data, -0.4F, 0.4F, -0.6F, 0.6F, 0.7F, 0.0F, 1.0F, 0.0F);
+            data.flip();
+            buffer = RenderSystem.getDevice()
+                    .createBuffer(() -> "vkdisp geometry", GpuBuffer.USAGE_VERTEX, data);
+            geometryBuffer = buffer;
+            // 一次性埋点：确认顶点缓冲真实创建且大小符合（336 = 12 顶点 × 28 字节）。
+            dev.vkdisp.VkDisp.LOGGER.info(
+                    "vkdisp: geometry buffer created: size={} expected={} stride={} vertices={}",
+                    buffer.size(),
+                    (long) GEOMETRY_VERTEX_COUNT * 28,
+                    PipelineApi.geometryVertexStride(),
+                    GEOMETRY_VERTEX_COUNT);
+        }
+        return buffer;
+    }
+
+    /** 追加一个四边形（两个三角形，6 顶点）到顶点数据：NDC 范围 + 固定 z + 固定颜色。 */
+    private static void putQuad(java.nio.ByteBuffer data, float x0, float x1, float y0, float y1, float z,
+            float r, float g, float b) {
+        float[][] triangles = {
+                {x0, y0, x1, y0, x1, y1},
+                {x0, y0, x1, y1, x0, y1},
+        };
+        for (float[] triangle : triangles) {
+            for (int i = 0; i < 6; i += 2) {
+                data.putFloat(triangle[i]).putFloat(triangle[i + 1]).putFloat(z);
+                data.putFloat(r).putFloat(g).putFloat(b).putFloat(1.0F);
+            }
+        }
+    }
+
     /**
      * P1.2 断言用：已注册管线中「编译成功」的数量（纯整数视图）。
      *
@@ -163,12 +221,12 @@ public final class FrameApi {
      * @return 已编译返回 true；尚未完成编译返回 false（不抛异常，供每帧轮询）
      */
     public static boolean isPipelineReady() {
-        // 本帧链用到 pattern / depthviz / blit 三条；composite 已注册但不在本帧链中（见 drawFullscreen 注释）。
+        // 本帧链用到 pattern / geometry / blit 三条（depthviz 与 composite 已注册但不在本帧链中）。
         return PipelineApi.isFullscreenPipelineRegistered()
-                && PipelineApi.isDepthVisPipelineRegistered()
+                && PipelineApi.isGeometryPipelineRegistered()
                 && PipelineApi.isBlitPipelineRegistered()
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.fullscreenPipeline()) != null
-                && RenderSystem.getCompiledPipelineNullable(PipelineApi.depthVisPipeline()) != null
+                && RenderSystem.getCompiledPipelineNullable(PipelineApi.geometryPipeline()) != null
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.blitPipeline()) != null;
     }
 
@@ -214,10 +272,10 @@ public final class FrameApi {
             throw new IllegalStateException(
                     "vkdisp: fullscreen pipeline not compiled yet: " + PipelineApi.FULLSCREEN_LOCATION);
         }
-        CompiledRenderPipeline depthVis = RenderSystem.getCompiledPipelineNullable(PipelineApi.depthVisPipeline());
-        if (depthVis == null) {
+        CompiledRenderPipeline geometry = RenderSystem.getCompiledPipelineNullable(PipelineApi.geometryPipeline());
+        if (geometry == null) {
             throw new IllegalStateException(
-                    "vkdisp: depthviz pipeline not compiled yet: " + PipelineApi.DEPTHVIS_LOCATION);
+                    "vkdisp: geometry pipeline not compiled yet: " + PipelineApi.GEOMETRY_LOCATION);
         }
         CompiledRenderPipeline blit = RenderSystem.getCompiledPipelineNullable(PipelineApi.blitPipeline());
         if (blit == null) {
@@ -234,39 +292,34 @@ public final class FrameApi {
         // 官方 PostPass 同款序列：无 depth 附件（本管线没有 depthStencilState）、不清屏（loadOp = LOAD）、
         // 无顶点绑定（全屏三角形由 gl_VertexIndex 推出）。
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-        // Pass A：图案 → 中间目标 A（颜色清为不透明黑、深度清为 1.0），同时写深度。
+        // Pass A+B 合并为**同一个 render pass**（同一附件内连续两次 createRenderPass 时，第二个 pass
+        // 的清屏/绘制实测不生效——本轮观察事实，成因未深挖；合并是标准做法且消除该问题）。
+        // 顺序：① 图案全屏（背景，写深度 0.9）→ ② 真实几何（近红 z=0.3 先画、远绿 z=0.7 后画）。
         try (RenderPass pass = encoder.createRenderPass(
-                () -> label + " A (pattern -> offscreen0)",
+                () -> label + " AB (pattern + geometry -> offscreen0)",
                 viewA,
                 Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)),
                 depthA,
                 OptionalDouble.of(1.0D))) {
+            // ① 图案背景
             pass.setPipeline(pattern);
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform(PipelineApi.PARAMS_UNIFORM, ring.currentBuffer());
             pass.draw(3, 1, 0, 0);
-        }
-        // Pass B（P3 前置）：采样 offscreen0 的**深度纹理** → offscreen1 灰度图。
-        // 这一步证明「深度附件真被写入且可被采样」，而不只是「深度附件分配了」。
-        // 说明：合成管线（R/B 交换，上一轮已验证）本轮**不在本帧链里**——它与本 pass 争用同一目标，
-        // 而本轮要验证的是深度链路；两级的合并留待 pack 链落地（P2.4）时统一编排。
-        try (RenderPass pass = encoder.createRenderPass(
-                () -> label + " B (depth sample -> offscreen1)",
-                viewB,
-                Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)),
-                null,
-                OptionalDouble.empty())) {
-            pass.setPipeline(depthVis);
+            // ② 真实几何 + 深度剔除（顶点缓冲为直接缓冲；见 geometryBuffer 的实测注释）
+            pass.setPipeline(geometry);
             RenderSystem.bindDefaultUniforms(pass);
-            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, depthA, sampler);
-            pass.draw(3, 1, 0, 0);
+            pass.setVertexBuffer(0, geometryBuffer().slice());
+            pass.draw(GEOMETRY_VERTEX_COUNT, 1, 0, 0);
         }
-        // Pass C：中间目标 B → 主目标（最后一级；主目标只由本 pass 写入）。
+        // Pass C：中间目标 → 主目标（最后一级；主目标只由本 pass 写入）。
+        // ⚠️ 采样的必须是**本帧链实际写入的那个目标**（本轮 A/B 都写 viewA）。
+        // 实测教训：曾把 C 级写成采样 viewB（本链从未写入），导致画面上永远看不到几何/深度 pass 的结果。
         try (RenderPass pass = encoder.createRenderPass(
-                () -> label + " C (offscreen1 -> main)", colorView, Optional.empty(), null, OptionalDouble.empty())) {
+                () -> label + " C (offscreen0 -> main)", colorView, Optional.empty(), null, OptionalDouble.empty())) {
             pass.setPipeline(blit);
             RenderSystem.bindDefaultUniforms(pass);
-            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, viewB, sampler);
+            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, viewA, sampler);
             pass.draw(3, 1, 0, 0);
         }
         // 原版 PostPass 同款：绘制后再 rotate，保证本帧写入的槽在 GPU 用完前不被复用。

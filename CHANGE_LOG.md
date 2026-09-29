@@ -5,6 +5,35 @@
 
 ---
 
+## 2026-09-29 — 真实几何 + 深度剔除（P3 前置第二段；本轮抓出 5 个真实缺陷）
+
+- **本次改了什么**：
+  1. `bridge/PipelineApi.java`：新增**几何管线** `vkdisp:pipeline/geometry`（顶点绑定 `Position(vec3f)+Color(vec4f)`、stride 28、`DepthStencilState(LESS_THAN_OR_EQUAL, writeDepth=true)`、`withCull(false)`）+ 顶点格式常量。
+  2. `bridge/FrameApi.java`：懒创建 12 顶点的几何缓冲（直接缓冲；近红 z=0.3 先画、远绿 z=0.7 后画，**刻意让远的后画**）；图案与几何合并进**同一个 render pass**（原因见下）；Pass C 采样链路实际写入的目标。
+  3. 新增 `assets/vkdisp/shaders/geometry.vsh` / `.fsh`（顶点属性带 `layout(location)`）；`fullscreen.fsh` 背景深度改为常量 `0.9`（让几何稳定压在背景上，判定不受背景深度分布干扰）。
+  4. 注册器埋点 `(1/5)…(5/5)`，Hook 就绪判定改看本帧链的三条管线。
+- **为什么改**：上一轮验证了深度的「写入 + 采样」，缺的正是**深度剔除**这半边——它是 gbuffers / shadow 的前提。判定设计成硬事实：重叠区若为红＝深度测试生效；若为绿＝失效（绿块后画）。
+- **⚠️ 本轮抓出并修掉的 5 个真实缺陷（全部有证据，不是猜的）**：
+  1. **顶点属性缺显式 location**：`in vec3 Position` 未带 `layout(location=N)` → 原版编译器报错原文 `error: 'location' : SPIR-V requires location for user input/output`，required 管线硬失败（符合「不静默」设计，但首次遇到须记录）。
+  2. **堆 ByteBuffer 传给 `createBuffer` → JVM 原生崩溃**：`hs_err_pid*.log` 实测 `SIGSEGV in StubRoutines::jbyte_disjoint_arraycopy, si_addr=0x10`；改用 `allocateDirect` 后消失（崩溃日志留档 `run/hs_err_pid116524.log`，被 gitignore）。
+  3. **`VertexFormat.builder(int)` 的参数是 `stepRate` 不是顶点大小**（javap 字段名 `stepRate`，原版 `DefaultVertexFormat` 一律传 `0`）：我们误传 `28` → 属性按每 28 顶点推进 → 读错偏移 → **退化三角形、无任何报错**（静默失败的典型样本）；改为 `builder(0)`。
+  4. **Pass C 采样了错误的中间目标**：A/B 都写 `viewA`，C 却采样 `viewB`（本链从未写入）→ 后续 pass 的结果**永远看不到**（这也是本轮前期"几何看不见"的主要迷惑源）。
+  5. **同一附件上第二次 `createRenderPass` 的清屏/绘制不生效**（观察事实：Pass B 清蓝 + 绘制，代码块执行、无异常，画面仍只有 Pass A 的图案）→ 合并进**同一个 render pass**（同 pass 内多管线多次 draw 是标准做法）；成因未深挖，登记为已知现象。
+- **影响的文档**：本 `CHANGE_LOG.md`。
+- **测试结果**（证据目录 `tools/vulkan-local/evidence/`，被 `.gitignore` 的 `/tools/` 覆盖、不入库）：
+  - ✅ **构建/测试**：`./gradlew build` exit=**0**；`./gradlew test` 全仓库 **264 用例 0 失败**。
+  - ✅ **日志**：`p3_final.log`（sha256 `2f3fb019…6f8f`，最终代码复验）——`pipeline registered (1/5)…(5/5) (total=5)`、`geometry pipeline registered: stride=28 topology=TRIANGLES`、`geometry buffer created: size=336 expected=336`、`count check: registered=5, compiled=5 (aligned)`、`3-pass chain executed (854x480)`；ERROR=**2**（仍只有 WSL 环境 narrator/OpenAL），`vkdisp` ERROR=**0**。
+  - ✅ **深度剔除量化判据**：截图 `p3_final.png`（sha256 `bf0c6265…b8040`，最终代码复验；此前 `p3_depth_cull.png` `481464b4…` 为清理前同构结果）——`近独占区(200,300)=红(255,0,0)`、**`★重叠区(370,300)=红(255,0,0)`（后画的远绿块被剔除 → 深度测试生效）**、`远独占区(550,300)=绿(0,255,0)`、`底部方向参考带(400,527)=橙(255,128,0)`；背景仍为图案（`(800,300)=白` 正是中轴白十字横线，y≈300 为中心行，合理）。
+- **流程教训（同样记下）**：本轮曾因**多个游戏进程残留**多次截到旧窗口，导致"同一内容反复出现"的假象——后续固定为「截图前先确认只有 1 个游戏进程、窗口 id 取最新」。
+- **未覆盖 / 存疑**：
+  1. 缺陷 5 的**成因未深挖**（仅以合并 pass 规避并记录现象）；
+  2. 深度**与真实几何网格**（多三角形、透视矩阵）仍未验证——本验证用 NDC 直写；
+  3. `depthviz` / `composite` 管线本轮不在本帧链（上两轮各自验证过）；
+  4. 未验证 `D24_UNORM_S8_UINT`（stencil）与深度比较采样器。
+- **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
+
+---
+
 ## 2026-09-29 — 深度附件 + 深度写入 + 深度采样（P3 前置）
 
 - **本次改了什么**：

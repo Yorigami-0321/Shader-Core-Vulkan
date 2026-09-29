@@ -51,7 +51,8 @@ void main() {
 
     fragColor = vec4(color, 1.0);
 
-    // P3 前置验证：写入深度（水平梯度 0.2→0.8）。管线开了 depthStencilState（LESS_THAN_OR_EQUAL + 写深度），
-    // 深度附件清为 1.0 → 梯度值全部通过测试并被写入；随后由 depthviz pass 采样出来判读。
-    gl_FragDepth = 0.2 + 0.6 * vUv.x;
+    // P3 前置：本 pass 作为**背景**，写一个较远的固定深度 0.9（深度附件清为 1.0，故能通过测试并写入）。
+    // 后续几何 pass（z=0.3 / 0.7）会稳定压在其上，从而让「深度剔除」的判定不受背景深度分布干扰。
+    // （深度采样链路已在上一轮用 0.2+0.6*uv.x 的梯度量化验证过，见 depthviz.fsh 与 CHANGE_LOG。）
+    gl_FragDepth = 0.9;
 }
