@@ -84,6 +84,9 @@ public final class PipelineApi {
     /** 阴影采样管线 location（P3.3：世界视图渲染 + 采样阴影贴图）。 */
     public static final String SHADOWED_LOCATION = "vkdisp:pipeline/shadowed";
 
+    /** 透视相机矩阵 uniform 名（P3.2/P3.3：与 geometry.vsh 世界视图分支的 std140 块字面一致）。 */
+    public static final String CAMERA_UNIFORM = "Camera";
+
     /** 光空间矩阵 uniform 名（P3.1 前置：与 geometry.vsh 的 std140 块字面一致）。 */
     public static final String LIGHT_MATRIX_UNIFORM = "LightMatrix";
 
@@ -354,9 +357,11 @@ public final class PipelineApi {
                 .withVertexShader(GEOMETRY_SHADER_ID)
                 .withFragmentShader(SHADOWED_SHADER_ID)
                 .withVertexBinding(0, GEOMETRY_VERTEX_FORMAT)
+                // 单一绑定组：光空间矩阵（fsh 回投）+ 采样器（阴影贴图）+ 相机矩阵（vsh 世界视图）。
                 .withBindGroupLayout(BindGroupLayout.builder()
                         .withUniform(LIGHT_MATRIX_UNIFORM, UniformType.UNIFORM_BUFFER)
                         .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
+                        .withUniform(CAMERA_UNIFORM, UniformType.UNIFORM_BUFFER)
                         .build())
                 .withCull(false)
                 .withColorTargetState(ColorTargetState.DEFAULT)

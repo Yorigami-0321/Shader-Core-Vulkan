@@ -132,6 +132,36 @@ public final class FrameApi {
                 .lookAt(eye, new org.joml.Vector3f(0.0F, 0.0F, 0.0F), new org.joml.Vector3f(0.0F, 1.0F, 0.0F));
     }
 
+    /** 相机矩阵环形缓冲（mat4 64B；P3.2/P3.3 真实透视视图取代占位 NDC 视图）。 */
+    private static MappableRingBuffer cameraRing;
+
+    /** 相机参数埋点只打一次。 */
+    private static boolean cameraLogged;
+
+    /**
+     * 真实透视相机：FOV 60°、zZeroToOne=true（Vulkan 深度）、相机位于 (0,0,-2.5) 看向原点。
+     *
+     * <p>验证判据：四边形 y 范围相同（±0.6）但 z 不同（0.3 / 0.7），透视下**近的红块应比远的绿块更高**
+     * （高度比 ≈ 距离比 2.8/2.2 ≈ 1.27）；恒等/正交视图下两者等高 —— 这正是「透视矩阵真实生效」的判据。
+     */
+    private static MappableRingBuffer cameraRing(int width, int height) {
+        MappableRingBuffer ring = cameraRing;
+        if (ring == null) {
+            ring = new MappableRingBuffer(
+                    () -> "vkdisp camera",
+                    GpuBuffer.USAGE_MAP_WRITE | GpuBuffer.USAGE_UNIFORM,
+                    LIGHT_MATRIX_BYTES);
+            cameraRing = ring;
+        }
+        if (!cameraLogged) {
+            cameraLogged = true;
+            dev.vkdisp.VkDisp.LOGGER.info(
+                    "vkdisp: camera perspective: fov=60deg, aspect={}, eye=(0,0,-2.5) -> origin, zZeroToOne=true",
+                    width / (float) height);
+        }
+        return ring;
+    }
+
     /** std140 vec4 = 16 字节（对齐规则：vec4 偏移必须 16 字节对齐）。 */
     private static final int PARAMS_BYTES = 16;
 
@@ -342,6 +372,16 @@ public final class FrameApi {
                     "vkdisp: blit pipeline not compiled yet: " + PipelineApi.BLIT_LOCATION);
         }
 
+        // P3.2/P3.3：透视相机矩阵（每帧按主目标宽高比重建；map/close 仍在开启 pass 之前）。
+        MappableRingBuffer camRing = cameraRing(width, height);
+        try (GpuBufferSlice.MappedView view = camRing.currentBuffer().map(false, true)) {
+            Std140Builder.intoBuffer(view.data()).putMat4f(new org.joml.Matrix4f()
+                    .perspective((float) Math.toRadians(60.0), width / (float) height, 0.1F, 32.0F, true)
+                    .lookAt(new org.joml.Vector3f(0.0F, 0.0F, -2.5F),
+                            new org.joml.Vector3f(0.0F, 0.0F, 0.0F),
+                            new org.joml.Vector3f(0.0F, 1.0F, 0.0F)));
+        }
+
         // P3.1 前置：光空间矩阵写入自己的环形缓冲（map/close 不是编码器命令，但仍在开启 pass 之前执行，
         // 遵守「pass 打开期间不动 encoder」的实测规则）。
         MappableRingBuffer matrixRing = lightMatrixRing();
@@ -385,6 +425,7 @@ public final class FrameApi {
             pass.setPipeline(shadowed);
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform(PipelineApi.LIGHT_MATRIX_UNIFORM, matrixRing.currentBuffer());
+            pass.setUniform(PipelineApi.CAMERA_UNIFORM, camRing.currentBuffer());
             pass.setUniform(PipelineApi.SAMPLER_UNIFORM, depthA, sampler);
             pass.setVertexBuffer(0, geometryBuffer().slice());
             pass.draw(GEOMETRY_VERTEX_COUNT, 1, 0, 0);
