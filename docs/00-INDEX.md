@@ -38,6 +38,7 @@
 13-GAP-REGISTRY.md    ← 上面那份的登记表（先登记再实现）
 15-ITERATION.md       ← 迭代维护协议
 16-READING.md         ← 按读者类型的阅读路径
+18-PARALLEL.md        ← 并行开发路线（哪些能同时干、不许碰什么）
 AGENT_CONTEXT.md      ← 跨会话记忆（决策、原版 API 清单、待决策项）
 ```
 
@@ -61,6 +62,7 @@ AGENT_CONTEXT.md      ← 跨会话记忆（决策、原版 API 清单、待决�
 | `15-ITERATION.md` | 三层防乱协议（A1–A17） |
 | `16-READING.md` | 按读者类型的阅读路径 |
 | `17-NATIVE.md` | **性能预算 + 参考先行**；C++/Rust 仅作未验证的可选项 |
+| `18-PARALLEL.md` | **并行开发路线**：可并行的 6 条线、契约冻结闸门、边界与限制 |
 | `AGENT_CONTEXT.md` | 跨会话记忆 |
 
 ---
