@@ -62,8 +62,6 @@ AGENT_CONTEXT.md      ← 跨会话记忆（决策、原版 API 清单、待决�
 | `16-READING.md` | 按读者类型的阅读路径 |
 | `17-NATIVE.md` | **性能预算 + 参考先行**；C++/Rust 仅作未验证的可选项 |
 | `AGENT_CONTEXT.md` | 跨会话记忆 |
-| `_archive/` | 旧方向文档（07 / 08 / 10 / 15 / 17） |
-| `_archive-开发计划-v2-旧方向.md` | 旧主计划 |
 
 ---
 
@@ -76,5 +74,6 @@ AGENT_CONTEXT.md      ← 跨会话记忆（决策、原版 API 清单、待决�
 
 ## 4. 提醒
 
-**`_archive/` 里的东西只用于查历史。** 里面的路线 A/B/C、「假 Sodium」、
-`Shader-Core-Vulkan-docs/` 路径、`26.3.0.16-beta` 版本号等，**全部已作废**。
+**旧方向（改写第三方渲染器）的文档已于 2026-09-29 全部删除**，不留归档副本。
+里面的路线 A/B/C、「假 Sodium」、`Shader-Core-Vulkan-docs/` 路径等**全部已作废**，
+不要再去找，也不要尝试恢复。**只有 `docs/` 下的 `00`–`17` + `AGENT_CONTEXT.md` 是有效文档。**
