@@ -5,6 +5,27 @@
 
 ---
 
+## 2026-09-29 — E 线二期：多绑定槽（binding>0）与绑定布局语义
+
+- **本次改了什么**（`src/main/java/dev/vkdisp/pipeline/model/` + 同名 test 包，均在该线独占路径内）：
+  1. 新增 `VertexBindingSlot`（一个绑定槽 = 槽号 + 槽内 `VertexLayout`）与 `VertexBindingLayout`（多槽中间表示：逐槽校验 + 跨槽校验 + canonical text 往返）。
+  2. `PipelineCacheKey` 新增静态工厂 `ofMultiSlot(spec, VertexBindingLayout, bindGroupLayout)` —— **一期 `of(...)` 签名与行为零改动**。
+  3. 新增 `VertexBindingLayoutTest`（25 用例）。
+- **为什么改**：E 线一期只覆盖「交错布局的绑定 0」；真实管线/多流渲染需要 binding index > 0，且渲染前要做 mesh stride 与 binding stride 的双侧校验（`08-TESTING.md` §5，T9「彩色尖刺」）。
+- **影响的文档**：本 `CHANGE_LOG.md`。
+- **测试结果**：
+  - ✅ `./gradlew test` → exit=0；本阶段 **25 用例 0 失败**；**一期 64 例零破**（BindGroupLayoutIrTest 16 / PipelineCacheKeyTest 15 / PipelineModelIntegrationTest 5 / VertexElementFormatTest 6 / VertexLayoutTest 22）；E 线合计 **89 用例 0 失败**；全仓库 **264 用例 0 失败**。
+  - ✅ **槽 0 回归保护**：offset `0,12,16,24,28,32,35,39`、size `12,4,8,4,4,3,4,8`、stride `47` 逐项断言，且与一期 `VertexLayout.of(SPEC).canonicalText()` **逐字符相等**。
+  - ✅ **多槽数值**：槽 1（`at_tangent vec4f` + `at_velocity vec3f`）offset `0/16`、stride `28`；`fromDeclarations(Map)` 无论遍历顺序槽号一律升序（缓存键确定性的来源）。
+  - ✅ **显式诊断（T11，全 ERROR 且均有用例）**：槽越界（`<0` 或 `>=16`，槽 15 合法）/ 重复槽 / 空槽 / 跨槽同名属性归属不明 / 槽内 stride-offset-size 不匹配 / 坏槽头与坏属性行等 14 类；空绑定集为 INFO（与一期口径一致）。
+- **该线自查发现并修掉的自身缺陷**（值得记录）：初版对「被跳过的槽」不再聚合其槽内诊断，导致「槽 2 因未知类型被跳过 → 变空槽」时只报 `EMPTY_BINDING_SLOT`、丢掉原因；已改为先聚合槽内诊断再决定是否接受该槽，并有单测 `slotLayoutDiagnosticsAreAggregated` 钉住。
+- **设计决策**：多槽入口刻意用**独立方法名** `ofMultiSlot(...)` 而非重载 —— 该线实测重载会让一期测试里 `of(spec, null, bindings)` 的 `null` 字面量产生编译歧义（一期直接红）。两个入口不可混用（布局文本形状不同），方向安全：宁可 cache miss，不可错复用。
+- **未覆盖 / 存疑**：① 多槽路径的 F1 适配仍无单测（F4 的 test 源集 classpath 不含 Minecraft 类型，与一期同缺口）；② 未做 mesh 侧多槽 stride 双侧比对（要等主线 P1.2 拿到原版 binding）；③ 无真实 pack 多流样本；④ `MAX_BINDING_SLOTS=16` 取公开规范下界，未接设备实际上限查询（属 `bridge/DeviceApi` 范围）；⑤ 冷路径零性能优化。
+- **P-1d 未定稿项**：`mc_Entity` 底层元素类型是否影响 stride 47 —— 本线一律不动，槽 0 数值逐位沿用一期，等 §3.2 由 env-1 定稿（07 X9）。
+- **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
+
+---
+
 ## 2026-09-29 — 多目标三 pass 链（离屏 ping-pong 轮换）+ 采样翻转规则标定
 
 - **本次改了什么**：

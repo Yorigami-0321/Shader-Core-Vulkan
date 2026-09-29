@@ -95,13 +95,7 @@ public record PipelineCacheKey(
         Objects.requireNonNull(vertexLayout, "vertexLayout");
         Objects.requireNonNull(bindGroupLayout, "bindGroupLayout");
 
-        ModelNames.requireNonBlank(spec.programId(), "programId");
-        ModelNames.requireNonBlank(spec.location(), "location");
-        ModelNames.requireNonBlank(spec.vertexShader(), "vertexShader");
-        ModelNames.requireNonBlank(spec.fragmentShader(), "fragmentShader");
-        for (String name : spec.vertexBindingNames()) {
-            ModelNames.requireCacheTextSafe(name, "vertexBindingNames[]");
-        }
+        requireSpecFields(spec);
         requireNoErrors("vertexLayout", vertexLayout.hasErrors(), vertexLayout.errors());
         requireNoErrors("bindGroupLayout", bindGroupLayout.hasErrors(), bindGroupLayout.errors());
 
@@ -114,6 +108,53 @@ public record PipelineCacheKey(
                 spec.optional(),
                 vertexLayout.canonicalText(),
                 bindGroupLayout.canonicalText());
+    }
+
+    /**
+     * 多槽版缓存键（E 线二期）：把 {@link VertexBindingLayout} 的规范文本整体放进键。
+     *
+     * <p>刻意用独立方法名而不是重载：重载会让「传 null 字面量」的既有调用点产生歧义
+     * （一期单槽入口 {@link #of(PipelineSpecIr, VertexLayout, BindGroupLayoutIr)} 必须零改动）。
+     *
+     * <p><b>两个入口不可混用</b>：内嵌的布局文本形状不同，同一条管线经两个入口会得到两个键。
+     * 方向是安全的（宁可 cache miss，不可错复用旧管线 = T9「彩色尖刺」）。
+     *
+     * @param spec                管线声明（不可为 null）
+     * @param vertexBindingLayout 多槽顶点布局（不可为 null）
+     * @param bindGroupLayout     绑定布局（不可为 null）
+     * @return 确定性缓存键
+     * @throws NullPointerException     任一入参为 null
+     * @throws IllegalArgumentException 字符串字段空白 / 绑定名不安全 / 布局带 ERROR 诊断
+     */
+    public static PipelineCacheKey ofMultiSlot(
+            PipelineSpecIr spec, VertexBindingLayout vertexBindingLayout, BindGroupLayoutIr bindGroupLayout) {
+        Objects.requireNonNull(spec, "spec");
+        Objects.requireNonNull(vertexBindingLayout, "vertexBindingLayout");
+        Objects.requireNonNull(bindGroupLayout, "bindGroupLayout");
+
+        requireSpecFields(spec);
+        requireNoErrors("vertexBindingLayout", vertexBindingLayout.hasErrors(), vertexBindingLayout.errors());
+        requireNoErrors("bindGroupLayout", bindGroupLayout.hasErrors(), bindGroupLayout.errors());
+
+        return new PipelineCacheKey(
+                spec.programId(),
+                spec.location(),
+                spec.vertexShader(),
+                spec.fragmentShader(),
+                spec.vertexBindingNames(),
+                spec.optional(),
+                vertexBindingLayout.canonicalText(),
+                bindGroupLayout.canonicalText());
+    }
+
+    private static void requireSpecFields(PipelineSpecIr spec) {
+        ModelNames.requireNonBlank(spec.programId(), "programId");
+        ModelNames.requireNonBlank(spec.location(), "location");
+        ModelNames.requireNonBlank(spec.vertexShader(), "vertexShader");
+        ModelNames.requireNonBlank(spec.fragmentShader(), "fragmentShader");
+        for (String name : spec.vertexBindingNames()) {
+            ModelNames.requireCacheTextSafe(name, "vertexBindingNames[]");
+        }
     }
 
     /** 规范文本：单射编码（长度前缀字段 + 带计数前缀的绑定名列表）。 */
