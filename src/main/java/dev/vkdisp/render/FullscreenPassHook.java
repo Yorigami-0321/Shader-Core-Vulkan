@@ -145,7 +145,7 @@ public final class FullscreenPassHook {
             if (!firstFrameLogged) {
                 firstFrameLogged = true;
                 VkDisp.LOGGER.info(
-                        "vkdisp shadow chain executed ({}x{}), lightMatrixPhase={} (1: geometry 光空间 -> 阴影贴图, 2: 阴影深度 -> offscreen1, 3: offscreen1 -> main)",
+                        "vkdisp shadow sample chain executed ({}x{}), lightMatrixPhase={} (1: 几何光空间 -> 阴影贴图, 2: 世界视图+阴影采样 -> offscreen1, 3: offscreen1 -> main)",
                         size.width(), size.height(), phase);
             } else if (paramLogs < 5 && frameCounter % 120 == 0) {
                 paramLogs++;

@@ -15,12 +15,18 @@ layout(std140) uniform LightMatrix {
 };
 
 layout(location = 0) out vec4 vColor;
+layout(location = 1) out vec3 vWorldPos;
 
 void main() {
-    // 顶点数据可视为「世界/光空间」坐标（z 由顶点数据给定：0.3 近 / 0.7 远）；
-    // 由 uLight 变换到裁剪空间——这正是 P3.1 影子 pass 所需的「光空间矩阵 → 顶点」链路。
-    // 当前 uLight 为占位矩阵（T+0.3 / S0.6，见 FrameApi.placeholderLightMatrix）；
-    // 画面位移即为「矩阵 uniform 真的生效」的像素级证据。
+    // 顶点数据是「世界」坐标（z 由顶点数据给定：0.3 近 / 0.7 远）。两条管线共用本文件：
+    //   SHADOW_MAP_PASS（管线 define）→ 渲染进阴影贴图：裁剪空间 = 光空间
+    //   否则（相机视图，P3.3 世界渲染）→ 裁剪空间 = 占位 NDC 视图（真实相机矩阵归 P3.2/3.3 主体）
+    // 世界坐标两种情况都输出，供阴影采样回算光空间坐标。
+#ifdef SHADOW_MAP_PASS
     gl_Position = uLight * vec4(Position, 1.0);
+#else
+    gl_Position = vec4(Position, 1.0);
+#endif
+    vWorldPos = Position;
     vColor = Color;
 }

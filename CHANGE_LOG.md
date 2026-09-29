@@ -5,6 +5,38 @@
 
 ---
 
+## 2026-09-29 — P3.3 阴影采样（世界视图渲染 + 阴影贴图深度比较 → 明暗可判定）
+
+- **本次改了什么**：
+  1. `geometry.vsh`：加 `SHADOW_MAP_PASS` 条件分支（`#ifdef`）——同一带顶点绑定的着色器被**两条管线**以不同 define 编译：阴影贴图 pass（裁剪空间=光空间）与世界视图 pass（裁剪空间=占位 NDC 视图）；同时输出 `vWorldPos` 供阴影回投。
+  2. 新增 `assets/vkdisp/shaders/shadowed.fsh`：世界坐标 → `uLight` 回投光空间 → 按正交范围映射到 uv → **采样阴影贴图深度** → `myDepth - bias > stored` 判定受影 → 受影片元 `×0.35` 变暗。
+  3. `bridge/PipelineApi.java`：新增**阴影采样管线** `vkdisp:pipeline/shadowed`（共用 geometry.vsh 但**无** define；片元 shadowed.fsh；同一绑定组含 `LightMatrix` UBO + `InSampler`；无深度状态）；几何管线加 `.withShaderDefine("SHADOW_MAP_PASS")`。
+  4. `bridge/FrameApi.java`：Pass 2 由「深度可视化」改为**世界视图渲染 + 阴影采样**（同一 encoder 内不同附件）；就绪判定改看 geometry/shadowed/blit。
+  5. 注册器埋点 `(1/6)…(6/6)`；Hook 埋点 `shadow sample chain executed`。
+- **为什么改**：P3.1 已能把深度写进阴影贴图；P3.3 是它的价值兑现——**在世界坐标里用阴影贴图算明暗**。做成了「暗绿/亮绿 + 红块不受影」的颜色差异，可像素级判定阴影是否真的生效（而不是只看到贴图）。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §5 P3 前置清单。
+- **测试结果**（证据目录 `tools/vulkan-local/evidence/`，被 `.gitignore` 覆盖、不入库）：
+  - ✅ **构建/测试**：`./gradlew build` exit=**0**；`./gradlew test` 全仓库 **264 用例 0 失败**。
+  - ✅ **日志**：`p33_shadow_sample.log`（sha256 `a364cea519259972…`）——`pipeline registered (5/6): vkdisp:pipeline/shadowed`、`(6/6) blit (total=6)`、`count check: registered=6, compiled=6 (aligned)`、`shadow sample chain executed (854x480)`；ERROR=**2**（仅 WSL 环境 narrator/OpenAL），`vkdisp` ERROR=**0**。
+  - ✅ **阴影生效的像素级判据**（截图 `p33_shadow_sample.png`，sha256 `be16fe8cf5df7804…`）：
+    
+| 颜色类 | 像素数 | 含义 |
+|---|---|---|
+| 受光绿 `(0,255,0)` | **29664** | 未被遮挡的绿块 |
+| **受影绿 `(0,89,0)`** | **19584** | **受阴影遮挡 → 0.35 调暗（89 = 255×0.35 精确吻合）** |
+| 受光红 `(255,0,0)` | **24480** | 红块（投影者）自身受光 |
+| 受影红 `(89,0,0)` | **0** | 红块不被自己的阴影遮挡（符合预期） |
+    
+    绿区阴影覆盖率 **39.8%**；截图中暗/亮绿分界线随光方向倾斜、带硬阴影锯齿 —— **阴影采样链路（世界坐标 → 光空间 → 深度比较）真实生效**。
+- **未覆盖 / 存疑（不掩饰）**：
+  1. 世界视图仍是**占位 NDC 视图**（非真实相机矩阵与透视投影）——归 P3.2/P3.3 主体；
+  2. uv 的 y 映射按 y-up 直写并已实测对齐（若换环境需复核，见 shadowed.fsh 注释）；
+  3. 硬阴影无 PCF/比较采样器；bias 固定 0.003（未做自适应）；
+  4. 单级联、单光源、2 个四边形遮挡物；未与原版 LevelRenderer 光空间列表/CSM 集成。
+- **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
+
+---
+
 ## 2026-09-29 — P3.1 影子 pass（自建光空间矩阵 + 阴影贴图渲染 + 可视化链）
 
 - **本次改了什么**：

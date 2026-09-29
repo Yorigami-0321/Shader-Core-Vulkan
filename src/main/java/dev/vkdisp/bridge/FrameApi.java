@@ -280,12 +280,12 @@ public final class FrameApi {
      * @return 已编译返回 true；尚未完成编译返回 false（不抛异常，供每帧轮询）
      */
     public static boolean isPipelineReady() {
-        // 本帧链用到 geometry / depthviz / blit 三条（pattern 与 composite 已注册但不在本帧链中）。
+        // 本帧链用到 geometry / shadowed / blit 三条（pattern、composite、depthviz 已注册但不在本帧链中）。
         return PipelineApi.isGeometryPipelineRegistered()
-                && PipelineApi.isDepthVisPipelineRegistered()
+                && PipelineApi.isShadowedPipelineRegistered()
                 && PipelineApi.isBlitPipelineRegistered()
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.geometryPipeline()) != null
-                && RenderSystem.getCompiledPipelineNullable(PipelineApi.depthVisPipeline()) != null
+                && RenderSystem.getCompiledPipelineNullable(PipelineApi.shadowedPipeline()) != null
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.blitPipeline()) != null;
     }
 
@@ -326,10 +326,10 @@ public final class FrameApi {
         GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
 
         // 三条管线都要就绪（图案 + 合成 + 传递）；任一未编译完成都抛异常，绝不静默少画一个 pass。
-        CompiledRenderPipeline depthVis = RenderSystem.getCompiledPipelineNullable(PipelineApi.depthVisPipeline());
-        if (depthVis == null) {
+        CompiledRenderPipeline shadowed = RenderSystem.getCompiledPipelineNullable(PipelineApi.shadowedPipeline());
+        if (shadowed == null) {
             throw new IllegalStateException(
-                    "vkdisp: depthviz pipeline not compiled yet: " + PipelineApi.DEPTHVIS_LOCATION);
+                    "vkdisp: shadowed pipeline not compiled yet: " + PipelineApi.SHADOWED_LOCATION);
         }
         CompiledRenderPipeline geometry = RenderSystem.getCompiledPipelineNullable(PipelineApi.geometryPipeline());
         if (geometry == null) {
@@ -374,17 +374,20 @@ public final class FrameApi {
             pass.setVertexBuffer(0, geometryBuffer().slice());
             pass.draw(GEOMETRY_VERTEX_COUNT, 1, 0, 0);
         }
-        // Pass 2：阴影贴图深度 → 灰度可视化（不同附件，规避同附件二次 pass 的问题）。
+        // Pass 2（P3.3）：**世界视图**渲染几何，同时采样阴影贴图（Pass 1 的深度）做深度比较；
+        // 受阴影的片元变暗 → 「阴影真的生效」变成可判定的颜色差异（不同附件，规避同附件二次 pass 问题）。
         try (RenderPass pass = encoder.createRenderPass(
-                () -> label + " 2 (shadow depth -> offscreen1)",
+                () -> label + " 2 (world + shadow sample -> offscreen1)",
                 viewB,
                 Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)),
                 null,
                 OptionalDouble.empty())) {
-            pass.setPipeline(depthVis);
+            pass.setPipeline(shadowed);
             RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform(PipelineApi.LIGHT_MATRIX_UNIFORM, matrixRing.currentBuffer());
             pass.setUniform(PipelineApi.SAMPLER_UNIFORM, depthA, sampler);
-            pass.draw(3, 1, 0, 0);
+            pass.setVertexBuffer(0, geometryBuffer().slice());
+            pass.draw(GEOMETRY_VERTEX_COUNT, 1, 0, 0);
         }
         // Pass 3：offscreen1 → 主目标（最后一级；主目标只由本 pass 写入）。
         // ⚠️ 采样的必须是**本帧链实际写入的那个目标**（实测教训：曾误采样本链未写入的目标）。

@@ -78,8 +78,11 @@ public final class PipelineApi {
     /** 深度可视化管线 location（P3 前置：采样深度纹理 → 灰度输出，用于验证深度附件链路）。 */
     public static final String DEPTHVIS_LOCATION = "vkdisp:pipeline/depthviz";
 
-    /** 几何管线 location（P3 前置：真实顶点缓冲 + 深度剔除验证）。 */
+    /** 几何管线 location（P3 前置：真实顶点缓冲 + 深度剔除验证；本管线渲染阴影贴图）。 */
     public static final String GEOMETRY_LOCATION = "vkdisp:pipeline/geometry";
+
+    /** 阴影采样管线 location（P3.3：世界视图渲染 + 采样阴影贴图）。 */
+    public static final String SHADOWED_LOCATION = "vkdisp:pipeline/shadowed";
 
     /** 光空间矩阵 uniform 名（P3.1 前置：与 geometry.vsh 的 std140 块字面一致）。 */
     public static final String LIGHT_MATRIX_UNIFORM = "LightMatrix";
@@ -129,6 +132,14 @@ public final class PipelineApi {
     private static final Identifier GEOMETRY_SHADER_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "geometry");
 
+    /** 阴影采样管线 location id。 */
+    private static final Identifier SHADOWED_PIPELINE_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/shadowed");
+
+    /** 阴影采样片元着色器 id：vkdisp:shadowed → assets/vkdisp/shaders/shadowed.fsh。 */
+    private static final Identifier SHADOWED_SHADER_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "shadowed");
+
     /** 注册成功后暂存的管线实例（供 FrameApi 使用）；未注册时为 null。 */
     private static RenderPipeline fullscreenPipeline;
 
@@ -143,6 +154,9 @@ public final class PipelineApi {
 
     /** 注册成功后暂存的几何管线实例；未注册时为 null。 */
     private static RenderPipeline geometryPipeline;
+
+    /** 注册成功后暂存的阴影采样管线实例；未注册时为 null。 */
+    private static RenderPipeline shadowedPipeline;
 
     /**
      * 几何顶点格式：Position(vec3f) + Color(vec4f)，stride = 28 字节。
@@ -299,6 +313,8 @@ public final class PipelineApi {
                 .withVertexShader(GEOMETRY_SHADER_ID)
                 .withFragmentShader(GEOMETRY_SHADER_ID)
                 .withVertexBinding(0, GEOMETRY_VERTEX_FORMAT)
+                // 本管线用于**渲染阴影贴图** → 让 geometry.vsh 走 SHADOW_MAP_PASS 分支（裁剪空间 = 光空间）。
+                .withShaderDefine("SHADOW_MAP_PASS")
                 // P3.1 前置：光空间矩阵 UBO（mat4，64B std140）。每帧由 FrameApi 上传。
                 .withBindGroupLayout(BindGroupLayout.builder()
                         .withUniform(LIGHT_MATRIX_UNIFORM, UniformType.UNIFORM_BUFFER)
@@ -323,6 +339,45 @@ public final class PipelineApi {
     /** 几何管线是否已注册完成（纯布尔视图）。 */
     public static boolean isGeometryPipelineRegistered() {
         return geometryPipeline != null;
+    }
+
+    /**
+     * 构建并注册 P3.3 的阴影采样管线（世界视图渲染 + 采样阴影贴图深度）。
+     *
+     * <p>与几何管线共用 `geometry.vsh`（**无** SHADOW_MAP_PASS define → 走相机视图分支），
+     * 片元为 `shadowed.fsh`（世界坐标回投光空间、采样深度、受阴影者变暗）。
+     * 只带采样器绑定 + 光空间矩阵 UBO；**无深度状态**（它渲染到无深度附件的目标）。
+     */
+    public static void registerShadowedPipeline(RegisterRenderPipelinesEvent event) {
+        RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                .withLocation(SHADOWED_PIPELINE_ID)
+                .withVertexShader(GEOMETRY_SHADER_ID)
+                .withFragmentShader(SHADOWED_SHADER_ID)
+                .withVertexBinding(0, GEOMETRY_VERTEX_FORMAT)
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withUniform(LIGHT_MATRIX_UNIFORM, UniformType.UNIFORM_BUFFER)
+                        .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
+                        .build())
+                .withCull(false)
+                .withColorTargetState(ColorTargetState.DEFAULT)
+                .build();
+        event.registerPipeline(pipeline);
+        shadowedPipeline = pipeline;
+        REGISTERED_PIPELINES.add(pipeline);
+    }
+
+    /** 阴影采样管线是否已注册完成（纯布尔视图）。 */
+    public static boolean isShadowedPipelineRegistered() {
+        return shadowedPipeline != null;
+    }
+
+    /** 已注册管线：阴影采样管线（bridge 包内部使用）。 */
+    static RenderPipeline shadowedPipeline() {
+        RenderPipeline pipeline = shadowedPipeline;
+        if (pipeline == null) {
+            throw new IllegalStateException("vkdisp: shadowed pipeline not registered yet");
+        }
+        return pipeline;
     }
 
     /** 已注册管线：几何管线（bridge 包内部使用）。 */
