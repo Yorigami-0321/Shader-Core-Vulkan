@@ -204,8 +204,9 @@ F1–F4 全部落地 → 放行并行
 ✅ P0.2 确认跑在 Vulkan 后端   （83a704d 验收通过；bridge/DeviceApi 落地）
 ✅ P0.3 首个可见产物           （主菜单截图 + 日志证据齐，run3 ERROR 清零）
 ✅ P0.4 bridge 包隔离落地       （业务包 `^import com\.mojang\.renderpearl` = 0 命中，仅 bridge/ 3 文件允许）
-   ▶️ P1.1 uniform 传递          ← 下一步（改数值 → 画面实时变化）
-   → P1.2 管线计数
+✅ P1.1 uniform 传递           （自定义 UBO VkDispParams；三张间隔截图 30.6%/25.8%/56.3% 像素不同）
+✅ P1.2 管线计数对齐           （日志 registered=1, compiled=1 aligned）
+   ▶️ 下一步：P3.1 影子 pass（可独立于 pack 加载推进；P2.x 解析链由 A/B 线汇合后再接）
    → P2.4 composite 生效 → P3.1 shadow → P3.2 gbuffers → P3.3 deferred
    → P4.1 主流包 → P4.2 切包回归 → P4.3 选项 GUI
 ```

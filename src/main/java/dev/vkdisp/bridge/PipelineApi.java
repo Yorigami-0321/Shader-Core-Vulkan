@@ -16,6 +16,9 @@ package dev.vkdisp.bridge;
  *    NeoForge 侧范本 = NeoForgeRenderPipelines（@EventBusSubscriber(Dist.CLIENT) + event.registerPipeline）。
  * 2. 备选：FrameGraphSetupEvent 帧图插 pass —— 调研否决（vanilla clear pass 会随后全清 main target，
  *    图案必被抹掉），本任务不采用；两条路径都是官方 API，无需 GAP 登记。
+ * 1b.（P1.1 补充）自定义 uniform 块：BindGroupLayout.builder().withUniform(name, UNIFORM_BUFFER) 的官方用法
+ *    （对照原版 BindGroupLayouts 的 GLOBALS = withUniform("Globals", UNIFORM_BUFFER)）；
+ *    GLSL 侧块名必须与此处 uniform 名一致，无显式 binding 序号。
  * 3. 我们的差异点：RenderPipeline 的构造与注册整段收在本 bridge 类内，业务包只接触
  *    FULLSCREEN_LOCATION 字符串常量与 registerFullscreenPipeline(...) 调用，零 com.mojang.renderpearl import；
  *    注册成功的管线实例暂存于本类，供 bridge/FrameApi 绘制时取用（业务层拿不到原版类型）；
@@ -23,8 +26,11 @@ package dev.vkdisp.bridge;
  * 4. 许可证核对：本项目 MIT；只调用公开 API 签名，无代码复制（07-CONSTRAINTS §〇 P1、L5-L8）。
  * 5. 性能基线：启动期一次性注册，冷路径，不做性能优化（17-NATIVE.md §3.2）。
  */
+import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.pipeline.UniformType;
+import java.util.List;
 import dev.vkdisp.VkDisp;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
@@ -40,6 +46,15 @@ public final class PipelineApi {
     /** 全屏管线 location（纯字符串视图，业务包用于埋点断言）。 */
     public static final String FULLSCREEN_LOCATION = "vkdisp:pipeline/fullscreen";
 
+    /**
+     * P1.1：全屏管线的自定义 uniform 块名（纯字符串视图，业务包用于埋点断言）。
+     *
+     * <p>与 {@code fullscreen.fsh} 的 {@code layout(std140) uniform VkDispParams { vec4 Params; };}
+     * 同名 —— 原版约定是「绑定布局里的 uniform 名 == GLSL 块名」（对照原版 {@code clouds.vsh} 的
+     * {@code layout(std140) uniform CloudInfo} 写法，无显式 binding 序号）。
+     */
+    public static final String PARAMS_UNIFORM = "VkDispParams";
+
     /** 管线 location：vkdisp:pipeline/fullscreen → 注册表键。 */
     private static final Identifier FULLSCREEN_PIPELINE_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/fullscreen");
@@ -50,6 +65,9 @@ public final class PipelineApi {
 
     /** 注册成功后暂存的管线实例（供 FrameApi 使用）；未注册时为 null。 */
     private static RenderPipeline fullscreenPipeline;
+
+    /** 已注册管线集合（P1.2「注册数 == 编译成功数」断言的计数来源）。 */
+    private static final List<RenderPipeline> REGISTERED_PIPELINES = new java.util.ArrayList<>();
 
     private PipelineApi() {}
 
@@ -66,11 +84,29 @@ public final class PipelineApi {
                 .withLocation(FULLSCREEN_PIPELINE_ID)
                 .withVertexShader(FULLSCREEN_SHADER_ID)
                 .withFragmentShader(FULLSCREEN_SHADER_ID)
+                // P1.1：自定义 uniform 块（POST_PROCESSING_SNIPPET 已带 GLOBALS 布局，这里是第 2 组）。
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withUniform(PARAMS_UNIFORM, UniformType.UNIFORM_BUFFER)
+                        .build())
                 .withColorTargetState(ColorTargetState.DEFAULT)
                 .build();
         // 官方注册入口：required 管线，随原版 ShaderManager 一起编译（编译失败 = 整次资源重载失败，绝不静默）。
         event.registerPipeline(pipeline);
         fullscreenPipeline = pipeline;
+        REGISTERED_PIPELINES.add(pipeline);
+    }
+
+    /** 已注册管线数（P1.2 计数对齐断言用；纯整数视图）。 */
+    public static int registeredPipelineCount() {
+        return REGISTERED_PIPELINES.size();
+    }
+
+    /**
+     * 已注册管线列表（bridge 内部用，供 FrameApi 统计编译成功数）。
+     * 用不可变快照返回，业务包拿不到原版类型。
+     */
+    static List<RenderPipeline> registeredPipelines() {
+        return REGISTERED_PIPELINES;
     }
 
     /** 全屏管线是否已注册完成（纯布尔视图，业务包轮询用；未注册返回 false，不抛异常）。 */

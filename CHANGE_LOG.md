@@ -5,6 +5,31 @@
 
 ---
 
+## 2026-09-29 — P1.1 uniform 传递 + P1.2 管线计数对齐
+
+- **本次改了什么**：
+  1. `bridge/PipelineApi.java`：管线新增自定义 uniform 块绑定布局 `BindGroupLayout.builder().withUniform("VkDispParams", UNIFORM_BUFFER)`（原版 `BindGroupLayouts.GLOBALS` 同款写法）；新增 `registeredPipelineCount()` / `registeredPipelines()` 供计数断言。
+  2. `bridge/FrameApi.java`（P1.1 核心）：新增纯 Java `FrameParams(phase, intensity)` 视图；用原版 `MappableRingBuffer`（usage = `MAP_WRITE|UNIFORM` = 130，实测原版 `PostPass` 字节码）+ `Std140Builder` 每帧把 `vec4(phase, intensity, 0, 0)` 写进 UBO，绘制前 `pass.setUniform("VkDispParams", buffer)`、绘制后 `ring.rotate()`（原版 `PostPass` 同序列）；新增 `compiledPipelineCount()`。
+  3. `render/FullscreenPassHook.java`：每帧推进相位（4 秒周期，`System.nanoTime` 驱动）→ 画面实时变化；首帧埋点带 uniform 取值、之后限频 5 次打印 `phase`（避免刷屏）；新增 **P1.2 计数对齐断言**（注册数 == 编译成功数，不等打 ERROR，不静默少）。
+  4. `assets/vkdisp/shaders/fullscreen.fsh`：新增 `layout(std140) uniform VkDispParams { vec4 Params; };`（块名与绑定布局 uniform 名一致，原版 `clouds.vsh` 的 `CloudInfo` 同款约定），棋盘随 `Params.x` 每 4 秒平移 2 格。
+- **为什么改**：`docs/01-DEV-LOOP.md` §10 P1.1「改数值后画面实时变化」+ P1.2「注册数 == 编译成功数，日志可见」；`docs/08-TESTING.md` §3 的管线计数断言要求「允许编译失败，但不允许失败得无声无息」。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §5 主线阶梯（P1.1/P1.2 标记完成，下一步改为 P3.1 影子 pass 等可独立于 pack 加载的档位）。
+- **测试结果**（证据目录 `tools/vulkan-local/evidence/`，被 `.gitignore` 的 `/tools/` 覆盖、不入库）：
+  - ✅ **构建**：`./gradlew build` → `BUILD SUCCESSFUL`，exit=**0**；`./gradlew test` 全仓库 **180 用例 0 失败**（本轮未改并行线代码）。
+  - ✅ **P1.2 计数对齐**：`p11_uniform_final.log`（sha256 `88f9438a…2d675`）L137 `vkdisp: pipeline count check: registered=1, compiled=1 (aligned)`。
+  - ✅ **P1.1 uniform 传递**：L138 `vkdisp fullscreen pass executed (854x480), uniform VkDispParams=1.8650122`；随后 5 条限频埋点证明数值**逐帧变化**：L139 `phase=0.0349 at frame 120` → L140 `phase=2.0353 at frame 240` → L141 `phase=0.0370 at frame 360` → L142 `phase=2.0377 at frame 480` → L143 `phase=0.0528 at frame 600`。
+  - ✅ **画面实时变化（量化）**：同一窗口间隔 2 秒的三张截图（`p11_uniform_t0/t1/t2.png`）**像素差异 30.56%（t0↔t1）、25.78%（t1↔t2）、56.34%（t0↔t2）**（自写 PNG 解码逐像素比对，共 930×577=536,610 像素）——不是"看起来差不多"，是真变了。三张 sha256 各不相同：`c005bf96…`、`cdd61568…`、`5b98d785…`。
+  - ✅ **红线**：业务包 `^import com\.mojang\.renderpearl` 仍 **0 命中**（原版类型只在 `bridge/`）；后端 Vulkan（L56）。
+  - ⚠️ **ERROR=2**：仍为已知环境缺失（`Narrator` 缺 `libflite.so`、`SoundEngine` 无 OpenAL 设备），与 P0.1/P0.2/P0.3 同批；`vkdisp` 相关 ERROR = **0**。
+  - **GAP 登记**：不需要（自定义 UBO 走官方 `BindGroupLayout` + `setUniform`，有原版 `PostPass` 活样板）。
+- **未覆盖 / 存疑**：
+  1. uniform 目前由**时间驱动**（无需人工改值即可验证），尚未接 GUI/配置项做人工改值——归 P4.3 选项 GUI；
+  2. `intensity` 分量已写入 UBO 但 shader 暂未使用（预留），避免把未验证语义写死；
+  3. 仅验证单管线（registered=1/compiled=1），多管线场景（P3 起）需要同一断言随管线数增长继续成立。
+- **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
+
+---
+
 ## 2026-09-29 — P0.3 首个可见产物（全屏图案上屏）+ 闸门 F1/F2/F3/F4 落地
 
 - **本次改了什么**：

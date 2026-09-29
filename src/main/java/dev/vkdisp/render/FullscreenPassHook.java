@@ -61,6 +61,21 @@ public final class FullscreenPassHook {
     /** 资源已加载完成但管线仍不就绪的 ERROR 只打一次（可能是真编译失败）。 */
     private static boolean notReadyLogged;
 
+    /** P1.2 计数对齐断言只打一次。 */
+    private static boolean countChecked;
+
+    /** 进程启动时刻，用于生成秒级动画相位（P1.1：改数值 → 画面实时变化）。 */
+    private static final long START_NANOS = System.nanoTime();
+
+    /** 相位循环周期（秒）：取模避免浮点精度退化，同时保证任意两张间隔截图都可能不同。 */
+    private static final double PHASE_PERIOD_SECONDS = 4.0;
+
+    /** 每帧计数（用于按间隔打印 uniform 取值证据）。 */
+    private static int frameCounter;
+
+    /** uniform 取值证据最多打印 5 次（限频，避免刷屏）。 */
+    private static int paramLogs;
+
     private FullscreenPassHook() {
     }
 
@@ -103,12 +118,37 @@ public final class FullscreenPassHook {
             return;
         }
 
+        // P1.2：注册数 == 编译成功数（08-TESTING.md §3），不等即 ERROR，不静默少。
+        if (!countChecked) {
+            countChecked = true;
+            int registered = PipelineApi.registeredPipelineCount();
+            int compiled = FrameApi.compiledPipelineCount();
+            if (registered == compiled) {
+                VkDisp.LOGGER.info(
+                        "vkdisp: pipeline count check: registered={}, compiled={} (aligned)", registered, compiled);
+            } else {
+                VkDisp.LOGGER.error(
+                        "vkdisp: pipeline count mismatch: registered={}, compiled={}", registered, compiled);
+            }
+        }
+
+        // P1.1：每帧推进相位 → uniform 数值变化 → 画面实时变化（不是只在启动时生效）。
+        double seconds = (System.nanoTime() - START_NANOS) / 1_000_000_000.0;
+        float phase = (float) (seconds % PHASE_PERIOD_SECONDS);
+        FrameApi.FrameParams params = new FrameApi.FrameParams(phase, 1.0F);
+
         try {
-            FrameApi.FrameSize size = FrameApi.drawFullscreen(PASS_LABEL);
+            FrameApi.FrameSize size = FrameApi.drawFullscreen(PASS_LABEL, params);
+            frameCounter++;
             if (!firstFrameLogged) {
                 firstFrameLogged = true;
                 VkDisp.LOGGER.info(
-                        "vkdisp fullscreen pass executed ({}x{})", size.width(), size.height());
+                        "vkdisp fullscreen pass executed ({}x{}), uniform {}={}",
+                        size.width(), size.height(), PipelineApi.PARAMS_UNIFORM, phase);
+            } else if (paramLogs < 5 && frameCounter % 120 == 0) {
+                paramLogs++;
+                VkDisp.LOGGER.info(
+                        "vkdisp: uniform {} phase={} at frame {}", PipelineApi.PARAMS_UNIFORM, phase, frameCounter);
             }
         } catch (Throwable t) {
             // 失败必须打 ERROR 原文（07 X11：禁止吞异常让它看起来能跑）。

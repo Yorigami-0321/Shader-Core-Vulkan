@@ -8,9 +8,18 @@
 layout(location = 0) in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
 
+// P1.1 自定义 uniform 块：名字必须与 BindGroupLayout.withUniform("VkDispParams", UNIFORM_BUFFER) 一致
+// （原版约定见 clouds.vsh 的 layout(std140) uniform CloudInfo，无显式 binding 序号）。
+// x = phase（秒级相位，驱动棋盘平移：改数值画面就变）、y = intensity（预留）。
+layout(std140) uniform VkDispParams {
+    vec4 Params;
+};
+
 void main() {
     // 8x8 棋盘：品红 / 青，高饱和纯色，截图一眼可辨是否被本管线覆盖。
-    vec2 cell = floor(vUv * 8.0);
+    // P1.1：棋盘随 Params.x 每 4 秒平移 2 个格子 → 间隔截图必然不同（uniform 真的传到了 GPU）。
+    vec2 boardUv = fract(vUv + vec2(Params.x * 0.25, 0.0));
+    vec2 cell = floor(boardUv * 8.0);
     bool odd = mod(cell.x + cell.y, 2.0) < 1.0;
     vec3 color = odd ? vec3(1.0, 0.0, 1.0) : vec3(0.0, 1.0, 1.0);
 
