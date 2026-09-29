@@ -5,6 +5,28 @@
 
 ---
 
+## 2026-09-29 — D 线二期：gl_ 内建差异转换（真实 OF 包编译的前置）
+
+- **本次改了什么**（`src/main/java/dev/vkdisp/glsl/translate/` + 同名 test 包，均在该线独占路径内）：
+  1. 新增 `FragmentOutputAdapter`：`gl_FragColor` / `gl_FragData[n]` → `layout(location = N) out vec4`（优先复用包内已有的 out 声明，避免重复声明；歧义时 ERROR 不改写，拒绝猜测 X9）。
+  2. 新增 `TextureFunctionRenamer`：`texture1D/2D/3D/Cube/Proj/Lod` → `texture/textureProj/textureLod`；`shadow*` 额外包 `vec4(texture(...))` 以保持老式 `.r/.g/.b/.a` 语义。
+  3. 新增 `FtransformExpander`：`ftransform()` → `(gbufferProjection * gbufferModelView * vec4(Position, 1.0))`（矩阵名以已冻结的 `UniformCatalog` 为准；位置属性优先取包内已声明的 `Position`/`vaPosition`/`gl_Vertex`）。
+  4. 新增 `GlslTextScan`（包内共用扫描原语：等长视图、括号配对、宏续行标记）；`OfGlslTranslator` 改为**五级流水线**（一期三级 + 二期两级 + 注入），一期的 4 个类零改动。
+- **为什么改**：D 线一期明确列出「`gl_FragColor`/`texture2D`/`ftransform` 等 gl_ 内建差异未实现」，而真实 OF/Iris 老式包几乎必用这些写法 → 不补则包必然编译失败（P2.3 的直接前置）。
+- **影响的文档**：本 `CHANGE_LOG.md`（D 线一期条目中的「未覆盖第 2 条」由本轮闭合）。
+- **测试结果**：
+  - ✅ `./gradlew test --rerun-tasks` → `BUILD SUCCESSFUL`，全仓库 **239 用例 0 失败 0 错误**；其中一期 49 例仍全绿；二期新增 **59 例**（FragmentOutputAdapterTest 18 / TextureFunctionRenamerTest 12 / FtransformExpanderTest 12 / GlslTextScanTest 9 / OfGlslTranslatorBuiltinsTest 8）。
+  - ✅ golden 逐字比对：片元内建输出、五级流水线端到端（片元/顶点）、旧函数改名、ftransform 展开（自造样本，未使用任何第三方 pack 片段，18-PARALLEL §7.6）。
+  - ✅ 幂等：四处「输出即不动点」断言 + 组合样本两遍文本逐字节相同、第二遍 0 诊断。
+  - ✅ 边界（显式诊断不静默）：注释/字符串/`#define` 续行不改写；`gl_FragData` 未知下标/越界/缺下标 → ERROR；阶段不符 → ERROR；CRLF 保留；恶意输入不抛异常。
+  - ✅ 红线：`grep -rn "com\.mojang\.\(renderpearl\|blaze3d\)"` 于本线 main/test 两目录 → **NO MATCH**。
+- **关键实现修正（该线上报，值得记住）**：端到端行号映射**不能**写成 `injectedMap.compose(preInject)` —— F3 的 `compose` 在上游「该行是合成行」时会回退成本阶段起源，会把插入的合成声明误标成真实源行号（实测错成 `line=2`）。改为「两次插入位移先合成一张映射、再 compose 一次上游」，F3 契约零修改，并有专门用例钉死。
+- **未覆盖 / 存疑**（该线自报，不掩饰）：① 不代包声明位置属性（属顶点格式绑定职责），未声明时只 WARN；② 跨行调用显式降级（`ftransform(` 换行 → 只 WARN 不展开）；③ 未点名的旧名未动（X12，如 `texture2DRect` / `gl_FragDepth` 常量下标不折常量）；④ `out` 接口块不参与槽位解析；⑤ `#include` 展开后的行号归 C 线；⑥ 冷路径零性能优化。
+  - **合规**：IrisShaders/glsl-transformer 与 glsl-preprocessor（GPL-3.0 + 例外条款）全程**零接触、未读其代码**，样本与期望值全部自造（07 L12 §1.3 陷阱 2）。
+- **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
+
+---
+
 ## 2026-09-29 — 纹理采样链路打通（composite/deferred 的共同前置）
 
 - **本次改了什么**：
