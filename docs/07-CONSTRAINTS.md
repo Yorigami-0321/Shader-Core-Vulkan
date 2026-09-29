@@ -1,7 +1,30 @@
-# 12 · 工程约束清单
+# 07 · 工程约束清单
 
 > 违反任一条即为不合格。这是硬约束，不是建议。
-> 版本权威：`22-版本基线.md`。测试标准：`11-测试与验收标准.md`。
+> 版本权威：`05-VERSION.md`。测试标准：`08-TESTING.md`。
+
+---
+
+## 〇、本项目许可证：**MIT**（已定）
+
+```
+LICENSE                  ← 工程根，MIT 全文
+gradle.properties        ← mod_license=MIT
+TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
+```
+
+**这个决定带来三条硬约束：**
+
+| # | 约束 | 原因 |
+|---|---|---|
+| **P1** | **不得并入任何 LGPL / GPL 代码** | MIT 与 LGPL-3.0 / GPL-3.0 不是同族；一旦并入，整个工程就要改许可证 |
+| **P2** | **不得并入任何 ARR 内容** | All Rights Reserved 的内容无权再分发 |
+| **P3** | **分发时 jar 内必须带 `LICENSE`** | MIT 的署名要求：许可声明须随副本或实质部分一并提供 |
+
+> 换句话说：**MIT 选了就得完全自研。** 这也意味着 `L7`（移植 VulkanMod）**已作废** ——
+> 不再允许移植 VulkanMod 的代码，只能读思路、读它的做法，不能搬代码。
+>
+> 好处是干净：不用维护 `NOTICE`、不用逐文件加 LGPL 头、不担心许可传染。
 
 ---
 
@@ -9,34 +32,26 @@
 
 | # | 约束 | 原因 |
 |---|---|---|
-| **L1** | **本项目的许可证必须显式声明** | 无许可证 = 默认保留所有权利 = 别人无法合法使用 |
+| **L1** | **本项目许可证 = MIT，已写入 `LICENSE` 与 `gradle.properties`** | 无许可证 = 默认保留所有权利 = 别人无法合法使用 |
 | **L2** | **不得复制 Sodium 的任何代码** | Sodium 是 PolyForm Shield 1.0.0，Noncompete 禁止竞争性使用 |
 | **L3** | **不得把本项目描述成「Sodium 替代品」** | 同上；且本项目根本不需要 Sodium |
 | **L4** | **不得向 Sodium 仓库提 PR 或 issue 索要内部 API** | 其 CONTRIBUTING 明确拒绝任何 AI 生成代码 |
 | **L5** | **不得复制 Sulkan（GPL-3.0）的任何代码** | `.java` / `.glsl` / 资源文件，一个字都不抄 |
 | **L6** | **不得复制 Beryl（ARR）的任何内容** | All Rights Reserved，完全不可用 |
-| **L7** | **移植 VulkanMod（LGPL-3.0）代码时必须逐文件标注** | 保留原版权头 + 注明 `adapted from VulkanMod (LGPL-3.0)`；该衍生文件以 LGPL-3.0 分发 |
-| **L8** | **不得复制 Vitrail（LGPL-3.0）的代码** | 与本项目无关，且引用需遵守 LGPL |
+| **L7** | **不得复制 VulkanMod 的任何代码**（见 §〇 P1） | VulkanMod 是 LGPL-3.0，与 MIT 不同族；**只读思路，不搬代码** |
+| **L8** | **不得复制 Vitrail（LGPL-3.0）的代码** | 同上，且与本项目无关 |
 | **L9** | **不得声称与 CaffeineMC / Iris / OptiFine / Vitrail 存在关联** | 避免商标与归属问题 |
+| **L10** | **jar 内必须包含 `LICENSE`** | MIT 署名要求 |
 
 ### 1.1 可以借鉴什么（判断标准）
 
-**可以**：借鉴「往哪个方法注入」「该调用哪个 API」这类**事实性信息** —— 不受版权保护，
-写进笔记、写进文档都可以。
+**可以**：借鉴「往哪个方法注入」「该调用哪个 API」「该用哪个类」这类**事实性信息**——
+不受版权保护，写进笔记、写进文档都可以。
 
 **不可以**：复制「具体怎么写的代码」—— 一行都不落盘。
 
-### 1.2 本项目许可证建议
-
-| 选项 | 适用场景 |
-|---|---|
-| **LGPL-3.0** | 若确定性要移植 VulkanMod(LGPL) 的代码 —— 选它最省事，许可同族 |
-| **MIT** | 若坚持完全自研、想宽松发布 —— 但**不能**再并入 LGPL 代码 |
-| **GPL-3.0** | ⚠️ 过强，会传染，不建议 |
-
-> **当前状态**：⏳ 未定（`AGENT_CONTEXT.md` Q1）。在定下来之前，
-> **一律按「最严」执行：不复制任何外部代码**，这样任何许可证选择都不会翻车。
-> MDK 模板文件本身是 MIT（见仓库 `TEMPLATE_LICENSE.txt`），保留该文件即可。
+> ⚠️ **MIT 下的实操尺度**：由于不能再并入 LGPL 内容，判断要更保守。
+> 拿不准的时候：**只用它告诉你的"该往哪打洞"，代码自己从零写。**
 
 ---
 
@@ -48,14 +63,14 @@
 | **T2** | **所有 GPU 操作必须走 `com.mojang.renderpearl.*`** | 用户约束：禁止重复造轮子 |
 | **T3** | **不得自研 Vulkan 设备 / 命令缓冲 / render pass** | 官方有 |
 | **T4** | **不得自研 SPIR-V 编译器** | 走原版编译通道 |
-| **T5** | **业务代码不得直接 `import com.mojang.renderpearl.*`** | 必须经 `bridge` 包 —— 升级时只改一处（见 `23-版本迁移预案.md` §2） |
+| **T5** | **业务代码不得直接 `import com.mojang.renderpearl.*`** | 必须经 `bridge` 包 —— 升级时只改一处（见 `06-MIGRATION.md` §2） |
 | **T6** | **jar 内不得含游戏类**（`net/minecraft/**`、`com/mojang/**`） | 会与游戏冲突 |
 | **T7** | **jar 内不得含任何第三方模组类**（`net/caffeinemc/**`、`dev/vitrail/**`） | 会冲突且牵连许可证 |
 | **T8** | **`RenderTarget` / `TextureTarget` 仍在 `com.mojang.blaze3d.pipeline`** | 26.3 搬迁**不完整**，盲改包名会改坏 |
 | **T9** | **顶点 stride 必须在绘制前断言一致** | 不匹配会画成彩色尖刺且无报错 |
 | **T10** | **每一处 mixin 注入点必须打日志证明被调用** | 静默失败是本类工程的头号坑 |
 | **T11** | **任何降级路径必须显式报错或打 WARN** | 不允许「失败得像没发生过」 |
-| **T12** | **自制补充的特性必须收敛在 `platform/` 包，并登记在缺口表** | 官方更新后要能一处回退（见 `25-特性缺口与自行补充策略.md`） |
+| **T12** | **自制补充的特性必须收敛在 `platform/` 包，并登记在缺口表** | 官方更新后要能一处回退（见 `12-GAP-STRATEGY.md`） |
 
 ---
 
@@ -156,7 +171,7 @@ mod_group_id             = dev.vkdisp
 | `gradlew` 可执行位 | Windows 下需 `git update-index --chmod=+x gradlew` |
 | 提交粒度 | 一个功能一个 commit |
 | 分支 | `main` 保持可用；开发用 `dev` |
-| 提交前 | 必须跑 `11-测试与验收标准.md` §9 的回归清单 |
+| 提交前 | 必须跑 `08-TESTING.md` §9 的回归清单 |
 
 > ⚠️ **实测坑**：clone 时若系统级 `core.autocrlf=true`，**工作区文件本身会落盘成 CRLF**，
 > 光设 `.gitattributes` 不够 —— 必须实际 `sed -i 's/\r$//'` 重写一遍。
@@ -168,10 +183,11 @@ mod_group_id             = dev.vkdisp
 
 ```
 [ ] gradlew build 通过，jar 含 class
+[ ] jar 含 LICENSE（MIT 署名要求）
 [ ] jar 不含 net/caffeinemc、net/minecraft、dev/vitrail、com/mojang
 [ ] mixins.json 是 JAVA_25
 [ ] 无硬编码版本号（都走 gradle.properties）
-[ ] 无复制来的第三方代码
+[ ] 无复制来的第三方代码（MIT 下尤其严格 —— 不许并入 LGPL/GPL/ARR）
 [ ] 对外文字里没有「Sodium 替代品 / Iris 兼容 / OptiFine 官方」类表述
 [ ] 新增的 GPU 操作走的是 renderpearl
 [ ] 业务包没有 import com.mojang.renderpearl.*

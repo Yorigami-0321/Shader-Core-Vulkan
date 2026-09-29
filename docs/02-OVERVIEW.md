@@ -1,4 +1,4 @@
-# 01 · 项目概览
+# 02 · 项目概览
 
 > 2026-09-29 重写。目标主线已明确为：**基于原版 Vulkan 的、兼容 OptiFine/Iris 格式着色器包的着色器模组。**
 
@@ -69,7 +69,7 @@ vkdisp
 | 不支持 | **26.2 及之前**（那代没有 `renderpearl.backend.api`） |
 | 锁定 | MC 26.3 / NeoForge 26.3.0.23-beta / Java 25 / MDG 2.0.147 |
 
-> **权威文档：`22-版本基线.md`。** 任何版本相关表述与它冲突时以它为准。
+> **权威文档：`05-VERSION.md`。** 任何版本相关表述与它冲突时以它为准。
 
 ---
 
@@ -78,7 +78,7 @@ vkdisp
 **做**
 - OF/Iris 格式包的解析、编排、转译、GUI。
 - 所有 GPU 操作走原版 `com.mojang.renderpearl.*`。
-- 原版 Vulkan 暂不支持、但 OF/Iris 语义必需的特性，**可以自行补充**（见 `25-特性缺口与自行补充策略.md`）。
+- 原版 Vulkan 暂不支持、但 OF/Iris 语义必需的特性，**可以自行补充**（见 `12-GAP-STRATEGY.md`）。
 
 **不做**
 - ❌ 不写 Vulkan 设备 / 命令缓冲 / render pass（官方有）

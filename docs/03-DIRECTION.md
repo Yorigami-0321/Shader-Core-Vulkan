@@ -1,8 +1,8 @@
-# 20 · 方向变更与参考模组借鉴分析
+# 03 · 方向变更与参考模组借鉴分析
 
 > 状态：**新方向总纲，以本文为准。** 旧方向（替代 Sodium）的相关文档已全部归档到 `docs/_archive/`。
 > 日期：2026-09-29
-> 配套：`01-项目概览.md`（定位）、`21-新方向技术规格书.md`（组件）、`22-版本基线.md`（版本权威）
+> 配套：`02-OVERVIEW.md`（定位）、`04-SPEC.md`（组件）、`05-VERSION.md`（版本权威）
 > 结论摘要：**方向已从"替代 Sodium"整体切换为"基于原版 Vulkan 后端 + 自研 OptiFine/Iris 格式着色器引擎"，法律风险基本清零，且技术路径已被两个参考模组验证。**
 
 ---
@@ -13,9 +13,11 @@
 
 | 参考模组 | 许可证 | 借鉴方式 | 价值 |
 |---|---|---|---|
-| **VulkanMod** | LGPL-3.0 | 可研读，**部分可直接移植**（需保留版权声明、以 LGPL 分发衍生部分） | ⭐⭐⭐⭐⭐ 最高：它验证了"模组自己当渲染后端"整条路的可行性，且设备抽象层可直接借鉴 |
+| **VulkanMod** | LGPL-3.0 | **只能读，不能抄**（本项目是 MIT，LGPL 不同族，见 `07-CONSTRAINTS.md` §〇） | ⭐⭐⭐⭐⭐ 最高：它验证了"模组自己当渲染后端"整条路的可行性，其挂载模式与格式表是**思路**上的最佳范本 |
 | **Sulkan (sulkanShaders)** | GPL-3.0 | **只能读，不能抄**（GPL 传染，抄了你的项目必须整体 GPL 开源） | ⭐⭐⭐⭐ 高：它验证了"在原版 Vulkan 上注册自定义 RenderPipeline"的具体做法，是**思路**上的最佳范本 |
 | **Beryl** | ARR（闭源，作者同 xCollateral） | 不可借鉴代码 | ⭐⭐ 参考：它是 VulkanMod 的着色器管线，证明这条路有商业/闭源可行性 |
+
+> ⚠️ **共同结论**：三个参考模组**没有一个的代码能用**。它们的价值全部是"证明这条路能走通"+"告诉我们该往哪个方法打洞"。本项目 **MIT，100% 自研代码**。
 
 **关键事实：Sulkan 和 VulkanMod 都完全不支持 OptiFine/Iris 格式着色器包。** 这正是新方向真正的技术空白与价值所在——两个参考模组都只做"自带内嵌着色器/自研管线"，没有人做"兼容 OF/Iris 包的加载器"。这部分必须自研，没有轮子可造。
 
@@ -67,26 +69,27 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 
 ## 2. 参考模组逐一分析
 
-### 2.1 VulkanMod（LGPL-3.0）— 借鉴价值最高
+### 2.1 VulkanMod（LGPL-3.0）— 参考价值最高，但**代码不可用**
 
 **它做了什么**：`build.gradle` 里 `include()` 打包 LWJGL 的 `lwjgl-vulkan` / `lwjgl-vma` / `lwjgl-shaderc` / `lwjgl-spvc`，**自己建了完整的 Vulkan 设备、内存分配器、交换链、命令缓冲、描述符集**，然后通过 mixin 把原版的 `RenderSystem` / `GlStateManager` / `GL11/GL14/GL15/GL30` 全部接管。
 
-**可直接借鉴的具体资产**（按价值排序）：
+**可借鉴的具体资产**（⚠️ **只能读、只能抄"做法"，不能搬代码** —— 本项目 MIT，VulkanMod 是 LGPL-3.0，见 `07-CONSTRAINTS.md` §〇）：
 
 | 资产 | 位置 | 借鉴方式 |
 |---|---|---|
-| **`gl/` 包** — GL API 的 Vulkan 垫片 | `net/vulkanmod/gl/VkGlBuffer`、`VkGlProgram`、`VkGlTexture`、`VkGlFramebuffer`、`VkGlShader`、`GlUtil` | ⭐⭐⭐⭐⭐ 这是"把 GL 调用翻译成 Vulkan"的完整范本。**如果新方向想兼容老渲染路径，这是唯一成熟参考**。LGPL 允许移植，改文件头声明 + 本项目衍生部分以 LGPL 分发即可 |
-| **`ExtendedRenderPipeline` 模式** | `interfaces/shader/ExtendedRenderPipeline.java` | ⭐⭐⭐⭐⭐ **最高价值的模式**：给原版 `RenderPipeline` 挂 mixin 实现自定义接口，往里塞自己的 pipeline 对象。新方向要"在原生 pipeline 上挂 OF 语义"用一模一样的招 |
-| **`ShaderManagerM` 注入点** | `mixin/render/shader/ShaderManagerM.java` | ⭐⭐⭐⭐⭐ 它 `@Inject` 到 `ShaderManager.apply(...)` 的 `List.isEmpty()` 调用点，拿 `@Local CompilationCache`，再 `gpuDevice.precompilePipeline(pipeline, cache::getShaderSource)` —— **这就是"把自己的着色器塞进原版编译流程"的标准手法**，新方向必然要用 |
-| **`VkGlProgram` 的 ID 映射表** | `gl/VkGlProgram.java` | ⭐⭐⭐⭐ `Int2ReferenceOpenHashMap` + `genProgramId()`，把 GL 的整数 program id 映射到自己的 Pipeline。**着色器包引用 GL program 时这是必需的兼容层** |
-| **`GlUtil.vulkanFormat` 格式映射表** | `gl/GlUtil.java` | ⭐⭐⭐⭐ GL 格式 → `VK_FORMAT_*` 的完整 switch，现成的查表 |
-| **`SpirvCompiler` + `shader/converter/`** | `vulkan/shader/SpirvCompiler.java`、`converter/SpirvPipeline.java`、`SpirvShader.java` | ⭐⭐⭐ 用 lwjgl-shaderc 把 GLSL 编成 SPIR-V。**但新方向应该优先用原版自己的 GLSL→SPIR-V 通道**（见 §3.2），这个只作 fallback |
-| **`vulkan/shader/layout/`** | `AlignedStruct`、`PushConstants`、`Uniform`、`Mat3`、`Vec1f`、`Vec1i` | ⭐⭐⭐ std140/std430 对齐工具。OF 格式的 uniform 块对齐会用得上 |
+| **`gl/` 包** — GL API 的 Vulkan 垫片 | `net/vulkanmod/gl/VkGlBuffer`、`VkGlProgram`、`VkGlTexture`、`VkGlFramebuffer`、`VkGlShader`、`GlUtil` | ❌ **不借鉴**：这是"把 GL 调用翻译成 Vulkan"的完整实现，属于表达性代码；且 26.3 原版已是 Vulkan 后端，大部分工作原版已做完 |
+| **`ExtendedRenderPipeline` 模式** | `interfaces/shader/ExtendedRenderPipeline.java` | ⭐⭐⭐⭐⭐ **最高价值的模式**：给原版 `RenderPipeline` 挂 mixin 实现自定义接口，往里塞自己的 pipeline 对象。**照这个"做法"自己从零写**（例如 `ExtendedVkdispPipeline`） |
+| **`ShaderManagerM` 注入点** | `mixin/render/shader/ShaderManagerM.java` | ⭐⭐⭐⭐⭐ 它 `@Inject` 到 `ShaderManager.apply(...)` 的 `List.isEmpty()` 调用点，拿 `@Local CompilationCache`，再 `gpuDevice.precompilePipeline(pipeline, cache::getShaderSource)` —— **记住"注入点选在哪"这个事实，代码自己写** |
+| **`VkGlProgram` 的 ID 映射表** | `gl/VkGlProgram.java` | ⭐⭐⭐ 思路：用 `Int2ReferenceOpenHashMap` 做整数 id → Pipeline 映射。**"GL program id 需要兼容层"这个结论有用，实现自己写** |
+| **`GlUtil.vulkanFormat` 格式映射表** | `gl/GlUtil.java` | ⭐⭐⭐ 思路：GL 格式 → `VK_FORMAT_*` 需要一张表。**表要自己按 Vulkan spec 重建**（`GL_*` 常量是公开规范，不受版权保护） |
+| **`SpirvCompiler` + `shader/converter/`** | `vulkan/shader/SpirvCompiler.java`、`converter/SpirvPipeline.java`、`SpirvShader.java` | ⭐⭐ 不做。本项目 **T4：不得自研 SPIR-V 编译器**，走原版编译通道 |
+| **`vulkan/shader/layout/`** | `AlignedStruct`、`PushConstants`、`Uniform`、`Mat3`、`Vec1f`、`Vec1i` | ⭐⭐ 思路：std140/std430 对齐需要工具类。**对齐规则是 spec 公开内容，自己按 spec 写** |
 
 **关键限制（务必注意）**：
-- 它编译目标是 **MC 1.21.11 / Java 21 / yarn mappings / `com.mojang.blaze3d.*`**，新方向是 **26.3 / Java 25 / 官方 mappings / `com.mojang.renderpearl.*`**。**类名和包名全变了**，移植时必须做 `blaze3d.* → renderpearl.*` 的重映射（Vitrail 的 `versions/26.3.remap` 里就有现成的映射表）。
+- 它编译目标是 **MC 1.21.11 / Java 21 / yarn mappings / `com.mojang.blaze3d.*`**，新方向是 **26.3 / Java 25 / 官方 mappings / `com.mojang.renderpearl.*`**。**类名和包名全变了**（`blaze3d.* → renderpearl.*`，现成映射表见 `Vitrail-Shaders/versions/26.3.remap`）—— 但**因为不移植代码，这个映射表只作理解用，不是移植依据**。
 - 它 **完全不支持 OptiFine 格式**。它的着色器是自己写的、放在 `assets/vulkanmod/shaders/` 里的固定管线（`PipelineManager` 里硬编码 `terrain` / `terrain_earlyZ` / `blit` / `clouds` 四条），走的是自己的 JSON 配置格式，跟 OF 的 `shaders.properties`/`gbuffers_*` 毫无关系。
-- **它的 `gl/` 包的意义在 26.3 已经大幅下降**：26.3 的原版已经是 Vulkan 后端，`RenderSystem` 下面接的是 `renderpearl.backend.vulkan`。所以 VulkanMod 那套"用 Vulkan 假装 GL"的工作，**在新方向上大部分不需要做了** —— 原版已经替你做完了。真正需要的只是它那两三个"挂载模式"和格式映射表。
+- **它的 `gl/` 包的意义在 26.3 已经大幅下降**：26.3 的原版已经是 Vulkan 后端，`RenderSystem` 下面接的是 `renderpearl.backend.vulkan`。所以 VulkanMod 那套"用 Vulkan 假装 GL"的工作，**在新方向上大部分不需要做了** —— 原版已经替你做完了。真正有参考价值的只是它那两三个"挂载模式"（**做法**，不是代码）。
+- 🔴 **license 边界（本项目的红线）**：VulkanMod 是 **LGPL-3.0**，本项目是 **MIT**，两者不同族。**不得复制它的任何一行代码**（`07-CONSTRAINTS.md` §〇 P1 / L7）。可以带走的是"给 `RenderPipeline` 挂 mixin 扩展接口""`ShaderManager.apply` 里有个可注入的编译点"这类**事实性结论**。
 
 ### 2.2 Sulkan（GPL-3.0）— 思路范本，但代码不能用
 
@@ -103,7 +106,7 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 | **资源包打包技巧** | `pack/ShaderPackRepository.java` | ⭐⭐⭐⭐ 把用户的 zip 解包到 `resourcepacks/sulkan_shaderpack_active/`，自动写 `pack.mcmeta`，再把该包 ID 塞进 `options.resourcePacks`。**这是"让原版资源系统加载我的着色器"的干净做法** |
 | **`@Mixin(value=..., remap=false)` 注入 Sodium 内部** | `mixin/sodium/*.java` | ⭐⭐⭐ 如果你的新方向仍想**可选**利用 Sodium 的区块渲染（而非替代它），这些注入点是现成的 |
 
-**为什么不能用它的代码**：GPL-3.0 是强传染许可证。你的项目若包含任何 Sulkan 代码，整个项目必须以 GPL-3.0 开源分发。如果新方向的目标是宽松许可（MIT/LGPL）或闭源，**一行都不能抄**。可以抄的只有"它验证过这条路能走通"这个事实和它的架构分层。
+**为什么不能用它的代码**：GPL-3.0 是强传染许可证。你的项目若包含任何 Sulkan 代码，整个项目必须以 GPL-3.0 开源分发。本项目已是 **MIT**，**一行都不能抄**（`07-CONSTRAINTS.md` §〇 P1 / L5）。可以带走的只有"它验证过这条路能走通"这个事实和它的架构分层。
 
 ### 2.3 Beryl（ARR）— 纯参考
 
@@ -155,19 +158,19 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 |---|---|---|
 | Sodium PolyForm Shield Noncompete | 🔴 直接踩线 | 🟢 **不接触**，合规风险清零 |
 | 与 Vitrail 的关系 | 需要上游配合改代码 | 🟢 **完全不碰**，两个模组可共存 |
-| 借鉴 VulkanMod (LGPL) | — | 🟡 可移植，但衍生部分须 LGPL，且要保留版权声明 |
+| 借鉴 VulkanMod (LGPL) | — | 🔴 **只能读思路，不能移植代码**（MIT 与 LGPL 不同族） |
 | 借鉴 Sulkan (GPL) | — | 🔴 **只能读思路，不能抄代码** |
 | 借鉴 Beryl (ARR) | — | 🔴 完全不可 |
-| 本项目建议许可证 | 被迫纠结 | **LGPL-3.0**（便于吸收 VulkanMod 的可移植部分），或 **MIT**（若要闭源则全部自研） |
+| 本项目许可证 | 被迫纠结 | ✅ **已定：MIT**（`LICENSE` + `gradle.properties` 的 `mod_license=MIT`） |
 
-**红线**：不要抄 Sulkan 的 `.java`、不要抄它的 `.glsl`、不要抄它的资源文件。只借鉴"架构分层"和"注入点位置"这两个不构成表达的事实。
+**红线**：不要抄 Sulkan 的 `.java`、不要抄它的 `.glsl`、不要抄它的资源文件。**VulkanMod 同理**（LGPL 也不能并入 MIT 工程）。只借鉴"架构分层"和"注入点位置"这两个不构成表达的事实。
 
 ---
 
 ## 5. 新方向的分阶段计划
 
 > **版本基线（已明确）**：支持范围 = **MC 26.3 及之后发布的新版本**；**当前主线锁 26.3**。
-> 不支持 26.2 及之前。一切开发、验证、验收以 26.3 为准。详见 `22-版本基线.md`。
+> 不支持 26.2 及之前。一切开发、验证、验收以 26.3 为准。详见 `05-VERSION.md`。
 
 ### Phase 0 — 验证（1 个最小 E2E）
 
@@ -175,7 +178,7 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 - 用 `RenderPipeline.builder()` 注册一个全屏 pass，跑通"自定义着色器出现在屏幕上"
 - 验收：屏幕上出现一张自定义纯色/棋盘图
 - **这一步决定了整条路是否成立，务必最先做**
-- **前置动作**：先落实 `23-版本迁移预案.md` §2 的 `bridge` 包隔离设计——
+- **前置动作**：先落实 `06-MIGRATION.md` §2 的 `bridge` 包隔离设计——
   虽然现在只有一个 pass，但要让"原版 API 访问集中"从第一天就成立
 
 ### Phase 1 — 后处理链
@@ -206,24 +209,25 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 
 ### Phase 5 — 版本跟进（持续）
 
-- 26.4 / 26.5 … 发布后按 `23-版本迁移预案.md` §4 的流程升级
+- 26.4 / 26.5 … 发布后按 `06-MIGRATION.md` §4 的流程升级
 - 每次升级跑 §5 回归清单，回填 §6 迁移日志
 
 ---
 
 ## 6. 需要你拍板的
 
-1. **许可证选 LGPL-3.0 还是 MIT？**
-   - 想吸收 VulkanMod 的 `gl/` 包与格式映射 → 选 **LGPL-3.0**
-   - 想完全自研、将来可闭源 → 选 **MIT**，只读不抄 VulkanMod
+1. ~~**许可证选 LGPL-3.0 还是 MIT？**~~ ✅ **已定（2026-09-29）：MIT。**
+   已写入工程根 `LICENSE` 与 `gradle.properties` 的 `mod_license=MIT`。
+   后果：**不得并入任何 LGPL / GPL / ARR 代码**，VulkanMod 只能读思路不能搬代码。
+   三条硬约束见 `07-CONSTRAINTS.md` §〇（P1 / P2 / P3）。
 
 2. ~~是否仍要在 26.3 上继续？~~ **已定（2026-09-29）**：
-   支持 **26.3 及之后**的新版本，当前主线锁 **26.3**，不支持 26.2 及之前。见 `22-版本基线.md`。
+   支持 **26.3 及之后**的新版本，当前主线锁 **26.3**，不支持 26.2 及之前。见 `05-VERSION.md`。
 
 3. **是否保留对 Sodium 的可选增强？** 建议留到 Phase 4，先不碰。
 
-4. **旧 `Shader-Core-Vulkan/` 目录怎么处理？** 建议整体弃用、另起干净工程
-   （现有 4 个 Java 文件全部引用虚构 API，编译产物零个 class）。
+4. ~~**旧 `Shader-Core-Vulkan/` 目录怎么处理？**~~ ✅ **已决并执行**：
+   旧内容已清空，换成官方 NeoForge 26.3 MDK。
 
 ---
 
@@ -246,19 +250,19 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 | Sulkan 目标版本新 | `gradle.properties` `minecraft_version=26.2`, `options.release = 25`, `sodium_version=0.9.1+mc26.2` |
 | Vitrail 仍重度依赖 Sodium | 770 个类中 23 个引用 `caffeinemc`（3%），集中在 `mixin/sodium/*` 与 `sodium/*` —— **旧方向不可行，新方向绕开它是对的** |
 
-## 附录 B：可移植性速查（VulkanMod → 新方向）
+## 附录 B：类型对应速查（VulkanMod 1.21.11 → 本项目 26.3）
 
-| VulkanMod 类 | 1.21.11 类型 | 26.3 对应类型 | 移植难度 |
+> ⚠️ **用途仅限"理解与定位"**。本项目 MIT，**不得移植 VulkanMod 代码**（`07-CONSTRAINTS.md` §〇）。
+> 此表用来回答"它的这个东西相当于我们这边的什么"，不是移植依据。
+> 真正的重映射工具表（若将来用于原版 API 升级）见 `Vitrail-Shaders/versions/26.3.remap`。
+
+| VulkanMod 类 | 1.21.11 类型 | 26.3 对应类型 | 说明 |
 |---|---|---|---|
-| `interfaces/shader/ExtendedRenderPipeline` | `com.mojang.blaze3d.pipeline.RenderPipeline` | `com.mojang.renderpearl.api.pipeline.RenderPipeline` | 🟢 改 import 即可，**模式照搬** |
-| `mixin/render/shader/ShaderManagerM` | `ShaderManager.apply(Configs,ResourceManager,ProfilerFiller)` | 需重新定位签名 | 🟡 注入点需重找 |
-| `gl/VkGlProgram` | — | — | 🟢 自包含，改 Pipeline 类型即可 |
-| `gl/GlUtil.vulkanFormat` | `GL11/GL30` 常量 | — | 🟢 直接可用（`GL_*` 常量不变） |
-| `gl/VkGlBuffer/Texture/Framebuffer` | — | 原版已有 `renderpearl` 对应物 | 🟡 **可能不需要了** —— 先评估原版是否已覆盖 |
-| `vulkan/shader/layout/*` | — | — | 🟢 纯算法，可直接用 |
-| `vulkan/shader/SpirvCompiler` | lwjgl-shaderc | 原版自带编译 | 🟡 优先用原版，仅作 fallback |
-| `vulkan/Vulkan`（设备创建） | — | 原版 `VulkanDevice` | 🔴 **完全不需要**，这正是新方向的收益 |
-
-> 通用重映射：`com.mojang.blaze3d.*` → `com.mojang.renderpearl.*`（简单名配对），
-> 例外：`RenderTarget` / `TextureTarget` 仍在 `com.mojang.blaze3d.pipeline`。
-> 完整表见 `Vitrail-Shaders/versions/26.3.remap`。
+| `interfaces/shader/ExtendedRenderPipeline` | `com.mojang.blaze3d.pipeline.RenderPipeline` | `com.mojang.renderpearl.api.pipeline.RenderPipeline` | **模式可学**：给原版 pipeline 挂 mixin 扩展接口，自行实现 |
+| `mixin/render/shader/ShaderManagerM` | `ShaderManager.apply(Configs,ResourceManager,ProfilerFiller)` | 需重新定位签名 | **注入点可学**：26.x 签名已变，注入点要自己重找 |
+| `gl/VkGlProgram` | — | — | ❌ 不搬；26.3 原版已有对应物 |
+| `gl/GlUtil.vulkanFormat` | `GL11/GL30` 常量 | — | ❌ 不搬；表的**必要性**可学，内容按 Vulkan spec 自建 |
+| `gl/VkGlBuffer/Texture/Framebuffer` | — | 原版已有 `renderpearl` 对应物 | ❌ 不搬；原版已覆盖 |
+| `vulkan/shader/layout/*` | — | — | ❌ 不搬；对齐规则按 spec 自写 |
+| `vulkan/shader/SpirvCompiler` | lwjgl-shaderc | 原版自带编译 | ❌ 不搬；本项目 T4 禁止自研编译通道 |
+| `vulkan/Vulkan`（设备创建） | — | 原版 `VulkanDevice` | ❌ 完全不需要，这正是新方向的收益 |
