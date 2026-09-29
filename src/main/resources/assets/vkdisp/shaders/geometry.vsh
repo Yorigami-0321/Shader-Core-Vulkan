@@ -9,23 +9,28 @@
 layout(location = 0) in vec3 Position;
 layout(location = 1) in vec4 Color;
 
-// P3.1 前置：光空间矩阵（std140 mat4，块名必须与 BindGroupLayout.withUniform("LightMatrix") 一致）。
+// 两条管线共用本文件、以 SHADOW_MAP_PASS define 区分（块名必须与各自 BindGroupLayout 一致）：
+//   阴影贴图 pass：需要光空间矩阵；世界视图 pass：需要真实透视相机矩阵。
+#ifdef SHADOW_MAP_PASS
 layout(std140) uniform LightMatrix {
     mat4 uLight;
 };
+#else
+layout(std140) uniform Camera {
+    mat4 uCamera;
+};
+#endif
 
 layout(location = 0) out vec4 vColor;
 layout(location = 1) out vec3 vWorldPos;
 
 void main() {
-    // 顶点数据是「世界」坐标（z 由顶点数据给定：0.3 近 / 0.7 远）。两条管线共用本文件：
-    //   SHADOW_MAP_PASS（管线 define）→ 渲染进阴影贴图：裁剪空间 = 光空间
-    //   否则（相机视图，P3.3 世界渲染）→ 裁剪空间 = 占位 NDC 视图（真实相机矩阵归 P3.2/3.3 主体）
-    // 世界坐标两种情况都输出，供阴影采样回算光空间坐标。
+    // 顶点数据是「世界」坐标（z 由顶点数据给定：0.3 近 / 0.7 远）。世界坐标两种情况都输出，
+    // 供阴影采样（shadowed.fsh）回投光空间；裁剪空间按 pass 分支选择：
 #ifdef SHADOW_MAP_PASS
     gl_Position = uLight * vec4(Position, 1.0);
 #else
-    gl_Position = vec4(Position, 1.0);
+    gl_Position = uCamera * vec4(Position, 1.0);
 #endif
     vWorldPos = Position;
     vColor = Color;
