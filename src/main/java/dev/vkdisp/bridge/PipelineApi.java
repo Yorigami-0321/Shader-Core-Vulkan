@@ -55,6 +55,16 @@ public final class PipelineApi {
      */
     public static final String PARAMS_UNIFORM = "VkDispParams";
 
+    /**
+     * 全屏管线的采样器 uniform 名（纯字符串视图）。
+     *
+     * <p>与原版 {@code BindGroupLayouts.IN_SAMPLER} 完全同构（字节码核实：
+     * {@code BindGroupLayout.builder().withUniform("InSampler", COMBINED_IMAGE_SAMPLER).build()}），
+     * GLSL 侧对应 {@code uniform sampler2D InSampler;}（原版 {@code core/blit_depth.fsh} 写法）。
+     * 采样器单独成组、不与 uniform 块混用，与原版 Globals/Sampler0 分组方式一致。
+     */
+    public static final String SAMPLER_UNIFORM = "InSampler";
+
     /** 管线 location：vkdisp:pipeline/fullscreen → 注册表键。 */
     private static final Identifier FULLSCREEN_PIPELINE_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/fullscreen");
@@ -85,8 +95,10 @@ public final class PipelineApi {
                 .withVertexShader(FULLSCREEN_SHADER_ID)
                 .withFragmentShader(FULLSCREEN_SHADER_ID)
                 // P1.1：自定义 uniform 块（POST_PROCESSING_SNIPPET 已带 GLOBALS 布局，这里是第 2 组）。
+                // 实验：UBO 与 sampler 放同一绑定组，声明顺序与 GLSL 一致。
                 .withBindGroupLayout(BindGroupLayout.builder()
                         .withUniform(PARAMS_UNIFORM, UniformType.UNIFORM_BUFFER)
+                        .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
                         .build())
                 .withColorTargetState(ColorTargetState.DEFAULT)
                 .build();

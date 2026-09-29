@@ -5,6 +5,31 @@
 
 ---
 
+## 2026-09-29 — 纹理采样链路打通（composite/deferred 的共同前置）
+
+- **本次改了什么**：
+  1. `bridge/PipelineApi.java`：管线增加采样器绑定 `BindGroupLayout.withUniform("InSampler", COMBINED_IMAGE_SAMPLER)`（与原版 `BindGroupLayouts.IN_SAMPLER` 同构），并与 `VkDispParams` UBO **合并进同一个绑定组**（原因见下）。
+  2. `bridge/FrameApi.java`：懒创建 16×16 四象限测试纹理（`device.createTexture(TEXTURE_BINDING|COPY_DST, RGBA8_UNORM)` + `NativeImage` 填像素 + `createCommandEncoder().writeToTexture(texture, image)` + `createTextureView`），采样器取原版 `RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST)`，绘制时 `pass.setUniform("InSampler", view, sampler)`。
+  3. `assets/vkdisp/shaders/fullscreen.fsh`：`uniform sampler2D InSampler;`（原版 `core/blit_depth.fsh` 写法），采样结果调制棋盘亮度（`color *= 0.35 + 0.65*tint`）。
+- **为什么改**：composite / deferred / 阴影链的本质都是「采样输入纹理 → 计算 → 写输出」，采样器绑定链路是所有后续 pass 的共同前置；提前打通可避免 P2.4/P3.3 阶段同时排查「映射没生效」与「着色器逻辑错」两类问题。
+- **影响的文档**：本 `CHANGE_LOG.md`。
+- **实测踩坑与修复**（全部有异常原文/量化证据，非推断）：
+  1. 🔴 **`writeToTexture` 不能在 render pass 打开期间调用**：首版把懒创建纹理放在 pass 内部，日志刷出 **3916 条** ERROR，异常原文 `java.lang.IllegalStateException: Close the existing render pass before performing additional commands`（`FrontendCommandEncoder.writeToTexture:410`）→ 修复：纹理/采样器解析提前到 `createRenderPass` **之前**。
+  2. 🔴 **UBO 与 sampler 分成两个绑定组时采样失配**：诊断版直接输出采样值，四象限均值几乎相同（`(223,75,84)`/`(223,74,83)`/`(195,50,59)`/`(195,50,59)`）＝采样到近似常量色 → 合并为**单个绑定组**（声明顺序与 GLSL 一致）后象限结构立即出现。
+  3. ⚠️ **UV 方向**：合并后象限出现但为垂直翻转（TL 蓝 / TR 白 / BL 红 / BR 绿 ≠ 期望 TL 红 / TR 绿 / BL 蓝 / BR 白）→ 结论：全屏三角形里 `vUv.y=0` 对应屏幕**底部**，而 `NativeImage` 行 0 是顶部，采样前需 `vec2(vUv.x, 1.0 - vUv.y)`（已写入着色器注释，供后续 composite 直接复用）。
+- **测试结果**（证据目录 `tools/vulkan-local/evidence/`，被 `.gitignore` 覆盖、不入库）：
+  - ✅ **构建**：`./gradlew build` exit=**0**；`./gradlew test` 全仓库 **239 用例 0 失败**。
+  - ✅ **运行**：`p2_sampler_final.log`（sha256 `8bbfa8a1…ff67b`）L137 `pipeline count check: registered=1, compiled=1 (aligned)`、L138 `fullscreen pass executed (854x480), uniform VkDispParams=2.4185026`；ERROR=**2**（仍为 WSL 环境缺失 narrator/OpenAL），`vkdisp` ERROR=**0**。
+  - ✅ **量化验收（四象限均值 vs 期望）**：截图 `p2_sampler_final.png`（sha256 `747bf95a581cfd8d…`，930×577）——左上 `(118,53,92)` R 主导＝红 ✓、右上 `(56,121,92)` G 主导＝绿 ✓、左下 `(41,40,196)` B 主导＝蓝 ✓、右下 `(103,105,196)` R≈G+B 高＝白/原棋盘 ✓（与设计意图**逐项吻合**）。
+  - 🔴 **回归证据留档**：`p2_sampler_regression.log`（sha256 `06078c53…0f234`）记录踩坑 1 的 3916 条 ERROR 与异常原文。
+- **未覆盖 / 存疑**：
+  1. **不采样主渲染目标**：同一 pass 内既写又采样同一纹理在 Vulkan 属非法反馈回路，真实 composite 链须按原版做 ping-pong 中间目标（P3.3 交付）；当前测试纹理是**能力验证载体**，P2.4 起会被真实 colortex 替代；
+  2. 未验证 sRGB/格式特例（当前 RGBA8_UNORM ↔ 主目标同格式）与 mipmap 采样；
+  3. 采样器目前固定 ClampToEdge+NEAREST，真实包需要 per-sampler 配置（归 P2.4）。
+- **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
+
+---
+
 ## 2026-09-29 — P1.1 uniform 传递 + P1.2 管线计数对齐
 
 - **本次改了什么**：

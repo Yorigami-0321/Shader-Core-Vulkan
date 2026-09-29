@@ -18,6 +18,12 @@ package dev.vkdisp.bridge;
  * 1b.（P1.1 补充）自定义 uniform 上传：原版 PostPass 用 MappableRingBuffer(usage=MAP_WRITE|UNIFORM=130)
  *    + Std140Builder 写 UBO + setUniform(name, buffer) 的官方序列；GLSL 侧块名与绑定布局 uniform 名一致
  *    （原版范本 assets/minecraft/shaders/core/clouds.vsh 的 layout(std140) uniform CloudInfo）。
+ * 1c.（P2 前置）纹理采样链路：原版 BindGroupLayouts.IN_SAMPLER =
+ *    BindGroupLayout.builder().withUniform("InSampler", COMBINED_IMAGE_SAMPLER)（字节码核实）；
+ *    GLSL 侧 uniform sampler2D InSampler（原版 core/blit_depth.fsh）；纹理创建走
+ *    GpuDevice.createTexture(label, TEXTURE_BINDING|COPY_DST, RGBA8_UNORM, w,h,1,1) +
+ *    NativeImage + createCommandEncoder().writeToTexture(texture, image) + createTextureView；
+ *    采样器取原版 RenderSystem.getSamplerCache().getClampToEdge(FilterMode)。
  * 3. 我们的差异点：只暴露纯 Java 视图 {@link FrameSize}/{@link FrameParams} 与
  *    {@link #drawFullscreen(String, FrameParams)}；
  *    RenderPass / RenderPipeline / CompiledRenderPipeline / GpuTextureView 等原版类型全部封在方法体内，
@@ -28,12 +34,18 @@ package dev.vkdisp.bridge;
  */
 import com.mojang.blaze3d.buffers.Std140Builder;
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.device.GpuDevice;
 import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import java.util.Optional;
 import java.util.OptionalDouble;
@@ -84,6 +96,56 @@ public final class FrameApi {
             paramsRing = ring;
         }
         return ring;
+    }
+
+    /** 自建的测试纹理边长（像素）；4 象限色块，采样调制后肉眼与像素统计都能看出差别。 */
+    private static final int TEST_TEXTURE_SIZE = 16;
+
+    /** 自建测试纹理与视图（懒创建；P2 阶段第一次「采样器绑定 → 采样 → 输出」链路的载体）。 */
+    private static GpuTexture testTexture;
+    private static GpuTextureView testTextureView;
+
+    /**
+     * 懒创建一张 16×16 测试纹理（4 象限色块）并返回其视图。
+     *
+     * <p>序列照原版：{@code device.createTexture(label, usage, format, w, h, depth, mips)}
+     * （usage = {@code TEXTURE_BINDING | COPY_DST}）→ {@code NativeImage} 填像素 →
+     * {@code createCommandEncoder().writeToTexture(texture, image)} → {@code createTextureView}。
+     * 用自建纹理而不是直接采样主目标，是因为「同一 pass 内既写又采样同一纹理」在 Vulkan 属非法反馈回路，
+     * 真实 composite 链要按原版做 ping-pong 目标（P3.3 交付）。
+     */
+    private static GpuTextureView testTextureView() {
+        GpuTextureView view = testTextureView;
+        if (view == null) {
+            GpuDevice device = RenderSystem.getDevice();
+            try (NativeImage image = new NativeImage(TEST_TEXTURE_SIZE, TEST_TEXTURE_SIZE, false)) {
+                for (int y = 0; y < TEST_TEXTURE_SIZE; y++) {
+                    for (int x = 0; x < TEST_TEXTURE_SIZE; x++) {
+                        // 象限色块：左上红、右上绿、左下蓝、右下白；ABGR 打包（原版 NativeImage 约定）。
+                        int half = TEST_TEXTURE_SIZE / 2;
+                        boolean right = x >= half;
+                        boolean bottom = y >= half;
+                        int r = (right && bottom) ? 255 : (right ? 0 : (bottom ? 0 : 255));
+                        int g = right && !bottom ? 255 : (right && bottom ? 255 : 0);
+                        int b = (!right && bottom) ? 255 : (right && bottom ? 255 : 0);
+                        image.setPixelABGR(x, y, (255 << 24) | (b << 16) | (g << 8) | r);
+                    }
+                }
+                GpuTexture texture = device.createTexture(
+                        () -> "vkdisp test pattern",
+                        GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_DST,
+                        GpuFormat.RGBA8_UNORM,
+                        TEST_TEXTURE_SIZE,
+                        TEST_TEXTURE_SIZE,
+                        1,
+                        1);
+                device.createCommandEncoder().writeToTexture(texture, image);
+                testTexture = texture;
+                view = device.createTextureView(texture);
+                testTextureView = view;
+            }
+        }
+        return view;
     }
 
     /**
@@ -150,6 +212,12 @@ public final class FrameApi {
                     "vkdisp: fullscreen pipeline not compiled yet: " + PipelineApi.FULLSCREEN_LOCATION);
         }
 
+        // 采样器资源必须在开启 render pass **之前**解析：懒创建纹理要调 encoder.writeToTexture，
+        // 而 pass 打开期间 encoder 不允许其它命令（实测异常原文：
+        // "Close the existing render pass before performing additional commands"）。
+        GpuTextureView samplerView = testTextureView();
+        GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+
         // P1.1：把本帧参数写进环形缓冲的当前槽（std140：vec4 Params = {phase, intensity, 0, 0}）。
         MappableRingBuffer ring = paramsRing();
         try (GpuBufferSlice.MappedView view = ring.currentBuffer().map(false, true)) {
@@ -166,6 +234,8 @@ public final class FrameApi {
             RenderSystem.bindDefaultUniforms(pass);
             // P1.1：绑定自定义 uniform 块（名字与 GLSL 块名一致）。
             pass.setUniform(PipelineApi.PARAMS_UNIFORM, ring.currentBuffer());
+            // 采样器绑定：纹理视图 + 采样器（原版 PostPass 对输入纹理的同款调用）。
+            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, samplerView, sampler);
             pass.draw(3, 1, 0, 0);
         }
         // 原版 PostPass 同款：绘制后再 rotate，保证本帧写入的槽在 GPU 用完前不被复用。
