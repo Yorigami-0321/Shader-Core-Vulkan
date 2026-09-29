@@ -1,0 +1,34 @@
+#version 330
+#extension GL_ARB_separate_shader_objects : require
+// vkdisp 全屏图案片元着色器（P0.3 验收图案：高饱和品红/青棋盘 + 黄色四角标 + 白色中轴十字）
+// 资源 id：vkdisp:fullscreen → 由 RenderPipeline withFragmentShader(Identifier) 解析到本文件。
+// 首行必须是 #version（编译器不注入版本行）。
+
+// 与 fullscreen.vsh 的 location=0 一一对应（separate shader objects 布局约定）。
+layout(location = 0) in vec2 vUv;
+layout(location = 0) out vec4 fragColor;
+
+void main() {
+    // 8x8 棋盘：品红 / 青，高饱和纯色，截图一眼可辨是否被本管线覆盖。
+    vec2 cell = floor(vUv * 8.0);
+    bool odd = mod(cell.x + cell.y, 2.0) < 1.0;
+    vec3 color = odd ? vec3(1.0, 0.0, 1.0) : vec3(0.0, 1.0, 1.0);
+
+    // 四角黄色方块（边长约 1/16 屏）：用于确认四角都被画到、方向未翻转。
+    vec2 toEdge = min(vUv, vec2(1.0) - vUv);
+    if (toEdge.x < 0.0625 && toEdge.y < 0.0625) {
+        color = vec3(1.0, 1.0, 0.0);
+    }
+
+    // 白色中轴十字：用于确认全屏覆盖与中心位置。
+    if (abs(vUv.x - 0.5) < 0.004 || abs(vUv.y - 0.5) < 0.004) {
+        color = vec3(1.0, 1.0, 1.0);
+    }
+
+    // 黑色细边框：把画面与窗口边缘区分开，便于截图确认画满整屏。
+    if (toEdge.x < 0.01 || toEdge.y < 0.01) {
+        color = vec3(0.0, 0.0, 0.0);
+    }
+
+    fragColor = vec4(color, 1.0);
+}

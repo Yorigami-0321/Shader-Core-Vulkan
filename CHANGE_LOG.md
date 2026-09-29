@@ -5,6 +5,43 @@
 
 ---
 
+## 2026-09-29 — P0.3 首个可见产物（全屏图案上屏）+ 闸门 F1/F2/F3/F4 落地
+
+- **本次改了什么**：
+  1. **P0.3 实现**（impl-coder，task-2）：新增 `bridge/PipelineApi.java`（用原版 `RenderPipelines.POST_PROCESSING_SNIPPET` 构建并注册全屏管线）、`bridge/FrameApi.java`（按原版 `PostPass` 序列 `createRenderPass → setPipeline → bindDefaultUniforms → draw(3,1,0,0)` 绘制）、`render/FullscreenPipelineRegistrar.java`（mod bus `RegisterRenderPipelinesEvent` 接线）、`render/FullscreenPassHook.java`（game bus `RenderFrameEvent.Post` 接线）、`assets/vkdisp/shaders/fullscreen.vsh|.fsh`（`gl_VertexIndex` 全屏三角形 + 品红/青棋盘图案）。
+  2. **P0.3 复验缺陷修复**（lead）：三轮 runClient 实测定位并修掉两处启动期 ERROR：
+     - run1：`FrameApi.drawFullscreen` 把「管线尚未编译完成」当致命失败，早期帧刷 **11 条** `vkdisp: fullscreen pass failed` ERROR（违反 `01-DEV-LOOP.md` §9「日志无 ERROR」）；
+     - run2：首修后改为每帧轮询 `getCompiledPipelineNullable`，却撞上原版启动窗口期的 **fallback PipelineCache**（`GameRenderer.preloadUiShader`，绑定旧 ResourceManager），每帧触发一次失败加载 → 原版记 **24 条** `Couldn't preload shader vkdisp:shaders/fullscreen.vsh` ERROR；
+     - run3：改用官方 `ClientResourceLoadFinishedEvent` 作门闩（GLSL 编译属资源重载的一部分，此刻管线缓存才就绪），重载完成前完全不触碰管线缓存 → **ERROR 全部清零**。
+  3. **闸门 F1**（bridge 契约冻结）：`ContractVersion`（版本常量 + §3.2 变更流程）、`RenderApi`（`PipelineSpec` + 注册/查询签名）、`TextureApi`（`TextureView` + 主目标视图）、`MixinTargets`（mixin 目标常量集中表），与既有 `DeviceApi`/`FrameApi`/`PipelineApi` 凑齐 `06-MIGRATION.md` §2.1 的 5 接口。
+  4. **闸门 F2**（`pack/` 数据模型冻结，contract-pack）：`ShaderPack`/`Program`/`ProgramStage`/`Option`/`OptionType`/`Dimension`/`VertexAttribute`/`UniformDecl` 共 8 类，全部 record/enum + 构造校验 + 不可变集合。
+  5. **闸门 F3**（`glsl/` 契约冻结，contract-glsl）：`TranslateResult`（文本 + 诊断 + 行号映射）、`TranslateDiagnostic`（severity/原文件/行/列）、`SourceLineMap`（双向逐行查询 + `compose` 端到端合成）。
+  6. **闸门 F4**（测试基建）：`build.gradle` 接 JUnit 5（BOM 5.13.4）+ `test` 任务启用 JUnit Platform；`src/test/` 骨架 + 冒烟测试 + `src/test/resources/packs/README.md`（fixture 许可证限制）。
+  7. **E 线（管线纯计算件）**（line-e，task-7）：`pipeline/model/` 14 个文件 —— `VertexLayout`（04-SPEC §4 逐项 offset/size/**stride=47** + `isConsistent()`）、`PipelineCacheKey` + `PipelineSpecIr` + `CanonicalText`（长度前缀单射编码 + SHA-256 指纹，**属性类型变化也换键** = T9「彩色尖刺」单测闸门）、`BindGroupLayoutIr`（可打印/可回读的绑定布局 IR）、`ModelDiagnostic`（显式诊断）。
+- **为什么改**：`docs/01-DEV-LOOP.md` §10 的 P0.3 完成标准「屏幕上出现自定义全屏 pass 画出的图案（非黑屏、非崩）」；`docs/18-PARALLEL.md` §3 要求先冻结 F1–F4 契约闸门，A–F 并行线才可开工（F2/F3 为 C/D/E/F 的共同输入）。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §3.0 现状快照（F1–F4 全部 ✅、已解锁并行线更新）。`docs/01`–`17` 正文未改动。
+- **测试结果**（证据目录 `tools/vulkan-local/evidence/` 已被 `.gitignore` 的 `/tools/` 覆盖、不入库）：
+  - ✅ **构建**：`./gradlew build` → `BUILD SUCCESSFUL`，exit=**0**。
+  - ✅ **产物六项核对**：`.class` 数=**10**；含 `META-INF/neoforge.mods.toml`；含 `LICENSE`；禁列 `net/minecraft`/`com/mojang`/`net/caffeinemc`/`dev/vitrail` = **0**。
+  - ✅ **P0.3 可见产物（run3 最终代码）**：`p03_final_vulkan_clean.log`（sha256 `e2e9630f…47de9`）——L56 `Using graphics backend Vulkan, using drivers: 1.4.354 llvmpipe Mesa 26.2.3-arch1.1`；L60 `vkdisp: pipeline registered (count=1): vkdisp:pipeline/fullscreen`；L136 `vkdisp: client resources loaded (initial=true), fullscreen pass enabled`；**L137 `vkdisp fullscreen pass executed (854x480)`**。
+  - ✅ **截图**：`p03_mainmenu_final_a.png` / `_b.png`（930x577，sha256 `820d23eae4641c5b192c700313063f7517320c6d0414b14317ca58b933d8a6ff`，两窗口像素统计 mean=196.78 非黑屏）；图案=品红/青 8×8 棋盘 + 黄色四角标 + 白色中轴十字 + 黑色边框，全屏覆盖主菜单。
+  - ✅ **ERROR 收敛三轮对比**：run1 = 11 条我方 ERROR（`p03_run1_startup_errors.log` sha256 `caaebca6…388181`）→ run2 = 24 条原版预加载 ERROR（`p03_run2_vanilla_preload_errors.log`）→ run3 = **0 条**；run3 `Couldn't preload shader` = **0**、`Mixin apply failed` = **0**、`FATAL` = **0**。
+  - ⚠️ **ERROR=2（环境性，非本项目）**：`Narrator` 加载 `libflite.so` 失败（WSL 无 TTS）、`SoundEngine` `Failed to open OpenAL device`（WSL 无声卡）——与 P0.1/P0.2 同一批已知环境缺失。
+  - ✅ **闸门 F4 测试**：`./gradlew test` → `F4InfraSmokeTest` **2/2 PASSED**，exit=0。
+  - ✅ **E 线单测**：`./gradlew test` exit=0，E 线 5 个测试类 **64 用例 0 失败**（VertexLayoutTest 22 / BindGroupLayoutIrTest 16 / PipelineCacheKeyTest 15 / VertexElementFormatTest 6 / PipelineModelIntegrationTest 5），全仓库合计 **100 用例 0 失败**；数值断言逐项 offset `0,12,16,24,28,32,35,39`、size `12,4,8,4,4,3,4,8`、stride `47`；8 个不同 Program → 8 个不同键文本与指纹；文本篡改逐项显式 ERROR。
+  - ✅ **闸门 F2/F3 自检**（各线成员执行）：`./gradlew compileJava` exit=0；红线 `grep -rn "com\.mojang\.\(renderpearl\|blaze3d\)"` 于 `pack/`、`glsl/`、`translate/` 均 **NO MATCH**；F3 另跑独立行为冒烟 **35 条断言全绿**。
+  - **GAP 登记**：**不需要**——P0.3 全程使用官方事件（`RegisterRenderPipelinesEvent` / `RenderFrameEvent.Post` / `ClientResourceLoadFinishedEvent`），无自行补充。
+  - 本轮无性能改动（P0.3 冷路径，每帧一次 draw），`17-NATIVE.md` §2 性能预算不适用。
+- **未覆盖 / 存疑**（不掩饰）：
+  1. P0.3 仅在**主菜单**截图验收（用户本轮指定口径），未进世界复核图案与世界渲染的叠加顺序；
+  2. 管线按 **required** 注册：真编译失败表现为原版资源重载硬失败（红屏 + `Failed to load required shader programs`），而非我方 ERROR 路径——属刻意选择（失败绝不静默），排查入口已写入类注释；
+  3. F2 上报的 `04-SPEC.md` §4 出入（`mc_Entity` 记 vec2s vs OF 官方 vec3；UV1/UV2 用途描述）**未当场判定**，已登记为待办（影响 E 线 stride 表），不许用猜的值填（07 X9）；
+  4. **E 线未覆盖**：F1 适配方法 `PipelineSpecIr.of(RenderApi.PipelineSpec, String)` 只有 main 源集编译证据——F4 的 test 源集 classpath 不含 Minecraft 类型，单测无法构造；是否把 MC 加入 test 源集属共享文件改动，待 env-1 决定（已登记）；与主线真实 binding 的双侧 stride 比对留 P1.2；无 binding>0 多槽用例。
+  5. **D 线（`glsl/translate/`）本批未提交**：文件已落盘且全量测试通过，但该线尚未交付完成，等其 complete 后再单独提交。
+- **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行，成员不自行 commit）。
+
+---
+
 ## 2026-09-29 — 新增并行开发路线（18-PARALLEL）+ 索引同步 + .gitignore 完善
 
 - **本次改了什么**：

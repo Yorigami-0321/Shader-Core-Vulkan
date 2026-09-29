@@ -69,24 +69,26 @@
 | **F3** | `glsl/` 输入输出契约 | `TranslateResult`（文本 + 诊断列表）的签名 | 让 C 和 D 能背靠背开工 |
 | **F4** | **测试基建** | `build.gradle` 接 JUnit 5 + `src/test/java` + `src/test/resources/packs/` 骨架 | 🔴 **当前 `dependencies {}` 块是空的，项目没有任何测试框架** |
 
-### 3.0 现状快照（2026-09-29 19:00 核实，对应 `83a704d`）
+### 3.0 现状快照（2026-09-29 19:36 核实，F1–F4 闸门落地后）
 
 > 随仓库推进更新。**闸门未过之前，§4 的并行线一条都不许开。**
 
 | 闸门项 | 现状 | 证据 |
 |---|---|---|
-| **F1** | 🟡 **部分落地** —— `bridge/DeviceApi.java` 已就位，且已长成**正确范式** | 内层 import `renderpearl`，对外只暴露纯 Java `record DeviceInfoView`；`grep -rl 'com\.mojang\.\(renderpearl\|blaze3d\)' src/main/java` 仅命中这 1 个文件 |
-| F1 剩余 | ⏳ `RenderApi` / `FrameApi` / `TextureApi` / `MixinTargets` 4 个接口未落地 | **E 线需要 `RenderApi` 的类型 → E 线仍被 F1 卡着** |
-| **F2** | ❌ 未开始 —— `pack/` 包不存在 | `find src -name '*.java'` 只剩 4 个文件 |
-| **F3** | ❌ 未开始 —— `glsl/` 包不存在 | 同上 |
-| **F4** | ❌ 未开始 —— 无测试框架 | `grep -nE 'junit\|test' build.gradle` 无测试依赖命中；`src/test/` 不存在 |
+| **F1** | ✅ **已落地** | `bridge/` 5 接口齐：`DeviceApi`（P0.2）+ `PipelineApi`/`FrameApi`（P0.3）+ `ContractVersion`/`RenderApi`/`TextureApi`/`MixinTargets`（F1）；`ContractVersion.VERSION=1` 承载 §3.2 版本流程 |
+| **F2** | ✅ **已落地** | `pack/` 8 类冻结：`ShaderPack`/`Program`/`ProgramStage`/`Option`/`OptionType`/`Dimension`/`VertexAttribute`/`UniformDecl`（contract-pack 交付，compileJava exit=0、红线 NO MATCH） |
+| **F3** | ✅ **已落地** | `glsl/` 三件套：`TranslateResult`/`TranslateDiagnostic`/`SourceLineMap`（contract-glsl 交付，compileJava exit=0、35 条行为断言全绿） |
+| **F4** | ✅ **已落地** | `build.gradle` 接 JUnit 5（BOM 5.13.4）+ JUnit Platform；`src/test/` 骨架 + `F4InfraSmokeTest` **2/2 PASSED** |
 
-**当前可立即开工的闸门项 = F2 + F3**（纯新增文件，不碰任何共享文件，零冲突）。
+**闸门状态：F1–F4 全部 ✅ → 并行线已放行**（2026-09-29 本轮落地）。
 
-- **F1 剩余**：`bridge/` 与关键路径 P0.3/P0.4 是邻居，**须与主轴环境协调后再动**；
-- **F4**：要改共享文件 `build.gradle`（且需下载依赖），**同样须协调**。
+- **F1/F4**：由 env-1（lead）落地并推送（commit `3106a23`）；F4 是 `build.gradle` 的一次性改动，此后并行线只写各自 `src/test/` 子路径。
+- **F2/F3**：纯新增契约，不碰共享文件，已交付。
+- **契约变更**：F1–F3 冻结后若要改字段/签名，走 §3.2 流程（由 env-1 统一改 + `ContractVersion.VERSION` +1）。
 
-**已解锁的并行线**：无。**A 线要先等 F2**，C/D 线要先等 F2 + F3。
+**已解锁的并行线**（本会话分工：env-1 负责主线 + D/E/F；A/B/C 由外部环境负责）：
+**D 线**（`glsl/translate/`）与 **E 线**（`pipeline/model/`）已开工；**F 线**（`config/`）依赖 F2 已满足。
+**A/B 线**需 F2（已满足），**C 线**需 F2 + F3（均已满足）——由外部环境认领时可直接开工。
 
 ### 3.1 闸门判定
 
@@ -372,9 +374,10 @@ F1–F4 全部落地 → 放行并行
 
 | # | 事项 | 状态 |
 |---|---|---|
-| P-1 | **F2 + F3 契约冻结**（可立即开工，零共享文件冲突） | ⏳ **未开始 —— 这是并行的唯一闸门** |
-| P-1b | F1 剩余 4 个 `bridge/` 接口：`RenderApi` / `FrameApi` / `TextureApi` / `MixinTargets` | 🟡 `DeviceApi` 已落地并成范式；其余需与主轴环境协调 |
-| P-1c | F4 测试基建（JUnit 5 + `src/test/` 骨架） | ⏳ 未开始；改共享文件 `build.gradle`，需协调 |
+| P-1 | **F2 + F3 契约冻结** | ✅ **已完成**（`pack/` 8 类、`glsl/` 三件套；compileJava exit=0、红线 NO MATCH、F3 另 35 条断言全绿） |
+| P-1b | F1 剩余 `bridge/` 接口：`RenderApi` / `TextureApi` / `MixinTargets` + `ContractVersion` | ✅ **已完成**（`FrameApi`/`PipelineApi` 随 P0.3 落地；5 接口齐） |
+| P-1c | F4 测试基建（JUnit 5 + `src/test/` 骨架） | ✅ **已完成**（`F4InfraSmokeTest` 2/2 PASSED） |
+| P-1d | `04-SPEC.md` §4 与 OF 官方属性表的出入复核（`mc_Entity` vec2s vs vec3、UV1/UV2 用途） | ⏳ **待办**——F2 上报；影响 E 线 stride 表，须实证后再改（禁止猜值，07 X9） |
 | P-2 | 把本文登记进 `00-INDEX.md` 文档清单 | ✅ 已同步 |
 | P-3 | 是否要在 `01-DEV-LOOP.md` §10 加一句指向本文的交叉引用 | ⏳ 待拍板 |
 | P-4 | `AGENT_CONTEXT.md` 的 Q5「P0 是否开工」口径 | 🟡 P0.1 / P0.2 均已验收通过 → **Q5 已作废，应更新该文档** |
