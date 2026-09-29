@@ -9,7 +9,7 @@
 **`vkdisp`（Vulkan Shader Dispatcher）** 是一个 NeoForge **纯客户端**模组：跑在 Minecraft 原版自带的
 Vulkan 渲染后端上，加载**存量 OptiFine / Iris 格式**的着色器包（BSL、Complementary、Sildur's…）。
 
-> **独立实现，与 Sodium、Iris、OptiFine、Vitrail 均无关联。**
+> **独立实现。不与任何第三方渲染优化模组或着色器加载器做集成。**
 > 不依赖任何第三方前置，也不尝试替代任何第三方前置。
 
 ---
@@ -20,7 +20,7 @@ Vulkan 渲染后端上，加载**存量 OptiFine / Iris 格式**的着色器包�
 |---|---|
 | 过去十年社区的着色器包几乎全是 **OptiFine 格式**，跑在 **OpenGL** 上 | 格式本身与 Vulkan 无关，可以复用 |
 | Minecraft 26.3 把渲染后端换成了 **Vulkan** | 存量 pack 全部失效 |
-| Iris / Sodium 是 **OpenGL** 时代的加载器 | 在 26.3 上无从下手 |
+| 既有加载器（Iris 等）与渲染优化模组都构建在 **OpenGL** 时代 | 在 26.3 上无从下手 |
 | 已有的原版 Vulkan 着色器模组（VulkanMod / Sulkan 等）**都不支持 OF/Iris 格式** | **没有现成轮子可借**——这是本项目要做的那件事 |
 
 ---
@@ -119,7 +119,7 @@ vkdisp
 **不做**
 - ❌ 不写 Vulkan 设备 / 命令缓冲 / render pass（官方有）
 - ❌ 不写 SPIR-V 编译器（走原版编译通道）
-- ❌ 不依赖 Sodium、不替代 Sodium、不做「假 Sodium」
+- ❌ **不与任何第三方渲染模组做集成**（不依赖、不替代、不容忍「假 XX」方案，`07-CONSTRAINTS.md` L11）
 - ❌ 不碰 Vitrail（两者可共存，互不干扰）
 - ❌ 不抄 GPL-3.0（Sulkan）与 ARR（Beryl）的任何代码
 - ❌ **现在不做任何原生（C++/Rust）实现**、不建 `accel/` 包、不配 CMake/cargo（`17-NATIVE.md` 状态声明）

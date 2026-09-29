@@ -35,7 +35,7 @@
 | 工程形态 | **官方 MDK `NeoForgeMDKs/MDK-26.3-ModDevGradle`**（commit `eec248c`），已铺入 `D:/Code/Minecraft/Shader-Core-Vulkan` |
 | 未来版本 | 按 `06-MIGRATION.md` §4 流程升级，**不做前瞻兼容设计** |
 
-- **不依赖 Sodium**，**不替代 Sodium**，**完全不碰 Vitrail**（两者可共存）
+- **不与任何第三方渲染模组做集成**（不依赖、不替代、不做「假 XX」），**完全不碰 Vitrail**（两者可共存）
 - **不自己写 Vulkan 设备** —— 用原版 `com.mojang.renderpearl.backend.vulkan`
 - 自研的部分：① OF/Iris 格式解析器 ② pass 编排 ③ GLSL 转译 ④ 选项 GUI
 - **遇到原版 Vulkan 不支持的特性可以自行补充**，但必须先登记、必须收敛在 `platform/`、
@@ -55,7 +55,7 @@
 
 **核心新发现（推翻旧计划根基）**：26.3 原版自带**后端抽象层**
 `com.mojang.renderpearl.backend.api.{GpuDeviceBackend, CommandEncoderBackend, BackendRenderPipeline, SpvModule}`
-—— 这就是旧计划苦苦寻找而未得的"官方后端插口"。旧计划锁死在 Sodium 上，没往原版看。
+—— 这就是旧计划苦苦寻找而未得的"官方后端插口"。旧计划锁死在第三方渲染模组上，没往原版看。
 
 ---
 
@@ -93,6 +93,7 @@
 | **D13** | **新增 `01-DEV-LOOP.md` 作为给 agent 派活的标准流程** | **2026-09-29** | 用户明确指令 |
 | **D14** | **新增 `17-NATIVE.md`：兼顾性能 + 参考先行；C++/Rust 仅作可选项写入文档** | **2026-09-29** | **用户明确指令**（「模组要兼顾性能，部分需求可改成用 c++ 或 rust 实现。每一部分的实现最好都先去找参考。」） |
 | **D15** | **C++/Rust 可行性未验证 → 当前阶段纯 Java；不建 `accel/` 包、不配原生工具链** | **2026-09-29** | 用户追加指令：「**C++/Rust 作为可选项先写进文档就行。实际是否可行等后续**」（`17-NATIVE.md` 状态声明） |
+| **D16** | 🔴 **与 Sodium 彻底隔绝：不保留任何可选增强；零代码 / 零依赖 / 零集成 / 零兼容 / 零正面引用** | **2026-09-29** | **用户明确指令**：「**不保留，和 sodium 彻底隔绝开**」（`07-CONSTRAINTS.md` L11 + X18） |
 
 ---
 
@@ -187,7 +188,8 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
 |---|---|---|
 | Q1 | ~~**本项目许可证？** LGPL-3.0 / MIT~~ | ✅ **已定（2026-09-29）：MIT**。`LICENSE` 全文 + `gradle.properties` 的 `mod_license=MIT`；由此产生 P1/P2/P3 三条硬约束，**VulkanMod(LGPL) 也只能读不能抄**（`07-CONSTRAINTS.md` §〇） |
 | Q2 | ~~是否仍锁 MC 26.3？~~ | ✅ **已定**：支持 **26.3 及之后**，主线 **26.3** |
-| Q3 | **是否保留 Sodium 可选增强？** | ⏳ 待定。建议留到 P4，先不碰 |
+| Q3 | ~~**是否保留 Sodium 可选增强？**~~ | ✅ **已定（2026-09-29）：不保留，与 Sodium 彻底隔绝**（`07-CONSTRAINTS.md` L11） |
+| Q3b | 是否需要与**其它**第三方渲染模组（Vitrail 等）做集成？ | ❌ **不需要**。一律零集成，地形走原版 `SectionRenderDispatcher` |
 | Q4 | ~~旧 `Shader-Core-Vulkan/` 目录怎么办？~~ | ✅ **已决并执行**：清空旧内容，换成官方 NeoForge 26.3 MDK |
 | Q5 | **P0 是否开工？** | ⏳ **待定**（用户当前只要计划 + 骨架，未授权写功能代码） |
 | Q6 | **是否有场景必须用原生（C++/Rust）？** | ✅ **已定：现在不做。** C++/Rust 只是「写进文档的可选项」，**实际是否可行等后续**；真要做须先过 `17-NATIVE.md` §6.2 第 0 关可行性验证（D15） |
@@ -199,7 +201,8 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
 
 - `mixins.json` 的 `compatibilityLevel` **必须 `JAVA_25`**（`JAVA_21` 在 Java 25 下静默跳过 mixin）
 - `mods.toml` 的 `[[dependencies.<X>]]` 表名必须等于 `modId`
-- modId / 包名 **绝不要用** `sodium` / `vitrail` / `iris` / `optifine`
+- modId / 包名 **绝不要用**任何第三方渲染模组的名字（`vitrail` / `iris` / `optifine`，也不要 `sodium`）
+- 🔴 **Sodium 彻底隔绝（L11 / X18）**：构建脚本零 `sodium`/`caffeinemc` 坐标、无运行时探测、无集成分支；代码里 `sodium` 只允许出现在「划清界限」的否定式语句中
 - 顶点格式字段名必须与着色器 `attribute` 声明**字面一致**
 - 仓库内需 `.gitattributes`（`* text=auto eol=lf`）+ 仓库级 `core.autocrlf=false`，
   并手工 `git update-index --chmod=+x gradlew`

@@ -1,9 +1,9 @@
 # 03 · 方向变更与参考模组借鉴分析
 
-> 状态：**新方向总纲，以本文为准。** 旧方向（替代 Sodium）的相关文档已全部归档到 `docs/_archive/`。
+> 状态：**新方向总纲，以本文为准。** 旧方向（改写第三方渲染器）的相关文档已全部归档到 `docs/_archive/`。
 > 日期：2026-09-29
 > 配套：`02-OVERVIEW.md`（定位）、`04-SPEC.md`（组件）、`05-VERSION.md`（版本权威）
-> 结论摘要：**方向已从"替代 Sodium"整体切换为"基于原版 Vulkan 后端 + 自研 OptiFine/Iris 格式着色器引擎"，法律风险基本清零，且技术路径已被两个参考模组验证。**
+> 结论摘要：**方向已从"改写第三方渲染器"整体切换为"基于原版 Vulkan 后端 + 自研 OptiFine/Iris 格式着色器引擎"，法律风险基本清零，且技术路径已被两个参考模组验证。**
 
 ---
 
@@ -42,7 +42,7 @@ com.mojang.renderpearl.backend.vulkan.*  ← Vulkan 实现
 com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SPIRVModule
 ```
 
-**这意味着什么**：Mojang 在 26.3 里已经把"渲染前端"与"后端实现"拆开了，`com.mojang.renderpearl.backend.api` 就是**官方的后端插口**。这正是旧计划里"想去用官方实现但找不到入口"的那个入口——**它一直都在，只是旧计划的搜索范围锁死在 Sodium 上，没看原版**。
+**这意味着什么**：Mojang 在 26.3 里已经把"渲染前端"与"后端实现"拆开了，`com.mojang.renderpearl.backend.api` 就是**官方的后端插口**。这正是旧计划里"想去用官方实现但找不到入口"的那个入口——**它一直都在，只是旧计划的搜索范围锁死在第三方渲染模组上，没看原版**。
 
 ### 1.2 后果：新方向的正确姿势
 
@@ -63,7 +63,7 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 └─────────────────────────────────────────────────────────┘
 ```
 
-**不碰 Sodium，不碰 Vitrail，不自己写 Vulkan 设备。** 只写"OF 格式 → RenderPipeline"这一层的翻译器 + 帧图编排。
+**不碰任何第三方渲染模组，不碰 Vitrail，不自己写 Vulkan 设备。** 只写"OF 格式 → RenderPipeline"这一层的翻译器 + 帧图编排。
 
 ---
 
@@ -93,7 +93,7 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 
 ### 2.2 Sulkan（GPL-3.0）— 思路范本，但代码不能用
 
-**它做了什么**：Fabric 客户端模组，48 个 Java 文件 / 约 6229 行。基于 Sodium + 原版 Vulkan 渲染器，提供自带的着色效果（影子、AO、水、体积云、大气、Bloom、FXAA），并支持**自带格式**的"着色器包"。
+**它做了什么**：Fabric 客户端模组，48 个 Java 文件 / 约 6229 行。构建在原版 Vulkan 渲染器之上，提供自带的着色效果（影子、AO、水、体积云、大气、Bloom、FXAA），并支持**自带格式**的"着色器包"。
 
 **它的贡献（纯思路，因为 GPL 不能抄）**：
 
@@ -104,7 +104,7 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 | **帧图插入** | `mixin/LevelRendererPostMixin.java`、`LevelRendererShadowMixin.java` | ⭐⭐⭐⭐ `builder.addPass("sulkan:directional_shadow_maps")` 往 `FrameGraphBuilder` 里插自己的 pass；`@Inject` 到 `LevelRenderer.render` 的 `submitFeatures` 调用点与 RETURN。**OF 格式的 shadow/composite/deferred 阶段就要这么挂** |
 | **原版类路径着色器加载 + `#include` 预处理** | `VulkanDeviceShaderCompilerMixin.sulkan$classpathShader()` | ⭐⭐⭐⭐ 自己实现 `GlslPreprocessor.applyImport` 解 `namespace:path` 形式的 include。**OF 的 `#include` 指令要的就是这个** |
 | **资源包打包技巧** | `pack/ShaderPackRepository.java` | ⭐⭐⭐⭐ 把用户的 zip 解包到 `resourcepacks/sulkan_shaderpack_active/`，自动写 `pack.mcmeta`，再把该包 ID 塞进 `options.resourcePacks`。**这是"让原版资源系统加载我的着色器"的干净做法** |
-| **`@Mixin(value=..., remap=false)` 注入 Sodium 内部** | `mixin/sodium/*.java` | ⭐⭐⭐ 如果你的新方向仍想**可选**利用 Sodium 的区块渲染（而非替代它），这些注入点是现成的 |
+| **`@Mixin(value=..., remap=false)` 注入第三方区块渲染器内部** | `mixin/sodium/*.java` | ⭐ 已判定**不用**：本项目**不与任何第三方渲染模组做集成**（`07-CONSTRAINTS.md` L11）。仅作为"第三方能注入到什么深度"的事实记录 |
 
 **为什么不能用它的代码**：GPL-3.0 是强传染许可证。你的项目若包含任何 Sulkan 代码，整个项目必须以 GPL-3.0 开源分发。本项目已是 **MIT**，**一行都不能抄**（`07-CONSTRAINTS.md` §〇 P1 / L5）。可以带走的只有"它验证过这条路能走通"这个事实和它的架构分层。
 
@@ -142,21 +142,21 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 
 **结论：优先走原版通道。** OF 的 GLSL 与 M 原版 GLSL 不完全一致（OF 有 `attribute`/`varying` 老式语法、`gl_` 内建差异），需要一层**源码转译**，但转译出来的结果仍交给原版编译器。
 
-### 3.3 与 Sodium 的关系（可选，不是必需）
+### 3.3 区块地形性能：走原版，不接任何第三方渲染模组
 
-新方向**不依赖 Sodium**。但如果要区块地形性能，可以选择性地检测 Sodium 是否在场：
-- Sodium 在 → 用它的区块网格 + 复用 Sulkan 展示的那套注入点（`ShaderChunkRenderer.compileProgram`、`TerrainRenderPass.getTarget`）
-- Sodium 不在 → 走原版 `SectionRenderDispatcher`
+地形渲染**只走原版 `SectionRenderDispatcher`**。本项目**不与任何第三方渲染模组做集成**，
+不检测、不兼容、不复用任何外部区块渲染器。
 
-**注意**：这一步是可选增强，不是必需。放在 Phase 3 之后再做。
+**没有"可选集成"这条路**（曾经的 Phase 4 可选项已取消，见 `07-CONSTRAINTS.md` L11）。
+地形性能若不足，走 `17-NATIVE.md` 的流程定位，而不是引外部依赖。
 
 ---
 
 ## 4. 许可证策略（对比旧方向）
 
-| 项目 | 旧方向（替代 Sodium） | 新方向 |
+| 项目 | 旧方向（改写别人的渲染器） | 新方向 |
 |---|---|---|
-| Sodium PolyForm Shield Noncompete | 🔴 直接踩线 | 🟢 **不接触**，合规风险清零 |
+| PolyForm Shield 类非竞争许可 | 🔴 直接踩线 | 🟢 **零接触**，合规风险清零（本项目对外只有一句"独立实现"） |
 | 与 Vitrail 的关系 | 需要上游配合改代码 | 🟢 **完全不碰**，两个模组可共存 |
 | 借鉴 VulkanMod (LGPL) | — | 🔴 **只能读思路，不能移植代码**（MIT 与 LGPL 不同族） |
 | 借鉴 Sulkan (GPL) | — | 🔴 **只能读思路，不能抄代码** |
@@ -204,7 +204,6 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 ### Phase 4 — 兼容性与打磨
 
 - dimension 分支、block/item properties、选项 GUI、profiles
-- 可选 Sodium 集成（**只读 API 包，不碰内部**）
 - 验收：主流包（Complementary / BSL / Sildur）基本可用
 
 ### Phase 5 — 版本跟进（持续）
@@ -224,7 +223,8 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 2. ~~是否仍要在 26.3 上继续？~~ **已定（2026-09-29）**：
    支持 **26.3 及之后**的新版本，当前主线锁 **26.3**，不支持 26.2 及之前。见 `05-VERSION.md`。
 
-3. **是否保留对 Sodium 的可选增强？** 建议留到 Phase 4，先不碰。
+3. ~~**是否保留对 Sodium 的可选增强？**~~ ✅ **已定（2026-09-29）：不保留，彻底隔绝。**
+   不与任何第三方渲染模组做集成（见 `07-CONSTRAINTS.md` L11）。
 
 4. ~~**旧 `Shader-Core-Vulkan/` 目录怎么处理？**~~ ✅ **已决并执行**：
    旧内容已清空，换成官方 NeoForge 26.3 MDK。
@@ -247,8 +247,8 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 | Beryl = ARR | Modrinth 页面 `Licensed ARR` |
 | VulkanMod 自带设备层 | `build.gradle` `include(implementation("org.lwjgl:lwjgl-vulkan"))` + `lwjgl-vma`/`lwjgl-shaderc`/`lwjgl-spvc` 三平台 natives |
 | VulkanMod 目标版本旧 | `gradle.properties` `minecraft_version = 1.21.11`, `options.release = 21` |
-| Sulkan 目标版本新 | `gradle.properties` `minecraft_version=26.2`, `options.release = 25`, `sodium_version=0.9.1+mc26.2` |
-| Vitrail 仍重度依赖 Sodium | 770 个类中 23 个引用 `caffeinemc`（3%），集中在 `mixin/sodium/*` 与 `sodium/*` —— **旧方向不可行，新方向绕开它是对的** |
+| Sulkan 目标版本新 | `gradle.properties` `minecraft_version=26.2`, `options.release = 25` |
+| Vitrail 重度依赖第三方区块渲染器 | 770 个类中 23 个引用 `caffeinemc`（3%），集中在 `mixin/sodium/*` 与 `sodium/*` —— **旧方向不可行，新方向绕开它是对的** |
 
 ## 附录 B：类型对应速查（VulkanMod 1.21.11 → 本项目 26.3）
 

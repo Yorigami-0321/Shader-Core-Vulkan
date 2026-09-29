@@ -41,7 +41,7 @@ displayName="${mod_name}" #mandatory
 description='''
 基于 Minecraft 原版自带 Vulkan 渲染后端的着色器引擎，兼容 OptiFine / Iris 格式着色器包。
 
-独立实现，与 Sodium、Iris、OptiFine、Vitrail 均无关联，也不依赖或替代其中任何一个。
+独立实现，不与任何第三方渲染优化模组或着色器加载器做集成，也不依赖或替代其中任何一个。
 '''
 
 # 本模组是纯客户端渲染模组

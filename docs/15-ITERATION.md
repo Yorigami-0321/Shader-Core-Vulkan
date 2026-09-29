@@ -104,6 +104,7 @@ git reset --hard HEAD
 | A1 | **不得复制任何第三方代码**（MIT 下不许并入 LGPL/GPL/ARR） | `07-CONSTRAINTS.md` §〇 P1/P2 + §一 |
 | A2 | 不得把「Sodium 替代品」写进对外文字 | `07-CONSTRAINTS.md` L3 |
 | A3 | 不得向 Sodium 提 PR | `07-CONSTRAINTS.md` L4 |
+| A15 | 🔴 不得在构建脚本声明 `sodium`/`caffeinemc` 依赖，或写运行时探测/集成分支 | `07-CONSTRAINTS.md` L11 + X18 |
 | A4 | 所有 GPU 操作走 `com.mojang.renderpearl.*` | `07-CONSTRAINTS.md` T2 |
 | A5 | `mixins.json` 必须 `JAVA_25` | `07-CONSTRAINTS.md` T1 |
 | A6 | 业务包不得直接 import 原版渲染类型（走 `bridge`） | `07-CONSTRAINTS.md` T5 |

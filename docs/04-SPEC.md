@@ -30,7 +30,7 @@ com.mojang.renderpearl.backend.vulkan.VulkanDevice  ← 原版实现，不碰
 ## 2. 命名与坐标
 
 - Java 包名：`dev.<你的域>.vkdisp`（示例，可换）
-- 模组 id：`vkdisp`（**绝不要用 `sodium` / `vitrail` / `iris` / `optifine`**）
+- 模组 id：`vkdisp`（**绝不要用任何**第三方渲染模组的名字，如 `vitrail` / `iris` / `optifine`，也不要用 `sodium`）
 - 着色器资源命名空间：`vkdisp`（内部管线用），用户包用 `vkdisp_pack`（`ShaderPackRepository` 生成的虚拟资源包）
 - mixin 配置 `compatibilityLevel`：**必须 `JAVA_25`**（写 `JAVA_21` 会在 Java 25 下静默跳过全部 mixin）
 
@@ -225,13 +225,12 @@ plugins {
 
 neoForge {
     version = project.neo_version          // = 26.3.0.23-beta，取自 gradle.properties
-    // 关键：不要声明 sodium 依赖 —— 新方向不需要
 }
 
 dependencies {
-    // 若要可选兼容 Sodium 区块渲染（Phase 4+），用 compileOnly + 运行时探测
-    // compileOnly("net.caffeinemc:sodium-neoforge-api:...")  ← 只允许用官方 api 包
-    // 绝对不要 transitive 拉 sodium 的内部类
+    // 🔴 本项目零第三方渲染模组依赖（`07-CONSTRAINTS.md` L11）。
+    //    不得出现任何第三方渲染器/着色器加载器的 compileOnly / implementation / runtimeOnly。
+    //    地形走原版 SectionRenderDispatcher，着色器走原版编译通道。
 
     // 若走自带 shaderc 的 fallback 方案（不推荐，优先原版通道）
     // implementation 'org.lwjgl:lwjgl-shaderc:3.3.3'
@@ -335,7 +334,7 @@ tasks.register('buildNative') {
 | OF GLSL 转译工作量被低估 | **高** | 分阶段，Phase 2 只做 composite；UBO 语义先硬编码一组常见 uniform；**先读 Iris 的解析器**（`17-NATIVE.md` §1.3） |
 | 原版对 render target 数量/格式有限制 | 中 | 复用 `colortex` 语义时按需降级；给足诊断日志 |
 | 老版本 MC 没有 `renderpearl.backend.api` | — | 本方案**锁定 26.3+**，不支持更早版本 |
-| 被误认为"又一个 Iris" | 低 | README 明确写"独立实现，与 Iris/OptiFine/Sodium/Vitrail 均无关联" |
+| 被误认为"又一个 Iris" | 低 | README 明确写"独立实现，与任何第三方着色器加载器/渲染优化模组均无关联" |
 | 误抄 GPL / LGPL 代码 | 中 | 本项目 MIT，见 `03-DIRECTION.md` §8 与 `07-CONSTRAINTS.md` §〇；VulkanMod/Sulkan 都只读思路不抄代码 |
 | **不装包也掉帧**（着色器模组最不可接受的失败） | **中** | `17-NATIVE.md` §2 把它列为 P0 必过；每阶段测帧时间 |
 | **误把冷路径当瓶颈，白写原生库** | **中** | `17-NATIVE.md` §3.2 热度分级 + §5 六问决策树 |
