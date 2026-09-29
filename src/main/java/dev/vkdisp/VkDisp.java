@@ -1,4 +1,12 @@
 package dev.vkdisp;
+/**
+ * 【参考调研】P0.1 骨架 / 官方 MDK 骨架
+ * 1. 官方/主实现：NeoForge MDK 26.3 (ModDevGradle 2.0.147, commit eec248c) — 参考了：@Mod 注册方式、IEventBus 注入、配置注册。
+ * 2. 备选：无（本阶段只要骨架）
+ * 3. 我们的差异点：仅做 P0.1 骨架，不写渲染管线；后续按 01-DEV-LOOP.md 顺序推进。
+ * 4. 许可证核对：MIT（本项目）；MDK 模板 MIT；不并入 LGPL/GPL 代码。
+ * 5. 性能基线：P0.1 冷路径（启动日志），无优化需求。
+ */
 
 import org.slf4j.Logger;
 
