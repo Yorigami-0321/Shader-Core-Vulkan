@@ -377,7 +377,7 @@ F1–F4 全部落地 → 放行并行
 | P-1 | **F2 + F3 契约冻结** | ✅ **已完成**（`pack/` 8 类、`glsl/` 三件套；compileJava exit=0、红线 NO MATCH、F3 另 35 条断言全绿） |
 | P-1b | F1 剩余 `bridge/` 接口：`RenderApi` / `TextureApi` / `MixinTargets` + `ContractVersion` | ✅ **已完成**（`FrameApi`/`PipelineApi` 随 P0.3 落地；5 接口齐） |
 | P-1c | F4 测试基建（JUnit 5 + `src/test/` 骨架） | ✅ **已完成**（`F4InfraSmokeTest` 2/2 PASSED） |
-| P-1d | `04-SPEC.md` §4 与 OF 官方属性表的出入复核（`mc_Entity` vec2s vs vec3、UV1/UV2 用途） | ⏳ **待办**——F2 上报；影响 E 线 stride 表，须实证后再改（禁止猜值，07 X9） |
+| P-1d | `04-SPEC.md` §4 与 OF 官方属性表的出入复核 | 🟡 **部分完成**——已核实并写入 §4 复核注记（`mc_Entity` 官方为 **vec3**；`vaUV1`=overlay / `vaUV2`=lightmap；`at_*` 三项存在）。**剩余未定项**：`mc_Entity` 的底层元素类型（float32 / int16）文档未给，直接决定字节数与 stride（E 线现值 47）→ **须在 P1.2 构建真实 `VertexFormat` 时实测对齐**，再走 §3.2 定稿；此前 F2/E 沿用旧值，任何线不许私改（07 X9） |
 | P-2 | 把本文登记进 `00-INDEX.md` 文档清单 | ✅ 已同步 |
 | P-3 | 是否要在 `01-DEV-LOOP.md` §10 加一句指向本文的交叉引用 | ⏳ 待拍板 |
 | P-4 | `AGENT_CONTEXT.md` 的 Q5「P0 是否开工」口径 | 🟡 P0.1 / P0.2 均已验收通过 → **Q5 已作废，应更新该文档** |

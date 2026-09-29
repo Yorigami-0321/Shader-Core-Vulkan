@@ -213,6 +213,20 @@ OF/Iris 包依赖额外的顶点属性。原版 `VertexFormat` 需要通过 `Ver
 
 **注意**：字段名必须与着色器里的 `attribute` 声明**完全一致**——参考你的 `SKILL.md`（`neoforge-262-mod-port`）里"字段名必须字面一致"的坑。
 
+> ⚠️ **复核注记（2026-09-29，env-1 实测复核）**：上表与 OF 官方属性表有 **两处出入**，已核实——
+> 来源：OptiFine 规范文档 `OptiFineDoc/doc/shaders.txt`「Attributes」节（仅取格式事实，零文本搬用；
+> sp614x/optifine 无 LICENSE = ARR，按 07-CONSTRAINTS X20 不并入其文本表达）：
+> 1. `mc_Entity` 官方声明为 **`in vec3 mc_Entity`**（xy = blockId / renderType），**不是 vec2s**；
+> 2. `vaUV1` = **overlay**、`vaUV2` = **lightmap**（上表把 UV1 记作"光照贴图"、UV2 记作"法线"，两处用途均有误）；
+>    法线是独立属性 `Normal`，不占 `UV2`。
+> 3. 官方 Attributes 表另有 `at_tangent` / `at_velocity` / `at_midBlock` 三项（上表未列；F2 契约已按事实预留）。
+>
+> 🔴 **未定项（禁止猜值，07 X9）**：官方文档给的是**着色器侧**分量类型，
+> **底层元素类型（float32 / int16）文档未给**，而它直接决定 `mc_Entity` 的字节数与 stride。
+> 该值必须等 **P1.2 构建真实 `VertexFormat` 时与原版实测对齐**后再走
+> `18-PARALLEL.md` §3.2 定稿；在此之前 F2 的 `VertexAttribute` 与 E 线 `VertexLayout`（stride=47）
+> 沿用本表旧值，缺口由 `18-PARALLEL.md` §10 的 **P-1d** 跟踪，**不许在并行线里私自改契约**。
+
 ---
 
 ## 5. 构建配置
