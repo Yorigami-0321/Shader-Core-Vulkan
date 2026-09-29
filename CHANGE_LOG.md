@@ -19,7 +19,8 @@
   6. **闸门 F4**（测试基建）：`build.gradle` 接 JUnit 5（BOM 5.13.4）+ `test` 任务启用 JUnit Platform；`src/test/` 骨架 + 冒烟测试 + `src/test/resources/packs/README.md`（fixture 许可证限制）。
   7. **E 线（管线纯计算件）**（line-e，task-7）：`pipeline/model/` 14 个文件 —— `VertexLayout`（04-SPEC §4 逐项 offset/size/**stride=47** + `isConsistent()`）、`PipelineCacheKey` + `PipelineSpecIr` + `CanonicalText`（长度前缀单射编码 + SHA-256 指纹，**属性类型变化也换键** = T9「彩色尖刺」单测闸门）、`BindGroupLayoutIr`（可打印/可回读的绑定布局 IR）、`ModelDiagnostic`（显式诊断）。
   8. **D 线（GLSL 转译）**（line-d，task-6）：`glsl/translate/` 9 主 + 4 测 —— `OfGlslTranslator`（编排 + `dMap.compose(cMap)` 端到端行号映射）、`AttributeRewriter`（顶点 `attribute→in`/`varying→out`、片元 `varying→in`，等行数重写）、`UniformInjector` + `UniformCatalog`（04-SPEC §3.2 **23 条**内建 uniform 只补缺失、注入点在头部之后）、`ShaderStage`/`GlslDeclaration`/`CommentState`/`SourceLines`（注释等长空格化保列位）。
-  9. **文档复核**：`docs/04-SPEC.md` §4 增加复核注记 —— 核实 OF 官方属性表（来源：OptiFine 规范文档 `shaders.txt`「Attributes」节，仅取格式事实零文本搬用）：`mc_Entity` 官方为 **vec3**（非 §4 的 vec2s）、`vaUV1`=overlay / `vaUV2`=lightmap（§4 用途有误）、`at_*` 三项存在；**底层元素类型文档未给 → 禁止猜值**（07 X9），留 P1.2 实测定稿（`18-PARALLEL` §10 P-1d）。
+  9. **F 线（选项模型 + Binding）**（line-f，task-8）：`config/` 6 主 + 5 测 —— `PackOptions`（从 F2 `List<Option>` 构造；默认值/按名查改/**越界钳制 + WARN**/profile 应用含 `:` `=` 裸名 `!名` `profile.` 继承与环检测）、`OptionBinding`（选项值 → `#define` 表 + uniform 值；`DefineStyle{LITERAL, IFDEF_TRUE}`；快照语义）、`OptionUniformValue`（Bool/Int/Float/Text）、`OptionDiagnostic(Sink)`（T11 不静默）、`OptionText`（GLSL 标识符/数值文本校验，手写扫描不用正则）。
+  10. **文档复核**：`docs/04-SPEC.md` §4 增加复核注记 —— 核实 OF 官方属性表（来源：OptiFine 规范文档 `shaders.txt`「Attributes」节，仅取格式事实零文本搬用）：`mc_Entity` 官方为 **vec3**（非 §4 的 vec2s）、`vaUV1`=overlay / `vaUV2`=lightmap（§4 用途有误）、`at_*` 三项存在；**底层元素类型文档未给 → 禁止猜值**（07 X9），留 P1.2 实测定稿（`18-PARALLEL` §10 P-1d）。
 - **为什么改**：`docs/01-DEV-LOOP.md` §10 的 P0.3 完成标准「屏幕上出现自定义全屏 pass 画出的图案（非黑屏、非崩）」；`docs/18-PARALLEL.md` §3 要求先冻结 F1–F4 契约闸门，A–F 并行线才可开工（F2/F3 为 C/D/E/F 的共同输入）。
 - **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §3.0 现状快照（F1–F4 全部 ✅、已解锁并行线更新）与 §10 待办 P-1/P-1b/P-1c/P-1d；`docs/04-SPEC.md` §4（新增复核注记：OF 官方属性表出入 + 未定项）。其余 `docs/01`–`17` 正文未改动。
 - **测试结果**（证据目录 `tools/vulkan-local/evidence/` 已被 `.gitignore` 的 `/tools/` 覆盖、不入库）：
@@ -32,6 +33,7 @@
   - ✅ **闸门 F4 测试**：`./gradlew test` → `F4InfraSmokeTest` **2/2 PASSED**，exit=0。
   - ✅ **E 线单测**：`./gradlew test` exit=0，E 线 5 个测试类 **64 用例 0 失败**（VertexLayoutTest 22 / BindGroupLayoutIrTest 16 / PipelineCacheKeyTest 15 / VertexElementFormatTest 6 / PipelineModelIntegrationTest 5），全仓库合计 **100 用例 0 失败**；数值断言逐项 offset `0,12,16,24,28,32,35,39`、size `12,4,8,4,4,3,4,8`、stride `47`；8 个不同 Program → 8 个不同键文本与指纹；文本篡改逐项显式 ERROR。
   - ✅ **D 线单测**：`./gradlew test --rerun-tasks --no-build-cache` → `BUILD SUCCESSFUL`，D 线 **49/49**（AttributeRewriterTest 19 / OfGlslTranslatorTest 14 / UniformInjectorTest 12 / UniformCatalogTest 4），全仓库合计 **115 用例 0 失败**；幂等以文本为不动点（golden 两轮逐字节相同、二轮零诊断）；诊断回填验证（片元 `attribute` 的 ERROR 经 `SourceLineMap` 定位到 `shaders/lib/common.glsl:57`）；16 例 hostile 输入无异常逃逸。
+  - ✅ **F 线单测**：`./gradlew test` exit=0，F 线 **65/65**（PackOptionsDefaultsTest 14 / PackOptionsMutationTest 20 / PackOptionsProfileTest 15 / OptionBindingTest 16），全仓库合计 **180 用例 0 失败 0 错误 0 跳过**；边界覆盖越界钳制（列表上下界、32 位整数边界、超 long 位数）、非法值（`1.5`→INTEGER、`1f`/`0x1p3`/`NaN`/`Infinity`/空串→FLOAT）、空选项集、profile 继承环/自环、`#define` 两张快照整文本比对。
   - ✅ **闸门 F2/F3 自检**（各线成员执行）：`./gradlew compileJava` exit=0；红线 `grep -rn "com\.mojang\.\(renderpearl\|blaze3d\)"` 于 `pack/`、`glsl/`、`translate/` 均 **NO MATCH**；F3 另跑独立行为冒烟 **35 条断言全绿**。
   - **GAP 登记**：**不需要**——P0.3 全程使用官方事件（`RegisterRenderPipelinesEvent` / `RenderFrameEvent.Post` / `ClientResourceLoadFinishedEvent`），无自行补充。
   - 本轮无性能改动（P0.3 冷路径，每帧一次 draw），`17-NATIVE.md` §2 性能预算不适用。
@@ -40,7 +42,8 @@
   2. 管线按 **required** 注册：真编译失败表现为原版资源重载硬失败（红屏 + `Failed to load required shader programs`），而非我方 ERROR 路径——属刻意选择（失败绝不静默），排查入口已写入类注释；
   3. F2 上报的 `04-SPEC.md` §4 出入（`mc_Entity` 记 vec2s vs OF 官方 vec3；UV1/UV2 用途描述）**未当场判定**，已登记为待办（影响 E 线 stride 表），不许用猜的值填（07 X9）；
   4. **E 线未覆盖**：F1 适配方法 `PipelineSpecIr.of(RenderApi.PipelineSpec, String)` 只有 main 源集编译证据——F4 的 test 源集 classpath 不含 Minecraft 类型，单测无法构造；是否把 MC 加入 test 源集属共享文件改动，待 env-1 决定（已登记）；与主线真实 binding 的双侧 stride 比对留 P1.2；无 binding>0 多槽用例。
-  5. **D 线已知限制**（该线自报）：幂等以文本为准（插入行时行号映射按 F3 语义必然变化，未断言）；`gl_FragColor`/`texture2D`/`ftransform` 等 gl_ 内建差异**未实现**（不在本任务完成标准内，若要归 P2.3 另开任务）；多行声明 / 同行多名 uniform / UBO 块内同名 / `#if 0` 头部为未覆盖边界。
+  5. **F 线开放点**（该线自报，需实证后定稿）：`OptionBinding` 的布尔 `#define` 风格默认取 `LITERAL`（`#define X true/false`），备选 OF 兼容风格 `IFDEF_TRUE`（真→空替换 `#define X`、假→`#undef X`）已实现且有快照单测——**哪种是真实包（`#ifdef` vs `#if`）所需，缺真实包 + GPU 证据，按 X9 未猜死**，建议 P4.2/P4.3 用真实包定稿（换默认为一行改动）；自由文本 STRING 选项如何进 GLSL 未定（非标识符文本执行「跳过 + WARN DEFINE_SKIPPED_UNSAFE_VALUE」）；选项名大小写折叠未实现。
+  6. **D 线已知限制**（该线自报）：幂等以文本为准（插入行时行号映射按 F3 语义必然变化，未断言）；`gl_FragColor`/`texture2D`/`ftransform` 等 gl_ 内建差异**未实现**（不在本任务完成标准内，若要归 P2.3 另开任务）；多行声明 / 同行多名 uniform / UBO 块内同名 / `#if 0` 头部为未覆盖边界。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行，成员不自行 commit）。
 
 ---

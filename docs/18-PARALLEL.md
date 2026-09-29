@@ -202,8 +202,10 @@ F1–F4 全部落地 → 放行并行
 ```
 ✅ P0.1 空模组能构建能跑        （cfbc2b4 验收通过）
 ✅ P0.2 确认跑在 Vulkan 后端   （83a704d 验收通过；bridge/DeviceApi 落地）
-▶️ P0.3 首个可见产物           ← 当前卡点（另一环境调研中）
-   → P0.4 bridge 全量落地 → P1.1 uniform → P1.2 管线计数
+✅ P0.3 首个可见产物           （主菜单截图 + 日志证据齐，run3 ERROR 清零）
+✅ P0.4 bridge 包隔离落地       （业务包 `^import com\.mojang\.renderpearl` = 0 命中，仅 bridge/ 3 文件允许）
+   ▶️ P1.1 uniform 传递          ← 下一步（改数值 → 画面实时变化）
+   → P1.2 管线计数
    → P2.4 composite 生效 → P3.1 shadow → P3.2 gbuffers → P3.3 deferred
    → P4.1 主流包 → P4.2 切包回归 → P4.3 选项 GUI
 ```
@@ -377,6 +379,7 @@ F1–F4 全部落地 → 放行并行
 | P-1 | **F2 + F3 契约冻结** | ✅ **已完成**（`pack/` 8 类、`glsl/` 三件套；compileJava exit=0、红线 NO MATCH、F3 另 35 条断言全绿） |
 | P-1b | F1 剩余 `bridge/` 接口：`RenderApi` / `TextureApi` / `MixinTargets` + `ContractVersion` | ✅ **已完成**（`FrameApi`/`PipelineApi` 随 P0.3 落地；5 接口齐） |
 | P-1c | F4 测试基建（JUnit 5 + `src/test/` 骨架） | ✅ **已完成**（`F4InfraSmokeTest` 2/2 PASSED） |
+| P-1e | F 线开放点：布尔 `#define` 风格（`LITERAL` vs OF 兼容 `IFDEF_TRUE`）与自由文本 STRING 选项的 GLSL 映射 | ⏳ **待实证** —— 两种风格均已实现且有单测，缺真实包证据按 07 X9 未猜死；建议 P4.2/P4.3 用真实包定稿（换默认一行改动） |
 | P-1d | `04-SPEC.md` §4 与 OF 官方属性表的出入复核 | 🟡 **部分完成**——已核实并写入 §4 复核注记（`mc_Entity` 官方为 **vec3**；`vaUV1`=overlay / `vaUV2`=lightmap；`at_*` 三项存在）。**剩余未定项**：`mc_Entity` 的底层元素类型（float32 / int16）文档未给，直接决定字节数与 stride（E 线现值 47）→ **须在 P1.2 构建真实 `VertexFormat` 时实测对齐**，再走 §3.2 定稿；此前 F2/E 沿用旧值，任何线不许私改（07 X9） |
 | P-2 | 把本文登记进 `00-INDEX.md` 文档清单 | ✅ 已同步 |
 | P-3 | 是否要在 `01-DEV-LOOP.md` §10 加一句指向本文的交叉引用 | ⏳ 待拍板 |
