@@ -3,5 +3,7 @@
   "vkdisp.configuration.section.vkdisp.common.toml": "Vulkan Shader Dispatcher",
   "vkdisp.configuration.section.vkdisp.common.toml.title": "Vulkan Shader Dispatcher",
   "vkdisp.configuration.enabled": "Enabled",
-  "vkdisp.configuration.debugLog": "Debug Log"
+  "vkdisp.configuration.enabled.tooltip": "Master switch. When off, the mod does not touch rendering at all; useful for quickly bisecting issues.",
+  "vkdisp.configuration.debugLog": "Debug Log",
+  "vkdisp.configuration.debugLog.tooltip": "Diagnostic logging. When on, outputs pipeline build/compile counts to help detect silent failures."
 }

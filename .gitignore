@@ -39,6 +39,12 @@ run/
 repo/
 !**/src/**/repo/
 
+### 本地运行环境（免 root Vulkan 前缀等，不入库）###
+/tools/
+
+### 从 Windows 复制文件进 WSL 时产生的 NTFS 附加数据流（会当普通文件落地）###
+*:Zone.Identifier
+
 ### 构建日志（临时诊断产物，不入库）###
 /build*.log
 /build_*.log

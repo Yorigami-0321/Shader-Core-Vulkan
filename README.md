@@ -18,7 +18,7 @@
 | NeoForge | 26.3.0.23-beta |
 | ModDevGradle | 2.0.147 |
 
-权威文档：`docs/22-版本基线.md`。
+权威文档：`docs/05-VERSION.md`。
 
 ---
 
@@ -51,7 +51,7 @@ Windows 下注意：仓库级 `core.autocrlf` 必须是 `false`（见 `.gitattri
 
 ## 文档
 
-工程文档包在 `docs/`，先读 `docs/16-阅读优先级指引.md`。
+工程文档包在 `docs/`，先读 `docs/16-READING.md`（索引入口 `docs/00-INDEX.md`）。
 
 Mapping Names：本工程使用 Mojang 官方映射，其授权条款见
 <https://github.com/NeoForged/NeoForm/blob/main/Mojang.md>。

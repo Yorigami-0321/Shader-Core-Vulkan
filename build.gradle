@@ -171,6 +171,14 @@ publishing {
     }
 }
 
+// 分发合规：jar 内必须随带 LICENSE 全文
+// 依据 docs/07-CONSTRAINTS.md L10 / P3「分发时 jar 内必须带 LICENSE」，
+// 以及 docs/01-DEV-LOOP.md §3.2「[ ] 含 LICENSE（本项目是 MIT，必须随分发）」。
+// 仓库根 LICENSE 不会自动进入 jar，必须显式声明为打包输入。
+tasks.named('jar', Jar).configure {
+    from('LICENSE')
+}
+
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8' // Use the UTF-8 charset for Java compilation
 }

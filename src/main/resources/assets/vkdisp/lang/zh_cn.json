@@ -3,5 +3,7 @@
   "vkdisp.configuration.section.vkdisp.common.toml": "Vulkan 着色器分发器",
   "vkdisp.configuration.section.vkdisp.common.toml.title": "Vulkan 着色器分发器",
   "vkdisp.configuration.enabled": "启用",
-  "vkdisp.configuration.debugLog": "诊断日志"
+  "vkdisp.configuration.enabled.tooltip": "总开关。关闭后本模组不介入任何渲染，用于快速二分定位问题。",
+  "vkdisp.configuration.debugLog": "诊断日志",
+  "vkdisp.configuration.debugLog.tooltip": "诊断日志。打开后输出管线构建/编译计数，便于排查静默失败。"
 }
