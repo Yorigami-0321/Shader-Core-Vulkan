@@ -49,8 +49,21 @@ public record BuiltinUniform(String name, String type, String descriptionZh, Str
         Objects.requireNonNull(descriptionEn, "descriptionEn 不许为 null");
     }
 
-    /** 可直接插入 GLSL 全局作用域的声明文本，例如 {@code uniform mat4 gbufferModelView;}。 */
+    /** 独立声明文本（包源码形态），例如 {@code uniform mat4 gbufferModelView;}。 */
     public String declaration() {
         return "uniform " + this.type + " " + this.name + ";";
+    }
+
+    /**
+     * 块成员声明文本（不带 {@code uniform} 关键字），例如 {@code mat4 gbufferModelView;}。
+     *
+     * <p>注入时用它而不是 {@link #declaration()}：Vulkan GLSL 禁止非透明 uniform 游离在块外
+     * （驱动实测 shaderc 原文 {@code 'non-opaque uniforms outside a block' : not allowed when
+     * using GLSL for Vulkan}），{@link UniformInjector} 把全部内建发射进单个具名无实例名块
+     * {@code layout(std140) uniform VkDispBuiltins { … };}（原版 shader 同款形态）——
+     * 无实例名块的成员仍在全局作用域，包源码里的 {@code gbufferModelView * …} 引用字面不变。
+     */
+    public String blockMember() {
+        return this.type + " " + this.name + ";";
     }
 }

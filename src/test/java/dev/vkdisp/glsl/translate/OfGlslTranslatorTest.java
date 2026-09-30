@@ -51,34 +51,36 @@ class OfGlslTranslatorTest {
             }
             """;
 
-    /** 与 {@link #OF_SAMPLE} 对应的期望输出（注入块按 04-SPEC §3.2 顺序展开）。 */
+    /** 与 {@link #OF_SAMPLE} 对应的期望输出（注入块按 04-SPEC §3.2 顺序展开，匿名 std140 块包裹）。 */
     private static final String EXPECTED = """
             #version 330 core
             // self-made OF-dialect sample for unit tests (not from any third-party pack)
             // vkdisp: OF builtin uniforms (04-SPEC 3.2)
-            uniform mat4 gbufferModelView;
-            uniform mat4 gbufferProjection;
-            uniform mat4 gbufferModelViewInverse;
-            uniform mat4 gbufferProjectionInverse;
-            uniform mat4 shadowModelView;
-            uniform mat4 shadowProjection;
-            uniform vec3 cameraPosition;
-            uniform vec3 sunPosition;
-            uniform vec3 moonPosition;
-            uniform vec3 shadowLightPosition;
-            uniform float frameTimeCounter;
-            uniform int frameCounter;
-            uniform float viewWidth;
-            uniform float viewHeight;
-            uniform float near;
-            uniform float far;
-            uniform float wetness;
-            uniform float rainStrength;
-            uniform int isEyeInWater;
-            uniform int worldTime;
-            uniform int worldDay;
-            uniform ivec2 atlasSize;
-            uniform ivec2 eyeBrightnessSmooth;
+            layout(std140) uniform VkDispBuiltins {
+            mat4 gbufferModelView;
+            mat4 gbufferProjection;
+            mat4 gbufferModelViewInverse;
+            mat4 gbufferProjectionInverse;
+            mat4 shadowModelView;
+            mat4 shadowProjection;
+            vec3 cameraPosition;
+            vec3 sunPosition;
+            vec3 moonPosition;
+            vec3 shadowLightPosition;
+            float frameTimeCounter;
+            int frameCounter;
+            float viewWidth;
+            float viewHeight;
+            float near;
+            float far;
+            float wetness;
+            float rainStrength;
+            int isEyeInWater;
+            int worldTime;
+            int worldDay;
+            ivec2 atlasSize;
+            ivec2 eyeBrightnessSmooth;
+            };
             in vec4 mc_Entity;
             out vec3 vNormal;
             void main() {
@@ -98,9 +100,10 @@ class OfGlslTranslatorTest {
     void injectsCompleteBuiltinTable() {
         TranslateResult result = OfGlslTranslator.translate(ShaderStage.VERTEX, OF_SAMPLE);
         for (BuiltinUniform uniform : UniformCatalog.uniforms()) {
-            assertEquals(1, count(result.text(), uniform.declaration()),
+            assertEquals(1, count(result.text(), uniform.blockMember()),
                     "内建 uniform 必须注入且仅一次：" + uniform.name());
         }
+        assertEquals(1, count(result.text(), UniformInjector.BLOCK_OPEN), "23 条必须共用一个匿名块");
     }
 
     @Test
@@ -213,7 +216,11 @@ class OfGlslTranslatorTest {
     void sampleWithoutOfDeclarationsStillGetsBuiltins() {
         TranslateResult result = OfGlslTranslator.translate(ShaderStage.VERTEX, "void main() {}\n");
         assertTrue(result.isSuccess());
-        assertEquals(23, count(result.text(), "uniform "), "没有 OF 声明也要注入内建 uniform");
+        assertEquals(1, count(result.text(), UniformInjector.BLOCK_OPEN), "必须注入匿名 std140 块开行");
+        for (BuiltinUniform uniform : UniformCatalog.uniforms()) {
+            assertEquals(1, count(result.text(), uniform.blockMember()),
+                    "没有 OF 声明也要注入内建 uniform：" + uniform.name());
+        }
     }
 
     @Test

@@ -53,34 +53,36 @@ class OfGlslTranslatorBuiltinsTest {
             }
             """;
 
-    /** {@link #FRAGMENT_SAMPLE} 的期望输出（内建 uniform 块 + 合成片元输出声明两个插入点）。 */
+    /** {@link #FRAGMENT_SAMPLE} 的期望输出（内建 uniform 匿名 std140 块 + 合成片元输出声明两个插入点）。 */
     private static final String FRAGMENT_EXPECTED = """
             #version 120
             // self-made OF-dialect fragment sample for unit tests (not from any third-party pack)
             // vkdisp: OF builtin uniforms (04-SPEC 3.2)
-            uniform mat4 gbufferModelView;
-            uniform mat4 gbufferProjection;
-            uniform mat4 gbufferModelViewInverse;
-            uniform mat4 gbufferProjectionInverse;
-            uniform mat4 shadowModelView;
-            uniform mat4 shadowProjection;
-            uniform vec3 cameraPosition;
-            uniform vec3 sunPosition;
-            uniform vec3 moonPosition;
-            uniform vec3 shadowLightPosition;
-            uniform float frameTimeCounter;
-            uniform int frameCounter;
-            uniform float viewWidth;
-            uniform float viewHeight;
-            uniform float near;
-            uniform float far;
-            uniform float wetness;
-            uniform float rainStrength;
-            uniform int isEyeInWater;
-            uniform int worldTime;
-            uniform int worldDay;
-            uniform ivec2 atlasSize;
-            uniform ivec2 eyeBrightnessSmooth;
+            layout(std140) uniform VkDispBuiltins {
+            mat4 gbufferModelView;
+            mat4 gbufferProjection;
+            mat4 gbufferModelViewInverse;
+            mat4 gbufferProjectionInverse;
+            mat4 shadowModelView;
+            mat4 shadowProjection;
+            vec3 cameraPosition;
+            vec3 sunPosition;
+            vec3 moonPosition;
+            vec3 shadowLightPosition;
+            float frameTimeCounter;
+            int frameCounter;
+            float viewWidth;
+            float viewHeight;
+            float near;
+            float far;
+            float wetness;
+            float rainStrength;
+            int isEyeInWater;
+            int worldTime;
+            int worldDay;
+            ivec2 atlasSize;
+            ivec2 eyeBrightnessSmooth;
+            };
             layout(location = 0) out vec4 vkdispFragOut0;
             uniform sampler2D gtexture;
             in vec2 texcoord;
@@ -118,7 +120,8 @@ class OfGlslTranslatorBuiltinsTest {
         assertTrue(result.isSuccess(), "样本无错误，必须成功：" + result.diagnostics());
         assertTrue(result.text().startsWith("#version 120\n// self-made OF-dialect vertex sample"),
                 result.text());
-        assertTrue(result.text().contains("uniform mat4 gbufferModelView;\n"));
+        assertTrue(result.text().contains("\nmat4 gbufferModelView;\n"),
+                "内建 uniform 应以匿名块成员注入：" + result.text());
         assertTrue(result.text().contains("in vec3 Position;"));
         assertTrue(result.text().contains("in vec2 UV0;"));
         assertTrue(result.text().contains("out vec2 texcoord;"));
@@ -127,7 +130,11 @@ class OfGlslTranslatorBuiltinsTest {
                 result.text());
         assertTrue(result.diagnostics().isEmpty(), "已声明位置属性时不该有诊断："
                 + result.diagnostics());
-        assertEquals(23, count(result.text(), "uniform "), "23 条内建 uniform 必须齐");
+        for (BuiltinUniform uniform : UniformCatalog.uniforms()) {
+            assertEquals(1, count(result.text(), uniform.blockMember()),
+                    "23 条内建 uniform 必须齐：" + uniform.name());
+        }
+        assertEquals(1, count(result.text(), UniformInjector.BLOCK_OPEN), "必须共用一个匿名块");
     }
 
     @Test

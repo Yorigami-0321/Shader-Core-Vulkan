@@ -114,10 +114,11 @@ class GlslPipelineTest {
         // ② 条件分支：#ifdef USE_LOCAL 未定义 → 走 #else 分支
         assertTrue(r.text().contains("in vec3 vCommon;"), "选中分支的 varying 应转译成 in");
         assertFalse(r.text().contains("vLocal"), "未选中分支应被删除");
-        // ③ 转译：内建 uniform 注入完整且只注入一次
+        // ③ 转译：内建 uniform 注入完整且只注入一次（匿名 std140 块形态，P2.3 驱动编译要求）
         assertTrue(r.text().contains(UniformInjector.BLOCK_HEADER), "注入块头应存在");
+        assertTrue(r.text().contains(UniformInjector.BLOCK_OPEN), "匿名 std140 块开行应存在");
         for (BuiltinUniform uniform : UniformCatalog.uniforms()) {
-            assertEquals(1, count(r.text(), uniform.declaration()),
+            assertEquals(1, count(r.text(), uniform.blockMember()),
                     "内建 uniform 必须注入且仅一次：" + uniform.name());
         }
     }
@@ -174,8 +175,8 @@ class GlslPipelineTest {
         assertFalse(r.isSuccess(), "循环包含必须使管线失败");
         assertTrue(r.errors().stream().anyMatch(d -> d.message().contains("循环包含")),
                 "必须显式报循环包含 ERROR：" + r.diagnostics());
-        // 失败短路：预处理失败后不进入转译 —— 输出里不得出现注入的内建 uniform
-        assertFalse(r.text().contains("uniform mat4 gbufferModelView;"),
+        // 失败短路：预处理失败后不进入转译 —— 输出里不得出现注入的内建 uniform 块
+        assertFalse(r.text().contains(UniformInjector.BLOCK_HEADER),
                 "预处理失败时不得再进入转译注入");
     }
 

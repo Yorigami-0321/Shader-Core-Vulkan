@@ -224,7 +224,18 @@ F1–F4 全部落地 → 放行并行
       `VkDispPackScan`（ClientResourceLoadFinishedEvent → gameDir/shaderpacks → ShaderPackService.loadAll）
       实测 latest.log：packs=2（kind=zip + kind=dir 各一）programs=2 options=8 problems=0 diagnostics=0，
       选项逐条可见（name/type/default/values/slider/screen），vkdisp ERROR/WARN=0（01-DEV-LOOP §10 P2.1/P2.2 达标）
-   → P2.3 #include 编译（冷路径 GlslPipeline 已就绪，待接主线）→ P2.4 composite 生效 → P3.1 shadow → P3.2 gbuffers → P3.3 deferred
+   ▶️ P2.3 #include 编译接主线：冷路径已齐（ShaderPackCompiler → GlslPipeline，`d6e9bdd`），
+      本轮把「源交给驱动编译」补上 —— 新增 bridge/ShaderCompileApi（经原版 GlslCompiler.compileToSpv
+      把阶段源编到 SPIR-V）+ 启动期逐阶段编译日志，验收口径 = 01-DEV-LOOP §10 P2.3
+      （含 #include 的 program 能编译通过，日志可见）。
+      实测撞出并已修的方言坑（T11 证据链）：D 线注入的 23 条内建 uniform 原为独立
+      `uniform <type> <name>;` 行 —— Vulkan GLSL 禁止非透明 uniform 游离在块外
+      （shaderc 原文 `'non-opaque uniforms outside a block'`，首跑 4/4 阶段失败）；
+      改包块后又撞：匿名块 `layout(std140) uniform {` 报 `syntax error, unexpected LEFT_BRACE`
+      （GLSL 语法要求块名；原版 89 个 shader 全为具名无实例名块、成员裸引用）。终态 = 单个
+      `layout(std140) uniform VkDispBuiltins { … };`（原版同款形态：无实例名 → 成员仍在全局
+      作用域，包源码引用字面不变；04-SPEC §3.2 表的名称/类型/顺序不变，只改发射外壳）
+   → P2.4 composite 生效 → P3.1 shadow → P3.2 gbuffers → P3.3 deferred
    → P4.1 主流包 → P4.2 切包回归 → P4.3 选项 GUI
 ```
 

@@ -5,6 +5,36 @@
 
 ---
 
+## 2026-09-30 — P2.3 #include 编译接主线：驱动级 GLSL→SPIR-V 通路打通，4/4 阶段编译通过
+
+- **本次改了什么**：
+  1. 新增 `bridge/ShaderCompileApi.java`（env-1 独占 bridge 路径）：把阶段最终 GLSL 源经**原版 `GlslCompiler.compileToSpv`**（shaderc，与原版管线同一条编译路径）编到 SPIR-V。构造参数 `isZZeroToOne()` / `shaderDrawParameters()` 取自 javap 核实的 PipelineBuilder 字节码（X9 不猜）；**永不抛异常** —— `ShaderCompileException`/意外 `RuntimeException` 一律降级为带原文的失败视图（T11）；`SpvModule` 用完即关、不创建管线；`ShaderSource` 桩对残留 `#include` 返回 null → shaderc 显式报 "not found"。含【参考调研】五条头（T13）。
+  2. `VkDispPackScan` 增加 `compileAndLog()`：扫包日志之后逐包逐阶段 `ShaderPackCompiler`（include 展开 + OF 转译，冷路径）→ `ShaderCompileApi` 驱动编译 → 每阶段一行 `pack program compiled OK … spvBytes=` / `FAILED … : <原版错误原文含 file:line>` + 末行 `pack compile done: stages= ok= failed=` 汇总（P2.3 验收口径）。
+  3. **D 线 Vulkan 方言修复（两轮 runClient 实测驱动，非纸面推演）**：`UniformInjector` 的 23 条内建 uniform 发射形态改为单个**具名无实例名块** `layout(std140) uniform VkDispBuiltins { … };`：
+     - 第 1 轮失败（4/4 阶段）：独立 `uniform mat4 …;` 行 → shaderc 原文 `'non-opaque uniforms outside a block' : not allowed when using GLSL for Vulkan`；
+     - 第 2 轮失败：匿名块 `layout(std140) uniform {` → `syntax error, unexpected LEFT_BRACE`（GLSL 语法要求块名；核查合并 jar 内原版 **89 个 shader 全部是具名无实例名块、成员裸引用**，如 `Scissor.x`）；
+     - 终态 = 原版同款形态：无实例名 → 成员仍在全局作用域 → 包源码 `gbufferModelView * …` 引用字面不变；04-SPEC §3.2 表的名称/类型/顺序不变，只改发射外壳；
+     - 配套：`BuiltinUniform.blockMember()` 新增（`declaration()` 保留为包源码形态）；扫描侧把布局块成员记作「已声明」（保证幂等 + 防撞名）；未闭合布局块显式 ERROR（T11）。
+  4. 测试同步：`UniformInjectorTest` 新增 std140 块形态用例（+1，共 390）；两个 golden 串改块形态；`GlslPipelineTest` / `OfGlslTranslatorTest` / `OfGlslTranslatorBuiltinsTest` 断言改 `blockMember()` + `BLOCK_OPEN`。
+  5. `docs/18-PARALLEL.md` §5 P2.3 状态块：记录两轮方言坑的证据链与终态形态。
+- **为什么改**：01-DEV-LOOP §10 的 P2.3 = 「含 `#include` 的 program 能编译通过（日志证据）」。冷路径早已能产出最终源（`d6e9bdd`），本轮补上「源交给驱动编译」的桥；而桥一通，立刻暴露出 D 线发射形态与 Vulkan GLSL 的两处真实差距 —— 只有真实驱动编译能抓到，JUnit 文本断言抓不到。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §5（P2.3 块）。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；`./gradlew test` **390 用例 0 失败 0 错误**（基线 389 + 新增块形态用例 1）。
+  - ✅ **runClient 实测**（`run/logs/latest.log`，本轮最终一轮）：
+    ```
+    vkdisp: pack program compiled OK: pack=vkdisp-fixture-zip  program=composite stage=VERTEX   file=composite.vsh spvBytes=3664
+    vkdisp: pack program compiled OK: pack=vkdisp-fixture-zip  program=composite stage=FRAGMENT file=composite.fsh spvBytes=3756
+    vkdisp: pack program compiled OK: pack=vkdisp-fixture-dir  program=composite stage=VERTEX   file=composite.vsh spvBytes=3664
+    vkdisp: pack program compiled OK: pack=vkdisp-fixture-dir  program=composite stage=FRAGMENT file=composite.fsh spvBytes=3756
+    vkdisp: pack compile done: stages=4 ok=4 failed=0
+    ```
+    P2.3 验收达成：`composite.fsh` 源内含 `#include "/lib/common.glsl"`（zip + dir 两包均 OK）；同轮 `pack scan done: packs=2 programs=2 options=8 problems=0 diagnostics=0`；`VulkanBackend` 启动启用；**vkdisp ERROR=0 / WARN=0，全 log 零 ERROR 行**。
+- **未覆盖 / 存疑**：包**自带**非透明 uniform（真实 OF 包常见）仍是独立行形态 → 同一条 Vulkan 规则会在 P4.1 撞上（已在任务板登记为后续缺口，本轮不动 §7.6 边界）；`#version 150/120` 包与 `attribute/varying` 全套方言的真实包未测；`VkDispBuiltins` 块的 SPIR-V 反射与 uniform 上传（OfUniformManager）留 P2.4 —— 具名块恰好给了反射稳定块名；F3+T 资源重载触发的二次编译未实测；两次失败轮的完整日志原文未入库（仅摘录进本条目与 18-PARALLEL）。
+- **是否已提交**：随本条目一并 commit 并推送至 `origin/master`。
+
+---
+
 ## 2026-09-30 — P2.1/P2.2 主线接入：启动期扫包钩子上线，zip+目录包与选项枚举日志实测可见
 
 - **本次改了什么**：

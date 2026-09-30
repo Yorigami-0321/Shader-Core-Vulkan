@@ -25,7 +25,14 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  * 3. 我们的差异点：① **只注入缺失项**：包内已声明的一律不重写（尊重包的意图，也保证幂等）；
  *    已声明但类型与 OF 语义不符 → WARN 而不是偷偷覆盖（T11）；② 固定注入顺序（文档表顺序），
  *    第二遍转译时首行代码即已注入的 uniform，注入点前移到它之前且无缺失项 → 文本逐字节不变；
- *    ③ 纯注释 / 空文件不注入（注入了也没有使用方），并显式 WARN 而不是静默跳过。
+ *    ③ 纯注释 / 空文件不注入（注入了也没有使用方），并显式 WARN 而不是静默跳过；
+ *    ④ 注入文本包裹在单个**具名 std140 块**（无实例名）里而不是独立 {@code uniform} 行 ——
+ *    Vulkan GLSL 禁止非透明 uniform 游离在块外（P2.3 驱动实测 shaderc 原文
+ *    {@code 'non-opaque uniforms outside a block' : not allowed when using GLSL for Vulkan}），
+ *    而块必须带名字（同轮实测：匿名 {@code uniform {} 报 {@code syntax error, unexpected LEFT_BRACE}；
+ *    原版 89 个 shader 全是具名无实例名块，成员裸引用 —— 两条均为公开语言/原版事实，不受版权保护）。
+ *    无实例名块的成员仍在全局作用域，包源码引用字面不变；扫描时把该块成员记作"已声明"
+ *    以保证幂等与不撞名。
  * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载期一次）；两趟线性扫描，无缓存、无预优化
@@ -43,6 +50,11 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  * 头部区之外还有一处约束：包内的 {@code #include} / {@code #define} 由 C 线处理，本类只**跳过读取**，
  * 不解析、不改写（18-PARALLEL §4 D 线"不许做"）。
  *
+ * <p><b>注入形态</b>：识别注释 + 单个具名（无实例名）{@link #BLOCK_OPEN} 块 … {@link #BLOCK_CLOSE}，
+ * 成员行是 {@link BuiltinUniform#blockMember()} 而非独立 {@code uniform} 行 —— 独立非透明 uniform 行
+ * 过不了 Vulkan 驱动编译，匿名块过不了语法（差异点 ④）。扫描侧对应把布局块成员记作"已声明"，
+ * 第二遍因此无缺失项 → 文本逐字节不变（幂等）。
+ *
  * <p><b>行号契约</b>：诊断的 {@code line} 是**注入前（本阶段输入）的行号**，
  * {@code sourceFile} 留空由 {@link OfGlslTranslator} 经 F3 的 {@code SourceLineMap} 回填原文件。
  * {@link Result#insertIndex()} / {@link Result#insertedLineCount()} 供入口构造输出行号映射。
@@ -51,6 +63,25 @@ public final class UniformInjector {
 
     /** 注入块的识别注释（第二遍转译时它是注释，会被注入点扫描跳过；不参与任何语义）。 */
     public static final String BLOCK_HEADER = "// vkdisp: OF builtin uniforms (04-SPEC 3.2)";
+
+    /** 注入块开行：具名（无实例名）std140 uniform 块，形态与原版 shader 完全同款（差异点 ④）。 */
+    public static final String BLOCK_OPEN = "layout(std140) uniform VkDispBuiltins {";
+
+    /** 注入块闭行。 */
+    public static final String BLOCK_CLOSE = "};";
+
+    /**
+     * 布局限定的具名 uniform 块开头（本类发射的形态，或包源码原版同款写法）：
+     * {@code layout(...) uniform <名字> {}，且 {@code {} 必须是行尾 —— 单行整块不进块态
+     * （宁可漏记成员走"撞名 → 驱动显式报错"，也不制造假的"块未闭合"）。
+     * 块名与 {@link #BLOCK_OPEN} 的名字不必相同 —— 只要是**无实例名**块，成员就在全局作用域。
+     */
+    private static final java.util.regex.Pattern LAYOUT_UNIFORM_BLOCK_OPEN =
+            java.util.regex.Pattern.compile("layout\\s*\\(.*\\)\\s*uniform\\s+\\w+\\s*\\{\\s*$");
+
+    /** 块成员声明行：{@code [精度] 类型 名字[数组];} —— 只识别到名字与类型（幂等记录 + 类型核对）。 */
+    private static final java.util.regex.Pattern BLOCK_MEMBER = java.util.regex.Pattern.compile(
+            "(?:(?:lowp|mediump|highp)\\s+)?([A-Za-z_]\\w*)\\s+([A-Za-z_]\\w*)\\s*(?:\\[[^]]*\\])?\\s*;");
 
     private UniformInjector() {}
 
@@ -61,7 +92,8 @@ public final class UniformInjector {
      * @param diagnostics       诊断（位置 = 本阶段输入行号；{@code sourceFile} 为 {@code null}，由入口回填）
      * @param injected          本次实际注入的内建 uniform（按 {@link UniformCatalog} 顺序）
      * @param insertIndex       注入点之前原有行数（0 基；0 = 插在文件最前；无注入时无意义）
-     * @param insertedLineCount 本次插入的行数（含 {@link #BLOCK_HEADER} 注释行）
+     * @param insertedLineCount 本次插入的行数（{@link #BLOCK_HEADER} + {@link #BLOCK_OPEN}
+     *                          + 成员行 + {@link #BLOCK_CLOSE}，即 {@code 缺失数 + 3}）
      */
     public record Result(String text, List<TranslateDiagnostic> diagnostics, List<BuiltinUniform> injected,
             int insertIndex, int insertedLineCount) {
@@ -86,11 +118,37 @@ public final class UniformInjector {
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         Map<String, Integer> declaredAtLine = new LinkedHashMap<>();
         CommentState comments = new CommentState();
+        boolean inLayoutBlock = false;
+        int layoutBlockStartLine = 0;
         for (int index = 0; index < sourceLines.size(); index++) {
             int lineNumber = index + 1;
             String code = comments.stripComments(sourceLines.get(index), lineNumber);
             String trimmed = code.strip();
             if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                continue;
+            }
+            // 布局块内：无实例名块的成员是全局作用域声明（幂等记录）；} 收尾，其余行不解析。
+            if (inLayoutBlock) {
+                int closeBrace = trimmed.indexOf('}');
+                if (closeBrace >= 0) {
+                    String before = trimmed.substring(0, closeBrace).strip();
+                    java.util.regex.Matcher member = BLOCK_MEMBER.matcher(before);
+                    if (member.matches()) {
+                        recordDeclaration(member.group(2), member.group(1), lineNumber,
+                                declaredAtLine, diagnostics);
+                    }
+                    inLayoutBlock = false;
+                    continue;
+                }
+                java.util.regex.Matcher member = BLOCK_MEMBER.matcher(trimmed);
+                if (member.matches()) {
+                    recordDeclaration(member.group(2), member.group(1), lineNumber, declaredAtLine, diagnostics);
+                }
+                continue;
+            }
+            if (LAYOUT_UNIFORM_BLOCK_OPEN.matcher(trimmed).matches()) {
+                inLayoutBlock = true;
+                layoutBlockStartLine = lineNumber;
                 continue;
             }
             GlslDeclaration declaration = GlslDeclaration.parse(code);
@@ -100,18 +158,11 @@ public final class UniformInjector {
             if (declaration.block || declaration.name == null) {
                 continue;
             }
-            Integer firstLine = declaredAtLine.putIfAbsent(declaration.name, lineNumber);
-            if (firstLine != null) {
-                diagnostics.add(TranslateDiagnostic.warn("uniform " + declaration.name
-                        + " 重复声明（首次出现在第 " + firstLine + " 行）", null, lineNumber));
-                continue;
-            }
-            BuiltinUniform builtin = UniformCatalog.find(declaration.name);
-            if (builtin != null && declaration.type != null && !builtin.type().equals(declaration.type)) {
-                diagnostics.add(TranslateDiagnostic.warn("OF 内建 uniform " + builtin.name()
-                        + " 在包内声明为 " + declaration.type + "，OF 语义为 " + builtin.type()
-                        + "（保留包内声明，不注入、不重写）", null, lineNumber));
-            }
+            recordDeclaration(declaration.name, declaration.type, lineNumber, declaredAtLine, diagnostics);
+        }
+        if (inLayoutBlock) {
+            diagnostics.add(TranslateDiagnostic.error("layout(...) uniform 块未闭合（起始于第 "
+                    + layoutBlockStartLine + " 行）", null, layoutBlockStartLine));
         }
         if (comments.inBlockComment()) {
             diagnostics.add(0, TranslateDiagnostic.error("块注释未闭合（起始于第 "
@@ -132,13 +183,36 @@ public final class UniformInjector {
         if (missing.isEmpty()) {
             return new Result(lines.text(), diagnostics, List.of(), 0, 0);
         }
-        List<String> injectedLines = new ArrayList<>(missing.size() + 1);
+        // 发射形态 = 识别注释 + 具名无实例名 std140 块（差异点 ④）：独立非透明 uniform 行过不了 Vulkan 编译。
+        List<String> injectedLines = new ArrayList<>(missing.size() + 3);
         injectedLines.add(BLOCK_HEADER);
+        injectedLines.add(BLOCK_OPEN);
         for (BuiltinUniform uniform : missing) {
-            injectedLines.add(uniform.declaration());
+            injectedLines.add(uniform.blockMember());
         }
+        injectedLines.add(BLOCK_CLOSE);
         return new Result(lines.insertLines(insertIndex, injectedLines), diagnostics, missing,
                 insertIndex, injectedLines.size());
+    }
+
+    /**
+     * 记录一条已声明的 uniform：重名 → WARN（T11，不吞）；OF 内建但类型与 §3.2 不符 → WARN
+     * （保留包内声明，不注入不重写）。独立声明与匿名块成员共用同一套判定。
+     */
+    private static void recordDeclaration(String name, String type, int lineNumber,
+            Map<String, Integer> declaredAtLine, List<TranslateDiagnostic> diagnostics) {
+        Integer firstLine = declaredAtLine.putIfAbsent(name, lineNumber);
+        if (firstLine != null) {
+            diagnostics.add(TranslateDiagnostic.warn("uniform " + name
+                    + " 重复声明（首次出现在第 " + firstLine + " 行）", null, lineNumber));
+            return;
+        }
+        BuiltinUniform builtin = UniformCatalog.find(name);
+        if (builtin != null && type != null && !builtin.type().equals(type)) {
+            diagnostics.add(TranslateDiagnostic.warn("OF 内建 uniform " + builtin.name()
+                    + " 在包内声明为 " + type + "，OF 语义为 " + builtin.type()
+                    + "（保留包内声明，不注入、不重写）", null, lineNumber));
+        }
     }
 
     /**

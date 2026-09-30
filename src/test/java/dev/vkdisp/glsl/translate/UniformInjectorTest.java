@@ -39,13 +39,33 @@ class UniformInjectorTest {
     void injectsAllTwentyThreeBuiltinsWhenAbsent() {
         UniformInjector.Result result = UniformInjector.inject(MINIMAL);
         assertEquals(23, result.injected().size(), "04-SPEC §3.2 的 23 条一条都不能少");
-        assertEquals(24, result.insertedLineCount(), "23 条声明 + 1 行识别注释");
+        assertEquals(26, result.insertedLineCount(), "识别注释 + 块开行 + 23 条成员 + 块闭行");
         assertEquals(1, result.insertIndex(), "#version 之后、首条代码之前");
         assertTrue(result.diagnostics().isEmpty());
         for (BuiltinUniform uniform : UniformCatalog.uniforms()) {
-            assertEquals(1, count(result.text(), uniform.declaration()),
+            assertEquals(1, count(result.text(), uniform.blockMember()),
                     "声明必须出现且仅出现一次：" + uniform.name());
         }
+    }
+
+    /**
+     * P2.3 驱动实测的方言要求（差异点 ④）：注入的非透明 uniform 必须在具名 std140 块内 ——
+     * 独立 {@code uniform} 行被 shaderc 以 {@code 'non-opaque uniforms outside a block'} 拒绝，
+     * 匿名块被以 {@code syntax error, unexpected LEFT_BRACE} 拒绝（GLSL 要求块名）。
+     */
+    @Test
+    void injectedBuiltinsAreWrappedInNamedStd140Block() {
+        UniformInjector.Result result = UniformInjector.inject(MINIMAL);
+        assertTrue(result.text().contains(UniformInjector.BLOCK_HEADER + "\n" + UniformInjector.BLOCK_OPEN),
+                "识别注释后必须紧跟具名 std140 块开行：\n" + result.text());
+        assertTrue(result.text().contains(UniformInjector.BLOCK_OPEN + "\nmat4 gbufferModelView;\n"),
+                "成员必须在块内且是全局作用域可用形态：\n" + result.text());
+        assertTrue(result.text().contains("\n" + UniformInjector.BLOCK_CLOSE + "\n"),
+                "块必须有闭行：\n" + result.text());
+        // MINIMAL 输入除块开行外没有任何 uniform 记号 —— 成员行不带 uniform 关键字。
+        assertEquals(1, count(result.text(), "uniform "),
+                "整个注入文本里 uniform 关键字只应出现在块开行");
+        assertEquals(26, result.insertedLineCount(), "插入行数 = 注释 1 + 开行 1 + 成员 23 + 闭行 1");
     }
 
     @Test
@@ -63,7 +83,8 @@ class UniformInjectorTest {
         assertEquals("#extension GL_ARB_shading_language_include : enable", lines.get(2),
                 "#extension 必须仍在任何非预处理记号之前");
         assertEquals(UniformInjector.BLOCK_HEADER, lines.get(3));
-        assertEquals("uniform mat4 gbufferModelView;", lines.get(4));
+        assertEquals(UniformInjector.BLOCK_OPEN, lines.get(4));
+        assertEquals("mat4 gbufferModelView;", lines.get(5));
         assertEquals(3, result.insertIndex());
     }
 
@@ -126,7 +147,9 @@ class UniformInjectorTest {
         UniformInjector.Result result = UniformInjector.inject(source);
         assertEquals(23, result.injected().size(),
                 "块内字段不是全局 uniform 声明，gbufferModelView 仍需注入");
-        assertEquals(1, count(result.text(), "uniform mat4 gbufferModelView;"));
+        // 成员行锚定换行：包内块成员有缩进（"\n    mat4 …"），注入行是列首（"\nmat4 …"）。
+        assertEquals(1, count(result.text(), "\nmat4 gbufferModelView;\n"),
+                "注入的块成员必须出现且仅出现一次");
     }
 
     @Test

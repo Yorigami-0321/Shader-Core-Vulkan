@@ -1,6 +1,6 @@
 package dev.vkdisp;
 /**
- * 【参考调研】P2.1/P2.2 启动期扫包与选项枚举日志 / NeoForge 资源加载完成事件
+ * 【参考调研】P2.1/P2.2/P2.3 启动期扫包、选项枚举与阶段编译日志 / NeoForge 资源加载完成事件
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
  *    参考对象 = NeoForge 26.3.0.23-beta ClientResourceLoadFinishedEvent（官方事件，LGPL-2.1
  *    定义类 —— 只观察事件签名与触发时机，不复制其实现）+ 本仓库自研 B 线 ShaderPackScanner /
@@ -21,14 +21,21 @@ package dev.vkdisp;
  *    （BROKEN_ZIP→ERROR，结构性问题→WARN，首次运行的 INVENTORY_MISSING / NO_PACKS_FOUND→INFO，
  *    全部显式打点，T11 不许「失败得像没发生过」）；诊断按 TranslateDiagnostic 原 severity 分流；
  *    整体 catch Throwable 打 ERROR 原文。总开关关闭走 WARN 降级分支（01-DEV-LOOP §5.1）。
+ *    ④ P2.3（本轮）：扫包日志之后逐阶段跑 ShaderPackCompiler（include 展开 + OF 转译，冷路径）
+ *    并把最终源经 bridge/ShaderCompileApi 交给原版 GlslCompiler 做**驱动级 GLSL→SPIR-V 编译** ——
+ *    每阶段 OK/FAIL 日志 + 汇总计数（"含 #include 的 program 能编译通过" 的验收证据）；
+ *    编译失败打原版错误原文（含 file:line，T11），转译失败的阶段不进驱动编译但同样显式报错。
  * 4. 许可证核对：本项目 MIT；只调用公开 API 与本方代码，无代码复制（07-CONSTRAINTS L5-L8）。
  * 5. 性能基线：启动/重载期一次性冷路径扫描（17-NATIVE §3.2），不做性能优化（T14 达标即停）。
  */
 
+import dev.vkdisp.bridge.ShaderCompileApi;
 import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.glsl.translate.ShaderStage;
 import dev.vkdisp.pack.Option;
 import dev.vkdisp.pack.Program;
 import dev.vkdisp.pack.ShaderPack;
+import dev.vkdisp.pack.ShaderPackCompiler;
 import dev.vkdisp.pack.ShaderPackScanner;
 import dev.vkdisp.pack.ShaderPackService;
 import net.minecraft.client.Minecraft;
@@ -41,16 +48,19 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * P2.1/P2.2 主线接入：客户端资源加载完成后扫描 {@code <gameDir>/shaderpacks/}，
- * 把包清单（zip / 目录两种形态）与选项枚举逐条打进日志。
+ * P2.1/P2.2/P2.3 主线接入：客户端资源加载完成后扫描 {@code <gameDir>/shaderpacks/}，
+ * 把包清单（zip / 目录两种形态）与选项枚举逐条打进日志，并把各 program 的最终源做驱动级编译。
  *
  * <p>验收口径（01-DEV-LOOP §10）：
  * <ul>
  *   <li><b>P2.1</b> —— {@code .zip} 与目录两种形态都被列出（日志 {@code kind=zip} / {@code kind=dir}）；</li>
- *   <li><b>P2.2</b> —— 选项被枚举出来，日志可见（每选项一行 name/type/default/values/slider/screen）。</li>
+ *   <li><b>P2.2</b> —— 选项被枚举出来，日志可见（每选项一行 name/type/default/values/slider/screen）；</li>
+ *   <li><b>P2.3</b> —— 含 {@code #include} 的 program 能编译通过（日志：逐阶段
+ *       {@code pack program compiled OK} + 汇总 {@code pack compile done}，失败打原文）。</li>
  * </ul>
  *
  * <p>本类只读库存、只打日志：不注册虚拟资源包、不写用户的 options/resourcePacks（T11 / 04-SPEC §3.1）。
+ * 驱动级编译经 bridge/ShaderCompileApi（P2.3 本轮新增），SPIR-V 用完即关、不创建管线。
  */
 @EventBusSubscriber(modid = VkDisp.MOD_ID, value = Dist.CLIENT)
 public final class VkDispPackScan {
@@ -77,21 +87,30 @@ public final class VkDispPackScan {
         }
         try {
             scanAndLog(event.isInitial());
+            compileAndLog();
         } catch (Throwable t) {
             // 失败必须打 ERROR 原文（07-CONSTRAINTS T11：不许吞异常让它看起来能跑）。
             VkDisp.LOGGER.error("vkdisp: pack scan failed", t);
         }
     }
 
-    /** 扫描 + 逐条日志。{@link ShaderPackService#loadAll} 永不抛非受检异常，此处只兜真正的意外。 */
-    private static void scanAndLog(boolean initial) {
+    /** 库存目录（{@code <gameDir>/shaderpacks}）；gameDirectory 不可用返回 null（调用方显式报错）。 */
+    private static Path inventoryDir() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.gameDirectory == null) {
+            return null;
+        }
+        return minecraft.gameDirectory.toPath().resolve("shaderpacks");
+    }
+
+    /** 扫描 + 逐条日志。{@link ShaderPackService#loadAll} 永不抛非受检异常，此处只兜真正的意外。 */
+    private static void scanAndLog(boolean initial) {
+        Path inventory = inventoryDir();
+        if (inventory == null) {
             VkDisp.LOGGER.error(
                     "vkdisp: pack scan aborted — game directory unavailable (initial={})", initial);
             return;
         }
-        Path inventory = minecraft.gameDirectory.toPath().resolve("shaderpacks");
         ShaderPackService.InventoryResult result = ShaderPackService.loadAll(inventory);
         VkDisp.LOGGER.info("vkdisp: pack scan: inventory={} exists={} initial={}",
                 inventory, Files.isDirectory(inventory), initial);
@@ -135,6 +154,70 @@ public final class VkDispPackScan {
         VkDisp.LOGGER.info("vkdisp: pack scan done: packs={} programs={} options={} problems={} diagnostics={}",
                 result.packs().size(), programCount, optionCount,
                 result.scanProblems().size(), result.diagnostics().size());
+    }
+
+    /**
+     * P2.3：逐包逐阶段编译 —— 冷路径（{@link ShaderPackCompiler}：include 展开 + OF 转译）→
+     * 驱动级编译（bridge/ShaderCompileApi → 原版 GlslCompiler → SPIR-V）。
+     *
+     * <p>日志口径：每阶段一行 {@code pack program compiled OK/FAILED}（失败带原版错误原文，含
+     * file:line），末行 {@code pack compile done} 汇总计数。「含 #include 的 program 能编译通过」
+     * 的验收 = 汇总中该阶段 failed=0 且 OK 行可见。包级装载诊断不在此重复打（scanAndLog 已打过
+     * 同一批 load 诊断），这里只打转译阶段自身的诊断与驱动编译结果。
+     */
+    private static void compileAndLog() {
+        Path inventory = inventoryDir();
+        if (inventory == null) {
+            VkDisp.LOGGER.error("vkdisp: pack compile aborted — game directory unavailable");
+            return;
+        }
+        ShaderPackScanner.ScanResult scan = ShaderPackScanner.scan(inventory);
+        int stages = 0;
+        int ok = 0;
+        int failed = 0;
+        for (ShaderPackScanner.DiscoveredPack discovered : scan.packs()) {
+            ShaderPackCompiler.CompileResult compiled = ShaderPackCompiler.compile(discovered);
+            if (compiled.pack() == null) {
+                // 包模型没组装出来：load 级诊断已由 scanAndLog 打过（同一发现路径），这里显式标记编译被跳过。
+                failed++;
+                VkDisp.LOGGER.error("vkdisp: pack compile skipped (pack model null): pack={}",
+                        discovered.name());
+                continue;
+            }
+            String packName = compiled.pack().name();
+            for (ShaderPackCompiler.CompiledStage stage : compiled.stages()) {
+                stages++;
+                // 转译期自身的诊断（D 线 INFO/WARN/ERROR）只在这里打一次 —— scanAndLog 打的是 load 期诊断。
+                for (TranslateDiagnostic diagnostic : stage.result().diagnostics()) {
+                    logDiagnostic(diagnostic);
+                }
+                if (!stage.isSuccess()) {
+                    failed++;
+                    VkDisp.LOGGER.error(
+                            "vkdisp: pack program compile FAILED (translation): pack={} program={} stage={} file={}",
+                            packName, stage.programName(), stage.stage(), stage.sourceFile());
+                    continue;
+                }
+                // 诊断名与原版 Identifier.toString() 同构，会出现在 shaderc 错误原文里。
+                String debugName = "vkdisp:pack/" + packName + "/" + stage.sourceFile();
+                ShaderCompileApi.StageResult driver = ShaderCompileApi.compileStage(
+                        debugName, stage.result().text(), stage.stage() == ShaderStage.VERTEX);
+                if (driver.success()) {
+                    ok++;
+                    VkDisp.LOGGER.info(
+                            "vkdisp: pack program compiled OK: pack={} program={} stage={} file={} spvBytes={}",
+                            packName, stage.programName(), stage.stage(), stage.sourceFile(),
+                            driver.spvBytes());
+                } else {
+                    failed++;
+                    VkDisp.LOGGER.error(
+                            "vkdisp: pack program compile FAILED: pack={} program={} stage={} file={}: {}",
+                            packName, stage.programName(), stage.stage(), stage.sourceFile(),
+                            driver.error());
+                }
+            }
+        }
+        VkDisp.LOGGER.info("vkdisp: pack compile done: stages={} ok={} failed={}", stages, ok, failed);
     }
 
     /**
