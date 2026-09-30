@@ -155,6 +155,13 @@ public final class ShaderPackService {
         List<ConstEvaluator.OptionConstant> discoveredOptions = new ArrayList<>();
         for (Map.Entry<String, ProgramBlueprint> entry : blueprints.entrySet()) {
             ProgramBlueprint blueprint = entry.getValue();
+            List<UniformDecl> uniforms = new ArrayList<>();
+            List<VertexAttribute> attributes = new ArrayList<>();
+            // 顶点阶段才收顶点属性（片元的 in 是插值输入，语义不同）。
+            collectSource(plan, resolver, blueprint.vertexShader, true,
+                    discoveredOptions, uniforms, attributes, diagnostics);
+            collectSource(plan, resolver, blueprint.fragmentShader, false,
+                    discoveredOptions, uniforms, attributes, diagnostics);
             programs.add(new Program(
                     blueprint.name,
                     ProgramStage.parse(blueprint.name),
@@ -162,10 +169,9 @@ public final class ShaderPackService {
                     blueprint.dimensionFolder,
                     blueprint.vertexShader,
                     blueprint.fragmentShader,
-                    List.of(),
-                    List.of(),
+                    dedupeUniforms(uniforms),
+                    attributes,
                     settings.getOrDefault(entry.getKey(), Map.of())));
-            collectOptions(plan, resolver, blueprint, discoveredOptions, diagnostics);
         }
 
         List<Option> options = assembleOptions(discoveredOptions, sliders, screens, diagnostics);
@@ -423,44 +429,61 @@ public final class ShaderPackService {
 
     // ------------------------------------------------------------------ 选项发现（C 线）
 
-    /** 对程序的两个源文件跑 C 线预处理，收集诊断与识别出的选项常量。 */
-    private static void collectOptions(
+    /**
+     * 对一个源文件跑 C 线预处理，收集诊断、识别出的选项常量，以及声明（uniform / 顶点属性）。
+     *
+     * <p>预处理的输出文本（include 已展开、指令已去、**尚未转译**）正是声明提取的正确输入：
+     * 既覆盖被包含文件里的声明，又不会把 D 线 {@code UniformInjector} 注入的内建 uniform
+     * 误记成"包自己声明的"。
+     */
+    private static void collectSource(
             ShaderPackRepository.MountPlan plan,
             IncludeResolver resolver,
-            ProgramBlueprint blueprint,
-            List<ConstEvaluator.OptionConstant> sink,
+            String sourcePath,
+            boolean vertexStage,
+            List<ConstEvaluator.OptionConstant> optionSink,
+            List<UniformDecl> uniformSink,
+            List<VertexAttribute> attributeSink,
             List<TranslateDiagnostic> diagnostics) {
-        // 程序允许只有一侧文件存在（Program 契约：缺失侧为 null，消费方显式降级，08-TESTING §4）。
-        // 注意不能写成 List.of(vertexShader, fragmentShader) —— List.of 遇到 null 元素会抛 NPE。
-        List<String> sourcePaths = new ArrayList<>(2);
-        if (blueprint.vertexShader != null) {
-            sourcePaths.add(blueprint.vertexShader);
+        if (sourcePath == null) {
+            // 程序允许只有一侧文件存在（Program 契约：缺失侧为 null，消费方显式降级，08-TESTING §4）。
+            return;
         }
-        if (blueprint.fragmentShader != null) {
-            sourcePaths.add(blueprint.fragmentShader);
+        String source = readText(plan, sourcePath);
+        if (source == null) {
+            diagnostics.add(TranslateDiagnostic.of(
+                    TranslateDiagnostic.Severity.WARN,
+                    "vkdisp: 程序源文件不可读，跳过选项与声明提取: " + sourcePath,
+                    sourcePath, TranslateDiagnostic.UNKNOWN_LINE));
+            return;
         }
-        for (String sourcePath : sourcePaths) {
-            String source = readText(plan, sourcePath);
-            if (source == null) {
-                diagnostics.add(TranslateDiagnostic.of(
-                        TranslateDiagnostic.Severity.WARN,
-                        "vkdisp: 程序源文件不可读，跳过选项发现: " + sourcePath,
-                        sourcePath, TranslateDiagnostic.UNKNOWN_LINE));
-                continue;
-            }
-            GlslPreprocessor.PreprocessReport report;
-            try {
-                report = GlslPreprocessor.analyze(sourcePath, source, resolver);
-            } catch (RuntimeException e) {
-                diagnostics.add(TranslateDiagnostic.of(
-                        TranslateDiagnostic.Severity.WARN,
-                        "vkdisp: 预处理该程序失败，已跳过其选项发现: " + e.getMessage(),
-                        sourcePath, TranslateDiagnostic.UNKNOWN_LINE));
-                continue;
-            }
-            diagnostics.addAll(report.result().diagnostics());
-            sink.addAll(report.options());
+        GlslPreprocessor.PreprocessReport report;
+        try {
+            report = GlslPreprocessor.analyze(sourcePath, source, resolver);
+        } catch (RuntimeException e) {
+            diagnostics.add(TranslateDiagnostic.of(
+                    TranslateDiagnostic.Severity.WARN,
+                    "vkdisp: 预处理该程序失败，已跳过其选项与声明提取: " + e.getMessage(),
+                    sourcePath, TranslateDiagnostic.UNKNOWN_LINE));
+            return;
         }
+        diagnostics.addAll(report.result().diagnostics());
+        optionSink.addAll(report.options());
+
+        GlslDeclarationExtractor.Result declarations =
+                GlslDeclarationExtractor.extract(report.result().text(), sourcePath, vertexStage);
+        uniformSink.addAll(declarations.uniforms());
+        attributeSink.addAll(declarations.attributes());
+        diagnostics.addAll(declarations.diagnostics());
+    }
+
+    /** 同一 program 的两个阶段可能各自声明同名 uniform —— 按名字去重并保序（首见优先）。 */
+    private static List<UniformDecl> dedupeUniforms(List<UniformDecl> uniforms) {
+        Map<String, UniformDecl> byName = new LinkedHashMap<>();
+        for (UniformDecl uniform : uniforms) {
+            byName.putIfAbsent(uniform.name(), uniform);
+        }
+        return List.copyOf(byName.values());
     }
 
     /**

@@ -268,6 +268,42 @@ class ShaderPackServiceTest {
                 () -> "null 入参必须显式 ERROR，实际: " + result.diagnostics());
     }
 
+    @Test
+    void programDeclarationsAreFilledFromSource() throws IOException {
+        Path pack = packDir("decl");
+        write(pack, "shaders/composite.vsh",
+                "#version 150\n"
+                        + "in vec3 vaPosition;\n"
+                        + "in vec4 vaColor;\n"
+                        + "uniform mat4 gbufferModelView;\n"
+                        + "void main() {}\n");
+
+        ShaderPack model = onlyPack(ShaderPackService.loadAll(inventory));
+        Program program = model.programs().get(0);
+
+        assertEquals(List.of(VertexAttribute.Position, VertexAttribute.Color), program.vertexAttributes());
+        assertEquals(List.of(new UniformDecl("gbufferModelView", "mat4")), program.uniforms());
+    }
+
+    @Test
+    void declarationsFromBothStagesAreMergedAndDeduped() throws IOException {
+        Path pack = packDir("merge");
+        write(pack, "shaders/composite.vsh",
+                "#version 150\nuniform mat4 projectionMatrix;\nin vec3 vaPosition;\nvoid main() {}\n");
+        write(pack, "shaders/composite.fsh",
+                "#version 150\nuniform mat4 projectionMatrix;\nuniform sampler2D gtexture;\n"
+                        + "in vec2 vUv;\nvoid main() {}\n");
+
+        ShaderPack model = onlyPack(ShaderPackService.loadAll(inventory));
+        Program program = model.programs().get(0);
+
+        assertEquals(List.of("projectionMatrix", "gtexture"),
+                program.uniforms().stream().map(UniformDecl::name).toList(),
+                "两阶段的 uniform 应合并并按键去重（保序、首见优先）");
+        assertEquals(List.of(VertexAttribute.Position), program.vertexAttributes(),
+                "片元的 in（vUv）不该混进顶点属性");
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private Path packDir(String name) throws IOException {
