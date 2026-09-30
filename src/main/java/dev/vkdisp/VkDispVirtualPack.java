@@ -22,8 +22,9 @@ package dev.vkdisp;
  *       此刻配置尚未加载（ClientModLoader.finish@3079 才加载完）；openAllSelected@3114 生成源，
  *       两个事件的字节码偏移实测见 18-PARALLEL §5 P2.4 ②；
  *    ② **永不抛穿资源加载**：生成链任意 Throwable → ERROR 原文 + 内置 passthrough 兜底
- *       （composite 是 required 管线，抛穿会砸启动；T11 要求显式可见而非静默）；
- *    ③ PackResources 是内存实现（单资源：shaders/composite.fsh），无文件句柄，close 为空操作。
+ *       （composite / deferred 都是 required 管线，抛穿会砸启动；T11 要求显式可见而非静默）；
+ *    ③ PackResources 是内存实现（双资源：shaders/composite.fsh + shaders/deferred.fsh），
+ *       无文件句柄，close 为空操作。
  * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只观察官方签名（07-CONSTRAINTS L5-L8 / X19-X21）。
  * 5. 性能基线：❄️ 冷路径（注册一次 + 每次资源加载生成一次），清晰优先不做优化（18-PARALLEL §7.7）。
  */
@@ -80,15 +81,35 @@ import net.neoforged.neoforge.event.AddPackFindersEvent;
 @EventBusSubscriber(modid = VkDisp.MOD_ID, value = Dist.CLIENT)
 public final class VkDispVirtualPack {
 
-    /** 虚拟包命名空间（04-SPEC §2）；管线片元 id = {@code vkdisp_pack:composite}。 */
+    /** 虚拟包命名空间（04-SPEC §2）；管线片元 id = {@code vkdisp_pack:composite} / {@code :deferred}。 */
     public static final String NAMESPACE = "vkdisp_pack";
 
-    /** 包内唯一资源：composite 片元（相对 assets/ 的路径）。 */
+    /** 包内资源：composite 片元（相对 assets/ 的路径）。 */
     public static final String COMPOSITE_PATH = "shaders/composite.fsh";
+
+    /** 包内资源（P3.3）：deferred 步片元（相对 assets/ 的路径）。 */
+    public static final String DEFERRED_PATH = "shaders/deferred.fsh";
 
     /** 全量资源 id：assets/vkdisp_pack/shaders/composite.fsh（ShaderManager FileToIdConverter 解析口径）。 */
     private static final Identifier COMPOSITE_ID =
             Identifier.fromNamespaceAndPath(NAMESPACE, COMPOSITE_PATH);
+
+    /** 全量资源 id（P3.3）：assets/vkdisp_pack/shaders/deferred.fsh。 */
+    private static final Identifier DEFERRED_ID =
+            Identifier.fromNamespaceAndPath(NAMESPACE, DEFERRED_PATH);
+
+    /**
+     * P3.3 链路开关：最近一次 {@code openResources} 生成时，所选包是否真实产出了 deferred 片元。
+     *
+     * <p>默认 false（资源加载前 / 兜底路径 / 总开关关闭均为 false → FrameApi 走 P3.2 直连基线）。
+     * volatile：生成在资源加载线程写、渲染线程读（18-PARALLEL §5 P3.3 ④）。
+     */
+    private static volatile boolean hasDeferredProgram;
+
+    /** P3.3：所选包是否声明并成功产出了 deferred 片元（FrameApi 链路判据，只读视图）。 */
+    public static boolean hasDeferredProgram() {
+        return hasDeferredProgram;
+    }
 
     /**
      * 元数据段：兼容范围取到荒谬的宽（0..9999）——本包是自造必需品，不做版本猜测（X9）；
@@ -142,13 +163,15 @@ public final class VkDispVirtualPack {
             @Override
             public PackMetadataResources openMetadata(PackLocationInfo loc) {
                 // 元数据读取可能早于配置加载：返回静态兜底源，不做库存扫描。
-                return new VirtualPackResources(loc, PackCompositeSource.FALLBACK_GLSL);
+                return new VirtualPackResources(loc,
+                        PackCompositeSource.FALLBACK_GLSL, PackCompositeSource.FALLBACK_GLSL);
             }
 
             @Override
             public Stream<PackResources> openResources(PackLocationInfo loc, Pack.Metadata meta) {
                 // openAllSelected@3114：此刻配置已加载@3079 → 生成真正生效的源（P2.4 ③ 时机）。
-                return Stream.of(new VirtualPackResources(loc, generateSource()));
+                GeneratedSources sources = generateSources();
+                return Stream.of(new VirtualPackResources(loc, sources.composite(), sources.deferred()));
             }
         };
         Pack.Metadata metadata = new Pack.Metadata(
@@ -160,19 +183,25 @@ public final class VkDispVirtualPack {
         return new Pack(location, supplier, metadata, selection);
     }
 
+    /** P3.3 一次生成的双源（deferred 步开关 {@link #hasDeferredProgram} 随生成同步落盘）。 */
+    private record GeneratedSources(String composite, String deferred) {}
+
     /**
-     * 生成 composite 片元源（{@link PackCompositeSource} 冷路径编排）。
+     * 生成 composite + deferred 双片元源（{@link PackCompositeSource} 冷路径编排）。
      * 永不抛：任意失败 → ERROR 原文 + 内置 passthrough（required 管线必须总有源可编，T11）。
+     * 每条路径都显式写 {@link #hasDeferredProgram}（兜底/异常 = false → FrameApi 走 P3.2 基线）。
      */
-    static String generateSource() {
+    static GeneratedSources generateSources() {
         try {
             boolean enabled = VkDispConfig.ENABLED.get();
             String profile = VkDispConfig.PACK_PROFILE.get();
             if (!enabled) {
+                hasDeferredProgram = false;
                 VkDisp.LOGGER.warn(
                         "vkdisp: composite source: mod disabled (vkdisp.enabled=false)"
                                 + " -> built-in passthrough fallback");
-                return PackCompositeSource.FALLBACK_GLSL;
+                return new GeneratedSources(PackCompositeSource.FALLBACK_GLSL,
+                        PackCompositeSource.FALLBACK_GLSL);
             }
             Path inventory = inventoryDir();
             VkDisp.LOGGER.info("vkdisp: composite source generation start: profile='{}' inventory={}",
@@ -187,11 +216,19 @@ public final class VkDispVirtualPack {
                     result.fallback(), result.packName(), result.profile(),
                     result.source().getBytes(StandardCharsets.UTF_8).length,
                     result.diagnostics().size());
-            return result.source();
+            hasDeferredProgram = result.hasDeferredProgram();
+            // P3.3 证据行：deferred 步是否开（present=true 才会走 scene -> offscreen2 -> main 链）。
+            VkDisp.LOGGER.info(
+                    "vkdisp: deferred source ready: present={} pack={} bytes={}",
+                    result.hasDeferredProgram(), result.packName(),
+                    result.deferredSource().getBytes(StandardCharsets.UTF_8).length);
+            return new GeneratedSources(result.source(), result.deferredSource());
         } catch (Throwable t) {
+            hasDeferredProgram = false;
             VkDisp.LOGGER.error("vkdisp: composite source generation FAILED (原文如下)"
                     + " -> built-in passthrough fallback", t);
-            return PackCompositeSource.FALLBACK_GLSL;
+            return new GeneratedSources(PackCompositeSource.FALLBACK_GLSL,
+                    PackCompositeSource.FALLBACK_GLSL);
         }
     }
 
@@ -214,7 +251,8 @@ public final class VkDispVirtualPack {
     }
 
     /**
-     * 内存 {@link PackResources}：只服务一个资源（{@code shaders/composite.fsh}）。
+     * 内存 {@link PackResources}：服务两个资源（{@code shaders/composite.fsh} +
+     * {@code shaders/deferred.fsh}，P3.3 双管线双片元）。
      *
      * <p>接口清单经 javap 核实：{@link PackResources} 三个抽象方法 + 继承自
      * {@code PackMetadataResources} 的 {@code location/getRootResource/getMetadataSection/close}
@@ -223,11 +261,13 @@ public final class VkDispVirtualPack {
     static final class VirtualPackResources implements PackResources {
 
         private final PackLocationInfo location;
-        private final byte[] bytes;
+        private final byte[] compositeBytes;
+        private final byte[] deferredBytes;
 
-        VirtualPackResources(PackLocationInfo location, String source) {
+        VirtualPackResources(PackLocationInfo location, String compositeSource, String deferredSource) {
             this.location = location;
-            this.bytes = source.getBytes(StandardCharsets.UTF_8);
+            this.compositeBytes = compositeSource.getBytes(StandardCharsets.UTF_8);
+            this.deferredBytes = deferredSource.getBytes(StandardCharsets.UTF_8);
         }
 
         @Override
@@ -237,8 +277,14 @@ public final class VkDispVirtualPack {
 
         @Override
         public IoSupplier<InputStream> getResource(PackType type, Identifier id) {
-            if (type == PackType.CLIENT_RESOURCES && COMPOSITE_ID.equals(id)) {
-                return () -> new ByteArrayInputStream(bytes);
+            if (type != PackType.CLIENT_RESOURCES) {
+                return null;
+            }
+            if (COMPOSITE_ID.equals(id)) {
+                return () -> new ByteArrayInputStream(compositeBytes);
+            }
+            if (DEFERRED_ID.equals(id)) {
+                return () -> new ByteArrayInputStream(deferredBytes);
             }
             return null;
         }
@@ -253,7 +299,12 @@ public final class VkDispVirtualPack {
             if (normalized.isEmpty()
                     || COMPOSITE_PATH.equals(normalized)
                     || COMPOSITE_PATH.startsWith(normalized + "/")) {
-                output.accept(COMPOSITE_ID, () -> new ByteArrayInputStream(bytes));
+                output.accept(COMPOSITE_ID, () -> new ByteArrayInputStream(compositeBytes));
+            }
+            if (normalized.isEmpty()
+                    || DEFERRED_PATH.equals(normalized)
+                    || DEFERRED_PATH.startsWith(normalized + "/")) {
+                output.accept(DEFERRED_ID, () -> new ByteArrayInputStream(deferredBytes));
             }
         }
 

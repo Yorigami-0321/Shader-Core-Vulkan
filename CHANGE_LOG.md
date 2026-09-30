@@ -5,6 +5,74 @@
 
 ---
 
+## 2026-09-30 — P3.3 deferred 链完整交付：每步输入=上一步输出（双跑日志链），同材质色调 A/B 0.688≈0.700，方向代数+边缘取证闭环
+
+- **本次改了什么**：
+  1. **`pack/PackCompositeSource` 扩双源**：新增 `DEFERRED_PROGRAM="deferred"`；`Result`
+     增 `deferredSource`（永不 null：取不到 → 内置 passthrough，紧凑构造器白名单非空白）+
+     `hasDeferredProgram`（选中包真实产出 deferred 片元才 true）；**同一次选包编译**顺带取
+     deferred 片元（链两端必须同包，不同包选项语义冲突比没有链更糟）；包声明 deferred 但
+     片元阶段失败 → WARN `声明了 deferred 但片元阶段无成功产出…按未启用处理`、不硬开喂
+     兜底源的步；未声明 → INFO `不含 deferred 程序…（链路保持 P3.2 直连）`；整体兜底两源
+     均 passthrough、hasDeferred=false（T11）。
+  2. **`VkDispVirtualPack` 服务第二资源**：`shaders/deferred.fsh` 进虚拟包 —— required 管线
+     必须总有源可编，**总开关关闭也服务 passthrough**；`generateSources()` 一次生成双源，
+     证据行 `deferred source ready: present=… pack=… bytes=…`，`volatile hasDeferredProgram()`
+     暴露给 bridge。
+  3. **第 8 条管线**：`PipelineApi` 增 `pipeline/deferred`（fragment=`vkdisp_pack:deferred`、
+     vertex=`vkdisp:fullscreen_flipv`、绑定组 BUILTINS+InSampler 同 composite —— 链方向
+     1+1≡0 (mod 2) 要求 deferred 贡献 +1 翻转，P-1f ③ + P3.2 实测代数合成，非新猜测）；
+     `FullscreenPipelineRegistrar` 计数 1/7..7/7 → 1/8..8/8（deferred 插 4/8）。
+  4. **`FrameApi` 链路执行**：`offscreenTarget` 扩 slot 2（无深度、颜色专用、仅链路时懒建）；
+     新 deferred pass（世界内 && scene 已捕获 && hasDeferred 才执行，scene → offscreen2，
+     标签 `(deferred: scene -> offscreen2, pack deferred)`）；Pass 4 输入三态（deferred 输出 /
+     scene 直连 / fixture offscreen1）+ 管线二选一 + 切换埋点沿用 `composite input source`；
+     链路一次性埋点 `deferred chain wired: scene -> offscreen2 -> main (pack deferred)`；
+     `isPipelineReady` 增补 deferred 注册+编译校验；相机锚定/位姿变化日志（取证用）。
+  5. **测试**：`PackCompositeSourceTest` 增 4 条 P3.3 用例（兜底双源+false、无 deferred
+     INFO、有 deferred 坏片元 WARN、色调标记 `vec3(1.0, 0.7, 0.7)`）→ 全套 **428**。
+  6. `docs/18-PARALLEL.md` §5 P3.3 块：设计①–⑤（X9 脚手架核查 + 方向代数 + 链拓扑 +
+     脚手架改动 + 证据计划）+ **本轮三跑实测回填** + 🟡→✅；⑤ 方向条按环境事实改写
+     （顶视网格复测不可复现 → 代数+基线+锚定帧边缘组合登记，同位姿镜像 未覆盖）。
+- **为什么改**：01-DEV-LOOP §10 P3.3 完整交付 = 08-TESTING §5「deferred | 每步的输入纹理是
+  上一步的输出」+「composite | 链顺序正确，最后一步写入主目标」。deferred 是 OptiFine 包的
+  常见程序位，链上没它 = 主流包（P4.1 BSL）过不了；已知色调变换必须穿过整链才上屏，
+  可检伪（链关即回落中性）。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §5（P3.3 块设计+实测）；
+  `PackCompositeSource.java`、`VkDispVirtualPack.java`、`bridge/PipelineApi.java`、
+  `bridge/FrameApi.java`、`render/FullscreenPipelineRegistrar.java`、
+  `PackCompositeSourceTest.java`。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；`cleanTest test` **428 用例 0 失败 0 错误**（4 条 P3.3 新增）。
+  - ✅ **runClient `-PquickPlay` 三跑**（/tmp/p33a|p33b|p33c_runclient.log，fixture 自造包
+    §7.6）：链开两跑 `present=true bytes=1384` → `pipeline registered (4/8)` →
+    `registered=8, compiled=8 (aligned)` → `deferred pipeline wired … flipv by net-parity`
+    → `deferred chain wired: scene -> offscreen2 -> main (pack deferred)` →
+    `composite input source: deferred output (P3.3)`；链关跑（deferred 改名 .off、zip 4 条目）
+    `present=false bytes=409` + INFO 不含 deferred → `composite input source: scene capture
+    (P3.2 terrain)`；两分支 **vkdisp WARN/ERROR=0**。
+  - ✅ **像素判据（同材质 A/B）**：链开锚定帧 `p33_chain_anchor.png`（sha256 a4d41356…，
+    相机日志锚 yaw −109.500046/pitch +6.2999973/fov 38.150047° == 退出存档）沙岩 R/G=1.5146；
+    链关帧 `p33_direct_anchor.png`（sha256 002bf828…）沙岩地面 R/G=1.0424（≈P3.2 基线
+    1.0430）→ G/R 抑制比 **0.688**、R/G 抬升比 **1.453** vs ×vec3(1.0,0.7,0.7) 预言
+    0.700/1.429（−1.7%/+1.7%）；链关全帧 R/G=1.0243 中性无残留。
+  - ✅ **方向**：链开锚定帧近竖墙角边族 87.0°、链关帧地平线族 {0.0°}（≥60px 边 −0.4..+0.5°）
+    无倾斜/翻转信号；1+1≡0 代数 + P3.2 像素级镜像基线组合登记。
+  - ✅ fixture 取证后复原（deferred 回名、zip 6 条目 3313B）。
+- **未覆盖**：
+  - **同位姿逐像素镜像判定**：本环境位姿跨会话不可保持（p33c 出现非指令位姿移动：18:43:44
+    后相机被外部输入挪走，退出存档 (12.7,4.0,−13.06)/(−62.1°,−26.1°) ≠ 锚 (8.5,1.62,−7.5)/
+    (−109.5°,6.3°)，位姿日志 30 条上限截断）→ A/B 只能**同材质锚定**；需输入隔离环境重跑
+    才能做同位姿镜像逐像素；
+  - F2/焦点注入在本环境不可用（focus-largest 命中 8192×8192 假窗口、PointerRoot 焦点回弹），
+    取证统一走 `x11_capture.py --window-id 0x60000f`（零输入副作用）；
+  - 绝对值预言「终帧=基线×0.7」的同场景口径不可测（跨会话构图变化），以同材质比值预言代之；
+  - ⑤ 方向条的顶视网格角度复测不可复现（位姿变了）；天空不进捕获、OIT 旁路、HUD/手部覆盖、
+    太阳/月亮光空间、多级联 CSM、PCF 仍为既有登记缺口，非本轮回归。
+- **是否已提交**：随本轮 commit 提交并推送 origin/master。
+
+---
+
 ## 2026-09-30 — P3.2 地形接管第一阶段：FrameGraphSetupEvent 换目标 + 双管线定向，三跑实测黑屏/镜像两坑闭环
 
 - **本次改了什么**：

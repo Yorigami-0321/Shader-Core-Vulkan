@@ -308,6 +308,120 @@ F1–F4 全部落地 → 放行并行
       跑3 终态：registered=7, compiled=7 (aligned)、light-space list ready 仍在、
       vkdisp WARN/ERROR=0（08-TESTING §5「地形走自定义目标而非原版目标」画面证据 =
       pass3 采 scene 输出，原版主目标不再收到地形）。
+   ✅ P3.3 deferred 链：各步输入输出正确（01-DEV-LOOP §10 P3.3，2026-09-30 三跑取证，
+      实测见 ⑤ 下方）｜验收 = 08-TESTING §5「deferred | 每步的输入纹理是上一步的输出」
+      +「composite | 链顺序正确，最后一步写入主目标」。设计
+      （① 脚手架事实全部仓内源码核实，X9；② 方向推导只合成 P-1f + P3.2 两条**已实测**
+      规则，不新增猜测）：
+      ① **X9 脚手架核查**：
+         - `pack/ProgramStage.DEFERRED("deferred", 4)` 已存在（族序 …→DEFERRED(4)→
+           COMPOSITE(5)→FINAL(6)）；`ShaderPackService.collectPrograms` 按
+           `shaders/<名>.fsh/.vsh` 文件名配对 → fixture 增加 `deferred.fsh/.vsh`
+           即成 program "deferred"，parse 命中枚举不归 UNKNOWN；
+         - `ShaderPackCompiler.compile` 遍历 `pack.programs()` **全部程序**（源 169 行，
+           两阶段逐个 compileStage，缺阶段 = 显式跳过非失败）→ deferred 自动参与冷路径
+           编译，编译器零改动；
+         - `PackCompositeSource.generate` 只产出 composite 单资源
+           （`firstCompositeFragment` 按 qualifiedName 过滤 FRAGMENT）→ 需扩双源；
+         - `VkDispVirtualPack.VirtualPackResources` 单资源 `shaders/composite.fsh`
+           （类 javadoc「单资源」）→ 需扩双资源；
+         - D 线 `OfGlslTranslator` 对**所有阶段**统一跑（UniformInjector 补内建块无
+           程序名门槛，源 126 行）→ deferred.fsh 与 composite.fsh 同等待遇，管线绑定组
+           必须同款带 BUILTINS + InSampler（P2.3 终态形态，X9：「片元有块布局没有」
+           方向未实测，所以照抄 composite 布局）；
+         - fixture 在 **gitignored** `run/shaderpacks/`（.gitignore:68 `run/`）：
+           `vkdisp-fixture-dir/` + `vkdisp-fixture-zip.zip`，本轮两处同步加 deferred
+           （§7.6 自造包，不入库）。
+      ② **方向推导（净翻转守恒）**：P3.2 实测 scene→主目标直连 = **0 翻转**（noflip 正确）；
+         composite 固定 flipv 读中间目标 = **+1**（P-1f ③「中间目标 → 主目标 FLIP」）。
+         链 scene→deferred→offscreen2→composite→main 要与直连同向，且 composite 一步
+         固定贡献 +1 → deferred 步必须也贡献 +1（1+1 ≡ 0 (mod 2) = 直连的 0）→
+         **deferred 管线 = flipv 顶点**。等价表述：scene 行序与我方中间目标行序差一次
+         翻转，deferred 把 scene 翻成中间目标约定、composite 再翻回 —— 两连翻净零，
+         画面不镜像（不引入新猜测，是 P-1f ③ + P3.2 实测的代数合成）。
+      ③ **链拓扑**（只在「世界内 && scene 已捕获 && 所选包声明 deferred」时开新步；
+         其余路径既有基线**逐字节不动**）：
+         - 世界内 + 包有 deferred：Pass 3 deferred（scene → offscreen2，flipv）→
+           Pass 4 composite（offscreen2 → main，flipv）；
+         - 世界内 + 包无 deferred：维持 P3.2 `composite_scene` 直连 scene（基线）；
+         - 菜单 / 未捕获：维持 P2.4 fixture → composite flipv（基线）；
+         - Pass 1/2 影子链不动（P3.1 验收对象）。
+      ④ **脚手架改动**：
+         - `PackCompositeSource`：`DEFERRED_PROGRAM="deferred"`；`Result` 扩
+           `deferredSource`（永不 null：取不到 → 内置 passthrough）+
+           `hasDeferredProgram`（真实取到包 deferred 片元才 true）；包声明 deferred 但
+           片元阶段编译失败 → WARN + 按无 deferred 处理（T11：不硬开一个喂兜底源的步）；
+           整体兜底路径两源均 passthrough、hasDeferred=false；
+         - `VkDispVirtualPack`：新增资源 `shaders/deferred.fsh` —— required 管线必须
+           总有源可编，**即使总开关关闭也服务 passthrough**；`generateSources()` 一次
+           生成双源 + `volatile hasDeferredProgram()` 暴露给 bridge；证据行
+           `deferred source ready: present=… pack=… bytes=…`；
+         - 第 8 条管线 `pipeline/deferred`（fragment=`vkdisp_pack:deferred`、
+           vertex=`vkdisp:fullscreen_flipv`、绑定组 BUILTINS+InSampler 同 composite）——
+           顶点是管线静态状态且 deferred 只在世界内跑 → 只需 flipv 一种变体；
+           注册器 7 步全量重编号 1/7..7/7 → 1/8..8/8（deferred 插在 4/8）；
+         - `FrameApi`：`offscreenTarget` 扩 slot 2（无深度，颜色专用，仅链路执行时
+           懒建）；新 deferred pass（世界内 + hasDeferred 才执行，scene → slot2，
+           pass 标签 `3 (deferred: scene -> offscreen2, pack deferred)`，composite
+           标签相应 `3`/`4` 随链路态）；Pass 4 输入三态（deferred 输出 / scene 直连 /
+           fixture offscreen1）+ 管线二选一（composite flipv / composite_scene noflip）
+           + 切换埋点沿用 `composite input source`；链路启动一次性埋点
+           `deferred chain wired: scene -> offscreen2 -> main`；`isPipelineReady`
+           增补 deferred 注册 + 编译校验。
+      ⑤ **证据计划**（08-TESTING §5「每步的输入纹理是上一步的输出」）：
+         - **日志链（每步输入=上一步输出的书面链）**：
+           `deferred source ready: present=true pack=…` → `pipeline registered (4/8)
+           … vkdisp:pipeline/deferred` → `pipeline count check: registered=8,
+           compiled=8 (aligned)` → 进世界 `deferred chain wired: scene -> offscreen2
+           -> main` → `composite input source: deferred output (P3.3)`；
+         - **像素变换（变换穿过整条链才可见）**：fixture `deferred.fsh` = 已知色调
+           `× vec3(1.0, 0.7, 0.7)`（G/B ×0.7，R 不动）→ 终帧 = P3.2 基线通道值 ×0.7：
+           预期 R≈141.0、G≈135.22×0.7≈94.7，**R/G 比 1.043 → ≈1.49**
+           （composite 的 0.9 系数在分子分母同乘、抵消）—— deferred 的输出确实是
+           composite 的输入（否则色调变换到不了屏幕）；deferred 没进链则 R/G 停在基线
+           1.043（判据可检伪，不是循环自证）；
+         - **方向不回归**（取证按环境事实调整，见实测末条）：原计划「yaw=−30.75° 顶视
+           网格角度复测」因跨会话位姿不可保持而无法复现 → 以 1+1≡0 净翻转代数（②）
+           + P3.2 已证方向基线（跑3 像素级镜像闭环）+ 锚定帧边缘取证（竖边/地平线
+           近零倾角）组合登记；同位姿镜像逐像素判定 = 未覆盖；
+         - vkdisp WARN/ERROR=0、registered=8 compiled=8。
+      实测（2026-09-30，/tmp/p33a|p33b|p33c_runclient.log 三次 runClient -PquickPlay）：
+      - **日志链 · 链开**（p33a 18:17 / p33b 18:32，fixture 6 条目 3313B）：
+        `deferred source ready: present=true pack=vkdisp-fixture-zip bytes=1384` →
+        `pipeline registered (4/8): vkdisp:pipeline/deferred` → `pipeline count check:
+        registered=8, compiled=8 (aligned)` → `deferred pipeline wired: fragment=
+        vkdisp_pack:deferred vertex=vkdisp:fullscreen_flipv (P3.3 chain step; flipv by
+        net-parity)` → 进世界 `deferred chain wired: scene -> offscreen2 -> main
+        (pack deferred)` → `composite input source: deferred output (P3.3)` —— 每步
+        输入=上一步输出的书面链完整；最后一步写入主目标沿用 P3.2 已证 Pass 4 结构；
+      - **日志链 · 链关**（p33c 18:43，deferred 改名 .off / zip 4 条目 409B 源）：
+        `deferred source ready: present=false … bytes=409` + INFO `包 'vkdisp-fixture-zip'
+        不含 deferred 程序，P3.3 deferred 步按未启用处理（链路保持 P3.2 直连）` →
+        `composite input source: scene capture (P3.2 terrain)`；两分支 vkdisp
+        WARN/ERROR 均 = 0，registered=8 compiled=8 (aligned)；
+      - **像素判据 · 同材质 A/B**：链开锚定帧 `/tmp/p33_chain_anchor.png`（sha256
+        a4d41356…，854×480，R=69.3602 G=45.6997 B=43.3047）沙岩壁龛内景 R/G=1.5146
+        （全帧 1.5177）；链关帧 `/tmp/p33_direct_anchor.png`（sha256 002bf828…，
+        R=33.4590 G=32.6650 B=32.3779）露天沙岩地面 R=142.138 G=136.356 B=134.253
+        R/G=1.0424（≈P3.2 基线 1.0430，绝对值也吻合 ⑤ 预言 R≈141/G≈135.2，+0.8%/
+        +0.9%）→ 同材质 G/R 抑制比 0.6602/0.9593=**0.688**、R/G 抬升比 1.5146/1.0424
+        =**1.453**，对 ×vec3(1.0,0.7,0.7) 预言 0.700 / 1.429 偏差 −1.7% / +1.7%（⑤
+        R/G≈1.49 预言命中）—— 色调变换必须穿过 deferred→composite 整条链才可能上屏；
+        链关全帧中性灰 R/G=1.0243（无变换残留），判据可检伪；
+      - **锚定链**（链开帧）：相机日志 `camera anchor captured: … yaw=-109.500046,
+        pitch=6.2999973, fov=38.150047deg` eye y=1.6194 == 退出存档 == 取证帧
+        （p33b 全程仅 #1 落地沉降，位姿稳定）；帧构图 = 玩家所在 2 格高沙岩壁龛
+        （存档区块 NBT 解码：列 (8,−8) y=0..1 空气、y=2 顶板、y=−1 地板 → feet y=0
+        与画面自洽），锚定帧近竖墙角边族 87.0°；链关帧地平线族 {0.0°}（≥60px 边
+        −0.4°..+0.5°）—— 无倾斜/翻转信号；
+      - **环境事实（登记）**：本环境 F2/焦点注入不可用（focus-largest 命中 8192×8192
+        假窗口、PointerRoot 焦点回弹致 XTEST 键落空）→ 取证统一改用
+        `x11_capture.py --window-id 0x60000f`（XGetImage 非黑帧、零输入副作用）；
+        会话存在**非指令位姿移动**（p33c 18:43:44 后相机被外部输入挪走，退出存档
+        (12.7,4.0,−13.06)/(−62.1°,−26.1°) ≠ 锚 (8.5,1.62,−7.5)/(−109.5°,6.3°)，
+        位姿日志 30 条上限截断）→ A/B 按**同材质锚定**（沙岩→沙岩）而非同位姿；
+        同位姿逐像素镜像判定 = 未覆盖（需输入隔离环境重跑）；fixture 取证后已复原
+        （deferred 回名 + zip 6 条目 3313B）。
    ✅ P2.1/P2.2 主线接入（A/B/C 线汇合后接启动期扫包钩子，随本轮提交）：
       `VkDispPackScan`（ClientResourceLoadFinishedEvent → gameDir/shaderpacks → ShaderPackService.loadAll）
       实测 latest.log：packs=2（kind=zip + kind=dir 各一）programs=2 options=8 problems=0 diagnostics=0，

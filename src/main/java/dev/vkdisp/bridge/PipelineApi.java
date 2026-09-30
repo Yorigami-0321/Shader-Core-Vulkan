@@ -78,6 +78,9 @@ public final class PipelineApi {
     /** P3.2 场景合成管线 location（纯字符串视图，错误信息用）。 */
     public static final String COMPOSITE_SCENE_LOCATION = "vkdisp:pipeline/composite_scene";
 
+    /** P3.3 deferred 步管线 location（纯字符串视图，错误信息用）。 */
+    public static final String DEFERRED_LOCATION = "vkdisp:pipeline/deferred";
+
     /**
      * P2.4：合成管线的内建 uniform 块名（纯字符串视图）。
      *
@@ -140,6 +143,15 @@ public final class PipelineApi {
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/composite_scene");
 
     /**
+     * P3.3 deferred 步管线 location id。
+     *
+     * <p>为什么 flipv：净翻转守恒（18-PARALLEL §5 P3.3 ②）—— scene 直连 = 0 翻转（P3.2 实测），
+     * 链路 composite 固定 flipv（+1），deferred 必须也 +1 才能与直连同向（1+1 ≡ 0 (mod 2)）。
+     */
+    private static final Identifier DEFERRED_PIPELINE_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/deferred");
+
+    /**
      * 合成管线片元着色器 id：vkdisp_pack:composite → {@code assets/vkdisp_pack/shaders/composite.fsh}。
      *
      * <p>P2.4 起指向**虚拟资源包** {@code vkdisp_pack}（04-SPEC §2）——源由
@@ -149,6 +161,15 @@ public final class PipelineApi {
      */
     private static final Identifier COMPOSITE_SHADER_ID =
             Identifier.fromNamespaceAndPath("vkdisp_pack", "composite");
+
+    /**
+     * P3.3 deferred 步片元着色器 id：vkdisp_pack:deferred → {@code assets/vkdisp_pack/shaders/deferred.fsh}。
+     *
+     * <p>与 composite 同款出自**虚拟资源包**：源 = 所选库存包的 deferred 片元（P3.3 ④），
+     * 包无 deferred / 兜底路径 = 内置 passthrough（required 管线必须总有源可编）。
+     */
+    private static final Identifier DEFERRED_SHADER_ID =
+            Identifier.fromNamespaceAndPath("vkdisp_pack", "deferred");
 
     /**
      * 合成管线顶点着色器 id：vkdisp:fullscreen_flipv → {@code assets/vkdisp/shaders/fullscreen_flipv.vsh}。
@@ -194,6 +215,9 @@ public final class PipelineApi {
 
     /** 注册成功后暂存的 P3.2 场景合成管线实例（无 v 翻转顶点）；未注册时为 null。 */
     private static RenderPipeline compositeScenePipeline;
+
+    /** 注册成功后暂存的 P3.3 deferred 步管线实例；未注册时为 null。 */
+    private static RenderPipeline deferredPipeline;
 
     /** 注册成功后暂存的深度可视化管线实例；未注册时为 null。 */
     private static RenderPipeline depthVisPipeline;
@@ -346,6 +370,39 @@ public final class PipelineApi {
         VkDisp.LOGGER.info(
                 "vkdisp: composite scene pipeline wired: fragment={} vertex={} (no v-flip; P3.2 scene input)",
                 COMPOSITE_SHADER_ID, FULLSCREEN_SHADER_ID);
+    }
+
+    /**
+     * 构建并注册 P3.3 deferred 步管线（{@link #DEFERRED_LOCATION}）。
+     *
+     * <p>片元 = 虚拟包 {@code vkdisp_pack:deferred}（包源或内置 passthrough），
+     * 顶点 = {@code vkdisp:fullscreen_flipv}（净翻转守恒推导，见 {@link #DEFERRED_PIPELINE_ID}），
+     * 绑定组与 composite 完全同款（BUILTINS + InSampler 同组 —— D 线对所有阶段统一注入，
+     * 18-PARALLEL §5 P3.3 ①）。deferred 只在世界内执行，但管线**必须无条件注册**
+     * （required：注册缺失会让 registered≠compiled 计数断言失败）。
+     */
+    public static void registerDeferredPipeline(RegisterRenderPipelinesEvent event) {
+        RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                .withLocation(DEFERRED_PIPELINE_ID)
+                .withVertexShader(FULLSCREEN_FLIPV_SHADER_ID)
+                .withFragmentShader(DEFERRED_SHADER_ID)
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withUniform(BUILTINS_UNIFORM, UniformType.UNIFORM_BUFFER)
+                        .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
+                        .build())
+                .withColorTargetState(ColorTargetState.DEFAULT)
+                .build();
+        event.registerPipeline(pipeline);
+        deferredPipeline = pipeline;
+        REGISTERED_PIPELINES.add(pipeline);
+        VkDisp.LOGGER.info(
+                "vkdisp: deferred pipeline wired: fragment={} vertex={} (P3.3 chain step; flipv by net-parity)",
+                DEFERRED_SHADER_ID, FULLSCREEN_FLIPV_SHADER_ID);
+    }
+
+    /** P3.3 deferred 步管线是否已注册完成（纯布尔视图）。 */
+    public static boolean isDeferredPipelineRegistered() {
+        return deferredPipeline != null;
     }
 
     /** 合成管线是否已注册完成（纯布尔视图）。 */
@@ -503,6 +560,15 @@ public final class PipelineApi {
         RenderPipeline pipeline = compositeScenePipeline;
         if (pipeline == null) {
             throw new IllegalStateException("vkdisp: composite scene pipeline not registered yet");
+        }
+        return pipeline;
+    }
+
+    /** P3.3 deferred 步管线；未注册时抛出（与 {@link #compositePipeline()} 同口径）。 */
+    static RenderPipeline deferredPipeline() {
+        RenderPipeline pipeline = deferredPipeline;
+        if (pipeline == null) {
+            throw new IllegalStateException("vkdisp: deferred pipeline not registered yet");
         }
         return pipeline;
     }

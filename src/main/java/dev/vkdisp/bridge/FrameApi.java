@@ -130,6 +130,13 @@ public final class FrameApi {
     private static String compositeInputSource;
 
     /**
+     * P3.3 deferred 链上一次是否激活。激活沿（false→true）打一次性埋点
+     * {@code deferred chain wired: scene -> offscreen2 -> main}（每步输入=上一步输出的
+     * 书面链第一环）；停用沿不需要日志 —— {@link #compositeInputSource} 的切换埋点已可见。
+     */
+    private static boolean deferredChainActive;
+
+    /**
      * 光空间列表（懒构建 + 缓存）。首次构建打验收埋点：
      * 非空 → {@code light-space list ready: size=… source=…}；空 → ERROR（T11，后续帧由
      * {@link #lightSpaceMatrix()} 拒绝出帧，hook 打 ERROR 原文本帧跳过影子链）。
@@ -389,27 +396,33 @@ public final class FrameApi {
      */
     private static TextureTarget offscreenTargetA;
     private static TextureTarget offscreenTargetB;
+    /** P3.3：槽 2 = deferred 步输出（只在链路激活时懒建，颜色专用无深度）。 */
+    private static TextureTarget offscreenTargetC;
 
     /**
-     * 按主目标尺寸取第 {@code slot} 个离屏目标（0/1 两个，交替作为 ping-pong 的两端）。
+     * 按主目标尺寸取第 {@code slot} 个离屏目标（0/1 ping-pong 两端 + 2 deferred 输出）。
      *
-     * <p>尺寸变化时 resize，不每帧重建；两个目标都按主目标尺寸分配，保证中间级分辨率一致。
+     * <p>尺寸变化时 resize，不每帧重建；所有目标都按主目标尺寸分配，保证中间级分辨率一致。
      */
     private static TextureTarget offscreenTarget(int slot, int width, int height) {
-        TextureTarget target = slot == 0 ? offscreenTargetA : offscreenTargetB;
+        TextureTarget target = switch (slot) {
+            case 0 -> offscreenTargetA;
+            case 1 -> offscreenTargetB;
+            default -> offscreenTargetC;
+        };
         if (target == null) {
             // 槽 0 带深度附件（P3 前置：图案 pass 写深度、depthviz pass 采样它）；
-            // 槽 1 只做颜色 ping-pong，不需要深度。
+            // 槽 1 只做颜色 ping-pong、槽 2 只承载 deferred 输出，都不需要深度。
             target = new TextureTarget(
                     "vkdisp offscreen " + slot,
                     width,
                     height,
                     GpuFormat.RGBA8_UNORM,
                     slot == 0 ? GpuFormat.D32_FLOAT : null);
-            if (slot == 0) {
-                offscreenTargetA = target;
-            } else {
-                offscreenTargetB = target;
+            switch (slot) {
+                case 0 -> offscreenTargetA = target;
+                case 1 -> offscreenTargetB = target;
+                default -> offscreenTargetC = target;
             }
         } else if (target.width != width || target.height != height) {
             target.resize(width, height);
@@ -507,10 +520,14 @@ public final class FrameApi {
                 && PipelineApi.isShadowedPipelineRegistered()
                 && PipelineApi.isCompositePipelineRegistered()
                 && PipelineApi.isCompositeScenePipelineRegistered()
+                && PipelineApi.isDeferredPipelineRegistered()
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.geometryPipeline()) != null
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.shadowedPipeline()) != null
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.compositePipeline()) != null
-                && RenderSystem.getCompiledPipelineNullable(PipelineApi.compositeScenePipeline()) != null;
+                && RenderSystem.getCompiledPipelineNullable(PipelineApi.compositeScenePipeline()) != null
+                // P3.3：deferred 是 required 管线（虚拟包总有源可编）→ 就绪判据一并要求它编译完成，
+                // 否则「世界内开链」会在帧中途撞未编译。
+                && RenderSystem.getCompiledPipelineNullable(PipelineApi.deferredPipeline()) != null;
     }
 
     /**
@@ -573,6 +590,13 @@ public final class FrameApi {
             throw new IllegalStateException(
                     "vkdisp: composite scene pipeline not compiled yet: " + PipelineApi.COMPOSITE_SCENE_LOCATION);
         }
+        // P3.3：deferred 步管线（flipv + vkdisp_pack:deferred）；isPipelineReady 已含此判据，
+        // 走到这里仍 null = 编译期异常，抛出不静默（T11）。
+        CompiledRenderPipeline deferred = RenderSystem.getCompiledPipelineNullable(PipelineApi.deferredPipeline());
+        if (deferred == null) {
+            throw new IllegalStateException(
+                    "vkdisp: deferred pipeline not compiled yet: " + PipelineApi.DEFERRED_LOCATION);
+        }
 
         // P3.2：相机矩阵（世界内=原版 GameRenderer，菜单=占位回退，来源切换见日志）；map/close 仍在开启 pass 之前。
         MappableRingBuffer camRing = cameraRing();
@@ -593,10 +617,33 @@ public final class FrameApi {
             Std140Builder.intoBuffer(view.data()).putVec4(params.phase(), params.intensity(), 0.0F, 0.0F);
         }
 
-        // 三段链（各自不同附件 —— 规避「同一附件第二次 createRenderPass 不生效」）：
+        // P3.3 链路判定（必须在开启任何 pass 之前定：决定槽 2 懒建与 pass 序列）：
+        //   世界内 && scene 已捕获 && 所选包声明 deferred → 开 deferred 步；否则保持既有基线
+        //   （世界内无 deferred = P3.2 直连 scene；菜单/未捕获 = P2.4 fixture，见 Pass 4）。
+        boolean useScene = Minecraft.getInstance().level != null && SceneCaptureApi.hasScene()
+                && SceneCaptureApi.sceneColorView() != null;
+        boolean deferredChain = useScene && dev.vkdisp.VkDispVirtualPack.hasDeferredProgram();
+        GpuTextureView viewC = null;
+        if (deferredChain) {
+            viewC = offscreenTarget(2, width, height).getColorTextureView();
+            if (viewC == null) {
+                throw new IllegalStateException("vkdisp: offscreen2 (deferred output) color texture view is null");
+            }
+            if (!deferredChainActive) {
+                deferredChainActive = true;
+                // 一次性埋点（书面链第一环）：scene 是 deferred 的输入、offscreen2 是其输出。
+                dev.vkdisp.VkDisp.LOGGER.info(
+                        "vkdisp: deferred chain wired: scene -> offscreen2 -> main (pack deferred)");
+            }
+        } else {
+            deferredChainActive = false;
+        }
+
+        // 链段（各自不同附件 —— 规避「同一附件第二次 createRenderPass 不生效」）：
         //  Pass 1 阴影贴图：清屏(黑, 深度1.0) → 几何(经光空间矩阵) → offscreen0 的**深度**即阴影贴图
         //  Pass 2 世界视图：采样阴影贴图深度 → offscreen1（受阴影片元变暗）
-        //  Pass 3：offscreen1 → 主目标（**P2.4 起 = 包 composite**，1-v 翻转在 flipv 顶点完成）
+        //  Pass 3（仅 P3.3 链）：scene → offscreen2（deferred 步，flipv = 净翻转守恒）
+        //  Pass 4/3：输入 → 主目标（**P2.4 起 = 包 composite**，1-v 翻转在 flipv 顶点完成）
         // 说明：图案背景本轮**不进链** —— 阴影贴图只应包含遮挡物深度，背景深度会污染贴图；
         //       pattern/blit/depthviz 管线仍注册并通过计数断言，只是不在本帧执行。
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
@@ -628,29 +675,56 @@ public final class FrameApi {
             pass.setVertexBuffer(0, geometryBuffer().slice());
             pass.draw(GEOMETRY_VERTEX_COUNT, 1, 0, 0);
         }
-        // Pass 3：输入 → 主目标（最后一级；主目标只由本 pass 写入）。
-        // P3.2：世界内且场景已捕获 → 输入 = SceneCaptureApi 捕获的地形（帧图本期写入，
-        //       targets.main 已换到我方纹理）；菜单/未捕获 → 回退 offscreen1 fixture。
-        //       来源**切换**打一次埋点（T11，不静默换输入）。方向首轮实测：flipv 采 scene
-        //       = 镜像（方块边缘 −yaw 符号已证）→ scene 输入换**无翻转**顶点（P-1f，双管线）。
+        // Pass 3（仅 P3.3 链）：scene → offscreen2（deferred 步）。
+        // 输入 = SceneCaptureApi 捕获的地形（本帧帧图已写入）、输出 = 槽 2 ——
+        // 书面链「每步的输入纹理是上一步的输出」的中间环（08-TESTING §5）。
+        // 顶点 flipv：净翻转守恒（18-PARALLEL §5 P3.3 ②）—— 直连 0 翻转、composite 固定 +1，
+        // 本步必须 +1 才不引入镜像（P-1f + P3.2 实测的代数合成，非猜测）。
+        if (deferredChain) {
+            try (RenderPass pass = encoder.createRenderPass(
+                    () -> label + " 3 (deferred: scene -> offscreen2, pack deferred)",
+                    viewC, Optional.empty(), null, OptionalDouble.empty())) {
+                pass.setPipeline(deferred);
+                RenderSystem.bindDefaultUniforms(pass);
+                pass.setUniform(PipelineApi.BUILTINS_UNIFORM, builtinsRing().currentBuffer());
+                pass.setUniform(PipelineApi.SAMPLER_UNIFORM, SceneCaptureApi.sceneColorView(), sampler);
+                pass.draw(3, 1, 0, 0);
+            }
+        }
+        // Pass 4（有链）/ Pass 3（无链）：输入 → 主目标（最后一级；主目标只由本 pass 写入）。
+        // 输入三态（来源**切换**打一次埋点，T11，不静默换输入）：
+        //   链激活   → deferred 输出 offscreen2（= 上一步 deferred 的输出，P3.3）
+        //   世界直连 → scene 捕获（P3.2：flipv 采 scene 实测镜像 → 无翻转顶点双管线）
+        //   菜单回退 → offscreen1 fixture（P2.4 基线）
         // ⚠️ 采样的必须是**本帧有内容的那个目标**（实测教训：曾误采样本链未写入的目标）。
-        // P2.4：fixture 路径管线 = 包 composite + fullscreen_flipv（1-v 翻转 P-1f 基线不变）；
+        // P2.4：fixture/链路路径管线 = 包 composite + fullscreen_flipv（1-v 翻转 P-1f 基线）；
         //       VkDispBuiltins 是 D 线注入进包源的内建块 —— 未被片元引用时绑定零值缓冲无副作用
         //       （被引用的正式上传链 OfUniformManager 属 P2.4+ 登记缺口）。
-        boolean useScene = Minecraft.getInstance().level != null && SceneCaptureApi.hasScene()
-                && SceneCaptureApi.sceneColorView() != null;
-        GpuTextureView compositeInput = useScene ? SceneCaptureApi.sceneColorView() : viewB;
-        String compositeSource = useScene ? "scene capture (P3.2 terrain)" : "fixture offscreen1";
+        GpuTextureView compositeInput;
+        String compositeSource;
+        if (deferredChain) {
+            compositeInput = viewC;
+            compositeSource = "deferred output (P3.3)";
+        } else if (useScene) {
+            compositeInput = SceneCaptureApi.sceneColorView();
+            compositeSource = "scene capture (P3.2 terrain)";
+        } else {
+            compositeInput = viewB;
+            compositeSource = "fixture offscreen1";
+        }
         if (!compositeSource.equals(compositeInputSource)) {
             compositeInputSource = compositeSource;
             dev.vkdisp.VkDisp.LOGGER.info("vkdisp: composite input source: {}", compositeSource);
         }
+        // pass 编号随链路态：有链时 deferred 占 3、本 pass 是 4；无链时保持 3（调试标签口径）。
+        String compositeStep = deferredChain ? " 4" : " 3";
         try (RenderPass pass = encoder.createRenderPass(
-                () -> label + " 3 (" + compositeSource + " -> main, pack composite)",
+                () -> label + compositeStep + " (" + compositeSource + " -> main, pack composite)",
                 colorView, Optional.empty(), null, OptionalDouble.empty())) {
-            // 顶点随输入源切换：scene = vanilla 帧图目标 → 无翻转（首轮 flipv 实测镜像，角度
-            // = −yaw 符号已证）；fixture = 我方中间目标 → 保留 P-1f 的 1-v 翻转基线。
-            pass.setPipeline(useScene ? compositeScene : composite);
+            // 顶点随输入源切换：链输出/fixture = 我方中间目标 → flipv（P-1f 1-v 翻转基线，
+            // 链路经 deferred 步已翻一次、此处再翻 = 净零，与 P3.2 直连同向）；
+            // scene 直连 = vanilla 帧图目标 → 无翻转（首轮 flipv 实测镜像，−yaw 符号已证）。
+            pass.setPipeline(useScene && !deferredChain ? compositeScene : composite);
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform(PipelineApi.BUILTINS_UNIFORM, builtinsRing().currentBuffer());
             pass.setUniform(PipelineApi.SAMPLER_UNIFORM, compositeInput, sampler);

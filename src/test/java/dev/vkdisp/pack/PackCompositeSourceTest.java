@@ -175,6 +175,66 @@ class PackCompositeSourceTest {
                 () -> "选项覆盖必须进入最终源，实际输出:\n" + result.source());
     }
 
+    // ------------------------------------------------------------------ P3.3 deferred 分支
+
+    @Test
+    void fallbackPathExposesPassthroughDeferredAndFalseFlag() {
+        PackCompositeSource.Result result = PackCompositeSource.generate(null, "");
+
+        assertFalse(result.hasDeferredProgram(), "兜底路径不开 deferred 步");
+        assertEquals(PackCompositeSource.FALLBACK_GLSL, result.deferredSource(),
+                "deferred 源永不 null：兜底 = passthrough（required 管线必须总有源可编）");
+    }
+
+    @Test
+    void packWithoutDeferredExposesPassthroughAndFalseFlag() throws IOException {
+        writeFixturePack();
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "");
+
+        assertFalse(result.hasDeferredProgram(), "包无 deferred 程序 → 链路不开 deferred 步");
+        assertEquals(PackCompositeSource.FALLBACK_GLSL, result.deferredSource());
+        assertTrue(result.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.INFO
+                                && d.message().contains("不含 deferred 程序")),
+                () -> "跳过 deferred 必须显式可见（T11），实际: " + result.diagnostics());
+        assertFragmentInlined(result.source());
+    }
+
+    @Test
+    void packWithDeferredExposesTintedDeferredSourceAndTrueFlag() throws IOException {
+        writeFixturePack();
+        writeDeferredProgram();
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "");
+
+        assertFalse(result.fallback(), "可用包不该兜底");
+        assertTrue(result.hasDeferredProgram(), "包声明且编出 deferred → 链路开 deferred 步");
+        assertFalse(result.deferredSource().contains("vkdisp 内置兜底"),
+                () -> "应是包的 deferred 源而非兜底，实际:\n" + result.deferredSource());
+        assertTrue(result.deferredSource().contains("vec3(1.0, 0.7, 0.7)"),
+                () -> "deferred 源必须带 fixture 色调变换（像素判据），实际:\n" + result.deferredSource());
+        assertFragmentInlined(result.source());
+    }
+
+    @Test
+    void brokenDeferredFragmentFallsBackToNoDeferredWithWarn() throws IOException {
+        writeFixturePack();
+        // 声明了 deferred 但片元编译必失败 → 按无 deferred 处理 + WARN（T11，不硬开步）。
+        write(inventory.resolve("fixture"), "shaders/deferred.fsh",
+                "#version 330\n#include \"/lib/missing.glsl\"\nvoid main() {}\n");
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "");
+
+        assertFalse(result.fallback(), "deferred 坏掉不影响 composite 可用");
+        assertFalse(result.hasDeferredProgram(), "片元无成功产出 → 按无 deferred 处理");
+        assertEquals(PackCompositeSource.FALLBACK_GLSL, result.deferredSource());
+        assertTrue(result.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.WARN
+                                && d.message().contains("deferred 步按未启用处理")),
+                () -> "坏 deferred 必须显式 WARN（T11），实际: " + result.diagnostics());
+    }
+
     // ------------------------------------------------------------------ helpers
 
     /** 断言产出的是被选中的包源（含 fixture 特征），而不是内置兜底。 */
@@ -229,6 +289,30 @@ class PackCompositeSourceTest {
                 screen.QUALITY=shadowDistance
                 profile.LOW=SHADOW_DARKNESS=0.05
                 profile.HIGH=SHADOW_DARKNESS=0.20
+                """);
+    }
+
+    /** 与 run/shaderpacks/vkdisp-fixture-dir/shaders/deferred.* 同形状（P3.3 像素判据色调变换）。 */
+    private void writeDeferredProgram() throws IOException {
+        Path pack = inventory.resolve("fixture");
+        write(pack, "shaders/deferred.fsh", """
+                #version 330
+                #extension GL_ARB_separate_shader_objects : require
+                uniform sampler2D InSampler;
+                layout(location = 0) in vec2 vUv;
+                layout(location = 0) out vec4 fragColor;
+                void main() {
+                    vec3 scene = texture(InSampler, vUv).rgb;
+                    fragColor = vec4(scene * vec3(1.0, 0.7, 0.7), 1.0);
+                }
+                """);
+        write(pack, "shaders/deferred.vsh", """
+                #version 330
+                #extension GL_ARB_separate_shader_objects : require
+                layout(location = 0) in vec3 vaPosition;
+                void main() {
+                    gl_Position = vec4(vaPosition, 1.0);
+                }
                 """);
     }
 
