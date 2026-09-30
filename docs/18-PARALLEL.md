@@ -224,18 +224,49 @@ F1–F4 全部落地 → 放行并行
       `VkDispPackScan`（ClientResourceLoadFinishedEvent → gameDir/shaderpacks → ShaderPackService.loadAll）
       实测 latest.log：packs=2（kind=zip + kind=dir 各一）programs=2 options=8 problems=0 diagnostics=0，
       选项逐条可见（name/type/default/values/slider/screen），vkdisp ERROR/WARN=0（01-DEV-LOOP §10 P2.1/P2.2 达标）
-   ▶️ P2.3 #include 编译接主线：冷路径已齐（ShaderPackCompiler → GlslPipeline，`d6e9bdd`），
-      本轮把「源交给驱动编译」补上 —— 新增 bridge/ShaderCompileApi（经原版 GlslCompiler.compileToSpv
-      把阶段源编到 SPIR-V）+ 启动期逐阶段编译日志，验收口径 = 01-DEV-LOOP §10 P2.3
-      （含 #include 的 program 能编译通过，日志可见）。
+   ✅ P2.3 #include 编译接主线（`a51ebd9` 验收通过）：冷路径 = ShaderPackCompiler → GlslPipeline
+      （`d6e9bdd`），接主线补上「源交给驱动编译」—— bridge/ShaderCompileApi（经原版
+      GlslCompiler.compileToSpv 把阶段源编到 SPIR-V）+ 启动期逐阶段编译日志。
       实测撞出并已修的方言坑（T11 证据链）：D 线注入的 23 条内建 uniform 原为独立
       `uniform <type> <name>;` 行 —— Vulkan GLSL 禁止非透明 uniform 游离在块外
       （shaderc 原文 `'non-opaque uniforms outside a block'`，首跑 4/4 阶段失败）；
       改包块后又撞：匿名块 `layout(std140) uniform {` 报 `syntax error, unexpected LEFT_BRACE`
       （GLSL 语法要求块名；原版 89 个 shader 全为具名无实例名块、成员裸引用）。终态 = 单个
       `layout(std140) uniform VkDispBuiltins { … };`（原版同款形态：无实例名 → 成员仍在全局
-      作用域，包源码引用字面不变；04-SPEC §3.2 表的名称/类型/顺序不变，只改发射外壳）
-   → P2.4 composite 生效 → P3.1 shadow → P3.2 gbuffers → P3.3 deferred
+      作用域，包源码引用字面不变；04-SPEC §3.2 表的名称/类型/顺序不变，只改发射外壳）。
+      实测日志：stages=4 ok=4 failed=0（含 #include 的 composite.fsh 4 阶段全 OK）
+   ✅ P2.4 composite 生效（开关能改变画面）（随本轮提交验收通过）｜验收 = 01-DEV-LOOP §10 P2.4
+      + 08-TESTING §4「选择开关后画面有对应变化 | 对比截图」。设计（事件时序已 javap 字节码核实，X9）：
+      ① **虚拟资源包 `vkdisp_pack`**（04-SPEC §2 命名空间）：AddPackFindersEvent（mod bus）
+      注册 required=true 的 RepositorySource → `PackRepository.rebuildSelected` 强制并入选中集
+      （字节码：isRequired 分支插到 defaultPosition，不写 options.resourcePacks，04-SPEC §3.1）。
+      ② **时序**（Minecraft.<init> 字节码偏移）：1602 setupModResourcePacks（发 AddPackFindersEvent）
+      → 1612 repository.reload() → 2850 initClientHooks（发 RegisterRenderPipelinesEvent）
+      → 3079 ClientModLoader.finish（此刻 configs 已 loadConfigs）→ 3114 openAllSelected
+      （生成包 composite 源）→ 3153 首次资源加载（ShaderManager 编译管线着色器）。
+      ③ **源生成**：openResources 时冷路径跑 ShaderPackService.loadAll → ShaderPackCompiler
+      （含选项覆盖）→ 取第一个 program=composite 的 FRAGMENT 成功产出；无可用包 → 自造
+      passthrough 兜底 + WARN（T11），管线必有源可编（required 管线编译失败会砸启动）。
+      ④ **开关**：新增 VkDispConfig.packProfile（P4.3 GUI 前的主线开关）→ PackOptions
+      .applyProfile → 与默认值的差分 → config/OptionSourceRewriter 逐行改写源里的
+      `#define NAME <值>` / `const NAME = <值>;`（保行号保注释）→ 编译进 SPIR-V。
+      ⑤ **帧链接线**：Pass 3 由 blit 换成 composite 管线 —— 片元 id 改指
+      `vkdisp_pack:composite`，顶点换自造 `fullscreen_flipv`（把「中间目标 → 主目标」的 1-v
+      翻转放进顶点，包片元保持 OF 原语义用原始 vUv，见 18-PARALLEL §10 P-1f）。
+      ⑥ **fixture 改造**：composite.fsh 改为采样 InSampler 并以 `1.0 - SHADOW_DARKNESS`
+      调制 RGB（原平铺色调 RGB 恒定，开关在画面上不可见）；A/B 对比 = 默认(0.90) vs
+      profile HIGH(0.80)，整帧亮度比理论 0.889。
+      实测（两轮 runClient，各截 1 张 F2 图 + 整帧亮度统计，stdlib PNG 解码）：
+      Run A packProfile='' → `composite source ready: fallback=false pack=vkdisp-fixture-zip
+      profile='' bytes=1655 diagnostics=0`，截图 sha256 `c4f7b50aff872af1…` mean_luma 6.3813；
+      Run B packProfile='HIGH'（改 `run/config/vkdisp-common.toml` 后重启）→ 同行
+      profile='HIGH'，截图 sha256 `af6f22e2e1738bad…` mean_luma 5.6604；**B/A = 0.8870**
+      （理论 0.80/0.90 = 0.8889，偏差 0.2% = RGBA8 量化），R/G 通道比 0.8870/0.8871 一致，
+      非黑像素 29294 个逐对比值同 0.8870、差异像素 7.15%。两轮共有：`virtual pack finder
+      registered` / `composite pipeline wired … fragment=vkdisp_pack:composite
+      vertex=vkdisp:fullscreen_flipv` / `pipeline count check: registered=6, compiled=6` /
+      vkdisp ERROR=0。
+   → P3.1 shadow → P3.2 gbuffers → P3.3 deferred
    → P4.1 主流包 → P4.2 切包回归 → P4.3 选项 GUI
 ```
 

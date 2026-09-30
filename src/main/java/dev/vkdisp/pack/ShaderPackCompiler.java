@@ -1,5 +1,6 @@
 package dev.vkdisp.pack;
 
+import dev.vkdisp.config.OptionSourceRewriter;
 import dev.vkdisp.glsl.GlslPipeline;
 import dev.vkdisp.glsl.TranslateDiagnostic;
 import dev.vkdisp.glsl.TranslateResult;
@@ -8,7 +9,10 @@ import dev.vkdisp.glsl.translate.ShaderStage;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * 【参考调研】ShaderPackCompiler（包 → 最终 GLSL 源；把 C+D 汇合到包模型上）
@@ -105,19 +109,35 @@ public final class ShaderPackCompiler {
     private ShaderPackCompiler() {}
 
     /**
-     * 把一个包编译成各阶段的最终 GLSL 源。
+     * 把一个包编译成各阶段的最终 GLSL 源（无选项覆盖）。
      *
      * <p>永不抛非受检异常：解包 / 读源 / 管线执行中的任何失败都降级为诊断（T11）。
      *
      * @param discovered 扫描器产出的合法包
      */
     public static CompileResult compile(ShaderPackScanner.DiscoveredPack discovered) {
+        return compile(discovered, Map.of());
+    }
+
+    /**
+     * 把一个包编译成各阶段的最终 GLSL 源，并把选项覆盖**就地改写**进源文本（P2.4 ④）。
+     *
+     * <p>改写发生在预处理**之前**：主文件与被 {@code #include} 的文件都过
+     * {@link OptionSourceRewriter}（保行号保注释），宏值随后由 C 线正常展开进最终源。
+     * 整包范围内始终没有命中任何声明行的覆盖名 → WARN（逐文件缺失不算：选项可能只声明在
+     * 另一个文件里；P2.4 画面对比是最终判据）。
+     *
+     * @param optionOverrides 选项名 → 新值；null / 空表 = 无覆盖（与单参重载等价）
+     */
+    public static CompileResult compile(
+            ShaderPackScanner.DiscoveredPack discovered, Map<String, String> optionOverrides) {
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         if (discovered == null) {
             diagnostics.add(TranslateDiagnostic.of(
                     TranslateDiagnostic.Severity.ERROR, "vkdisp: 待编译的包为 null，已跳过"));
             return new CompileResult(null, List.of(), diagnostics);
         }
+        Map<String, String> overrides = optionOverrides == null ? Map.of() : optionOverrides;
 
         ShaderPackService.LoadResult loaded = ShaderPackService.load(discovered);
         diagnostics.addAll(loaded.diagnostics());
@@ -140,22 +160,54 @@ public final class ShaderPackCompiler {
             return new CompileResult(pack, List.of(), diagnostics);
         }
 
+        Set<String> appliedNames = new LinkedHashSet<>();
         IncludeResolver resolver = ShaderPackService.resolverFor(plan);
+        if (!overrides.isEmpty()) {
+            resolver = rewritingResolver(resolver, overrides, appliedNames);
+        }
         List<CompiledStage> stages = new ArrayList<>();
         for (Program program : pack.programs()) {
             String qualifiedName = program.dimensionFolder().isEmpty()
                     ? program.name()
                     : program.dimensionFolder() + "/" + program.name();
             compileStage(plan, resolver, qualifiedName, ShaderStage.VERTEX,
-                    program.vertexShader(), stages, diagnostics);
+                    program.vertexShader(), overrides, appliedNames, stages, diagnostics);
             compileStage(plan, resolver, qualifiedName, ShaderStage.FRAGMENT,
-                    program.fragmentShader(), stages, diagnostics);
+                    program.fragmentShader(), overrides, appliedNames, stages, diagnostics);
+        }
+        // 包级缺失（整包没有任何文件声明该选项名）→ 显式 WARN（T11）。
+        for (String name : overrides.keySet()) {
+            if (!appliedNames.contains(name)) {
+                diagnostics.add(TranslateDiagnostic.of(
+                        TranslateDiagnostic.Severity.WARN,
+                        "vkdisp: 选项覆盖 '" + name + "' 未在任何源文件中命中声明行（该值未进入着色器）",
+                        String.valueOf(discovered.source()), TranslateDiagnostic.UNKNOWN_LINE));
+            }
         }
         return new CompileResult(pack, stages, diagnostics);
     }
 
     /**
-     * 编译单个阶段：读源 → 跑 {@link GlslPipeline}（预处理 + 转译）→ 收进产出。
+     * 包一层改写 resolver：所有被 {@code #include} 读入的文本同样过选项改写
+     * （选项常量经常声明在 {@code lib/*.glsl} 里），命中名同步登记进 {@code appliedNames}
+     * 供包级缺失判定 —— 否则只声明在 include 里的选项会被误报「未命中」。
+     */
+    private static IncludeResolver rewritingResolver(
+            IncludeResolver delegate, Map<String, String> overrides, Set<String> appliedNames) {
+        return path -> {
+            String text = delegate.read(path);
+            if (text == null) {
+                return null;
+            }
+            OptionSourceRewriter.Result rewritten = OptionSourceRewriter.apply(text, overrides);
+            appliedNames.addAll(rewritten.appliedNames());
+            return rewritten.text();
+        };
+    }
+
+    /**
+     * 编译单个阶段：读源 → 选项就地改写（{@code overrides} 非空时）→ 跑 {@link GlslPipeline}
+     * （预处理 + 转译）→ 收进产出。
      *
      * <p>{@code sourcePath} 为 null 表示该阶段文件缺失 —— 这是 {@link Program} 契约允许的显式降级
      * （08-TESTING §4），直接跳过，不算失败也不打噪音日志。
@@ -166,6 +218,8 @@ public final class ShaderPackCompiler {
             String qualifiedName,
             ShaderStage stage,
             String sourcePath,
+            Map<String, String> overrides,
+            Set<String> appliedNames,
             List<CompiledStage> sink,
             List<TranslateDiagnostic> diagnostics) {
         if (sourcePath == null) {
@@ -178,6 +232,12 @@ public final class ShaderPackCompiler {
                     "vkdisp: 程序 '" + qualifiedName + "' 的 " + stage + " 源文件不可读，跳过该阶段",
                     sourcePath, TranslateDiagnostic.UNKNOWN_LINE));
             return;
+        }
+        if (!overrides.isEmpty()) {
+            // 逐文件缺失是常态（选项声明在别的文件），只收集命中名，不逐文件告警。
+            OptionSourceRewriter.Result rewritten = OptionSourceRewriter.apply(source, overrides);
+            source = rewritten.text();
+            appliedNames.addAll(rewritten.appliedNames());
         }
         TranslateResult result;
         try {

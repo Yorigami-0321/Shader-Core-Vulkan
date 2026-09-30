@@ -75,6 +75,16 @@ public final class PipelineApi {
     /** 合成管线 location（P2 前置：中间目标 → 中间目标，多目标 ping-pong 的中间级）。 */
     public static final String COMPOSITE_LOCATION = "vkdisp:pipeline/composite";
 
+    /**
+     * P2.4：合成管线的内建 uniform 块名（纯字符串视图）。
+     *
+     * <p>包 composite 源经 D 线转译后必带 {@code layout(std140) uniform VkDispBuiltins { … };}
+     * （P2.3 实测终态）——绑定布局必须声明它（未被片元引用的布局条目合法：
+     * 反例对照 {@code blit.fsh} 不声明 Globals 但布局带 Globals，实测可绘制），
+     * 否则「片元声明了布局没有的块」这一方向未实测过（X9 不猜）。
+     */
+    public static final String BUILTINS_UNIFORM = "VkDispBuiltins";
+
     /** 深度可视化管线 location（P3 前置：采样深度纹理 → 灰度输出，用于验证深度附件链路）。 */
     public static final String DEPTHVIS_LOCATION = "vkdisp:pipeline/depthviz";
 
@@ -115,9 +125,25 @@ public final class PipelineApi {
     private static final Identifier COMPOSITE_PIPELINE_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/composite");
 
-    /** 合成管线片元着色器 id：vkdisp:composite → assets/vkdisp/shaders/composite.fsh。 */
+    /**
+     * 合成管线片元着色器 id：vkdisp_pack:composite → {@code assets/vkdisp_pack/shaders/composite.fsh}。
+     *
+     * <p>P2.4 起指向**虚拟资源包** {@code vkdisp_pack}（04-SPEC §2）——源由
+     * {@code dev.vkdisp.VkDispVirtualPack} 在 openResources 时经冷路径生成
+     * （库存包 composite + 选项覆盖，或内置 passthrough 兜底），原 mod 内
+     * {@code assets/vkdisp/shaders/composite.fsh} 不再被管线引用。
+     */
     private static final Identifier COMPOSITE_SHADER_ID =
-            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "composite");
+            Identifier.fromNamespaceAndPath("vkdisp_pack", "composite");
+
+    /**
+     * 合成管线顶点着色器 id：vkdisp:fullscreen_flipv → {@code assets/vkdisp/shaders/fullscreen_flipv.vsh}。
+     *
+     * <p>P2.4 把「中间目标 → 主目标」的 1-v 翻转从 blit 片元**上移**到本顶点（P-1f），
+     * 包片元因此保持 OF 原语义（原始 vUv 采样）。
+     */
+    private static final Identifier FULLSCREEN_FLIPV_SHADER_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "fullscreen_flipv");
 
     /** 深度可视化管线 location id。 */
     private static final Identifier DEPTHVIS_PIPELINE_ID =
@@ -252,17 +278,20 @@ public final class PipelineApi {
     }
 
     /**
-     * 构建并注册 P2 前置的合成管线（中间目标 → 中间目标）。
+     * 构建并注册合成管线（P2.4 起 = Pass 3 主链管线）。
      *
-     * <p>结构与传递管线相同（只有采样器绑定），差别在片元着色器 {@code vkdisp:composite}；
-     * 多目标 ping-pong 链的中间级用它，最后一级用传递管线写主目标。
+     * <p>片元 = 虚拟包 {@code vkdisp_pack:composite}（库存包源或内置兜底），
+     * 顶点 = {@code vkdisp:fullscreen_flipv}（1-v 翻转上移到顶点，P-1f）。
+     * 绑定组同一组、顺序与包源 GLSL 声明一致（P-1f ②）：先 {@link #BUILTINS_UNIFORM}
+     * （D 线注入的内建块在源中最靠前）后 {@link #SAMPLER_UNIFORM}。
      */
     public static void registerCompositePipeline(RegisterRenderPipelinesEvent event) {
         RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
                 .withLocation(COMPOSITE_PIPELINE_ID)
-                .withVertexShader(FULLSCREEN_SHADER_ID)
+                .withVertexShader(FULLSCREEN_FLIPV_SHADER_ID)
                 .withFragmentShader(COMPOSITE_SHADER_ID)
                 .withBindGroupLayout(BindGroupLayout.builder()
+                        .withUniform(BUILTINS_UNIFORM, UniformType.UNIFORM_BUFFER)
                         .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
                         .build())
                 .withColorTargetState(ColorTargetState.DEFAULT)
@@ -270,6 +299,10 @@ public final class PipelineApi {
         event.registerPipeline(pipeline);
         compositePipeline = pipeline;
         REGISTERED_PIPELINES.add(pipeline);
+        // 一次性埋点：P2.4 链接线换血可见（片元命名空间 / 顶点翻转版）。
+        VkDisp.LOGGER.info(
+                "vkdisp: composite pipeline wired to pack shader: fragment={} vertex={} builtins+sampler same group",
+                COMPOSITE_SHADER_ID, FULLSCREEN_FLIPV_SHADER_ID);
     }
 
     /** 合成管线是否已注册完成（纯布尔视图）。 */

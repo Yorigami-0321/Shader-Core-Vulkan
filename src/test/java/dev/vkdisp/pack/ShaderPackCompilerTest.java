@@ -148,6 +148,80 @@ class ShaderPackCompilerTest {
         assertTrue(result.isSuccess(), "没有阶段 = 没有失败项，不该判为失败");
     }
 
+    // ---------------------------------------------- P2.4 选项覆盖（compile 的 overrides 入参）
+
+    @Test
+    void optionOverrideRewritesPrimarySourceBeforePipeline() throws IOException {
+        Path pack = packDir("ovr");
+        write(pack, "shaders/composite.fsh",
+                "#version 150\n#define SHADOW_DARKNESS 0.10 // [0.05 0.10 0.20]\n"
+                        + "void main() { gl_FragColor = vec4(SHADOW_DARKNESS); }\n");
+
+        ShaderPackCompiler.CompileResult result = ShaderPackCompiler.compile(
+                onlyDiscovered(), java.util.Map.of("SHADOW_DARKNESS", "0.20"));
+
+        ShaderPackCompiler.CompiledStage fragment = stageOf(result, ShaderStage.FRAGMENT);
+        assertTrue(fragment.isSuccess(), () -> "实际诊断: " + result.diagnostics());
+        assertFalse(fragment.result().text().contains("0.10 // [0.05 0.10 0.20]"),
+                "默认值行应已被改写，实际输出:\n" + fragment.result().text());
+        // 预处理会删除 #define 指令行，但把值内联进使用点 —— 断言展开后的使用点带新值。
+        assertTrue(fragment.result().text().contains("0.20"),
+                () -> "选项新值必须进入最终源，实际输出:\n" + fragment.result().text());
+        assertEquals(0, countDiagnostics(result.diagnostics(), TranslateDiagnostic.Severity.WARN),
+                () -> "命中声明行时不该有缺失告警，实际: " + result.diagnostics());
+    }
+
+    @Test
+    void optionOverrideRewritesIncludeFileDeclarations() throws IOException {
+        Path pack = packDir("ovrinc");
+        write(pack, "shaders/composite.fsh",
+                "#version 150\n#include \"/lib/opts.glsl\"\n"
+                        + "void main() { gl_FragColor = vec4(DENSITY); }\n");
+        write(pack, "shaders/lib/opts.glsl", "const float DENSITY = 1.0; // [1.0 2.0]\n");
+
+        ShaderPackCompiler.CompileResult result = ShaderPackCompiler.compile(
+                onlyDiscovered(), java.util.Map.of("DENSITY", "2.0"));
+
+        ShaderPackCompiler.CompiledStage fragment = stageOf(result, ShaderStage.FRAGMENT);
+        assertTrue(fragment.isSuccess(), () -> "实际诊断: " + result.diagnostics());
+        assertTrue(fragment.result().text().contains("2.0"),
+                () -> "被包含文件里的 const 选项也要改写，实际输出:\n" + fragment.result().text());
+        assertEquals(0, countDiagnostics(result.diagnostics(), TranslateDiagnostic.Severity.WARN),
+                () -> "声明在 include 里同样算命中，不该告警，实际: " + result.diagnostics());
+    }
+
+    @Test
+    void optionOverrideMissingEverywhereInPackWarnsExplicitly() throws IOException {
+        Path pack = packDir("ovrmiss");
+        write(pack, "shaders/composite.fsh", "#version 150\nvoid main() {}\n");
+
+        ShaderPackCompiler.CompileResult result = ShaderPackCompiler.compile(
+                onlyDiscovered(), java.util.Map.of("NO_SUCH_OPTION", "1"));
+
+        assertTrue(result.isSuccess(), "缺失覆盖不是失败，是告警");
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic ->
+                        diagnostic.severity() == TranslateDiagnostic.Severity.WARN
+                                && diagnostic.message().contains("NO_SUCH_OPTION")),
+                () -> "整包未命中的覆盖名必须显式 WARN（T11），实际: " + result.diagnostics());
+    }
+
+    @Test
+    void nullOverridesBehavesLikeNoOverrides() throws IOException {
+        Path pack = packDir("ovrnull");
+        write(pack, "shaders/composite.fsh", "#version 150\nvoid main() {}\n");
+
+        ShaderPackCompiler.CompileResult plain = ShaderPackCompiler.compile(onlyDiscovered());
+        ShaderPackCompiler.CompileResult withNull = ShaderPackCompiler.compile(onlyDiscovered(), null);
+
+        assertEquals(plain.stages().size(), withNull.stages().size());
+        assertEquals(stageOf(plain, ShaderStage.FRAGMENT).result().text(),
+                stageOf(withNull, ShaderStage.FRAGMENT).result().text(),
+                "null 覆盖表与无覆盖完全等价");
+        assertTrue(withNull.diagnostics().stream().noneMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.WARN && d.message().contains("未在任何源文件")),
+                () -> "空覆盖表不该产生缺失告警，实际: " + withNull.diagnostics());
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private ShaderPackScanner.DiscoveredPack onlyDiscovered() {

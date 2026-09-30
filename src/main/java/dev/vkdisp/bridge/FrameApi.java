@@ -310,6 +310,32 @@ public final class FrameApi {
     }
 
     /**
+     * P2.4：VkDispBuiltins 内建块的零值环形缓冲。
+     *
+     * <p>23 条内建按 std140 布局共 508 字节，取 1024 留裕量（缓冲大于块合法）。
+     * 包 composite 源携带该块但当前不引用（fixture 只用 InSampler）→ 绑定零值即可；
+     * 正式值回填（OfUniformManager 上传链）是 P2.4+ 已登记缺口。
+     */
+    private static final int BUILTINS_BYTES = 1024;
+
+    private static MappableRingBuffer builtinsRing;
+
+    private static MappableRingBuffer builtinsRing() {
+        MappableRingBuffer ring = builtinsRing;
+        if (ring == null) {
+            ring = new MappableRingBuffer(
+                    () -> "vkdisp builtins",
+                    GpuBuffer.USAGE_MAP_WRITE | GpuBuffer.USAGE_UNIFORM,
+                    BUILTINS_BYTES);
+            builtinsRing = ring;
+            dev.vkdisp.VkDisp.LOGGER.info(
+                    "vkdisp: builtins uniform buffer created (bytes={}, zero-filled until OfUniformManager)",
+                    BUILTINS_BYTES);
+        }
+        return ring;
+    }
+
+    /**
      * 离屏渲染目标（P2 前置：图案先画到它上面，再被下一个 pass 采样进主目标）。
      *
      * <p>用原版 {@link TextureTarget}（{@code RenderTarget} 子类，vanilla 内部目标同款）：
@@ -431,13 +457,14 @@ public final class FrameApi {
      * @return 已编译返回 true；尚未完成编译返回 false（不抛异常，供每帧轮询）
      */
     public static boolean isPipelineReady() {
-        // 本帧链用到 geometry / shadowed / blit 三条（pattern、composite、depthviz 已注册但不在本帧链中）。
+        // 本帧链（P2.4 起）：geometry → shadowed → composite（Pass 3 已由 blit 换成包 composite；
+        // pattern、blit、depthviz 已注册但不在本帧链中）。
         return PipelineApi.isGeometryPipelineRegistered()
                 && PipelineApi.isShadowedPipelineRegistered()
-                && PipelineApi.isBlitPipelineRegistered()
+                && PipelineApi.isCompositePipelineRegistered()
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.geometryPipeline()) != null
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.shadowedPipeline()) != null
-                && RenderSystem.getCompiledPipelineNullable(PipelineApi.blitPipeline()) != null;
+                && RenderSystem.getCompiledPipelineNullable(PipelineApi.compositePipeline()) != null;
     }
 
     /**
@@ -476,7 +503,7 @@ public final class FrameApi {
         }
         GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
 
-        // 三条管线都要就绪（图案 + 合成 + 传递）；任一未编译完成都抛异常，绝不静默少画一个 pass。
+        // 三条管线都要就绪（几何 + 阴影采样 + 合成）；任一未编译完成都抛异常，绝不静默少画一个 pass。
         CompiledRenderPipeline shadowed = RenderSystem.getCompiledPipelineNullable(PipelineApi.shadowedPipeline());
         if (shadowed == null) {
             throw new IllegalStateException(
@@ -487,10 +514,11 @@ public final class FrameApi {
             throw new IllegalStateException(
                     "vkdisp: geometry pipeline not compiled yet: " + PipelineApi.GEOMETRY_LOCATION);
         }
-        CompiledRenderPipeline blit = RenderSystem.getCompiledPipelineNullable(PipelineApi.blitPipeline());
-        if (blit == null) {
+        // P2.4：Pass 3 从 blit 换成包 composite（片元来自虚拟包 vkdisp_pack，见 PipelineApi）。
+        CompiledRenderPipeline composite = RenderSystem.getCompiledPipelineNullable(PipelineApi.compositePipeline());
+        if (composite == null) {
             throw new IllegalStateException(
-                    "vkdisp: blit pipeline not compiled yet: " + PipelineApi.BLIT_LOCATION);
+                    "vkdisp: composite pipeline not compiled yet: " + PipelineApi.COMPOSITE_LOCATION);
         }
 
         // P3.2：相机矩阵（世界内=原版 GameRenderer，菜单=占位回退，来源切换见日志）；map/close 仍在开启 pass 之前。
@@ -512,12 +540,12 @@ public final class FrameApi {
             Std140Builder.intoBuffer(view.data()).putVec4(params.phase(), params.intensity(), 0.0F, 0.0F);
         }
 
-        // P3.1 影子 pass 链路（三段，各自不同附件 —— 规避「同一附件第二次 createRenderPass 不生效」）：
+        // 三段链（各自不同附件 —— 规避「同一附件第二次 createRenderPass 不生效」）：
         //  Pass 1 阴影贴图：清屏(黑, 深度1.0) → 几何(经光空间矩阵) → offscreen0 的**深度**即阴影贴图
-        //  Pass 2 可视化：采样阴影贴图深度 → offscreen1 灰度（depthviz）
-        //  Pass 3：offscreen1 → 主目标
+        //  Pass 2 世界视图：采样阴影贴图深度 → offscreen1（受阴影片元变暗）
+        //  Pass 3：offscreen1 → 主目标（**P2.4 起 = 包 composite**，1-v 翻转在 flipv 顶点完成）
         // 说明：图案背景本轮**不进链** —— 阴影贴图只应包含遮挡物深度，背景深度会污染贴图；
-        //       图案/合成管线仍注册并通过计数断言（registered=5），只是不在本帧执行。
+        //       pattern/blit/depthviz 管线仍注册并通过计数断言，只是不在本帧执行。
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
         try (RenderPass pass = encoder.createRenderPass(
                 () -> label + " 1 (shadow map: geometry -> offscreen0)",
@@ -549,13 +577,19 @@ public final class FrameApi {
         }
         // Pass 3：offscreen1 → 主目标（最后一级；主目标只由本 pass 写入）。
         // ⚠️ 采样的必须是**本帧链实际写入的那个目标**（实测教训：曾误采样本链未写入的目标）。
+        // P2.4：管线 = 包 composite（1-v 翻转在其顶点 fullscreen_flipv 里完成，P-1f）；
+        //       VkDispBuiltins 是 D 线注入进包源的内建块 —— 未被片元引用时绑定零值缓冲无副作用
+        //       （被引用的正式上传链 OfUniformManager 属 P2.4+ 登记缺口）。
         try (RenderPass pass = encoder.createRenderPass(
-                () -> label + " 3 (offscreen1 -> main)", colorView, Optional.empty(), null, OptionalDouble.empty())) {
-            pass.setPipeline(blit);
+                () -> label + " 3 (offscreen1 -> main, pack composite)",
+                colorView, Optional.empty(), null, OptionalDouble.empty())) {
+            pass.setPipeline(composite);
             RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform(PipelineApi.BUILTINS_UNIFORM, builtinsRing().currentBuffer());
             pass.setUniform(PipelineApi.SAMPLER_UNIFORM, viewB, sampler);
             pass.draw(3, 1, 0, 0);
         }
+        builtinsRing().rotate();
         // 原版 PostPass 同款：绘制后再 rotate，保证本帧写入的槽在 GPU 用完前不被复用。
         ring.rotate();
         return new FrameSize(width, height);

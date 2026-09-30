@@ -32,6 +32,19 @@ public final class VkDispConfig {
             .comment("诊断日志。打开后输出管线构建/编译计数，便于排查静默失败。")
             .define("debugLog", true);
 
+    /**
+     * P2.4「开关能改变画面」的主线开关：着色器包 profile 预设名
+     * （对应包 {@code shaders.properties} 里的 {@code profile.<名>} 条目）。
+     *
+     * <p>留空 = 使用包默认值。生效时机 = 虚拟资源包生成 composite 源时
+     * （{@code dev.vkdisp.VkDispVirtualPack}，改值后重启 / 资源重载生效）。
+     * P4.3 选项 GUI 前的临时主线入口（18-PARALLEL §5 P2.4 ④）。
+     */
+    // javap 核实：本版 ModConfigSpec 无 StringValue 内部类，字符串条目 = 泛型 ConfigValue<String>。
+    public static final ModConfigSpec.ConfigValue<String> PACK_PROFILE = BUILDER
+            .comment("着色器包 profile 预设名（shaders.properties 的 profile.<名>）。留空 = 使用包默认值。")
+            .define("packProfile", "");
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     private VkDispConfig() {

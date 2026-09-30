@@ -5,6 +5,30 @@
 
 ---
 
+## 2026-09-30 — P2.4 composite 生效：选项 profile 真实改变画面，A/B 整帧亮度比 0.8870 命中理论 0.8889
+
+- **本次改了什么**：
+  1. **虚拟资源包 `vkdisp_pack`**（新增 `VkDispVirtualPack`，env-1 独占 `VkDisp*` 路径）：`AddPackFindersEvent`（mod bus）注册 `required=true` 的 RepositorySource → `rebuildSelected` 强制入选中集（**不写** options.resourcePacks，04-SPEC §3.1）。源生成在 `openResources`（此刻配置已加载@3079、生成@3114，时序 = Minecraft.<init> 字节码偏移实测）；注册期只组装静态元数据。内部 `VirtualPackResources` 只服务 `assets/vkdisp_pack/shaders/composite.fsh` 一个资源（接口清单 javap 核实，X9）。生成链任意 Throwable → ERROR 原文 + 内置 passthrough 兜底（composite 是 required 管线，抛穿会砸启动，T11）。
+  2. **冷路径编排 `pack/PackCompositeSource`**（新增）：扫描 → 逐包 `ShaderPackService.load` → 找 `program=composite` → `PackOptions.of` → `applyProfile`（空名跳过）→ **values 与 defaults 差分**出覆盖表 → `ShaderPackCompiler.compile(discovered, overrides)` → 取第一个成功 FRAGMENT；全军覆没才兜底（必带 WARN）。扫描问题/选项诊断全部映射成分级 TranslateDiagnostic。
+  3. **选项改写链**（上一段冷路径主体，本轮接线完成）：新增 `config/OptionSourceRewriter`（行内改写 `#define NAME <值>` / 裸 define / `const T NAME = <值>;`，保行数保注释保 CRLF；13 单测）；`ShaderPackCompiler` 新增 `compile(pack, overrides)` 重载 —— 主源与 **include 包装后的源**都过改写器，覆盖名全包未命中 → 包级 WARN（T11）。
+  4. **帧链接线**（bridge 两文件）：Pass 3 由 blit 换成 composite 管线 —— `PipelineApi.COMPOSITE_SHADER_ID` 改指 `vkdisp_pack:composite`，顶点换自造 `fullscreen_flipv`（1-v 翻转进顶点，包片元保持 OF 原语义用原始 vUv，P-1f）；composite 绑定布局 `[VkDispBuiltins UBO, InSampler]` 同组（顺序对齐注入 GLSL；「布局多于 shader 使用」有 blit+Globals 先例），`FrameApi` 新增 1024B `builtinsRing()` 零填充绑定（上传链属 OfUniformManager，登记后续缺口）；`isPipelineReady` 判定从 blit 换 composite。
+  5. **主线开关**：`VkDispConfig.packProfile`（javap 核实本版 `ModConfigSpec` 无 StringValue → 泛型 `ConfigValue<String>`）。
+  6. **fixture 改造**（run/ 不入库）：composite.fsh 改为采样 InSampler 并以 `1.0 - SHADOW_DARKNESS` 调制 RGB（原平铺色调 RGB 恒定，开关在画面上不可见）+ `#define ENABLE_FOG` 门控；zip/dir 两套同步重建。删除旧模组自带 `assets/vkdisp/shaders/composite.fsh`（grep 核实唯一引用 `COMPOSITE_SHADER_ID` 已改指虚拟包）。
+  7. 测试：新增 `OptionSourceRewriterTest`（13）+ `PackCompositeSourceTest`（8：空库存/无 composite/坏片元兜底、空 profile 走默认、HIGH 覆盖进最终源、未知 profile 显式 ERROR 且保持默认）+ `ShaderPackCompilerTest` 补 4 条覆盖用例。
+- **为什么改**：01-DEV-LOOP §10 的 P2.4 = 08-TESTING §4「选择开关后画面有对应变化 | 对比截图」。前几轮证明了「编得过、扫得见」，但选项值从未进过上屏的那条链；本轮把 扫包 → 选项 → profile → 差分改写 → 驱动编译 → Pass 3 上屏 整条串起来，用两张截图的像素统计证明开关真的改变了画面（18-PARALLEL §5 关键路径，无 GPU 证据不算进度）。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §5（P2.4 块 → ✅，含 A/B 实测）。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；**415 用例 0 失败 0 错误**（基线 390 + 25 新增）。
+  - ✅ **runClient A/B 实测**（两轮完整启动，F2 截图各 1 张，stdlib PNG 解码整帧统计）：
+    - Run A `packProfile=""`：日志 `composite source generation start: profile=''` → `composite source ready: fallback=false pack=vkdisp-fixture-zip profile='' bytes=1655 diagnostics=0`；截图 `p24_runA_default.png` sha256 `c4f7b50aff872af130f0a5b77abb528eb0e8f2a6173e3485149c95c1af317ff6`，mean_luma **6.3813**。
+    - Run B `packProfile="HIGH"`：同两行日志 profile='HIGH' bytes=1655；截图 `p24_runB_high.png` sha256 `af6f22e2e1738badc0acb628687e8cecd26e22ebd27bdbbf0998f86af215c96a`，mean_luma **5.6604**。
+    - **判据：B/A = 0.8870，理论 HIGH(0.80)/default(0.90) = 0.8889，偏差 0.2%**（RGBA8 量化量级）；R/G 通道比 0.8870/0.8871 同向一致；非黑像素 29294 个逐对比较值同为 0.8870；差异像素 29294/409920 = 7.15%；两张 sha256 不同 → **选项开关真实改变了上屏画面**。
+    - 两轮共有链路证据：`virtual pack finder registered: id=vkdisp_pack required=true position=TOP`、`composite pipeline wired to pack shader: fragment=vkdisp_pack:composite vertex=vkdisp:fullscreen_flipv builtins+sampler same group`、`pipeline count check: registered=6, compiled=6 (aligned)`、`fullscreen pass enabled`；**两轮 vkdisp ERROR = 0**（仅存 ERROR 为原版 authlib/narrator/OpenAL 环境噪音）。
+- **未覆盖 / 存疑**：① 维度目录 composite（`world0/composite`）不参与 Pass 3 选择（代码 javadoc 已登记，P3.x 接维度时再定）；② `VkDispBuiltins` 仍零填充 —— fixture 片元不读内建成员，OfUniformManager 上传链是后续缺口；③ F3+T 资源重载触发的二次源生成未实测（本轮只测冷启动两轮）；④ 库存 zip+dir 两包同构，选中的是 zip（scanner 顺序），dir 包未单独切换验证；⑤ profile 值未进任何声明行时有包级 WARN 但无逐项提示 —— A/B 截图是最终裁判；⑥ 首轮启动出现 ConfigTracker `vkdisp-common.toml is not correct. Correcting`（NeoForge 首建配置的规范化动作，非本模组代码路径，第二轮消失）；⑦ `#version 150/120` 包与包自带非透明 uniform 的真实包留给 P4.1。
+- **是否已提交**：随本条目一并 commit 并推送至 `origin/master`。
+
+---
+
 ## 2026-09-30 — P2.3 #include 编译接主线：驱动级 GLSL→SPIR-V 通路打通，4/4 阶段编译通过
 
 - **本次改了什么**：
