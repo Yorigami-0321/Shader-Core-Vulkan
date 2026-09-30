@@ -217,9 +217,47 @@ F1–F4 全部落地 → 放行并行
    ✅ 接原版 GameRenderer 相机（cameraRenderState 驱动视图 + 菜单显式回退 + 锚点；F5 位移 4 格 →
       几何比值 0.505/0.510 = 理论 0.502/0.526 四位吻合；pose changed 埋点 3 条，vkdisp ERROR=0）
       ⏳ 仍缺：yaw/pitch 连续转动的像素判据（Weston X 焦点 None，XTEST 无法重新聚焦，待可聚焦环境补跑）、
-      与原版 LevelRenderer 光空间列表 / CSM 集成、PCF 软阴影
+      太阳/月亮方向的光空间（X9 修正：原版 26.3 全 jar 源检索无任何阴影贴图/光空间系统 ——
+      「接入原版 LevelRenderer 光空间列表」是基于错误前提的缺口，不存在可接入的原版列表；
+      重定义为按 04-SPEC §3.4 自建 ShadowPass 列表，见下方 P3.1 完整块）、PCF 软阴影
    ⏳ 深度测试剔除（真几何）、多颜色附件（colortex0..N）、多目标池复用
-   ▶️ P3.1 影子 pass：光空间矩阵 + 阴影贴图（深度链路已就绪）
+   ▶️ P3.1 光空间列表（01-DEV-LOOP §10 P3.1 完整交付）｜验收 = 08-TESTING §5
+      「光空间列表非空；阴影贴图内容合理（不是全黑/全白）」。设计：
+      ① **X9 前提修正**（本轮实测）：对合并 jar 全部 .java 源检索
+      `lightSpace|shadowMatrix|shadowProjection|shadowModelView|cascade` = **0 命中**；
+      `shadow*` 类仅实体投影斑（ShadowFeatureRenderer / entityShadow 渲染型）——
+      原版 26.3 **没有**阴影贴图与光空间列表（MC 原版本就不渲染世界阴影贴图）。
+      故 P3.1 完整交付 = 按 04-SPEC §3.4 自建 ShadowPass 的**光空间列表**（级联条目），
+      不是接入不存在的原版列表。
+      ② **列表结构**（新增业务类 `shadow/LightSpaceList`）：`Entry = {cascade 序号,
+      shadowModelView, shadowProjection, near, far, lightTravelDir}` —— V/P 分矩阵存储
+      （04-SPEC §3.2 `shadowModelView`/`shadowProjection` 双矩阵形态的数据层第一步）；
+      `build(dir)` 保证非空（零向量方向 → 显式抛出，T11 不静默）；当前单级联
+      （far=8、正交 ±1.2/±1、zZeroToOne —— 与已验收光空间矩阵数值逐位等价）。
+      ③ **接线**（FrameApi）：每帧 build → 列表空则 ERROR + 跳过本帧影子链（防御分支）
+      → `uLight = P₀ × V₀`（数值等价旧链，画面应逐像素不变）→ 首帧打
+      `light-space list ready: size=… source=…` 埋点（「列表非空」的日志判据）。
+      ④ **方向来源如实登记**：当前 = 固定占位方向（`source=fixed-placeholder`）；
+      太阳方向（`EnvironmentAttributes.SUN_ANGLE` 已 javap 核实，度数、经
+      SkyRenderer 的 R_YP(−90°)·R_XP(θ)·(0,1,0) 推出方向公式）与多级联 CSM 分割
+      **登记为本轮后缺口** —— 未做像素判据前不接（X9，不猜）。
+      实测（冷路径 `./gradlew build` exit=0，**424 tests** 全绿（+9 = LightSpaceListTest 9/9）；
+      runClient `-PquickPlay` 世界内取证，`run/logs/latest.log` vkdisp ERROR=0）：
+      首帧 `light matrix buffer created (content=light-space view-projection from LightSpaceList,
+      bytes=64)` → `light-space list ready: size=1 source=fixed-placeholder dir=(0.48000002, -0.8,
+      0.35999998) cascade0 near=0.1 far=8.0 ortho=[-1.2, 1.2]x[-1.0, 1.0] zZeroToOne=true`（列表非空
+      的日志判据）；`pipeline count check: registered=6, compiled=6 (aligned)`、
+      `shadow sample chain executed (854x480)`、进世界后 `camera source=vanilla GameRenderer` +
+      `camera anchor captured`。F2 截图（854x480，sha256 `3ea6c38fc5431596…`）：非黑 10598 像素
+      （2.6%）、全白 0；色调桶 **48 / 57 / 164** 三分量 = 红四边形受光（0.9×54.2）/ 绿四边形阴影
+      （0.35×164.2）/ 绿四边形受光（0.9×182.4）—— 明暗双峰、非全黑非全白，且**桶值与 P2.4 主菜单
+      默认轮（48/57/164）逐值相同** = 列表化后 uLight 数值等价的像素级证据。⚠️ 覆盖率与 P2.4 A/B
+      不同（10598 vs 29294 非黑）属**取景差异**非回归：P2.4 A/B 在主菜单占位相机取景（其 log
+      `vanilla GameRenderer` 0 命中），本轮 quickPlay 进世界、锚点俯视（pitch=90, fov=23.8°），
+      同色调桶按透视缩小后覆盖一致可解释。
+      未覆盖：空列表防御分支未在运行时触发（固定方向常量结构性不可达，靠
+      `LightSpaceListTest` 零向量/非规数用例 + lightSpaceMatrix() 抛错分支静态覆盖）；
+      太阳/月亮方向与多级联仍按 ④ 登记缺口。
    ✅ P2.1/P2.2 主线接入（A/B/C 线汇合后接启动期扫包钩子，随本轮提交）：
       `VkDispPackScan`（ClientResourceLoadFinishedEvent → gameDir/shaderpacks → ShaderPackService.loadAll）
       实测 latest.log：packs=2（kind=zip + kind=dir 各一）programs=2 options=8 problems=0 diagnostics=0，

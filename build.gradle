@@ -149,6 +149,9 @@ dependencies {
     testImplementation platform('org.junit:junit-bom:5.13.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    // P3.1：业务类（shadow/LightSpaceList）与被测管线持 joml 类型，测试源集需要同一 jar 才能编译。
+    // 版本 = MC 26.3 运行时自带的 joml（gradle 缓存 org.joml:joml:1.10.9），与主源集来自同一构件。
+    testImplementation 'org.joml:joml:1.10.9'
 }
 
 // F4：启用 JUnit Platform；测试失败 = build 失败（并行线证据规范 §7.3 要求单测全绿）

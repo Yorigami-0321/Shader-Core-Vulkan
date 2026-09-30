@@ -90,10 +90,8 @@ public final class FrameApi {
     /**
      * 光空间矩阵环形缓冲（懒创建，渲染线程 / 设备就绪后）。
      *
-     * <p><b>P3.1 前置的占位矩阵</b>：当前固定为「平移 +0.3、缩放 0.6」的仿射矩阵，
-     * 作用是把「矩阵 uniform 上传 → 顶点着色器变换 → 画面位移」这条链路**变成可像素级判定的事实**
-     * （与上一轮 NDC 直写相比，四边形位置必然改变）。P3.1 正式实现时，这里会换成
-     * 从光照方向构造的 view-projection 矩阵（视锥/光空间语义由主线后续交付）。
+     * <p>P3.1 起内容 = {@link dev.vkdisp.shadow.LightSpaceList} 首级联合成的 view-projection
+     * （uLight = P₀ × V₀）；写入与旧占位链数值逐位等价，画面不因列表化而改变。
      */
     private static MappableRingBuffer lightMatrixRing() {
         MappableRingBuffer ring = lightMatrixRing;
@@ -103,41 +101,81 @@ public final class FrameApi {
                     GpuBuffer.USAGE_MAP_WRITE | GpuBuffer.USAGE_UNIFORM,
                     LIGHT_MATRIX_BYTES);
             lightMatrixRing = ring;
-            // 一次性埋点：矩阵上传链路启用（translate=+0.3, scale=0.6 的占位光空间矩阵）。
             dev.vkdisp.VkDisp.LOGGER.info(
-                    "vkdisp: light matrix buffer created (translate=+0.3, scale=0.6, bytes={})",
+                    "vkdisp: light matrix buffer created (content=light-space view-projection from LightSpaceList, bytes={})",
                     LIGHT_MATRIX_BYTES);
         }
         return ring;
     }
 
-    /** P3.1 占位光照方向（单位向量，指向地面）；后续由世界光照/时间提供。 */
+    /**
+     * P3.1 光行进方向（固定占位，单位向量，从光源指向场景）。
+     *
+     * <p>来源如实登记：太阳/月亮方向（{@code EnvironmentAttributes.SUN_ANGLE} 已 javap 核实）
+     * 与多级联 CSM 分割为本轮后缺口 —— 未做像素判据前不接（X9，18-PARALLEL §5 P3.1 ④）。
+     */
     private static final org.joml.Vector3f LIGHT_DIRECTION =
             new org.joml.Vector3f(0.6F, -1.0F, 0.45F).normalize();
 
-    /** 光空间方向是否已打过埋点。 */
-    private static boolean lightSpaceLogged;
+    /** 方向来源标识（08-TESTING §5「列表非空」验收日志的 source= 字段，与上行保持一致）。 */
+    private static final String LIGHT_SPACE_SOURCE = "fixed-placeholder";
+
+    /** P3.1 光空间列表（懒构建一次，帧路径只读；验收对象 = 非空，08-TESTING §5）。 */
+    private static java.util.List<dev.vkdisp.shadow.LightSpaceList.Entry> lightSpaceList;
 
     /**
-     * P3.1 光空间 view-projection：正交投影（覆盖几何所在范围）× 相机沿光反方向看向原点的视图矩阵。
+     * 光空间列表（懒构建 + 缓存）。首次构建打验收埋点：
+     * 非空 → {@code light-space list ready: size=… source=…}；空 → ERROR（T11，后续帧由
+     * {@link #lightSpaceMatrix()} 拒绝出帧，hook 打 ERROR 原文本帧跳过影子链）。
+     */
+    private static java.util.List<dev.vkdisp.shadow.LightSpaceList.Entry> lightSpaceList() {
+        java.util.List<dev.vkdisp.shadow.LightSpaceList.Entry> list = lightSpaceList;
+        if (list == null) {
+            try {
+                list = dev.vkdisp.shadow.LightSpaceList.build(LIGHT_DIRECTION);
+            } catch (RuntimeException ex) {
+                dev.vkdisp.VkDisp.LOGGER.error(
+                        "vkdisp: light-space list build failed (T11): {}", ex.toString());
+                list = java.util.List.of();
+            }
+            lightSpaceList = list;
+            if (list.isEmpty()) {
+                dev.vkdisp.VkDisp.LOGGER.error(
+                        "vkdisp: light-space list EMPTY: size=0 source={} — 影子链本帧起拒绝执行",
+                        LIGHT_SPACE_SOURCE);
+            } else {
+                dev.vkdisp.shadow.LightSpaceList.Entry first = list.get(0);
+                dev.vkdisp.VkDisp.LOGGER.info(
+                        "vkdisp: light-space list ready: size={} source={} dir=({}, {}, {}) "
+                                + "cascade0 near={} far={} ortho=[{}, {}]x[{}, {}] zZeroToOne=true",
+                        list.size(), LIGHT_SPACE_SOURCE,
+                        first.lightTravelDirection().x,
+                        first.lightTravelDirection().y,
+                        first.lightTravelDirection().z,
+                        first.near(), first.far(),
+                        -dev.vkdisp.shadow.LightSpaceList.ORTHO_HALF_X,
+                        dev.vkdisp.shadow.LightSpaceList.ORTHO_HALF_X,
+                        -dev.vkdisp.shadow.LightSpaceList.ORTHO_HALF_Y,
+                        dev.vkdisp.shadow.LightSpaceList.ORTHO_HALF_Y);
+            }
+        }
+        return list;
+    }
+
+    /**
+     * P3.1 光空间矩阵（uLight = P₀ × V₀）：取光空间列表首级联的分矩阵合成。
      *
-     * <p>这是影子 pass 的核心：顶点从「世界空间」被变换到「光空间」，深度即阴影贴图。
-     * joml 的 {@code ortho(...).lookAt(...)} 语义 = P * V（右乘视图逆），与 std140 mat4 列主序一致。
+     * <p>正交投影 × 光相机沿光反方向看向原点的视图；数值与旧 {@code ortho().lookAt()} 链逐位等价。
+     * ⚠️ zZeroToOne=true：Vulkan 深度范围是 [0,1]；GL 约定 [-1,1] 会把近半几何裁掉（P3.1 基础实测）。
+     * 调用点位于任何 render pass 打开之前 —— 列表为空时抛出即整帧跳过影子链（防御分支，T11）。
      */
     private static org.joml.Matrix4f lightSpaceMatrix() {
-        org.joml.Vector3f eye = new org.joml.Vector3f(LIGHT_DIRECTION).negate().mul(4.0F);
-        if (!lightSpaceLogged) {
-            lightSpaceLogged = true;
-            dev.vkdisp.VkDisp.LOGGER.info(
-                    "vkdisp: light space computed: dir=({}, {}, {}), eye=({}, {}, {}), ortho=[-1.2,1.2]x[-1,1], near=0.1 far=8",
-                    LIGHT_DIRECTION.x, LIGHT_DIRECTION.y, LIGHT_DIRECTION.z,
-                    eye.x, eye.y, eye.z);
+        java.util.List<dev.vkdisp.shadow.LightSpaceList.Entry> list = lightSpaceList();
+        if (list.isEmpty()) {
+            throw new IllegalStateException(
+                    "vkdisp: light-space list is empty (see prior light-space ERROR) — skip this frame's shadow chain");
         }
-        // ⚠️ zZeroToOne=true：Vulkan 深度范围是 [0,1]；默认的 GL 约定 [-1,1] 会把近半几何裁掉
-        // （实测：灰度集中在 16..56 且阴影面积极小，修正后回到中值区）。
-        return new org.joml.Matrix4f()
-                .ortho(-1.2F, 1.2F, -1.0F, 1.0F, 0.1F, 8.0F, true)
-                .lookAt(eye, new org.joml.Vector3f(0.0F, 0.0F, 0.0F), new org.joml.Vector3f(0.0F, 1.0F, 0.0F));
+        return list.get(0).viewProjection(new org.joml.Matrix4f());
     }
 
     /** 相机矩阵环形缓冲（mat4 64B；P3.2/P3.3 真实透视视图取代占位 NDC 视图）。 */

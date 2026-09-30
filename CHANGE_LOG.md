@@ -5,6 +5,64 @@
 
 ---
 
+## 2026-09-30 — P3.1 光空间列表完整交付：自建级联列表非空（size=1），明暗双峰像素取证，uLight 数值等价
+
+- **本次改了什么**：
+  1. **X9 前提修正（先于实现，写进 18-PARALLEL §5）**：对合并 jar 全部 `.java` 源检索
+     `lightSpace|lightSpaceMatrix|shadowProjection|shadowModelView|cascade` 等 = **0 命中**，
+     `shadow*` 类仅实体投影斑 —— 原版 26.3 **没有**阴影贴图/光空间系统，此前登记的「接入原版
+     LevelRenderer 光空间列表」是基于错误前提的缺口。P3.1 完成定义改回 04-SPEC §3.4：
+     按契约**自建** ShadowPass 的光空间列表（级联条目数据层）。
+  2. 新增业务类 `shadow/LightSpaceList`（含【参考调研】五条头，T13）：`Entry = {cascade 序号,
+     shadowModelView, shadowProjection, near, far, lightTravelDirection}` —— **V/P 分开存**
+     （04-SPEC §3.2 双矩阵形态的数据层第一步，防御性拷贝）；`build(dir)` 永不返回空列表 ——
+     null/零向量/NaN/Inf → 显式 `IllegalArgumentException`（T11）；当前单级联（far=8、正交
+     ±1.2/±1、zZeroToOne），矩阵构造与已验收光空间逐位同参；`viewProjection(dest) = P × V`。
+  3. **接线 `bridge/FrameApi`**：原内联 `ortho().lookAt()` 单矩阵常量替换为
+     `lightSpaceList()`（懒构建 + 缓存 + 首帧埋点）→ `uLight = P₀ × V₀`（调用点在任何 render
+     pass 打开之前，列表空时抛错即整帧跳过影子链，hook catch 打 ERROR 原文，防御分支）；
+     方向来源如实登记 `source=fixed-placeholder`（太阳 `EnvironmentAttributes.SUN_ANGLE` 与
+     多级联 CSM 分割按 X9 登记为本轮后缺口，未做像素判据不接）；buffer 埋点与 javadoc 同步
+     去掉过期的「translate=+0.3」占位描述。
+  4. **测试**：新增 `shadow/LightSpaceListTest` 9 用例 —— 非空单级联结构、不可变列表、
+     **矩阵与旧链独立重算等价**（期望值不复用被测代码常量拼装）、zZeroToOne/正交范围、
+     方向单位化 + 防御拷贝、零/null/NaN/Inf/近零方向显式抛错。
+  5. `build.gradle`（env-1 共享文件）：补 `testImplementation 'org.joml:joml:1.10.9'` ——
+     业务类与被测管线持 joml 类型，测试源集原本没有该 jar（首跑 25 处编译错实测）；
+     版本 = MC 26.3 运行时自带构件（gradle 缓存核实）。
+- **为什么改**：01-DEV-LOOP §10 P3.1 完整交付 = 08-TESTING §5「光空间列表非空；阴影贴图内容
+  合理（不是全黑/全白）」。前提修正后，验收对象落在自建列表本身：把「列表非空」变成可断言的
+  数据结构 + 可 grep 的日志事实，同时用「桶值不变」的像素证据证明列表化没有改动画面（数值等价），
+  为多级联 CSM 与太阳方向接入立数据层。一次只做一个，同轮不碰 CSM/方向。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §5（⏳ 光空间缺口行的 X9 修正 +
+  P3.1 完整设计块 ①–④ + 实测回填）；`build.gradle` 注释。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；**424 用例 0 失败 0 错误**（基线 415 + LightSpaceListTest 9）。
+  - ✅ **runClient `-PquickPlay` 世界内实测**（`run/logs/latest.log`，**vkdisp ERROR=0**）：
+    `light matrix buffer created (content=light-space view-projection from LightSpaceList, bytes=64)` →
+    **`light-space list ready: size=1 source=fixed-placeholder dir=(0.48000002, -0.8, 0.35999998)
+    cascade0 near=0.1 far=8.0 ortho=[-1.2, 1.2]x[-1.0, 1.0] zZeroToOne=true`**（列表非空判据）；
+    `pipeline count check: registered=6, compiled=6 (aligned)`、`shadow sample chain executed
+    (854x480)`、进世界后 `camera source=vanilla GameRenderer` + `camera anchor captured`。
+  - ✅ **F2 截图**（854x480，`p31_lightspace_run.png` sha256 `3ea6c38fc54315961217e989a7e1e069a0d6e10f
+    92013cff7323b08023976cba`）：非黑 10598 px（2.6%）、全白 **0**；色调桶 **48/57/164** =
+    红四边形受光（0.9×54.2）/ 绿四边形阴影（0.35×164.2）/ 绿四边形受光（0.9×182.4）——
+    明暗双峰、非全黑非全白；**桶值与 P2.4 主菜单默认轮逐值相同（48/57/164）** = 列表化后
+    uLight 数值等价的像素级证据。覆盖率 10598 vs P2.4 的 29294 属取景差异非回归
+    （P2.4 A/B 为主菜单占位相机，其 log `vanilla GameRenderer` 0 命中；本轮进世界锚点
+    pitch=90 俯视，fov=23.8°，同色调按透视缩小可解释）。
+- **未覆盖 / 存疑**：① 空列表防御分支未在运行时触发（固定方向常量结构性不可达）——靠
+  `LightSpaceListTest` 零向量/非规数用例 + `lightSpaceMatrix()` 抛错分支静态覆盖，真实故障路径
+  未注入；② 太阳/月亮方向光空间未接（SUN_ANGLE API 已 javap 核实、方向公式已推导，但末地
+  固定午夜 + 竖直 fixture 几何 → 竖直光会得到退化贴图，无像素判据不接，X9）；③ 多级联 CSM
+  （列表 size>1）与逐级联分割策略未实现——数据层结构已就位；④ V/P 分矩阵仅用于合成 uLight，
+  04-SPEC §3.2 包侧 `shadowModelView`/`shadowProjection` 两 uniform 形态未接；⑤ PCF 软阴影未做；
+  ⑥ 运行时 `--rerun-tasks` 触发 `:createMinecraftArtifacts` 联网校验失败属环境网络问题
+  （常规任务图不受影响，build/test 均绿）。
+- **是否已提交**：随本条目一并 commit 并推送至 `origin/master`。
+
+---
+
 ## 2026-09-30 — P2.4 composite 生效：选项 profile 真实改变画面，A/B 整帧亮度比 0.8870 命中理论 0.8889
 
 - **本次改了什么**：
