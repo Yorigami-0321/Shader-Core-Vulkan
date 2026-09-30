@@ -221,7 +221,7 @@ F1–F4 全部落地 → 放行并行
       「接入原版 LevelRenderer 光空间列表」是基于错误前提的缺口，不存在可接入的原版列表；
       重定义为按 04-SPEC §3.4 自建 ShadowPass 列表，见下方 P3.1 完整块）、PCF 软阴影
    ⏳ 深度测试剔除（真几何）、多颜色附件（colortex0..N）、多目标池复用
-   ▶️ P3.1 光空间列表（01-DEV-LOOP §10 P3.1 完整交付）｜验收 = 08-TESTING §5
+   ✅ P3.1 光空间列表（01-DEV-LOOP §10 P3.1 完整交付）（随 `ac83f0b` 提交验收通过）｜验收 = 08-TESTING §5
       「光空间列表非空；阴影贴图内容合理（不是全黑/全白）」。设计：
       ① **X9 前提修正**（本轮实测）：对合并 jar 全部 .java 源检索
       `lightSpace|shadowMatrix|shadowProjection|shadowModelView|cascade` = **0 命中**；
@@ -258,6 +258,56 @@ F1–F4 全部落地 → 放行并行
       未覆盖：空列表防御分支未在运行时触发（固定方向常量结构性不可达，靠
       `LightSpaceListTest` 零向量/非规数用例 + lightSpaceMatrix() 抛错分支静态覆盖）；
       太阳/月亮方向与多级联仍按 ④ 登记缺口。
+   ✅ P3.2 gbuffers 接管第一步：地形走自定义渲染目标（01-DEV-LOOP §10 P3.2 完整交付）
+      （随本轮提交验收通过）
+      ｜验收 = 08-TESTING §5「地形/实体走自定义目标而非原版目标 | 调试视图」。设计
+      （①–③ 全部 javap / 合并 jar 源核实，X9）：
+      ① **钩子 = NeoForge `FrameGraphSetupEvent`**：LevelRenderer.java:249
+         `ClientHooks.fireFrameGraphSetup` 在目标包（`targets` bundle）初始化后、vanilla
+         clear/sky/main pass **加入帧图之前**触发；javap API = `getFrameGrapBuilder()` /
+         `getTargetBundle()` / `getCameraState()` …。事件携带 `com.mojang.blaze3d` 类型 →
+         处理器必须放 **bridge/**（T5 / 18-PARALLEL §7.1 业务禁触 blaze3d），新增
+         `bridge/SceneCaptureApi`（@EventBusSubscriber，沿用 FullscreenPassHook 注册形态）。
+         （FullscreenPassHook 头注 ② 对 FrameGraphSetupEvent 的否决是针对「帧图画图案」
+         —— 当时 vanilla clear 会抹掉图案；本轮用途是**换目标让 vanilla 自己的 pass 写进
+         我方纹理**，clear 抹的是我方要清的背景，结论不冲突。）
+      ② **接管方式**：事件里懒建 / 按主目标尺寸 resize
+         `TextureTarget("vkdisp scene", RGBA8_UNORM, D32_FLOAT)`（与原版 `MainTarget` 格式
+         javap 逐位一致：color=RGBA8_UNORM、depth=D32_FLOAT）→
+         `targets.replace(LevelTargetBundle.MAIN_TARGET_ID, builder.importExternal("vkdisp_scene", scene))`
+         （replace 字节码 = 直接写 `main` 字段，官方突变 API）。地形 pass
+         （`addMainPass` 打开的 "Main"/"Solid"）、see-through、always-on-top 全部在**执行期**
+         取 `targets.main.get()`（源 453/477/481 行核实）→ 地形颜色+深度落进我方纹理，
+         原版主目标不再收到地形 = 「而非原版目标」。
+      ③ **自清屏**：vanilla clear pass 的 executes **硬编码**清 `gameRenderer.mainRenderTarget()`
+         （源 256-260 行），换目标后**不会**清我方纹理 → 事件内直接
+         `clearColorAndDepthTextures(black, depth=0.0)`（帧图执行前、无 pass 打开，P-1f 规则内）。
+         深度不清 = 地形深度测试读陈旧数据必坏，此步不可省。**深度清 0.0 不是 1.0**：
+         renderpearl 是反向 Z（`DepthStencilState.DEFAULT = GREATER_THAN_OR_EQUAL`，javap 核实，
+         vanilla clear pass 同值 0.0）——首轮按 1.0 清 → GEQUAL 全败 → 地形零像素全黑（实测根因，
+         已修）。
+      ④ **帧链输入**：Pass 3（包 composite）`InSampler` 在**世界内且已捕获**时换成 scene
+         纹理（否则回退 offscreen1 fixture —— 菜单/未捕获），来源切换打一次埋点（T11）；
+         Pass 1/2 影子链原样保留（P3.1 验收对象 + P3.3 素材）。画面方向不做纸面推断 ——
+         首轮截图实测定（P-1f 矩：反了就翻，留证据）。**实测 = 镜像 → 双管线**：
+         顶点是管线静态状态，新增 `pipeline/composite_scene`（= composite 片元 +
+         不翻转 `fullscreen` 顶点），Pass 3 按输入源选；fixture 路径 flipv 基线不动。
+      ⑤ **如实登记缺口**：SkyRenderer 构造期持原版主目标引用（源 377/134 行）→ 天空直写
+         原版目标**不进捕获**（存档在末地、天空=虚空黑 → 本轮截图不可见；主世界黑天空
+         后续接）；OIT/improved-transparency 路径部分直读原版主目标深度（默认关，开时另测）；
+         HUD/手部被 Post 链整体覆盖为 P0.3 起既有语义，非本轮回归；仅世界内生效（菜单
+         走 fixture 回退）。
+      实测（runClient -PquickPlay 三跑，evidence/p32_run{1,2,3}.log + p32_scene_run{2,3}.png）：
+      跑1 `scene capture wired: 854x480 …` / `composite input source: fixture→scene` 切换埋点
+      与预期一致，但截图**全黑** —— 根因 = 反向 Z（见 ③ 修正：深度清 1.0 → 0.0）；
+      跑2（depth=0.0）地形进画面（末地石头顶视图，mean_luma=136.3）但**上下镜像**：
+      世界轴对齐方块边缘实测角度 {−30.7°, +58.3°} vs yaw=−30.75° 推算期望 {+30.7°, −59.3°}
+      符号整体翻转 → flipv 不适配 vanilla 帧图目标；
+      跑3（scene 输入换**无翻转顶点**双管线）边缘 {+29.7°, −61.5°} ≈ 期望，且
+      `mean|run3 − flipV(run2)| = 0.000`（像素级精确镜像）闭环证明方向修复。
+      跑3 终态：registered=7, compiled=7 (aligned)、light-space list ready 仍在、
+      vkdisp WARN/ERROR=0（08-TESTING §5「地形走自定义目标而非原版目标」画面证据 =
+      pass3 采 scene 输出，原版主目标不再收到地形）。
    ✅ P2.1/P2.2 主线接入（A/B/C 线汇合后接启动期扫包钩子，随本轮提交）：
       `VkDispPackScan`（ClientResourceLoadFinishedEvent → gameDir/shaderpacks → ShaderPackService.loadAll）
       实测 latest.log：packs=2（kind=zip + kind=dir 各一）programs=2 options=8 problems=0 diagnostics=0，

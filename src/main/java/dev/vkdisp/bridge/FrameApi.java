@@ -124,6 +124,12 @@ public final class FrameApi {
     private static java.util.List<dev.vkdisp.shadow.LightSpaceList.Entry> lightSpaceList;
 
     /**
+     * P3.2 Pass 3 上一次的输入来源（null = 尚未打过埋点）。只在**切换**时打一次日志
+     * （T11：不静默换输入，也不逐帧刷屏）。
+     */
+    private static String compositeInputSource;
+
+    /**
      * 光空间列表（懒构建 + 缓存）。首次构建打验收埋点：
      * 非空 → {@code light-space list ready: size=… source=…}；空 → ERROR（T11，后续帧由
      * {@link #lightSpaceMatrix()} 拒绝出帧，hook 打 ERROR 原文本帧跳过影子链）。
@@ -500,9 +506,11 @@ public final class FrameApi {
         return PipelineApi.isGeometryPipelineRegistered()
                 && PipelineApi.isShadowedPipelineRegistered()
                 && PipelineApi.isCompositePipelineRegistered()
+                && PipelineApi.isCompositeScenePipelineRegistered()
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.geometryPipeline()) != null
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.shadowedPipeline()) != null
-                && RenderSystem.getCompiledPipelineNullable(PipelineApi.compositePipeline()) != null;
+                && RenderSystem.getCompiledPipelineNullable(PipelineApi.compositePipeline()) != null
+                && RenderSystem.getCompiledPipelineNullable(PipelineApi.compositeScenePipeline()) != null;
     }
 
     /**
@@ -557,6 +565,13 @@ public final class FrameApi {
         if (composite == null) {
             throw new IllegalStateException(
                     "vkdisp: composite pipeline not compiled yet: " + PipelineApi.COMPOSITE_LOCATION);
+        }
+        // P3.2：scene 输入变体（无 v 翻转顶点；镜像实测根因 → 两条管线按输入源选，见 Pass 3）。
+        CompiledRenderPipeline compositeScene =
+                RenderSystem.getCompiledPipelineNullable(PipelineApi.compositeScenePipeline());
+        if (compositeScene == null) {
+            throw new IllegalStateException(
+                    "vkdisp: composite scene pipeline not compiled yet: " + PipelineApi.COMPOSITE_SCENE_LOCATION);
         }
 
         // P3.2：相机矩阵（世界内=原版 GameRenderer，菜单=占位回退，来源切换见日志）；map/close 仍在开启 pass 之前。
@@ -613,18 +628,32 @@ public final class FrameApi {
             pass.setVertexBuffer(0, geometryBuffer().slice());
             pass.draw(GEOMETRY_VERTEX_COUNT, 1, 0, 0);
         }
-        // Pass 3：offscreen1 → 主目标（最后一级；主目标只由本 pass 写入）。
-        // ⚠️ 采样的必须是**本帧链实际写入的那个目标**（实测教训：曾误采样本链未写入的目标）。
-        // P2.4：管线 = 包 composite（1-v 翻转在其顶点 fullscreen_flipv 里完成，P-1f）；
+        // Pass 3：输入 → 主目标（最后一级；主目标只由本 pass 写入）。
+        // P3.2：世界内且场景已捕获 → 输入 = SceneCaptureApi 捕获的地形（帧图本期写入，
+        //       targets.main 已换到我方纹理）；菜单/未捕获 → 回退 offscreen1 fixture。
+        //       来源**切换**打一次埋点（T11，不静默换输入）。方向首轮实测：flipv 采 scene
+        //       = 镜像（方块边缘 −yaw 符号已证）→ scene 输入换**无翻转**顶点（P-1f，双管线）。
+        // ⚠️ 采样的必须是**本帧有内容的那个目标**（实测教训：曾误采样本链未写入的目标）。
+        // P2.4：fixture 路径管线 = 包 composite + fullscreen_flipv（1-v 翻转 P-1f 基线不变）；
         //       VkDispBuiltins 是 D 线注入进包源的内建块 —— 未被片元引用时绑定零值缓冲无副作用
         //       （被引用的正式上传链 OfUniformManager 属 P2.4+ 登记缺口）。
+        boolean useScene = Minecraft.getInstance().level != null && SceneCaptureApi.hasScene()
+                && SceneCaptureApi.sceneColorView() != null;
+        GpuTextureView compositeInput = useScene ? SceneCaptureApi.sceneColorView() : viewB;
+        String compositeSource = useScene ? "scene capture (P3.2 terrain)" : "fixture offscreen1";
+        if (!compositeSource.equals(compositeInputSource)) {
+            compositeInputSource = compositeSource;
+            dev.vkdisp.VkDisp.LOGGER.info("vkdisp: composite input source: {}", compositeSource);
+        }
         try (RenderPass pass = encoder.createRenderPass(
-                () -> label + " 3 (offscreen1 -> main, pack composite)",
+                () -> label + " 3 (" + compositeSource + " -> main, pack composite)",
                 colorView, Optional.empty(), null, OptionalDouble.empty())) {
-            pass.setPipeline(composite);
+            // 顶点随输入源切换：scene = vanilla 帧图目标 → 无翻转（首轮 flipv 实测镜像，角度
+            // = −yaw 符号已证）；fixture = 我方中间目标 → 保留 P-1f 的 1-v 翻转基线。
+            pass.setPipeline(useScene ? compositeScene : composite);
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform(PipelineApi.BUILTINS_UNIFORM, builtinsRing().currentBuffer());
-            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, viewB, sampler);
+            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, compositeInput, sampler);
             pass.draw(3, 1, 0, 0);
         }
         builtinsRing().rotate();

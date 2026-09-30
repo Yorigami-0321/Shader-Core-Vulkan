@@ -41,7 +41,7 @@ public final class FullscreenPipelineRegistrar {
         try {
             PipelineApi.registerFullscreenPipeline(event);
             VkDisp.LOGGER.info(
-                    "vkdisp: pipeline registered (1/6): {}", PipelineApi.FULLSCREEN_LOCATION);
+                    "vkdisp: pipeline registered (1/7): {}", PipelineApi.FULLSCREEN_LOCATION);
         } catch (Throwable t) {
             VkDisp.LOGGER.error(
                     "vkdisp: pipeline registration failed: {}", PipelineApi.FULLSCREEN_LOCATION, t);
@@ -49,15 +49,24 @@ public final class FullscreenPipelineRegistrar {
         try {
             PipelineApi.registerCompositePipeline(event);
             VkDisp.LOGGER.info(
-                    "vkdisp: pipeline registered (2/6): {}", PipelineApi.COMPOSITE_LOCATION);
+                    "vkdisp: pipeline registered (2/7): {}", PipelineApi.COMPOSITE_LOCATION);
         } catch (Throwable t) {
             VkDisp.LOGGER.error(
                     "vkdisp: pipeline registration failed: {}", PipelineApi.COMPOSITE_LOCATION, t);
         }
         try {
+            // P3.2：scene 输入专用（无 v 翻转顶点），失败独立可见 —— 不与 composite 混一个 catch。
+            PipelineApi.registerCompositeScenePipeline(event);
+            VkDisp.LOGGER.info(
+                    "vkdisp: pipeline registered (3/7): {}", PipelineApi.COMPOSITE_SCENE_LOCATION);
+        } catch (Throwable t) {
+            VkDisp.LOGGER.error(
+                    "vkdisp: pipeline registration failed: {}", PipelineApi.COMPOSITE_SCENE_LOCATION, t);
+        }
+        try {
             PipelineApi.registerDepthVisPipeline(event);
             VkDisp.LOGGER.info(
-                    "vkdisp: pipeline registered (3/6): {}", PipelineApi.DEPTHVIS_LOCATION);
+                    "vkdisp: pipeline registered (4/7): {}", PipelineApi.DEPTHVIS_LOCATION);
         } catch (Throwable t) {
             VkDisp.LOGGER.error(
                     "vkdisp: pipeline registration failed: {}", PipelineApi.DEPTHVIS_LOCATION, t);
@@ -65,7 +74,7 @@ public final class FullscreenPipelineRegistrar {
         try {
             PipelineApi.registerGeometryPipeline(event);
             VkDisp.LOGGER.info(
-                    "vkdisp: pipeline registered (4/6): {} (vertexStride={})",
+                    "vkdisp: pipeline registered (5/7): {} (vertexStride={})",
                     PipelineApi.GEOMETRY_LOCATION,
                     PipelineApi.geometryVertexStride());
         } catch (Throwable t) {
@@ -75,7 +84,7 @@ public final class FullscreenPipelineRegistrar {
         try {
             PipelineApi.registerShadowedPipeline(event);
             VkDisp.LOGGER.info(
-                    "vkdisp: pipeline registered (5/6): {}", PipelineApi.SHADOWED_LOCATION);
+                    "vkdisp: pipeline registered (6/7): {}", PipelineApi.SHADOWED_LOCATION);
         } catch (Throwable t) {
             VkDisp.LOGGER.error(
                     "vkdisp: pipeline registration failed: {}", PipelineApi.SHADOWED_LOCATION, t);
@@ -83,7 +92,7 @@ public final class FullscreenPipelineRegistrar {
         try {
             PipelineApi.registerBlitPipeline(event);
             VkDisp.LOGGER.info(
-                    "vkdisp: pipeline registered (6/6): {} (total={})",
+                    "vkdisp: pipeline registered (7/7): {} (total={})",
                     PipelineApi.BLIT_LOCATION,
                     PipelineApi.registeredPipelineCount());
         } catch (Throwable t) {

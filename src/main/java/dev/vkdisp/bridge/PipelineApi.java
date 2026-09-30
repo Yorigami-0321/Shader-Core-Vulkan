@@ -75,6 +75,9 @@ public final class PipelineApi {
     /** 合成管线 location（P2 前置：中间目标 → 中间目标，多目标 ping-pong 的中间级）。 */
     public static final String COMPOSITE_LOCATION = "vkdisp:pipeline/composite";
 
+    /** P3.2 场景合成管线 location（纯字符串视图，错误信息用）。 */
+    public static final String COMPOSITE_SCENE_LOCATION = "vkdisp:pipeline/composite_scene";
+
     /**
      * P2.4：合成管线的内建 uniform 块名（纯字符串视图）。
      *
@@ -124,6 +127,17 @@ public final class PipelineApi {
     /** 合成管线 location id。 */
     private static final Identifier COMPOSITE_PIPELINE_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/composite");
+
+    /**
+     * P3.2 场景合成管线 location id（与 {@link #COMPOSITE_PIPELINE_ID} 片元相同、顶点不同）。
+     *
+     * <p>为什么需要第二条：fixture 中间目标（我方 pass 写）与 vanilla 帧图目标（地形 pass 写）
+     * 行序相反 —— Pass 3 对前者要 1-v 翻转（P-1f 实测），对后者**不翻转**（P3.2 首轮实测：
+     * 用翻转版采 scene，方块边缘角度 = −yaw 符号 → 镜像，见 18-PARALLEL §5 P3.2 ④）。
+     * 顶点是管线静态状态，无法按帧切换 → 两条管线按输入源选。
+     */
+    private static final Identifier COMPOSITE_SCENE_PIPELINE_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/composite_scene");
 
     /**
      * 合成管线片元着色器 id：vkdisp_pack:composite → {@code assets/vkdisp_pack/shaders/composite.fsh}。
@@ -177,6 +191,9 @@ public final class PipelineApi {
 
     /** 注册成功后暂存的合成管线实例；未注册时为 null。 */
     private static RenderPipeline compositePipeline;
+
+    /** 注册成功后暂存的 P3.2 场景合成管线实例（无 v 翻转顶点）；未注册时为 null。 */
+    private static RenderPipeline compositeScenePipeline;
 
     /** 注册成功后暂存的深度可视化管线实例；未注册时为 null。 */
     private static RenderPipeline depthVisPipeline;
@@ -305,9 +322,40 @@ public final class PipelineApi {
                 COMPOSITE_SHADER_ID, FULLSCREEN_FLIPV_SHADER_ID);
     }
 
+    /**
+     * 构建并注册 P3.2 场景合成管线（{@link #COMPOSITE_SCENE_LOCATION}）。
+     *
+     * <p>与 {@link #registerCompositePipeline} 唯一差别 = 顶点用不翻转的 {@code vkdisp:fullscreen}：
+     * scene 是 vanilla 帧图目标（P3.2 首轮实测用翻转顶点采样出镜像）；fixture 是我方中间目标
+     * （P-1f 实测需翻转）。片元/绑定组完全一致，按输入源在 FrameApi Pass 3 选择。
+     */
+    public static void registerCompositeScenePipeline(RegisterRenderPipelinesEvent event) {
+        RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                .withLocation(COMPOSITE_SCENE_PIPELINE_ID)
+                .withVertexShader(FULLSCREEN_SHADER_ID)
+                .withFragmentShader(COMPOSITE_SHADER_ID)
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withUniform(BUILTINS_UNIFORM, UniformType.UNIFORM_BUFFER)
+                        .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
+                        .build())
+                .withColorTargetState(ColorTargetState.DEFAULT)
+                .build();
+        event.registerPipeline(pipeline);
+        compositeScenePipeline = pipeline;
+        REGISTERED_PIPELINES.add(pipeline);
+        VkDisp.LOGGER.info(
+                "vkdisp: composite scene pipeline wired: fragment={} vertex={} (no v-flip; P3.2 scene input)",
+                COMPOSITE_SHADER_ID, FULLSCREEN_SHADER_ID);
+    }
+
     /** 合成管线是否已注册完成（纯布尔视图）。 */
     public static boolean isCompositePipelineRegistered() {
         return compositePipeline != null;
+    }
+
+    /** P3.2 场景合成管线是否已注册完成（纯布尔视图）。 */
+    public static boolean isCompositeScenePipelineRegistered() {
+        return compositeScenePipeline != null;
     }
 
     /**
@@ -446,6 +494,15 @@ public final class PipelineApi {
         RenderPipeline pipeline = compositePipeline;
         if (pipeline == null) {
             throw new IllegalStateException("vkdisp: composite pipeline not registered yet");
+        }
+        return pipeline;
+    }
+
+    /** P3.2 场景合成管线（无 v 翻转）；未注册时抛出（与 {@link #compositePipeline()} 同口径）。 */
+    static RenderPipeline compositeScenePipeline() {
+        RenderPipeline pipeline = compositeScenePipeline;
+        if (pipeline == null) {
+            throw new IllegalStateException("vkdisp: composite scene pipeline not registered yet");
         }
         return pipeline;
     }

@@ -5,6 +5,60 @@
 
 ---
 
+## 2026-09-30 — P3.2 地形接管第一阶段：FrameGraphSetupEvent 换目标 + 双管线定向，三跑实测黑屏/镜像两坑闭环
+
+- **本次改了什么**：
+  1. 新增 `bridge/SceneCaptureApi`（【参考调研】五条头，T13）：订阅 NeoForge 官方
+     `FrameGraphSetupEvent`（LevelRenderer:249，bundle 初始化后、vanilla clear/sky/main
+     pass 入图前，合并 jar 源核实）—— 懒建/随主目标 resize
+     `TextureTarget("vkdisp scene", RGBA8_UNORM, D32_FLOAT)`（= 原版 MainTarget 格式，javap 核实）
+     → `importExternal("vkdisp_scene")` → `targets.replace(MAIN_TARGET_ID, handle)`（官方突变
+     API；handle 只换持有对象、`get()` 仍返回我方纹理，FrameGraphBuilder 源核实）→
+     **自清屏 color(黑,α0)+depth(0.0)**（vanilla clear 硬编码清原版主目标，换目标后不代清）。
+     任意 Throwable → ERROR 原文 + 本帧不换目标（T11）；埋点
+     `scene capture wired: 854x480 … (targets.main -> vkdisp_scene)`。
+  2. **FrameApi Pass 3 输入源选择**：世界内且已捕获 → 采 scene 纹理，否则回退 offscreen1
+     fixture（菜单/未捕获）；来源**切换**打一次埋点（不逐帧刷）；
+     `pass.setPipeline(useScene ? compositeScene : composite)` 按输入选顶点。
+  3. **坑①（跑1 全黑）反向 Z**：vanilla clear depth=**0.0** 且
+     `DepthStencilState.DEFAULT = GREATER_THAN_OR_EQUAL`（javap 核实）—— 我们按常识清 1.0 →
+     GEQUAL 全败 → 地形零像素。改 0.0（vanilla 同值）。
+  4. **坑②（跑2 镜像）方向**：flipv 顶点采 scene = 上下颠倒 —— 世界轴对齐方块边缘角度
+     实测 {−30.7°, +58.3°} vs yaw=−30.75° 期望 {+30.7°, −59.3°} 符号整体翻转。顶点是管线
+     静态状态 → **双管线**：PipelineApi 新增 `pipeline/composite_scene`（同片元 +
+     不翻转 `fullscreen` 顶点，独立 `registerCompositeScenePipeline` + 独立 try/catch）、
+     FrameApi `isPipelineReady`/compiled fetch 同步、FullscreenPipelineRegistrar 计数标签
+     (1/6)…(6/6) → (1/7)…(7/7)（计数门禁 = registered==compiled，自动 7/7）。
+  5. `docs/18-PARALLEL.md` §5：P3.2 设计块 ①–⑤（全部 X9 核实）+ ③ 深度修正 + ④ 双管线
+     + 三跑实测回填 + ✅ 标记；SkyRenderer 旁路等缺口如实登记（⑤）。
+- **为什么改**：01-DEV-LOOP §10 P3.2 完整交付 = 08-TESTING §5「地形/实体走自定义目标而非
+  原版目标」。帧图装配期是唯一不 mixin 就能换 bundle 目标的官方扩展点；两个坑都是实测撞出
+  并按证据闭环（P-1f 矩：黑了查根因、反了翻，全程留 log+截图）。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §5（P3.2 块）；
+  `src/main/java/dev/vkdisp/bridge/SceneCaptureApi.java`（新）、`FrameApi.java`、
+  `PipelineApi.java`、`render/FullscreenPipelineRegistrar.java`。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；**424 用例 0 失败 0 错误**（本轮未新增用例，与 P3.1 基线持平）。
+  - ✅ **runClient `-PquickPlay` 三跑**（evidence/p32_run{1,2,3}.log）：
+    跑1 埋点全对但截图全黑（深度 1.0 反向 Z 根因，已修）；
+    跑2 地形进画面（末地石头顶视图 mean_luma=136.3）但镜像（角度取证）；
+    跑3 终态 —— `pipeline count check: registered=7, compiled=7 (aligned)`、
+    `composite scene pipeline wired: … vertex=vkdisp:fullscreen (no v-flip)`、
+    `scene capture wired: 854x480 …`、`composite input source: fixture offscreen1 →
+    scene capture (P3.2 terrain)` 各一次、`light-space list ready: size=1 …` 仍在、
+    **vkdisp WARN/ERROR=0**。
+  - ✅ **F2 截图方向闭环**：`p32_scene_run3.png`（854x480，sha256
+    `9d72bfdf0a13cdf9f0b78a79576be310a2aed9e1f67b0c4ca2821849987f1cc5`）方块边缘
+    {+29.7°, −61.5°} ≈ 期望；且 `mean|run3 − flipV(run2)| = 0.000`（**像素级精确镜像**，
+    逐像素比对脚本）证明修复 = 纯 V 方向、其余不变。
+- **未覆盖**：天空不进捕获（SkyRenderer 构造期持原版主目标，主世界黑天空后续接，末地不可见）；
+  OIT/improved-transparency 深度旁路（默认关）；HUD/手部被 Post 链覆盖（P0.3 起既有语义，
+  非本轮回归）；场景 resize 中途行为仅代码路径覆盖未实测换窗口；角度取证为手工取点（±2°），
+  以像素级镜像关系为主证；太阳/月亮光空间方向、多级联 CSM、PCF 仍为 P3.1 登记缺口。
+- **是否已提交**：随本轮 commit 提交并推送 origin/master。
+
+---
+
 ## 2026-09-30 — P3.1 光空间列表完整交付：自建级联列表非空（size=1），明暗双峰像素取证，uLight 数值等价
 
 - **本次改了什么**：
