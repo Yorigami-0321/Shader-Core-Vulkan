@@ -220,8 +220,11 @@ F1–F4 全部落地 → 放行并行
       与原版 LevelRenderer 光空间列表 / CSM 集成、PCF 软阴影
    ⏳ 深度测试剔除（真几何）、多颜色附件（colortex0..N）、多目标池复用
    ▶️ P3.1 影子 pass：光空间矩阵 + 阴影贴图（深度链路已就绪）
-   ▶️ P2.x 解析链：等 A/B/C 线汇合（外部环境）
-   → P2.4 composite 生效 → P3.1 shadow → P3.2 gbuffers → P3.3 deferred
+   ✅ P2.1/P2.2 主线接入（A/B/C 线汇合后接启动期扫包钩子，随本轮提交）：
+      `VkDispPackScan`（ClientResourceLoadFinishedEvent → gameDir/shaderpacks → ShaderPackService.loadAll）
+      实测 latest.log：packs=2（kind=zip + kind=dir 各一）programs=2 options=8 problems=0 diagnostics=0，
+      选项逐条可见（name/type/default/values/slider/screen），vkdisp ERROR/WARN=0（01-DEV-LOOP §10 P2.1/P2.2 达标）
+   → P2.3 #include 编译（冷路径 GlslPipeline 已就绪，待接主线）→ P2.4 composite 生效 → P3.1 shadow → P3.2 gbuffers → P3.3 deferred
    → P4.1 主流包 → P4.2 切包回归 → P4.3 选项 GUI
 ```
 

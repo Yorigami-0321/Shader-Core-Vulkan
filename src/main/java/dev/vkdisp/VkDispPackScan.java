@@ -1,0 +1,164 @@
+package dev.vkdisp;
+/**
+ * 【参考调研】P2.1/P2.2 启动期扫包与选项枚举日志 / NeoForge 资源加载完成事件
+ * 0. 合规核对（第 0 步闸门，不通过就换参考）：
+ *    参考对象 = NeoForge 26.3.0.23-beta ClientResourceLoadFinishedEvent（官方事件，LGPL-2.1
+ *    定义类 —— 只观察事件签名与触发时机，不复制其实现）+ 本仓库自研 B 线 ShaderPackScanner /
+ *    ShaderPackService（不参考任何第三方扫包实现；Iris shaderpack/parsing 仅曾作为格式语义的
+ *    只读调研对象，其代码未并入，格式本身属事实性信息，18-PARALLEL §4 A 线口径）。
+ *    → 能否并入本项目（MIT）：可以 —— 只调用事件公开 API 与本方 pack/ 纯 Java 入口
+ *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
+ * 1. 官方/主实现：ClientResourceLoadFinishedEvent —— 「客户端资源加载/重载成功之后」触发
+ *    （javadoc 原文），首启在资源加载之后、初始界面建立之前（与 FullscreenPassHook 的门闩同一事件，
+ *    触发点 ClientHooks#fireResourceLoadFinishedEvent）。库存目录取原版 gameDirectory（Minecraft
+ *    的 public final File 字段，javap 核实）下的 shaderpacks/ —— 与原版资源包惯例同目录。
+ *    扫包/解包/选项发现本体 = ShaderPackService.loadAll（冷路径，永不抛非受检异常）。
+ * 2. 备选：FMLClientSetupEvent.enqueueWork —— 更早但早于资源体系就绪，语义弱，否决；
+ *    每帧轮询 —— 无必要且刷屏，否决。二者均不构成自行补充特性，无需 GAP 登记（T12）。
+ * 3. 我们的差异点：本类**只读库存、只打日志** —— 不注册虚拟资源包、不写 options.resourcePacks、
+ *    不改用户包内任何文件（04-SPEC §3.1 只读不写；B 线「不许真的注册虚拟资源包」边界照旧）。
+ *    显式可见性：包清单/选项/程序逐条 INFO（P2.1/P2.2 验收证据），扫描问题按 kind 分级
+ *    （BROKEN_ZIP→ERROR，结构性问题→WARN，首次运行的 INVENTORY_MISSING / NO_PACKS_FOUND→INFO，
+ *    全部显式打点，T11 不许「失败得像没发生过」）；诊断按 TranslateDiagnostic 原 severity 分流；
+ *    整体 catch Throwable 打 ERROR 原文。总开关关闭走 WARN 降级分支（01-DEV-LOOP §5.1）。
+ * 4. 许可证核对：本项目 MIT；只调用公开 API 与本方代码，无代码复制（07-CONSTRAINTS L5-L8）。
+ * 5. 性能基线：启动/重载期一次性冷路径扫描（17-NATIVE §3.2），不做性能优化（T14 达标即停）。
+ */
+
+import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.pack.Option;
+import dev.vkdisp.pack.Program;
+import dev.vkdisp.pack.ShaderPack;
+import dev.vkdisp.pack.ShaderPackScanner;
+import dev.vkdisp.pack.ShaderPackService;
+import net.minecraft.client.Minecraft;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.client.event.ClientResourceLoadFinishedEvent;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+/**
+ * P2.1/P2.2 主线接入：客户端资源加载完成后扫描 {@code <gameDir>/shaderpacks/}，
+ * 把包清单（zip / 目录两种形态）与选项枚举逐条打进日志。
+ *
+ * <p>验收口径（01-DEV-LOOP §10）：
+ * <ul>
+ *   <li><b>P2.1</b> —— {@code .zip} 与目录两种形态都被列出（日志 {@code kind=zip} / {@code kind=dir}）；</li>
+ *   <li><b>P2.2</b> —— 选项被枚举出来，日志可见（每选项一行 name/type/default/values/slider/screen）。</li>
+ * </ul>
+ *
+ * <p>本类只读库存、只打日志：不注册虚拟资源包、不写用户的 options/resourcePacks（T11 / 04-SPEC §3.1）。
+ */
+@EventBusSubscriber(modid = VkDisp.MOD_ID, value = Dist.CLIENT)
+public final class VkDispPackScan {
+
+    /** 总开关关闭的降级分支只警告一次（01-DEV-LOOP §5.1 降级点）。 */
+    private static boolean disabledWarned;
+
+    private VkDispPackScan() {
+    }
+
+    /**
+     * 资源加载/重载完成门闩：此刻文件系统与资源体系均已就绪，扫描库存不会与原版加载竞争。
+     * 资源重载（F3+T）会再次触发 —— 重新扫描是期望行为（包变更可被发现），日志带 initial 标记。
+     */
+    @SubscribeEvent
+    static void onClientResourceLoadFinished(ClientResourceLoadFinishedEvent event) {
+        if (!VkDispConfig.ENABLED.get()) {
+            if (!disabledWarned) {
+                disabledWarned = true;
+                VkDisp.LOGGER.warn(
+                        "vkdisp: pack scan skipped (fallback branch: config vkdisp.enabled=false)");
+            }
+            return;
+        }
+        try {
+            scanAndLog(event.isInitial());
+        } catch (Throwable t) {
+            // 失败必须打 ERROR 原文（07-CONSTRAINTS T11：不许吞异常让它看起来能跑）。
+            VkDisp.LOGGER.error("vkdisp: pack scan failed", t);
+        }
+    }
+
+    /** 扫描 + 逐条日志。{@link ShaderPackService#loadAll} 永不抛非受检异常，此处只兜真正的意外。 */
+    private static void scanAndLog(boolean initial) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.gameDirectory == null) {
+            VkDisp.LOGGER.error(
+                    "vkdisp: pack scan aborted — game directory unavailable (initial={})", initial);
+            return;
+        }
+        Path inventory = minecraft.gameDirectory.toPath().resolve("shaderpacks");
+        ShaderPackService.InventoryResult result = ShaderPackService.loadAll(inventory);
+        VkDisp.LOGGER.info("vkdisp: pack scan: inventory={} exists={} initial={}",
+                inventory, Files.isDirectory(inventory), initial);
+
+        int optionCount = 0;
+        int programCount = 0;
+        int index = 0;
+        for (ShaderPack pack : result.packs()) {
+            index++;
+            optionCount += pack.options().size();
+            programCount += pack.programs().size();
+            // P2.1 证据行：kind=zip | kind=dir 两种形态都要能出现。
+            VkDisp.LOGGER.info(
+                    "vkdisp: pack[{}] name={} kind={} source={} programs={} options={} profiles={} dims={}",
+                    index, pack.name(), pack.fromArchive() ? "zip" : "dir", pack.rootPath(),
+                    pack.programs().size(), pack.options().size(),
+                    pack.profiles().keySet(), pack.dimensionFolders());
+            for (Program program : pack.programs()) {
+                VkDisp.LOGGER.info(
+                        "vkdisp: pack[{}] program name={} stage={} vsh={} fsh={}",
+                        index, program.name(), program.stage(),
+                        program.vertexShader(), program.fragmentShader());
+            }
+            // P2.2 证据行：选项逐条枚举（名称/类型/默认值/候选值/滑条/所属子屏）。
+            for (Option option : pack.options()) {
+                VkDisp.LOGGER.info(
+                        "vkdisp: pack[{}] option name={} type={} default={} values={} slider={} screen={}",
+                        index, option.name(), option.type(), option.defaultValue(),
+                        option.values(), option.slider(),
+                        option.screen().isEmpty() ? "(main)" : option.screen());
+            }
+        }
+
+        for (ShaderPackScanner.PackProblem problem : result.scanProblems()) {
+            logScanProblem(problem);
+        }
+        for (TranslateDiagnostic diagnostic : result.diagnostics()) {
+            logDiagnostic(diagnostic);
+        }
+
+        VkDisp.LOGGER.info("vkdisp: pack scan done: packs={} programs={} options={} problems={} diagnostics={}",
+                result.packs().size(), programCount, optionCount,
+                result.scanProblems().size(), result.diagnostics().size());
+    }
+
+    /**
+     * 扫描问题分级（T11：每条都显式打点，分级只影响严重度，不吞任何一条）：
+     * BROKEN_ZIP = 输入数据损坏 → ERROR；结构性问题（缺 shaders/、外层多套目录、非包条目等）→ WARN；
+     * 库存目录不存在 / 目录里没有包 = 首次运行的预期状态 → INFO（仍带 hint，不静默）。
+     */
+    private static void logScanProblem(ShaderPackScanner.PackProblem problem) {
+        String line = "vkdisp: pack scan problem kind={} entry={}: {}";
+        switch (problem.kind()) {
+            case BROKEN_ZIP -> VkDisp.LOGGER.error(line,
+                    problem.kind(), problem.entry(), problem.message());
+            case INVENTORY_MISSING, NO_PACKS_FOUND -> VkDisp.LOGGER.info(line + " (create shaderpacks/ and place packs there)",
+                    problem.kind(), problem.entry(), problem.message());
+            default -> VkDisp.LOGGER.warn(line, problem.kind(), problem.entry(), problem.message());
+        }
+    }
+
+    /** 诊断按原 severity 分流，格式沿用 {@link TranslateDiagnostic#format()}（含 file:line:col）。 */
+    private static void logDiagnostic(TranslateDiagnostic diagnostic) {
+        switch (diagnostic.severity()) {
+            case ERROR -> VkDisp.LOGGER.error("vkdisp: pack diagnostic: {}", diagnostic.format());
+            case WARN -> VkDisp.LOGGER.warn("vkdisp: pack diagnostic: {}", diagnostic.format());
+            case INFO -> VkDisp.LOGGER.info("vkdisp: pack diagnostic: {}", diagnostic.format());
+        }
+    }
+}

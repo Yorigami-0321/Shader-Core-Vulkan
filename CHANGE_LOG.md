@@ -5,6 +5,34 @@
 
 ---
 
+## 2026-09-30 — P2.1/P2.2 主线接入：启动期扫包钩子上线，zip+目录包与选项枚举日志实测可见
+
+- **本次改了什么**：
+  1. 新增 `VkDispPackScan`（env-1 独占 `VkDisp*` 路径）：`@EventBusSubscriber` + `ClientResourceLoadFinishedEvent` 门闩 → 解析 `Minecraft.gameDirectory/shaderpacks` → `ShaderPackService.loadAll` → 逐条日志：包清单行（`kind=zip|dir`、programs/options/profiles/dims，P2.1 证据）、程序行、选项行（`name/type/default/values/slider/screen`，P2.2 证据）、扫描问题按 kind 分级（BROKEN_ZIP→ERROR、结构性→WARN、INVENTORY_MISSING/NO_PACKS_FOUND→INFO 带 hint，T11 全部显式打点）、诊断按原 severity 分流；整体 catch Throwable 打 ERROR 原文；总开关关闭走 WARN 降级一次。含【参考调研】五条头（T13）。**只读库存、只打日志** —— 不注册虚拟资源包、不写 options/resourcePacks（04-SPEC §3.1、B 线边界）。
+  2. 自造 fixture 两套（§7.6 禁第三方包）：`run/shaderpacks/vkdisp-fixture-dir/`（目录包）+ `run/shaderpacks/vkdisp-fixture-zip.zip`（zip 包，shaders/ 在 zip 根），各含 composite.vsh/fsh（`shadowMapResolution` / `SHADOW_DARKNESS` / `ENABLE_FOG` / `shadowDistance` 四选项）+ shaders.properties（sliders/screen./profile.）；`run/` 整体 gitignore，不入库。
+  3. `docs/18-PARALLEL.md` §5 关键路径：P2.1/P2.2 → ✅（含实测日志口径）。
+- **为什么改**：A/B/C 线与 ShaderPackService 已于 `3afdf1d` 汇合入主线，但从未在真实游戏启动链路上跑过 —— 01-DEV-LOOP §10 的 P2.1（zip 与目录都能被列出）/ P2.2（选项被枚举出来、日志可见）验收只能靠 runClient 实测；本轮把冷路径汇合产物接到客户端启动事件上，补上这条关键路径证据。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §5（P2.1/P2.2 状态行）。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；`./gradlew test` **389 用例 0 失败 0 错误**（36 个测试类，基线 389 持平）。
+  - ✅ **runClient 实测**（`run/logs/latest.log`，exit=0 优雅退出）：
+    ```
+    vkdisp: pack scan: inventory=./shaderpacks exists=true initial=true
+    vkdisp: pack[1] name=vkdisp-fixture-zip kind=zip source=./shaderpacks/vkdisp-fixture-zip.zip programs=1 options=4 profiles=[LOW, HIGH] dims=[]
+    vkdisp: pack[1] option name=shadowMapResolution type=INTEGER default=2048 values=[512, 1024, 2048] slider=true screen=(main)
+    vkdisp: pack[1] option name=SHADOW_DARKNESS type=FLOAT default=0.10 values=[0.05, 0.10, 0.20] slider=false screen=(main)
+    vkdisp: pack[1] option name=ENABLE_FOG type=BOOLEAN default=true values=[true, false] ...
+    vkdisp: pack[1] option name=shadowDistance type=FLOAT default=64.0 values=[32.0, 64.0] slider=false screen=QUALITY
+    vkdisp: pack[2] name=vkdisp-fixture-dir kind=dir source=./shaderpacks/vkdisp-fixture-dir programs=1 options=4 profiles=[LOW, HIGH] dims=[]
+    （pack[2] 选项四行同构，略）
+    vkdisp: pack scan done: packs=2 programs=2 options=8 problems=0 diagnostics=0
+    ```
+    P2.1 = `kind=zip` 与 `kind=dir` 两行都在；P2.2 = 8 条选项行带全字段。同轮链路完好：`backend=Vulkan, device=llvmpipe`、阴影链 854x480 持续绘制、**vkdisp ERROR/WARN = 0**（仅存的 2 条 ERROR 是原版 narrator/sound 环境噪音，既有）。
+- **未覆盖 / 存疑**：F3+T 资源重载时的二次扫描仅设计上会重跑（本轮只实测首启 `initial=true`）；损坏 zip / 空目录 / 无 shaders/ 三种扫描问题分级在 JUnit 有覆盖但本轮日志实测 problems=0（fixture 全合法）；未验证真实第三方包（§7.6 禁入库）；选项值此轮只做枚举展示，未接 PackOptions/OptionBinding 生效链（那是 P4.3）。
+- **是否已提交**：随本条目一并 commit 并推送至 `origin/master`。
+
+---
+
 ## 2026-09-29 — 并行线汇合：A+B / C+D / E+F 三组交付入主线（纯冷路径，零 GPU 改动）
 
 - **本次改了什么**（三个队友环境各交独占路径，Lead 汇合）：
