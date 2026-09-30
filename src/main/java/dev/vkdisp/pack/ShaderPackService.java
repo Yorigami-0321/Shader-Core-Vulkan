@@ -279,8 +279,12 @@ public final class ShaderPackService {
         }
     }
 
-    /** 读一个相对 shaders/ 根的文件文本；不存在或不可读返回 null（调用方负责显式降级）。 */
-    private static String readText(ShaderPackRepository.MountPlan plan, String relativePath) {
+    /**
+     * 读一个相对 shaders/ 根的文件文本；不存在或不可读返回 null（调用方负责显式降级）。
+     *
+     * <p>包级可见：同包的 {@link ShaderPackCompiler} 复用它读取源文件，避免重复实现只读 IO。
+     */
+    static String readText(ShaderPackRepository.MountPlan plan, String relativePath) {
         try (InputStream in = plan.openShader(relativePath)) {
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException | RuntimeException e) {
@@ -600,8 +604,12 @@ public final class ShaderPackService {
         return wildcardOwner;
     }
 
-    /** 基于包内文件索引的 #include 解析器：直接复用 B 线的只读打开逻辑，不额外访问磁盘布局。 */
-    private static IncludeResolver resolverFor(ShaderPackRepository.MountPlan plan) {
+    /**
+     * 基于包内文件索引的 #include 解析器：直接复用 B 线的只读打开逻辑，不额外访问磁盘布局。
+     *
+     * <p>包级可见：同包的 {@link ShaderPackCompiler} 复用它解析 {@code #include}。
+     */
+    static IncludeResolver resolverFor(ShaderPackRepository.MountPlan plan) {
         return path -> (path == null || path.isBlank()) ? null : readText(plan, path);
     }
 }
