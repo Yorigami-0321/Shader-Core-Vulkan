@@ -93,7 +93,7 @@ public final class UniformInjector {
      * @param injected          本次实际注入的内建 uniform（按 {@link UniformCatalog} 顺序）
      * @param insertIndex       注入点之前原有行数（0 基；0 = 插在文件最前；无注入时无意义）
      * @param insertedLineCount 本次插入的行数（{@link #BLOCK_HEADER} + {@link #BLOCK_OPEN}
-     *                          + 成员行 + {@link #BLOCK_CLOSE}，即 {@code 缺失数 + 3}）
+     *                          + 收编行 + 缺失内建成员行 + {@link #BLOCK_CLOSE}，即 {@code 收编数 + 缺失数 + 3}）
      */
     public record Result(String text, List<TranslateDiagnostic> diagnostics, List<BuiltinUniform> injected,
             int insertIndex, int insertedLineCount) {
@@ -107,7 +107,10 @@ public final class UniformInjector {
     }
 
     /**
-     * 扫描源码并把缺失的 OF 内建 uniform 声明注入到文件头部区之后。
+     * 扫描源码并把缺失的 OF 内建 uniform 声明注入到文件头部区之后；同时把**游离在块外的非透明
+     * uniform 声明收编进同一个块**（P4.1：Vulkan GLSL 禁止非透明 uniform 在块外，包作者写的
+     * {@code uniform float rainStrength;} 这类 OF 方言原生形态必须移动而不是改写 —— 声明文本原样保留，
+     * 原行位抹空以保行号契约）。
      *
      * @param source 输入 GLSL（{@code null} 按空串处理）
      * @return 注入结果；永不返回 {@code null}
@@ -120,6 +123,9 @@ public final class UniformInjector {
         CommentState comments = new CommentState();
         boolean inLayoutBlock = false;
         int layoutBlockStartLine = 0;
+        // 收编候选：0 基行下标 → 块内成员文本（原声明去掉 uniform 关键字，声明文本原样）。
+        Map<Integer, String> adoptable = new java.util.LinkedHashMap<>();
+        java.util.Set<String> adoptedNames = new java.util.HashSet<>();
         for (int index = 0; index < sourceLines.size(); index++) {
             int lineNumber = index + 1;
             String code = comments.stripComments(sourceLines.get(index), lineNumber);
@@ -127,7 +133,7 @@ public final class UniformInjector {
             if (trimmed.isEmpty() || trimmed.startsWith("#")) {
                 continue;
             }
-            // 布局块内：无实例名块的成员是全局作用域声明（幂等记录）；} 收尾，其余行不解析。
+            // 块内（具名 std140 / 原包自声明块）：无实例名块的成员是全局作用域声明（幂等记录）；} 收尾。
             if (inLayoutBlock) {
                 int closeBrace = trimmed.indexOf('}');
                 if (closeBrace >= 0) {
@@ -156,12 +162,31 @@ public final class UniformInjector {
                 continue;
             }
             if (declaration.block || declaration.name == null) {
+                // 原包自声明的多行块（无 layout 前缀）：进入块态，成员不得被当成游离声明收编。
+                if (declaration.block) {
+                    inLayoutBlock = true;
+                    layoutBlockStartLine = lineNumber;
+                }
                 continue;
             }
             recordDeclaration(declaration.name, declaration.type, lineNumber, declaredAtLine, diagnostics);
+            // 游离非透明 uniform → 收编候选；采样器/图像类型留原位（Vulkan 允许块外，且不能进 UBO）。
+            // 边界：① 重名只收首现（重复声明已 WARN，两个同名成员进块会撞车）；
+            //      ② 语句前后有别的代码（同行多语句）不收 —— 抹行会连带删掉别的语句，宁可留给驱动报错；
+            //      ③ 多行声明（无分号）不收（声明文本跨行，收编会截断）。
+            if (declaration.terminated && !isOpaqueType(declaration.type)
+                    && !adoptedNames.contains(declaration.name)) {
+                int semi = code.indexOf(';', declaration.keywordEnd);
+                String prefix = code.substring(0, declaration.keywordStart).strip();
+                String suffix = semi >= 0 ? code.substring(semi + 1).strip() : "x";
+                if (semi >= 0 && prefix.isEmpty() && suffix.isEmpty()) {
+                    adoptedNames.add(declaration.name);
+                    adoptable.put(index, code.substring(declaration.keywordEnd, semi + 1).strip());
+                }
+            }
         }
         if (inLayoutBlock) {
-            diagnostics.add(TranslateDiagnostic.error("layout(...) uniform 块未闭合（起始于第 "
+            diagnostics.add(TranslateDiagnostic.error("uniform 块未闭合（起始于第 "
                     + layoutBlockStartLine + " 行）", null, layoutBlockStartLine));
         }
         if (comments.inBlockComment()) {
@@ -180,19 +205,46 @@ public final class UniformInjector {
                 missing.add(uniform);
             }
         }
-        if (missing.isEmpty()) {
+        if (missing.isEmpty() && adoptable.isEmpty()) {
             return new Result(lines.text(), diagnostics, List.of(), 0, 0);
         }
+        if (!adoptable.isEmpty()) {
+            // T11 显式：收编是方言适配不是降级，一条 INFO 报数量（逐条刷屏会淹没真正的 WARN）。
+            diagnostics.add(TranslateDiagnostic.info(
+                    adoptable.size() + " 条游离非透明 uniform 声明收编进 VkDispBuiltins 块"
+                            + "（Vulkan 要求非透明 uniform 在块内；声明文本原样，仅移动位置）", null, 0));
+        }
         // 发射形态 = 识别注释 + 具名无实例名 std140 块（差异点 ④）：独立非透明 uniform 行过不了 Vulkan 编译。
-        List<String> injectedLines = new ArrayList<>(missing.size() + 3);
+        // 块内顺序 = 收编的包声明（源码出现序）在前、缺失内建（目录序）在后 —— 确定且幂等。
+        List<String> injectedLines = new ArrayList<>(adoptable.size() + missing.size() + 3);
         injectedLines.add(BLOCK_HEADER);
         injectedLines.add(BLOCK_OPEN);
+        injectedLines.addAll(adoptable.values());
         for (BuiltinUniform uniform : missing) {
             injectedLines.add(uniform.blockMember());
         }
         injectedLines.add(BLOCK_CLOSE);
-        return new Result(lines.insertLines(insertIndex, injectedLines), diagnostics, missing,
-                insertIndex, injectedLines.size());
+        // 收编行**抹空而非删除**（保行号契约：后续行下标不动，insertIndex / insertedLineCount 语义不变）。
+        List<String> content = new ArrayList<>(sourceLines);
+        for (Integer index : adoptable.keySet()) {
+            content.set(index, "");
+        }
+        int at = Math.max(0, Math.min(insertIndex, content.size()));
+        // CRLF 文件：插入行按文件主行尾补 \r（与 SourceLines.insertLines 同款约定，不许混入裸 LF）。
+        String carriageReturn = sourceLines.stream().anyMatch(line -> line.endsWith("\r")) ? "\r" : "";
+        List<String> merged = new ArrayList<>(content.size() + injectedLines.size());
+        merged.addAll(content.subList(0, at));
+        for (String line : injectedLines) {
+            merged.add(line + carriageReturn);
+        }
+        merged.addAll(content.subList(at, content.size()));
+        String text = SourceLines.join(merged, lines.endsWithNewline() || at >= content.size());
+        return new Result(text, diagnostics, missing, insertIndex, injectedLines.size());
+    }
+
+    /** 透明性判定：采样器 / 图像类型不能进 UBO 块（Vulkan GLSL 公开语义），留在块外。 */
+    private static boolean isOpaqueType(String type) {
+        return type != null && (type.matches("(?:u|i)?sampler\\w*") || type.matches("(?:u|i)?image\\w*"));
     }
 
     /**

@@ -90,39 +90,54 @@ class UniformInjectorTest {
 
     @Test
     void doesNotDuplicateAlreadyDeclaredBuiltin() {
+        // P4.1 收编语义：游离声明的内建不再「原样留在块外」（过不了 Vulkan），而是**移动**进块 ——
+        // 不重复注入（22 条）+ 声明文本保留恰好一次 + 原行抹空。
         String source = "#version 330 core\nuniform mat4 gbufferModelView;\nvoid main() {}\n";
         UniformInjector.Result result = UniformInjector.inject(source);
         assertEquals(22, result.injected().size());
-        assertEquals(1, count(result.text(), "uniform mat4 gbufferModelView;"),
-                "包内已声明的内建 uniform 不许重复注入");
-        assertTrue(result.diagnostics().isEmpty());
+        assertEquals(1, count(result.text(), "mat4 gbufferModelView;"),
+                "声明文本（去 uniform 关键字）必须在块内出现且仅出现一次");
+        assertEquals(0, count(result.text(), "uniform mat4 gbufferModelView;"),
+                "游离原行必须被抹空（P4.1：块外非透明 uniform 过不了 shaderc）");
+        assertTrue(result.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.INFO && d.message().contains("收编")),
+                () -> "收编必须显式可见（T11），实际: " + result.diagnostics());
     }
 
     @Test
-    void allDeclaredMeansTextIsUntouched() {
+    void allPlainBuiltinsAreAdoptedIntoBlockInSourceOrder() {
         StringBuilder source = new StringBuilder("#version 330 core\n");
         for (BuiltinUniform uniform : UniformCatalog.uniforms()) {
             source.append(uniform.declaration()).append('\n');
         }
         source.append("void main() {}\n");
         UniformInjector.Result result = UniformInjector.inject(source.toString());
-        assertEquals(source.toString(), result.text(), "无缺失项时文本逐字节不变");
-        assertTrue(result.injected().isEmpty());
-        assertEquals(0, result.insertedLineCount());
+        assertTrue(result.injected().isEmpty(), "全部已声明 → 无缺失注入项");
+        assertEquals(23 + 3, result.insertedLineCount(), "收编 23 行 + 注释/开行/闭行 3 行");
+        // 收编后全部成员在块内、逐字节幂等（第二遍无游离声明可收）。
+        UniformInjector.Result second = UniformInjector.inject(result.text());
+        assertEquals(result.text(), second.text(), "收编路径同样必须幂等");
+        assertTrue(second.injected().isEmpty());
+        assertEquals(0, second.insertedLineCount());
+        assertTrue(second.diagnostics().isEmpty(), () -> "第二遍不该再有收编/注入诊断: " + second.diagnostics());
     }
 
     @Test
-    void typeMismatchWarnsAndKeepsPackDeclaration() {
+    void typeMismatchWarnsAndKeepsPackDeclarationText() {
         String source = "#version 330 core\nuniform vec4 cameraPosition;\nvoid main() {}\n";
         UniformInjector.Result result = UniformInjector.inject(source);
         assertEquals(22, result.injected().size(), "已声明的名字不再注入");
-        assertEquals(1, count(result.text(), "uniform vec4 cameraPosition;"), "包内声明不许被改写");
+        // 收编只移动不改写：类型不符时块内成员仍是包声明的 vec4（P4.1 语义）。
+        assertEquals(1, count(result.text(), "\nvec4 cameraPosition;\n"),
+                "包内声明文本必须原样保留（块内）");
         assertEquals(0, count(result.text(), "uniform vec3 cameraPosition;"));
-        assertEquals(1, result.diagnostics().size());
-        TranslateDiagnostic diagnostic = result.diagnostics().get(0);
-        assertEquals(TranslateDiagnostic.Severity.WARN, diagnostic.severity());
-        assertEquals(2, diagnostic.line());
-        assertTrue(diagnostic.message().contains("vec4") && diagnostic.message().contains("vec3"));
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> {
+            if (diagnostic.severity() != TranslateDiagnostic.Severity.WARN) {
+                return false;
+            }
+            return diagnostic.line() == 2
+                    && diagnostic.message().contains("vec4") && diagnostic.message().contains("vec3");
+        }), () -> "类型不符必须 WARN 且指回第 2 行，实际: " + result.diagnostics());
     }
 
     @Test
@@ -130,13 +145,17 @@ class UniformInjectorTest {
         String source = "#version 330 core\nuniform vec4 colortex0;\nuniform vec4 colortex0;\nvoid main() {}\n";
         UniformInjector.Result result = UniformInjector.inject(source);
         assertEquals(23, result.injected().size());
-        assertEquals(1, result.diagnostics().size());
-        assertEquals(TranslateDiagnostic.Severity.WARN, result.diagnostics().get(0).severity());
-        assertEquals(3, result.diagnostics().get(0).line());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic ->
+                        diagnostic.severity() == TranslateDiagnostic.Severity.WARN
+                                && diagnostic.line() == 3),
+                () -> "重复声明必须 WARN 且指回第 3 行，实际: " + result.diagnostics());
+        // 收编只收首现（重名第二次留原位，由驱动显式报错；两份都进块会变成块内重名）。
+        assertEquals(1, count(result.text(), "\nvec4 colortex0;\n"),
+                "重名只收首现，块内至多一份");
     }
 
     @Test
-    void uniformBlockIsIgnoredNotMisparsed() {
+    void packNamedBlockMembersAreRecordedNotAdopted() {
         String source = """
                 #version 330 core
                 uniform OfSceneParams {
@@ -145,11 +164,38 @@ class UniformInjectorTest {
                 void main() {}
                 """;
         UniformInjector.Result result = UniformInjector.inject(source);
-        assertEquals(23, result.injected().size(),
-                "块内字段不是全局 uniform 声明，gbufferModelView 仍需注入");
-        // 成员行锚定换行：包内块成员有缩进（"\n    mat4 …"），注入行是列首（"\nmat4 …"）。
+        assertEquals(22, result.injected().size(),
+                "无实例名块的成员是全局作用域声明，gbufferModelView 已声明 → 不再注入"
+                        + "（注入会造成同名重复，驱动显式报错）");
+        assertEquals(0, count(result.text(), "\nmat4 gbufferModelView;\n"),
+                "已声明的名字不许出现在注入块里");
+        // 块内成员不被收编（仍在包块原位）。
+        assertEquals(1, count(result.text(), "    mat4 gbufferModelView;"));
+    }
+
+    @Test
+    void plainPackUniformsAreAdoptedButSamplersStayOutside() {
+        String source = """
+                #version 330 core
+                uniform float rainStrength;
+                uniform sampler2D colortex0;
+                uniform mat4 gbufferModelView;
+                void main() {}
+                """;
+        UniformInjector.Result result = UniformInjector.inject(source);
+        assertEquals(1, count(result.text(), "\nfloat rainStrength;\n"),
+                "游离非透明 uniform 必须收进块内");
         assertEquals(1, count(result.text(), "\nmat4 gbufferModelView;\n"),
-                "注入的块成员必须出现且仅出现一次");
+                "游离内建同规则收编（且不重复注入）");
+        assertEquals(1, count(result.text(), "uniform sampler2D colortex0;"),
+                "采样器是透明类型：留原位，不进 UBO 块");
+        assertEquals(0, count(result.text(), "uniform float rainStrength;"),
+                "原行抹空（保行号契约）");
+        assertTrue(result.diagnostics().stream().anyMatch(d -> d.message().contains("收编")));
+        // 行号契约：抹空不删行 → 总行数只增不减。
+        assertEquals(result.text().split("\n", -1).length,
+                source.split("\n", -1).length + result.insertedLineCount(),
+                "抹空保行号：输出行数 = 输入行数 + 插入行数");
     }
 
     @Test

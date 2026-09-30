@@ -176,9 +176,20 @@ class OfGlslTranslatorBuiltinsTest {
                 "⑤ 级诊断必须经 ④ 级映射后回填原文件（直接用上游映射会错位）：" + typeMismatch.format());
         assertEquals(2, typeMismatch.line(), typeMismatch.format());
 
-        int builtinLine = indexOfLine(result.text(), "uniform vec3 gbufferModelView;");
-        assertEquals(new SourceLineMap.LineOrigin("shaders/composite.fsh", 2), result.originOf(builtinLine),
-                "包内原有声明行仍指回原文件原行号");
+        // P4.1 收编：原行文本被抹空（声明原样移进块），"找回原行"靠行号映射而非文本 ——
+        // 输出里必须恰好有一行映射回原文件第 2 行（抹空保行号契约）。
+        SourceLineMap.LineOrigin declOrigin = new SourceLineMap.LineOrigin("shaders/composite.fsh", 2);
+        int builtinLine = -1;
+        int lineCount = result.text().split("\n", -1).length;
+        for (int line = 1; line <= lineCount; line++) {
+            if (declOrigin.equals(result.originOf(line))) {
+                assertTrue(builtinLine < 0, "映射回原文件第 2 行的输出行必须唯一：" + line);
+                builtinLine = line;
+            }
+        }
+        assertTrue(builtinLine > 0, "抹空后的原行仍在输出里且映射指回原文件原行号");
+        assertEquals(1, count(result.text(), "vec3 gbufferModelView;"),
+                "收编不改写类型：包声明必须原样保留且仅出现一次（块内）");
         int outLine = indexOfLine(result.text(), "layout(location = 0) out vec4 vkdispFragOut0;");
         assertEquals(TranslateDiagnostic.UNKNOWN_LINE, result.originOf(outLine).sourceLine(),
                 "合成声明是合成行（映射未命中）");

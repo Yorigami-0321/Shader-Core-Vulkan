@@ -78,6 +78,30 @@ class DefineProcessorTest {
     }
 
     @Test
+    void functionMacroDefinesAndExpands() {
+        // P4.1 回归（X9 实测取证）：FUNC_DEFINE 的组号曾错位（pattern 3 组却读 group(3)/(4)）——
+        // 任何 #define f(a) 形态一进 handleDefine 就抛 IndexOutOfBoundsException("No group 4")，
+        // BSL 的 lib/*.glsl 函数宏全线转译失败。此用例锁死：定义不抛 + 按实参展开。
+        String src = "#define Bayer4(d) (d * 0.25)\nfloat x = Bayer4(v);\n";
+        DefineProcessor.Result r = DefineProcessor.process(src, identityMap("x.fsh", 2));
+        assertTrue(r.diagnostics().isEmpty(), () -> "函数宏定义/展开不许抛异常: " + r.diagnostics());
+        assertTrue(r.text().contains("float x = (v * 0.25);"),
+                "函数宏应按实参文本替换展开: " + r.text());
+    }
+
+    @Test
+    void objectMacroWhoseValueIsParenthesizedIsNotMisreadAsFunctionMacro() {
+        // P4.1 收紧回归：FUNC_DEFINE 曾允许名字与 ( 之间有空白，会把对象宏
+        // #define EXPR (1.0) 误判成"参数表为 1.0 的函数宏" → 裸引用 EXPR 永不展开。
+        // C 语义：函数宏的 ( 必须紧跟名字。
+        String src = "#define EXPR (1.0)\nfloat x = EXPR;\n";
+        DefineProcessor.Result r = DefineProcessor.process(src, identityMap("x.fsh", 2));
+        assertTrue(r.diagnostics().isEmpty(), () -> "对象宏不许产生诊断: " + r.diagnostics());
+        assertTrue(r.text().contains("float x = (1.0);"),
+                "带括号值的对象宏必须按对象宏展开: " + r.text());
+    }
+
+    @Test
     void unbalancedEndifReportsErrorWithLocation() {
         DefineProcessor.Result r = DefineProcessor.process("#endif\n", identityMap("y.fsh", 1));
         assertFalse(r.diagnostics().isEmpty(), "未闭合 #endif 必须报错");

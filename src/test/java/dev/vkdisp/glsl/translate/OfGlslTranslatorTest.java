@@ -117,13 +117,18 @@ class OfGlslTranslatorTest {
     /**
      * 无插入场景下，整个 TranslateResult（文本 + 诊断 + 行号映射）两轮完全相等 —— 这是"跑两遍结果
      * 一致"的强口径；有插入时映射按 F3 语义必然变化（首轮插入了新行），故只断言文本不动点。
+     *
+     * <p>P4.1 收编语义下"已声明"= 声明已在具名块内：游离 {@code uniform} 行首轮会被收编进块
+     * （插入 + INFO），不再满足"无插入"前提 —— 故样本直接用块内成员形态。
      */
     @Test
     void wholeResultIsIdempotentWhenNothingNeedsInjection() {
         StringBuilder source = new StringBuilder("#version 330 core\n");
+        source.append(UniformInjector.BLOCK_OPEN).append('\n');
         for (BuiltinUniform uniform : UniformCatalog.uniforms()) {
-            source.append(uniform.declaration()).append('\n');
+            source.append(uniform.blockMember()).append('\n');
         }
+        source.append(UniformInjector.BLOCK_CLOSE).append('\n');
         source.append("varying vec3 vNormal;\n").append("void main() {}\n");
         TranslateResult first = OfGlslTranslator.translate(ShaderStage.VERTEX, source.toString());
         TranslateResult second = OfGlslTranslator.translate(ShaderStage.VERTEX, first.text());

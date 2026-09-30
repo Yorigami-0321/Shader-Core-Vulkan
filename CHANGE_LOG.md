@@ -5,6 +5,78 @@
 
 ---
 
+## 2026-09-30 — P4.1.1 转译层接管 BSL：函数宏组号修复 + 游离 uniform 收编 + 维度偏好选中，182/182 阶段转译全绿，驱动层 6 类错误原文取证
+
+- **本次改了什么**（三处主线修复，全部 X9 实测取证驱动，非猜测）：
+  1. **`DefineProcessor` 函数宏组号错位修复**：`FUNC_DEFINE` pattern 只有 3 个捕获组
+     （g1=名 / g2=参数表 / g3=宏体），`handleDefine` 却按 4 组取 `group(3)/group(4)` ——
+     任何 `#define f(a)` 形态一进分支就抛 `IndexOutOfBoundsException("No group 4")`。
+     fixture 无函数宏故从未触发；载入 BSL（`lib/*.glsl` 大量 Bayer 系函数宏）后**全部
+     program 转译失败**（临时探针实测 composite 片元 0 成功）。修复组号 + 收紧 pattern：
+     名字与 `(` 必须紧邻（C 预处理器语义）—— 曾允许 `\s*` 间隔会把 `#define EXPR (1.0)`
+     误判成函数宏，其后裸引用永不展开。
+  2. **`UniformInjector` 游离 uniform 收编进块**：Vulkan GLSL 禁止非透明 uniform 在块外
+     （P2.3 已证 shaderc 原文 `non-opaque uniforms outside a block`），包作者写的
+     `uniform float rainStrength;` 这类 OF 方言原生形态此前**原样留在块外** → 驱动必拒。
+     新语义：扫描期收集收编候选（同行前后有别的语句 / 跨行声明 / 重名第二次不收），
+     声明文本**原样移动**进 `VkDispBuiltins` 块（不改写、不重排语义）、原行位抹空保行号
+     契约、采样器/图像类型（透明）留原位、块成员记作已声明（防重复注入）、CRLF 行尾补齐、
+     一条 INFO 显式报收编数（T11）。
+  3. **`PackCompositeSource` 维度偏好选择**：程序清单按限定名 TreeMap 排序，`world-1/…`
+     字典序先于 `world0/…`，旧「取第一个成功者」会选中**下界** composite 链主世界 deferred。
+     改为按维度权重择优（完全匹配 > world0 > 根 > 其它），deferred 与 composite **同维度
+     配对**（杜绝「下界 composite + 主世界 deferred」串链），选中行 INFO 显式可见。
+  4. **测试**：`UniformInjectorTest` 5 条旧语义用例改写为收编语义 + 新增采样器留原位/
+     行号契约；`DefineProcessorTest` 增函数宏定义展开 + 带括号值对象宏不误判；
+     `PackCompositeSourceTest` 增 3 条维度用例（world-1 字典序在前仍选 world0、deferred
+     同维配对、无 world0 时根优先于其它维度）；`OfGlslTranslator*Test`/`GlslPipelineTest`
+     强口径幂等样本改用块内成员形态（游离声明现已首轮收编 → 不满足「无插入」前提，
+     语义变化已写进 javadoc）；临时探针 `ScratchBslProbeTest` 取证后删除不入库。
+- **为什么改**：01-DEV-LOOP §10 P4.1「BSL 主要效果可用」的第一堵墙是**转译层全灭**——
+  X9 探针实测 BSL 91 program / 284 option 全部载入，但函数宏 bug 使 composite 片元
+  0 成功、旧选中逻辑还会串维度；三处修复是 BSL 进主线的前置条件，且全部按实测错误
+  定位（No group 4 原文、字典序事实、shaderc 块外语法）逐一闭环。
+- **影响的文档**：本 `CHANGE_LOG.md`；`docs/18-PARALLEL.md` §5（新增 P4.1 块：设计 +
+  本轮实测 + 驱动层 6 类错误登记为 P4.1.2 工作清单）；`DefineProcessor.java`、
+  `UniformInjector.java`、`PackCompositeSource.java` 及 6 个测试文件。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；`cleanTest test` **434 用例 0 失败 0 错误**（净增 6 条）。
+  - ✅ **探针（BSL 实装复跑）**：`compile stages=182 ok=182 fail=0`（修复前 composite
+    片元全灭）；`PackCompositeSource.generate` → `packName=BSL_v10.1.8 fallback=false
+    hasDeferred=true sourceBytes=24505`（与 world0/composite 片元产出逐字节吻合）、
+    WARN=83 ERROR=0（WARN 主体为 ftransform 位置属性显式告警，既有登记项）。
+  - ✅ **runClient `-PquickPlay`**（/tmp/p41a_runclient.log，exit=0 干净收尾）：
+    `composite 程序选中 'world0/composite'（维度偏好 world0 > 根 > 其它）` →
+    `composite source ready: fallback=false pack=BSL_v10.1.8 bytes=24505` →
+    `deferred source ready: present=true pack=BSL_v10.1.8 bytes=8271`，
+    管线注册 1/8..8/8 完整 —— **选中链（扫描→载入→转译→双源→注册）全绿**。
+  - 🔴 **驱动层编译失败（本轮如实取证，转译通过 ≠ 驱动通过）**：3 条 required 管线
+    （composite / composite_scene / deferred）×2 次资源重载共 6 次
+    `Couldn't compile pipeline`，错误原文 6 类：① `#version: Desktop shaders for
+    Vulkan SPIR-V require version 140 or higher`（BSL 是 120）；②③ `duplicate member
+    name: near/viewHeight/gbufferProjectionInverse` + `'VkDispBuiltins' : nameless
+    block contains a member that already has a name at global scope`；④⑤
+    `'location' : not supported for this version`（合成 out，随①连坐）与
+    `'location' : SPIR-V requires location for user input/output`（包 varying 无
+    location）；⑥ deferred 同构。**根因离线算术自证**：BSL 用逗号多名声明
+    `uniform float far, near;`(27) / `uniform float viewWidth, viewHeight,
+    aspectRatio;`(32) / `uniform mat4 gbufferProjection, gbufferProjectionInverse;`(39)
+    —— 解析器只记首名 → 后名未登记「已声明」→ 被当缺失**二次注入**块内，与收编整行
+    撞出的 3 个 duplicate 名字与驱动报文**逐一吻合**。失败致
+    `Failed to load required shader programs` → 资源包被摘除重载，`VkDispPackScan`
+    矩阵未触发（事件在失败重载上未送达）—— 以上原文即本轮驱动级证据。
+- **未覆盖**：
+  - **P4.1.2（下一轮，工作清单已按原文登记进 18-PARALLEL P4.1 块）**：逗号多名声明
+    全名登记（杀 ②③）、#version 120→≥140 升级（杀 ①④）、包 varying 显式
+    layout(location)（杀 ⑤）、随后复验驱动矩阵与 `VkDispPackScan` 全量矩阵；
+  - BSL 画面效果未达成本轮（管线未编过 → 资源加载失败回退），Iris 对比截图缺环境
+    （本机无 Iris）照旧登记；profiles 解析失败（`#if` 含 `>`）与 uniform 数值上传
+    （OfUniformManager 缺口）不在本轮范围；
+  - 探针输出 /tmp/bsl_probe.txt 不入库（临时文件已删除）。
+- **是否已提交**：随本轮 commit 提交并推送 origin/master。
+
+---
+
 ## 2026-09-30 — P3.3 deferred 链完整交付：每步输入=上一步输出（双跑日志链），同材质色调 A/B 0.688≈0.700，方向代数+边缘取证闭环
 
 - **本次改了什么**：

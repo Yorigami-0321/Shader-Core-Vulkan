@@ -235,6 +235,118 @@ class PackCompositeSourceTest {
                 () -> "坏 deferred 必须显式 WARN（T11），实际: " + result.diagnostics());
     }
 
+    // ------------------------------------------------------------------ 维度选择（P4.1）
+
+    @Test
+    void world0CompositePreferredOverNetherDespiteSortOrder() throws IOException {
+        // 程序清单按限定名 TreeMap 排序 → "world-1/…" 字典序先于 "world0/…"。
+        // 旧的"取第一个成功者"会选中下界；P4.1 维度偏好必须选中主世界。
+        writeDimensionPrograms();
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "");
+
+        assertFalse(result.fallback(), "多维度包可用时不该兜底");
+        assertTrue(result.source().contains("overworldTint"),
+                () -> "必须选中 world0/composite，实际:\n" + result.source());
+        assertFalse(result.source().contains("netherTint"),
+                () -> "不许选中 world-1/composite，实际:\n" + result.source());
+        assertTrue(result.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.INFO
+                                && d.message().contains("'world0/composite'")),
+                () -> "选中必须显式可见（T11），实际: " + result.diagnostics());
+    }
+
+    @Test
+    void deferredPairsWithSameDimensionAsComposite() throws IOException {
+        writeDimensionPrograms();
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "");
+
+        assertTrue(result.hasDeferredProgram(), "维度包的 deferred 应编出成功产出");
+        assertTrue(result.deferredSource().contains("overworldDeferredTint"),
+                () -> "deferred 必须与 composite 同维度（world0），实际:\n" + result.deferredSource());
+        assertFalse(result.deferredSource().contains("netherDeferredTint"),
+                () -> "不许链起「world0 composite + world-1 deferred」，实际:\n"
+                        + result.deferredSource());
+    }
+
+    @Test
+    void rootCompositePreferredOverOtherDimensionWhenNoWorld0() throws IOException {
+        writeFixturePack();
+        write(inventory.resolve("fixture"), "shaders/world-1/composite.fsh", """
+                #version 330
+                #extension GL_ARB_separate_shader_objects : require
+                uniform sampler2D InSampler;
+                layout(location = 0) in vec2 vUv;
+                layout(location = 0) out vec4 fragColor;
+                void main() {
+                    float netherTint = 1.0;
+                    fragColor = vec4(texture(InSampler, vUv).rgb * netherTint, 1.0);
+                }
+                """);
+        write(inventory.resolve("fixture"), "shaders/world-1/composite.vsh", """
+                #version 330
+                layout(location = 0) in vec3 vaPosition;
+                void main() { gl_Position = vec4(vaPosition, 1.0); }
+                """);
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "");
+
+        assertFalse(result.fallback());
+        assertFalse(result.source().contains("netherTint"),
+                () -> "无 world0 时根命名空间优先于其它维度，实际:\n" + result.source());
+        assertFragmentInlined(result.source());
+    }
+
+    /** 多维度 fixture：world-1 与 world0 各有 composite/deferred，标识符可区分（18-PARALLEL §7.6）。 */
+    private void writeDimensionPrograms() throws IOException {
+        Path pack = packDir("dim");
+        writeDimensionComposite(pack, "world0", "overworldTint", "vec3(1.0)");
+        writeDimensionComposite(pack, "world-1", "netherTint", "vec3(1.0, 0.0, 0.0)");
+        writeDimensionDeferred(pack, "world0", "overworldDeferredTint", "vec3(0.7, 1.0, 0.7)");
+        writeDimensionDeferred(pack, "world-1", "netherDeferredTint", "vec3(1.0, 0.3, 0.1)");
+    }
+
+    private void writeDimensionComposite(Path pack, String dimension, String marker, String tint)
+            throws IOException {
+        write(pack, "shaders/" + dimension + "/composite.fsh", """
+                #version 330
+                #extension GL_ARB_separate_shader_objects : require
+                uniform sampler2D InSampler;
+                layout(location = 0) in vec2 vUv;
+                layout(location = 0) out vec4 fragColor;
+                void main() {
+                    vec3 %s = %s;
+                    fragColor = vec4(texture(InSampler, vUv).rgb * %s, 1.0);
+                }
+                """.formatted(marker, tint, marker));
+        write(pack, "shaders/" + dimension + "/composite.vsh", """
+                #version 330
+                layout(location = 0) in vec3 vaPosition;
+                void main() { gl_Position = vec4(vaPosition, 1.0); }
+                """);
+    }
+
+    private void writeDimensionDeferred(Path pack, String dimension, String marker, String tint)
+            throws IOException {
+        write(pack, "shaders/" + dimension + "/deferred.fsh", """
+                #version 330
+                #extension GL_ARB_separate_shader_objects : require
+                uniform sampler2D InSampler;
+                layout(location = 0) in vec2 vUv;
+                layout(location = 0) out vec4 fragColor;
+                void main() {
+                    vec3 %s = %s;
+                    fragColor = vec4(texture(InSampler, vUv).rgb * %s, 1.0);
+                }
+                """.formatted(marker, tint, marker));
+        write(pack, "shaders/" + dimension + "/deferred.vsh", """
+                #version 330
+                layout(location = 0) in vec3 vaPosition;
+                void main() { gl_Position = vec4(vaPosition, 1.0); }
+                """);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     /** 断言产出的是被选中的包源（含 fixture 特征），而不是内置兜底。 */

@@ -422,6 +422,40 @@ F1–F4 全部落地 → 放行并行
         位姿日志 30 条上限截断）→ A/B 按**同材质锚定**（沙岩→沙岩）而非同位姿；
         同位姿逐像素镜像判定 = 未覆盖（需输入隔离环境重跑）；fixture 取证后已复原
         （deferred 回名 + zip 6 条目 3313B）。
+   🟡 P4.1 主流包 BSL（01-DEV-LOOP §10 P4.1「BSL 主要效果可用（与 Iris 对比截图）」，
+      转译层已通、驱动层在途，分 P4.1.1/P4.1.2 子轮推进）｜验收 = 08-TESTING §4/§5。
+      设计（X9 实测取证，全部非猜测）：
+      ① **包结构实测**（临时探针跑真 zip `run/shaderpacks/BSL_v10.1.8.zip`，gitignored）：
+      91 program / 284 option / profiles=[]（shaders.properties 解析失败：`#if 表达式含
+      非法字符 '>'`，登记项）/ dims=[world-1, world0, world1] / 182 个编译阶段；
+      扫描序 BSL ZIP 先于 fixture → BSL 转译成功即自动入选。
+      ② **P4.1.1 转译层三修复**（随本轮提交）：DefineProcessor 函数宏组号错位
+      （`No group 4` IndexOutOfBoundsException 使全部 program 转译失败）+ FUNC_DEFINE
+      收紧为 `(` 紧邻名字；UniformInjector 游离非透明 uniform **收编进 VkDispBuiltins 块**
+      （文本原样移动、原行抹空保行号、透明类型留原位、重名/跨行/多语句不收、INFO 计数）；
+      PackCompositeSource 维度偏好 world0 > 根 > 其它 + deferred 同维度配对（TreeMap 序
+      `world-1/…` 先于 `world0/…`，旧首成者会选中下界）。
+      ③ **P4.1.2 驱动层工作清单**（按 p41a runClient 错误原文逐条登记，见④）：
+      逗号多名声明全名登记（`uniform float far, near;` 类只记首名 → 后名被二次注入 →
+      块内 duplicate，BSL program/composite.glsl L27/32/39 与驱动报文逐一吻合）；
+      `#version 120 → ≥140` 升级（shaderc 硬门槛，连带 `location qualifier on output`）；
+      包 varying 显式 `layout(location)`（SPIR-V 硬要求）；之后复验驱动矩阵 +
+      VkDispPackScan 全量矩阵（事件在失败重载上未送达，本轮未触达）。
+      ④ **本轮实测（P4.1.1，2026-09-30）**：单测 434 全绿；探针
+      `compile stages=182 ok=182 fail=0`（修复前 composite 片元 0 成功）、
+      `generate → pack=BSL_v10.1.8 fallback=false hasDeferred=true sourceBytes=24505`
+      （=world0/composite 片元产出）；runClient（/tmp/p41a_runclient.log exit=0）：
+      `composite 程序选中 'world0/composite'` → `composite source ready … bytes=24505`
+      → `deferred source ready: present=true … bytes=8271` → 管线注册 1/8..8/8 ——
+      选中链全绿；随后 3 条 required 管线 ×2 重载 6 次
+      `Couldn't compile pipeline`（原文 6 类：#version<140 / duplicate member×3 +
+      nameless block 撞全局名 / location 版本不支持 / SPIR-V requires location）→
+      `Failed to load required shader programs` 资源包摘除重载 ——
+      **转译通过 ≠ 驱动通过**，此原文即驱动级证据。
+      ⑤ **P4.1 完成判据（不变）**：管线 registered==compiled → 进世界 BSL 视觉生效
+      （对照 fixture 基线可检伪）→ 与 Iris 对比截图（环境缺 Iris = 已登记限制）；
+      uniform 数值仍全零上传（OfUniformManager 缺口）→ sunVec 系效果可能 NaN 的
+      质量问题与 profiles 解析失败均留后续子轮。
    ✅ P2.1/P2.2 主线接入（A/B/C 线汇合后接启动期扫包钩子，随本轮提交）：
       `VkDispPackScan`（ClientResourceLoadFinishedEvent → gameDir/shaderpacks → ShaderPackService.loadAll）
       实测 latest.log：packs=2（kind=zip + kind=dir 各一）programs=2 options=8 problems=0 diagnostics=0，

@@ -356,7 +356,7 @@ class GlslPipelineTest {
     }
 
     /**
-     * 强口径幂等：输入没有任何预处理指令要删、内建 uniform 全部已声明（无注入）——
+     * 强口径幂等：输入没有任何预处理指令要删、内建 uniform 全部已声明（无注入无收编）——
      * 此时整个 TranslateResult（文本 + 诊断 + 行号映射）两轮完全相等。
      */
     @Test
@@ -371,12 +371,18 @@ class GlslPipelineTest {
         assertEquals(first, second, "无删除无注入时整个结果（含行号映射）必须两轮相等");
     }
 
-    /** 内建 uniform 全部预先声明的顶点着色器（保证首轮无注入）。 */
+    /**
+     * 内建 uniform 全部预先声明的顶点着色器（保证首轮无注入）。
+     * P4.1 收编语义：游离 uniform 行首轮会被收编进块（插入 + INFO）→ 强口径样本必须用
+     * 块内成员形态（"已声明"的合规形态）。
+     */
     private static String predeclaredVertexSource() {
         StringBuilder sb = new StringBuilder("#version 330 core\n");
+        sb.append(UniformInjector.BLOCK_OPEN).append('\n');
         for (BuiltinUniform uniform : UniformCatalog.uniforms()) {
-            sb.append(uniform.declaration()).append('\n');
+            sb.append(uniform.blockMember()).append('\n');
         }
+        sb.append(UniformInjector.BLOCK_CLOSE).append('\n');
         sb.append("varying vec3 vNormal;\n");
         sb.append("void main() {\n");
         sb.append("    vNormal = vec3(1.0);\n");

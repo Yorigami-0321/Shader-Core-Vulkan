@@ -48,9 +48,11 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  * <p>被 {@code dev.vkdisp.VkDispVirtualPack} 在虚拟资源包 {@code openResources} 时调用
  * （时机：ClientModLoader.finish 之后、首次资源加载之前 —— 此刻配置已加载，见 18-PARALLEL §5 P2.4 ②）。
  *
- * <p><b>已知未覆盖</b>（显式登记，不假装完整）：多维度包只取根命名空间的 {@code composite}
- * （dimensionFolder 前缀如 {@code world0/composite} 暂不参与 Pass 3 选择，P3.x 接维度时再定）；
- * profile 命中但覆盖名未进任何声明行的告警由 {@link ShaderPackCompiler} 包级判定负责。
+ * <p><b>维度选择</b>（P4.1）：多维度包按 {@code world0 > 根命名空间 > 其它维度} 择优取
+ * {@code composite}，{@code deferred} 与之**同维度配对**（避免「下界 composite + 主世界 deferred」串链）。
+ * <p><b>已知未覆盖</b>（显式登记，不假装完整）：选择维度**硬编码主世界偏好**，不随玩家当前维度动态切换
+ * （接维度切换时再定，18-PARALLEL 注册缺口照旧）；profile 命中但覆盖名未进任何声明行的告警由
+ * {@link ShaderPackCompiler} 包级判定负责。
  */
 public final class PackCompositeSource {
 
@@ -170,11 +172,18 @@ public final class PackCompositeSource {
 
             ShaderPackCompiler.CompileResult compiled = ShaderPackCompiler.compile(discovered, overrides);
             diagnostics.addAll(compiled.diagnostics());
-            String compositeSource = firstProgramFragment(compiled, COMPOSITE_PROGRAM);
-            if (compositeSource != null) {
+            Selection composite = selectProgramFragment(compiled, COMPOSITE_PROGRAM, null);
+            if (composite != null) {
                 // P3.3：同一次编译产物里顺带取 deferred 片元（不另开选包循环 —— composite 与
                 // deferred 必须出自**同一个包**，否则链路两端选项语义不一致）。
-                String deferredSource = firstProgramFragment(compiled, DEFERRED_PROGRAM);
+                // P4.1：维度同配 —— deferred 优先取与 composite **同维度目录**的程序
+                // （BLS 类多维度包 world-1 会先于 world0 排序，不配对会链起「下界 composite + 主世界 deferred」）。
+                String compositeDimension = dimensionOf(composite.qualifiedName());
+                diagnostics.add(TranslateDiagnostic.of(
+                        TranslateDiagnostic.Severity.INFO,
+                        "vkdisp: composite 程序选中 '" + composite.qualifiedName() + "'（维度偏好 world0 > 根 > 其它）",
+                        pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+                String deferredSource = selectDeferredSource(compiled, compositeDimension);
                 boolean hasDeferred = deferredSource != null;
                 if (!hasDeferred) {
                     deferredSource = FALLBACK_GLSL;
@@ -196,7 +205,7 @@ public final class PackCompositeSource {
                                 pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
                     }
                 }
-                return new Result(compositeSource, deferredSource, hasDeferred,
+                return new Result(composite.source(), deferredSource, hasDeferred,
                         pack.name(), false, profile, diagnostics);
             }
             diagnostics.add(TranslateDiagnostic.of(
@@ -225,16 +234,61 @@ public final class PackCompositeSource {
         return overrides;
     }
 
-    /** 取第一个成功的指定程序 FRAGMENT 源（composite / deferred 共用）；没有返回 null。 */
-    private static String firstProgramFragment(ShaderPackCompiler.CompileResult compiled, String programName) {
+    /** 一次程序选中的结果：产出源文本 + 其限定名（如 {@code world0/composite}，供维度配对）。 */
+    private record Selection(String source, String qualifiedName) {}
+
+    /** 取指定程序的 FRAGMENT 源并按维度偏好择优；没有成功产出返回 null。 */
+    private static Selection selectProgramFragment(
+            ShaderPackCompiler.CompileResult compiled, String programName, String preferredDimension) {
+        Selection best = null;
+        int bestRank = Integer.MAX_VALUE;
         for (ShaderPackCompiler.CompiledStage stage : compiled.stages()) {
-            if (stage.stage() == dev.vkdisp.glsl.translate.ShaderStage.FRAGMENT
-                    && stage.isSuccess()
-                    && isProgramName(stage.programName(), programName)) {
-                return stage.result().text();
+            if (stage.stage() != dev.vkdisp.glsl.translate.ShaderStage.FRAGMENT
+                    || !stage.isSuccess()
+                    || !isProgramName(stage.programName(), programName)) {
+                continue;
+            }
+            int rank = dimensionRank(dimensionOf(stage.programName()), preferredDimension);
+            if (rank < bestRank) {
+                best = new Selection(stage.result().text(), stage.programName());
+                bestRank = rank;
             }
         }
-        return null;
+        return best;
+    }
+
+    /**
+     * deferred 片元选择：优先与 composite **同维度目录**，否则按维度偏好
+     * （world0 > 根 > 其它）；无成功产出返回 null。
+     */
+    private static String selectDeferredSource(ShaderPackCompiler.CompileResult compiled,
+            String compositeDimension) {
+        Selection selection = selectProgramFragment(compiled, DEFERRED_PROGRAM, compositeDimension);
+        return selection == null ? null : selection.source();
+    }
+
+    /**
+     * 维度目录权重（越小越优先）：完全匹配 {@code preferred} → 0；
+     * 否则 world0（主世界，当前渲染维度）→ 1、根命名空间（无维度覆盖，OF 语义的默认）→ 2、其它维度 → 3。
+     * 并列取**先出现者**（stages 按限定名排序，结果确定）。
+     */
+    private static int dimensionRank(String dimension, String preferred) {
+        if (preferred != null && preferred.equals(dimension)) {
+            return 0;
+        }
+        if ("world0".equals(dimension)) {
+            return 1;
+        }
+        if (dimension.isEmpty()) {
+            return 2;
+        }
+        return 3;
+    }
+
+    /** 限定名前缀的维度目录（{@code world0/composite} → {@code world0}；根 {@code composite} → 空串）。 */
+    private static String dimensionOf(String qualifiedName) {
+        int slash = qualifiedName.indexOf('/');
+        return slash < 0 ? "" : qualifiedName.substring(0, slash);
     }
 
     /** 根程序 {@code composite} 或维度程序 {@code world0/composite} 都算（qualifiedName 形态）。 */

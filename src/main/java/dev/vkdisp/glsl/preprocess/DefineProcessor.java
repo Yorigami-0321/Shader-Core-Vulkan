@@ -182,8 +182,11 @@ public final class DefineProcessor {
         Matcher fm = FUNC_DEFINE.matcher(body);
         if (fm.find()) {
             String name = fm.group(1);
-            String paramsStr = fm.group(3) == null ? "" : fm.group(3);
-            String defBody = fm.group(4) == null ? "" : fm.group(4).strip();
+            // 组号与 FUNC_DEFINE 对齐（g1=名 / g2=参数表 / g3=宏体）：曾按 4 组 pattern 取 3/4 组，
+            // 函数宏分支一进就抛 IndexOutOfBoundsException("No group 4")——fixture 无函数宏从未触发，
+            // P4.1 载入 BSL（lib/*.glsl 大量 #define f(a) 形态）全线转译失败后修复（X9 实测取证）。
+            String paramsStr = fm.group(2) == null ? "" : fm.group(2);
+            String defBody = fm.group(3) == null ? "" : fm.group(3).strip();
             List<String> params = new ArrayList<>();
             for (String p : paramsStr.split(",")) {
                 p = p.strip();
@@ -680,6 +683,11 @@ public final class DefineProcessor {
 
     private static final Pattern DIRECTIVE = Pattern.compile("^#\\s*([A-Za-z_]\\w*)\\s*(.*)$");
     private static final Pattern OBJ_DEFINE = Pattern.compile("^([A-Za-z_]\\w*)\\s*(.*)$");
+    /**
+     * 函数宏形态：名字与 {@code (} **必须紧邻**（C 预处理器的函数宏语义 —— 公开语言事实）。
+     * 曾允许 {@code \s*} 间隔，会把对象宏 {@code #define EXPR (1.0)} 误判成函数宏，
+     * 其后 {@code EXPR} 裸引用因无实参列表永不展开（P4.1 BSL 取证后收紧）。
+     */
     private static final Pattern FUNC_DEFINE =
-            Pattern.compile("^([A-Za-z_]\\w*)\\s*\\(([^)]*)\\)\\s*(.*)$");
+            Pattern.compile("^([A-Za-z_]\\w*)\\(([^)]*)\\)\\s*(.*)$");
 }
