@@ -443,6 +443,101 @@ class PackCompositeSourceTest {
                 """);
     }
 
+    // ------------------------------------------------------------------ 包选择（P4.2 §6 切包）
+
+    @Test
+    void noneSelectionForcesPassthroughWithoutInventoryClaims() throws IOException {
+        writeFixturePack();
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "", "none");
+
+        assertTrue(result.fallback(), "选择 none 必须强制内置兜底");
+        assertNull(result.packName(), "none 不产出包");
+        assertEquals(PackCompositeSource.FALLBACK_GLSL, result.source());
+        assertFalse(result.hasDeferredProgram(), "none 不开 deferred 步");
+        assertFalse(result.hasFinalProgram(), "none 不开 final 步");
+        assertTrue(result.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.WARN
+                                && d.message().contains("shaderPack=none")),
+                () -> "none 兜底必须显式 WARN（T11），实际: " + result.diagnostics());
+        assertFalse(result.diagnostics().stream().anyMatch(d ->
+                        d.message().contains("库存中没有可用")),
+                () -> "none 是用户意图而非库存枯竭，不该混用库存兜底文案，实际: " + result.diagnostics());
+        assertFalse(result.source().contains("SHADOW_DARKNESS"),
+                "none 不该加载任何包内容");
+    }
+
+    @Test
+    void namedSelectionPicksExactPackRegardlessOfScanOrder() throws IOException {
+        writeFixturePack();
+        writeMarkerPack("alpha", "alphaPackMarker");
+        writeMarkerPack("zeta", "zetaPackMarker");
+
+        PackCompositeSource.Result byName = PackCompositeSource.generate(inventory, "", "zeta");
+
+        assertFalse(byName.fallback(), "库存中有指定包不该兜底");
+        assertEquals("zeta", byName.packName());
+        assertTrue(byName.source().contains("zetaPackMarker"),
+                () -> "必须选中 zeta 包，实际:\n" + byName.source());
+        assertFalse(byName.source().contains("alphaPackMarker"),
+                () -> "不许混入 alpha 包，实际:\n" + byName.source());
+        assertFalse(byName.source().contains("SHADOW_DARKNESS"),
+                () -> "不许混入 fixture 包（按名而非第一个成功者），实际:\n" + byName.source());
+        assertTrue(byName.diagnostics().stream().anyMatch(d ->
+                        d.message().contains("包选择过滤：仅接受 name='zeta'")),
+                () -> "过滤口径必须显式可见（T11），实际: " + byName.diagnostics());
+
+        // 反向：同一库存按另一个名选 → 按名而非扫描顺序。
+        PackCompositeSource.Result alpha = PackCompositeSource.generate(inventory, "", "alpha");
+        assertEquals("alpha", alpha.packName());
+        assertTrue(alpha.source().contains("alphaPackMarker"),
+                () -> "必须选中 alpha 包，实际:\n" + alpha.source());
+    }
+
+    @Test
+    void unknownNamedSelectionFallsBackWithoutTouchingOtherPacks() throws IOException {
+        writeFixturePack();
+
+        PackCompositeSource.Result result =
+                PackCompositeSource.generate(inventory, "", "no-such-pack");
+
+        assertTrue(result.fallback(), "指定包缺失必须兜底");
+        assertNull(result.packName());
+        assertTrue(result.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.WARN
+                                && d.message().contains("不在库存中")
+                                && d.message().contains("no-such-pack")),
+                () -> "缺名必须显式 WARN（T11），实际: " + result.diagnostics());
+        assertTrue(result.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.WARN
+                                && d.message().contains("内置 passthrough 兜底")),
+                () -> "兜底必带 WARN，实际: " + result.diagnostics());
+        assertFalse(result.source().contains("SHADOW_DARKNESS"),
+                "绝不静默落到库存里的其它包（§6 残留判据的前提）");
+    }
+
+    @Test
+    void namedSelectionWithBrokenTargetDoesNotFallThroughToNextPack() throws IOException {
+        // 目标包存在但 composite 编译失败 → 兜底，绝不换到旁边可用的 fixture
+        // （静默换包会让 §6 的 S2「切到 B」判据失去意义）。
+        writeFixturePack();
+        Path broken = packDir("target");
+        write(broken, "shaders/composite.fsh",
+                "#version 150\n#include \"/lib/missing.glsl\"\nvoid main() {}\n");
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "", "target");
+
+        assertTrue(result.fallback(), "指定包编译失败必须兜底");
+        assertNull(result.packName());
+        assertTrue(result.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.WARN
+                                && d.message().contains("无成功产出")
+                                && d.message().contains("不落到其它包")),
+                () -> "指定包失败必须显式 WARN 且声明不换包，实际: " + result.diagnostics());
+        assertFalse(result.source().contains("SHADOW_DARKNESS"),
+                "不许静默换成 fixture 包");
+    }
+
     // ------------------------------------------------------------------ helpers
 
     /** 断言产出的是被选中的包源（含 fixture 特征），而不是内置兜底。 */
@@ -457,6 +552,32 @@ class PackCompositeSourceTest {
     }
 
     /** 与 run/shaderpacks/vkdisp-fixture-dir 同形状的自造包（18-PARALLEL §7.6）。 */
+    /** P4.2 选择测试用最小可编包：marker 作为真实局部变量进源（同 finalMarker 口径，不依赖注释保留）。 */
+    private void writeMarkerPack(String name, String marker) throws IOException {
+        Path pack = packDir(name);
+        write(pack, "shaders/composite.fsh", """
+                #version 330
+                #extension GL_ARB_separate_shader_objects : require
+                uniform sampler2D InSampler;
+                layout(location = 0) in vec2 vUv;
+                layout(location = 0) out vec4 fragColor;
+                void main() {
+                    vec3 %s = vec3(1.0);
+                    fragColor = vec4(texture(InSampler, vUv).rgb * %s, 1.0);
+                }
+                """.formatted(marker, marker));
+        write(pack, "shaders/composite.vsh", """
+                #version 330
+                #extension GL_ARB_separate_shader_objects : require
+                layout(location = 0) in vec3 vaPosition;
+                layout(location = 0) out vec2 vUv;
+                void main() {
+                    gl_Position = vec4(vaPosition, 1.0);
+                    vUv = vec2(0.0);
+                }
+                """);
+    }
+
     private void writeFixturePack() throws IOException {
         Path pack = packDir("fixture");
         write(pack, "shaders/composite.fsh", """

@@ -146,6 +146,13 @@ if (meshStride != bindStride) {
 
 > 这是着色器加载器的经典坑：管线缓存按 program 键，顶点格式变了旧管线会残留。
 
+**执行方式（P4.2 落地，2026-10-01）**：切包由 `vkdisp-client.toml` 的 `shaderPack` 驱动，
+**外部改值保存即自动生效**（FML FileWatcher → `ModConfigEvent.Reloading` → `VkDispConfigHotReload`
+→ 资源重载），无需输入注入、无需重启 —— 全四步在**同一 runClient 会话**内完成：
+`""` = 自动选包（S1/S4）、指定包名 = 切 B（S2）、`"none"` = 强制内置 passthrough（S3）。
+每步等日志 `client resources loaded (initial=false)` 再截图。
+首跑取证 `evidence/p417-pack-switch.md`：S1↔S4 静态地面带 identity=+1.0000、S2/S3 尖刺 0.000%。
+
 ---
 
 ## 7. 边界条件清单

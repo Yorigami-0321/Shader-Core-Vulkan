@@ -21,3 +21,4 @@
 | `p414-final-step.md` | P4.1.4（2026-10-01） | final 步接线两跑闭环：第 9 管线 registered=9 compiled=9、三布局三环（42/24/24）+ uploaded slot=final written=24、日志门双布尔缺陷 run1 吞行→run2 按槽位名 Set 归零、attachment 恒等拷贝顶点推导（判定表「未镜像」行基于云团构图，已由 p416 强制位姿法取代） |
 | `p415-properties-conditionals.md` | P4.1.5（2026-10-01） | properties 条件编译两跑闭环：CRLF 续行缺陷 run1 解析失败 ×3 + profiles=[] → 修复归零 + profiles 五档 [ULTRA…HIGH]、WARN 集 diff 只删该文本零新增、单测 492→501 |
 | `p416-orientation.md` | P4.1.6（2026-10-01） | 画面方向矫正三跑闭环：强制位姿（Rotation 0,−15°）地平线 204（翻转）→ 392（正立）×2，根因 = P3.3 链 composite 顶点（彩色源是场景、净翻转守恒错算 deferred 一跳），B+ 采样源规则三处落地，run3↔run2 identity=+1.0000 / run1↔run3 镜像 +0.9450，包源与 present 排除 |
+| `p417-pack-switch.md` | P4.2（2026-10-01） | 切包回归单会话四截图闭环：shaderPack 三态（自动/包名/none）+ FML 配置热加载驱动，S1↔S4 静态地面带 identity=+1.0000（残差=云飘移）、S2/S3 尖刺 0.000%、S2/S3 亮度比 0.7108=理论 0.711（fixture 全链）、141 矩阵 ERROR ×4 零新增 |

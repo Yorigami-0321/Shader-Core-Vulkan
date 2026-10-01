@@ -77,6 +77,13 @@ public final class PackCompositeSource {
     public static final String FINAL_PROGRAM = "final";
 
     /**
+     * P4.2 切包（{@code 08-TESTING.md} §6）：包选择的保留值 —— 强制内置 passthrough，
+     * 不加载任何库存包。是<b>保留名</b>：即使库存里真有叫 {@code none} 的包也不参与选择
+     * （选择语义优先；想要该包请改用其真实名的其它写法，登记于 {@link #generate} javadoc）。
+     */
+    public static final String SELECTION_NONE = "none";
+
+    /**
      * 内置兜底源（T11）：passthrough —— 采样 InSampler 原样输出。
      *
      * <p>顶点侧用的是 {@code fullscreen_flipv}（1-v 已在顶点完成），故片元用**原始 vUv**，
@@ -146,21 +153,66 @@ public final class PackCompositeSource {
     private PackCompositeSource() {}
 
     /**
-     * 扫描库存并生成 composite 片元源。永不抛非受检异常（所有失败降级为诊断 + 最终兜底）。
+     * 旧签名 = <b>无包选择过滤</b>（自动：扫描顺序取第一个能编出 composite 的包，P2.4 既有行为）。
+     * P4.2 起委托 {@link #generate(Path, String, String)}，{@code packSelection=""}。
      *
      * @param inventoryDir {@code <gameDir>/shaderpacks}；null / 不存在 → 直接兜底（扫描器产出诊断）
      * @param profileName  profile 预设名；null / 空白 = 使用包默认值
      */
     public static Result generate(Path inventoryDir, String profileName) {
+        return generate(inventoryDir, profileName, "");
+    }
+
+    /**
+     * 扫描库存并生成 composite 片元源（P4.2 起带包选择过滤，{@code 08-TESTING.md} §6 切包驱动）。
+     * 永不抛非受检异常（所有失败降级为诊断 + 最终兜底）。
+     *
+     * @param inventoryDir  {@code <gameDir>/shaderpacks}；null / 不存在 → 直接兜底（扫描器产出诊断）
+     * @param profileName   profile 预设名；null / 空白 = 使用包默认值
+     * @param packSelection 包选择三态：{@code ""} = 自动（扫描顺序）；{@link #SELECTION_NONE} =
+     *                      强制内置 passthrough（保留名，不扫包）；其它 = 按包名<b>精确匹配</b>
+     *                      （{@code DiscoveredPack.name} = 扫包日志 {@code pack[N] name=}）——
+     *                      只有该包参与选择，匹配失败 / 无成功产出 → 显式 WARN + 兜底，
+     *                      <b>绝不静默落到别的包</b>（否则 §6 的 S2 判据失去意义）
+     */
+    public static Result generate(Path inventoryDir, String profileName, String packSelection) {
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         String profile = profileName == null ? "" : profileName.trim();
+        String selection = packSelection == null ? "" : packSelection.trim();
+
+        if (SELECTION_NONE.equals(selection)) {
+            // 保留名强制兜底：不扫包（用户意图明确，T11 仍用 WARN 标出兜底事实）。
+            diagnostics.add(TranslateDiagnostic.of(
+                    TranslateDiagnostic.Severity.WARN,
+                    "vkdisp: 包选择 = 'none'（配置 shaderPack=none），不加载库存包，"
+                            + "使用内置 passthrough 兜底",
+                    SELECTION_NONE, TranslateDiagnostic.UNKNOWN_LINE));
+            return fallbackResult(profile, diagnostics);
+        }
+        boolean named = !selection.isEmpty();
 
         ShaderPackScanner.ScanResult scan = ShaderPackScanner.scan(inventoryDir);
         for (ShaderPackScanner.PackProblem problem : scan.problems()) {
             diagnostics.add(scanProblemDiagnostic(problem));
         }
+        if (named) {
+            // 过滤口径显式可见（T11）：选了名却没有候选 = 后面必走兜底，先留证据。
+            long candidates = scan.packs().stream()
+                    .filter(discovered -> selection.equals(discovered.name()))
+                    .count();
+            diagnostics.add(TranslateDiagnostic.of(
+                    TranslateDiagnostic.Severity.INFO,
+                    "vkdisp: 包选择过滤：仅接受 name='" + selection + "'（库存 "
+                            + scan.packs().size() + " 个包，候选 " + candidates + " 个）",
+                    selection, TranslateDiagnostic.UNKNOWN_LINE));
+        }
+        boolean nameSeen = false;
 
         for (ShaderPackScanner.DiscoveredPack discovered : scan.packs()) {
+            if (named && !selection.equals(discovered.name())) {
+                continue; // 指定选择下其它包不参与（不加载、不留诊断噪音）
+            }
+            nameSeen = true;
             ShaderPackService.LoadResult loaded = ShaderPackService.load(discovered);
             diagnostics.addAll(loaded.diagnostics());
             ShaderPack pack = loaded.pack();
@@ -250,15 +302,35 @@ public final class PackCompositeSource {
             }
             diagnostics.add(TranslateDiagnostic.of(
                     TranslateDiagnostic.Severity.WARN,
-                    "vkdisp: 包 '" + pack.name() + "' 的 composite 片元阶段无成功产出，尝试下一个包",
+                    named
+                            ? "vkdisp: 指定包 '" + pack.name()
+                            + "' 的 composite 片元阶段无成功产出（shaderPack 指定下不换包，将走兜底）"
+                            : "vkdisp: 包 '" + pack.name() + "' 的 composite 片元阶段无成功产出，尝试下一个包",
                     pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
         }
 
-        diagnostics.add(TranslateDiagnostic.of(
-                TranslateDiagnostic.Severity.WARN,
-                "vkdisp: 库存中没有可用的 composite 片元源，使用内置 passthrough 兜底"
-                        + "（inventory=" + inventoryDir + ", profile='" + profile + "')",
-                String.valueOf(inventoryDir), TranslateDiagnostic.UNKNOWN_LINE));
+        // 全军覆没 → 兜底（T11：原因按选择模式显式区分，不混成一句「没有可用的」）。
+        if (named) {
+            diagnostics.add(TranslateDiagnostic.of(
+                    TranslateDiagnostic.Severity.WARN,
+                    (nameSeen
+                            ? "vkdisp: 指定包 '" + selection + "' 无成功产出"
+                            : "vkdisp: 指定包 '" + selection + "' 不在库存中")
+                            + "（inventory=" + inventoryDir + "），使用内置 passthrough 兜底"
+                            + "（不落到其它包）",
+                    selection, TranslateDiagnostic.UNKNOWN_LINE));
+        } else {
+            diagnostics.add(TranslateDiagnostic.of(
+                    TranslateDiagnostic.Severity.WARN,
+                    "vkdisp: 库存中没有可用的 composite 片元源，使用内置 passthrough 兜底"
+                            + "（inventory=" + inventoryDir + ", profile='" + profile + "')",
+                    String.valueOf(inventoryDir), TranslateDiagnostic.UNKNOWN_LINE));
+        }
+        return fallbackResult(profile, diagnostics);
+    }
+
+    /** 统一兜底出口：三源全 passthrough、链路开关全 false、{@code packName=null}（T11 诊断由调用方先落）。 */
+    private static Result fallbackResult(String profile, List<TranslateDiagnostic> diagnostics) {
         return new Result(FALLBACK_GLSL, FALLBACK_GLSL, false, FALLBACK_GLSL, false,
                 null, true, profile, diagnostics);
     }

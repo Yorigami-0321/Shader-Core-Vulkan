@@ -256,6 +256,8 @@ public final class VkDispVirtualPack {
         try {
             boolean enabled = VkDispConfig.ENABLED.get();
             String profile = VkDispConfig.PACK_PROFILE.get();
+            // P4.2 切包（§6 四张截图法的驱动）："" = 自动扫描顺序 / "none" = 强制兜底 / 其它 = 精确包名。
+            String selection = VkDispConfig.SHADER_PACK.get();
             if (!enabled) {
                 hasDeferredProgram = false;
                 hasFinalProgram = false;
@@ -269,16 +271,18 @@ public final class VkDispVirtualPack {
                         PackCompositeSource.FALLBACK_GLSL, PackCompositeSource.FALLBACK_GLSL);
             }
             Path inventory = inventoryDir();
-            VkDisp.LOGGER.info("vkdisp: composite source generation start: profile='{}' inventory={}",
-                    profile, inventory);
-            PackCompositeSource.Result result = PackCompositeSource.generate(inventory, profile);
+            VkDisp.LOGGER.info(
+                    "vkdisp: composite source generation start: profile='{}' selection='{}' inventory={}",
+                    profile, selection, inventory);
+            PackCompositeSource.Result result = PackCompositeSource.generate(inventory, profile, selection);
             for (TranslateDiagnostic diagnostic : result.diagnostics()) {
                 logDiagnostic(diagnostic);
             }
             // 证据行：A/B 对比时用（pack / profile / fallback / 源大小 / 诊断数）。
             VkDisp.LOGGER.info(
-                    "vkdisp: composite source ready: fallback={} pack={} profile='{}' bytes={} diagnostics={}",
-                    result.fallback(), result.packName(), result.profile(),
+                    "vkdisp: composite source ready: fallback={} pack={} profile='{}'"
+                            + " selection='{}' bytes={} diagnostics={}",
+                    result.fallback(), result.packName(), result.profile(), selection,
                     result.source().getBytes(StandardCharsets.UTF_8).length,
                     result.diagnostics().size());
             hasDeferredProgram = result.hasDeferredProgram();

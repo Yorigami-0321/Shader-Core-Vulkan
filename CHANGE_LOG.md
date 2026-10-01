@@ -5,6 +5,59 @@
 
 ---
 
+## 2026-10-01 — P4.2 切包回归：shaderPack 三态选择 + FML 配置热加载驱动会话内切包，四张截图单会话闭环（S1↔S4 静态地面带 identity=+1.0000，505 单测全绿）
+
+- **本次改了什么**（01-DEV-LOOP P4.2 / `08-TESTING.md` §6 四张截图法）：
+  1. **切换驱动 —— 配置热加载（新增 `VkDispConfigHotReload`）**：调研以字节码纠正了
+     中途「FML 无配置文件监视」的结论（当时只 javap `ConfigTracker` 公有方法，漏了同包
+     `ConfigWatcher`）：FML 实际内置 nightconfig FileWatcher（`Watching TOML config file …`，
+     500ms 去抖）→ 外部改 TOML → `ConfigWatcher.run` → `loadConfig(…, Reloading::new)`
+     → 发 **`ModConfigEvent.Reloading`**（mod bus；GUI 保存同事件）。本类只接本模组
+     （modid 过滤）→ T11 显式 INFO（新值全量落日志）→ `minecraft.execute(() ->
+     reloadResourcePacks())`（观察者线程 → 渲染线程）；不订阅 `Loading`（启动首载 =
+     空转）/ `Unloading`（无后续语义）。
+  2. **`VkDispConfig` 新增 `shaderPack` 三态**：`""`（默认）= 自动按库存扫描顺序取第一个
+     能编出 composite 的包（P2.4 原行为一行不改）；`"none"` = 保留名，强制内置 passthrough
+     （不扫包，WARN 显式）；其它 = 按包名**精确匹配**（= 扫包日志 `pack[N] name=`），
+     缺名/坏包 → 显式 WARN + 兜底，**绝不静默落到别的包**（否则 §6 的 S2 判据失去意义）。
+  3. **`PackCompositeSource.generate` 三参重载** + 2 参兼容委托（存量调用与单测零改动）；
+     选择过滤在 `DiscoveredPack.name` 上（load 前跳过非目标包），过滤口径/候选数/兜底原因
+     按选择模式分别落诊断（T11）。
+  4. **`VkDispVirtualPack.generateSources` 接线**：读 `SHADER_PACK`，
+     `generation start` / `source ready` 日志带 `selection='…'`（四阶段日志锚点）。
+- **为什么改**：§6 的经典坑（管线缓存按 program 键，切包后旧管线残留）只能在**会话内**
+  切换才测得出 —— 重启给的是冷缓存、证明不了残留；且本环境无输入注入（F 键/GUI 点击
+  不可用），配置热加载同时解决了「生产用户免手动 F3+T」与「测试无输入注入」两个问题，
+  是特性而非测试后门。一并使 `packProfile` / `enabled` 的外部改值同样立即生效。
+- **影响的文档**：`docs/08-TESTING.md` §6（追加执行方式与首跑取证指针）；
+  `evidence/p417-pack-switch.md`（新建，G-01 全格式）+ `evidence/README.md`（索引行）；
+  源码 3 改 1 新增（VkDispConfig / PackCompositeSource / VkDispVirtualPack +
+  VkDispConfigHotReload）+ 单测 1 文件。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；**505 用例 0 失败 0 错误**（501 → 505，+4 =
+    `PackCompositeSourceTest` 选择四件套：none 强制兜底不冒充库存枯竭 / 按名精确选中
+    无视扫描顺序 / 缺名兜底不碰别的包 / 目标包坏掉不穿透到下一个包）。
+  - ✅ **单会话四张截图**（`evidence/p417-pack-switch.md`）：S1 `""`→BSL（bytes=24515）→
+    改 `"vkdisp-fixture-dir"` → S2（bytes=1655，≤40ms 源重生成 / ≈4.5s 重载完成）→
+    改 `"none"` → S3（`fallback=true pack=null bytes=424`）→ 改回 `""` → S4（bytes=24515
+    与 S1 同长）。判读：**S1↔S4 静态地面带 identity=+1.0000、带 RGB 三通道差 0.0**
+    （全 crop +0.9390，残差全部来自云飘移 —— p416 已登记环境因素）；S2/S3 饱和尖刺
+    **0.000%**、目检无 BSL 残留；S2/S3 逐像素亮度比 **median=0.7108 vs 理论 0.711**
+    （fixture deferred ×(1,0.7,0.7) 叠 composite ×0.9 —— 重载后全链逐像素成立，
+    顺带补上 p416 未覆盖的 deferred 链视觉传导抽证）；链路边沿埋点三行（deferred/final
+    wired、composite input source）在回切时全部重打。
+  - ✅ 零回归：`stages=190 ok=49 failed=141` ×4 逐字一致；ERROR 直方图 = 已知 141 矩阵
+    6 类指纹 × **恰好 4 份** + 环境类（SoundEngine/Narrator）—— **零新错误类**；
+    `registered=9 compiled=9`、`Missing uniform`=0、`fullscreen pass failed`=0、
+    `解析失败`=0；三次重载均无 `pipelines not compiled`。
+- **未覆盖**（如实登记）：GUI 保存路径实测（字节码已证同一 `Reloading` 事件，留 P4.3
+  选项 GUI 轮一并取证）；`packProfile` 热切换（同一驱动链，本轮只切 `shaderPack`）；
+  **141 阶段矩阵**修复（本轮仅证 ×4 稳定复现零新增，登记缺口不变）；`builtins uploaded`
+  重载后不重打（一次性埋点 —— 重载期 uniform 正确性以 S2 像素比值代证）；菜单态热切换。
+- **是否已提交**：随本轮 commit 提交并推送 origin/master。
+
+---
+
 ## 2026-10-01 — P4.1.6 画面方向矫正：强制位姿三跑钉死 P3.3 链 composite 顶点根因，「顶点翻转跟随彩色采样源」三处落地，地平线 204（翻转）→ 392（正立）镜像闭合（501 单测全绿）
 
 - **本次改了什么**（用户报「镜头反了：下方是黑色的天空、上方是黄色的地面」的根因修复）：
