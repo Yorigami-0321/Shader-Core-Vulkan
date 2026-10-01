@@ -2,6 +2,7 @@
 
 > 跨会话项目记忆。每次生成/更新文档包后同步。
 > **2026-09-29 方向已彻底变更：以 §0 为准，旧方向全废。**
+> **最新交接快照：§9（2026-10-01，141 阶段矩阵修复轮，任务停止前存档）。**
 
 ---
 
@@ -249,3 +250,92 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
 
 **不要**用 IDE 批量 replace package 盲改 —— 26.3 那次搬迁**不完整**
 （`RenderTarget` / `TextureTarget` / `RenderSystem` 没搬），盲改会改坏。
+
+---
+
+## 9. 交接快照（2026-10-01 · 141 阶段矩阵修复轮，任务停止前存档）
+
+> 用户指令：本轮修改提交 → 写交接文档 → 交接文档同样提交 → 停止任务。
+> HEAD：`399e6a3`（测试转正）← `21461ea`（留档）← `4acde09`（P4.3）；工作树干净，已推送 origin/master。
+> `./gradlew build` exit 0：**572 tests / 0 failures / 0 skipped**（47 个结果 XML）。
+> 本轮**唯一未完成项 = runClient 实测取证**（见 §9.2 第 1 步）。
+
+### 9.1 本轮完成（都已提交推送）
+
+第二跑实测 `pack compile done: stages=190 ok=96 failed=94` —— 首错从 141 降到 94，
+四个旧错误类**全部归零**（证据口径 = 错误原文，内部编号 21461ea 提交信息里有串号，以本表为准）：
+
+| 错误原文类 | 修复落点 | 说明 |
+|---|---|---|
+| `undeclared identifier`（旧内建 gl_MultiTexCoord0 / gl_TextureMatrix / Position …） | `LegacyBuiltinInjector` | 141 主类；第一版「注入 gl_ 声明」被第二跑 reserved 否决 → **本会话重写为替换+注入**（下详） |
+| `SPIR-V requires location`（顶点 in 缺 location ×36） | `IoLocationAdapter` | P4.4：顶点 in 也补 `layout(location)`；绑定键仍是名字（PipelineBuilder 按 element.name() 查反射表） |
+| `can't use function syntax on variable`（texture 目标名冲突 ×44 FRAGMENT） | `TextureFunctionRenamer` 第二阶段 | ⑦ 前的改名撞上包声明的同名变量 → 声明位/实参位等全部非调用位改写 `texture_N` |
+| `redefinition`（dh/voxy 顶层**无关键字**同名全局被再注入块成员，D 类 6×FRAGMENT + 8 潜伏） | `UniformInjector` `TOP_LEVEL_GLOBAL` 登记 | 只登记「已声明」不改写行文本；范围收窄：整行 `;` 结尾 + `{}` 深度 0 + 仅 23 条 catalog 名 |
+| （诊断口径）同行多语句 WARN 行号被插入行右移 | `OfGlslTranslator` 级间映射回填 | ⑤ 后诊断经 ⑤ 级映射 ∘ 上游回填，`OfGlslTranslatorTest.diagnosticsAfter…` 锁定 |
+
+**reserved 第二波（本会话核心）**：补声明落地后驱动改报
+`identifiers starting with "gl_" are reserved` ×91（stage=VERTEX）+ `texture2DGradARB` ×3 ——
+**GLSL 公开词法保留 gl_ 前缀，用户代码声明与使用皆非法 → 注入 gl_ 名这条路被根本否决**，
+`LegacyBuiltinInjector` 全量重写为「**token 级等行替换 + 属性声明注入**」：
+
+- **属性类替换（仅 VERTEX）**：`gl_MultiTexCoord0→UV0`、`gl_MultiTexCoord1→UV2`、
+  `gl_Color→Color`、`gl_Normal→Normal`、`gl_Vertex→位置操作数`（与 `FtransformExpander`
+  同口径：包内声明 vec4 → 名字直接用；否则 `vec4(name, 1.0)`；未声明 →
+  `vec4(Position, 1.0)`）。映射与 `GlslDeclarationExtractor.ATTRIBUTE_ALIASES` 同源
+  （Iris 属性兼容档 ↔ 04-SPEC §4 表）。
+- **矩阵类替换（任何阶段）**：`gl_ProjectionMatrix→gbufferProjection`、
+  `gl_ModelViewMatrix→gbufferModelView`、`gl_ModelViewProjectionMatrix→(投影×视图)`、
+  `gl_NormalMatrix→(transpose(inverse(mat3(模型视图))))`（OpenGL 公开法线矩阵定义）、
+  `gl_TextureMatrix[n]→mat4(1.0)`（下标随 token 消费；裸名 / 声明行保留交驱动 T11）。
+- **注入只剩**「用而未声明」的裸 `in vec4 UV0; / in vec4 UV2; / in vec4 Color; /
+  in vec3 Normal; / in vec3 Position;`，由 ⑥ 补 location；行数 = 原行数 + 注入数，
+  `Result.insertIndex/insertedLineCount` 行号契约不变。
+- **声明行保护**：表达式型替换遇该旧名显式声明行不动 token（否则声明名位落进表达式打坏语法）；
+  纯标识符替换声明 / 使用同步换名；`gl_Vertex` 声明行改名 `Position`。
+- **幂等**：第二遍无 gl_ token（替换门关）+ Position 已 layout 声明（注入门关）→ 逐字节不变、零诊断。
+- **texture2DGradARB → textureGrad**（`TextureFunctionRenamer.renames()`；ARB 扩展 →
+  330 core 四参同名同参重命名；自动进 `targetNames()` 冲突消解集合）。
+- 测试：`LegacyBuiltinInjectorTest` 重写 17 例；`OfGlslTranslatorTest` 端到端改内容寻址
+  + 新增顶点 ⑤+⑧ 合成映射 e2e；`TextureFunctionRenamerTest` +2（RENAME_CASES 行 + 四参 golden）。
+  `FtransformExpander.POSITION_CANDIDATES` 改包级可见；`OfGlslTranslator` ⑤ javadoc 同步
+  （**编排逻辑未变**，⑤ 仍可能插行，级间映射 / compose 语义全部沿用）。
+
+### 9.2 下一步（按序执行即可续轮）
+
+1. **runClient 取证**（缺的硬证据；日志里 `vkdisp: pack compile done:` 行 = `VkDispPackScan.java:220`）：
+   ```bash
+   mv run/logs/latest.log run/logs/pre-141fix-$(date +%s).log   # 每次启动前隔离旧日志
+   source tools/vulkan-local/env.sh
+   export JAVA_TOOL_OPTIONS="-Djava.net.preferIPv4Stack=true"
+   ./gradlew runClient -PquickPlay --console=plain
+   ```
+   达标线：**`stages=190 ok=190 failed=0`**；同时核对 `pipeline count … registered=9, compiled=9`、
+   Missing uniform=0、解析失败=0、fullscreen pass failed=0。⚠️ **首错遮蔽**：还有失败就会有新类
+   冒出来把旧的藏住 —— 同轮修掉或显式登记（T11），不许带着未知类收轮。游戏退出后再对日志取 sha256。
+2. 证据文件 `evidence/p4xx-141-matrix.md`（G-01 格式：一行复现 + sha256 表 + 判定表 + 未覆盖登记；
+   模板 `evidence/p418-options-gui.md`）+ `evidence/README.md` 索引行。
+3. 文档同步：`08-TESTING.md` §1/§6；`18-PARALLEL.md:475` 陈旧行；可选 `04-SPEC.md` §3.2 补矩阵
+   语义一句（gl_* → gbuffer* 的对应表已在 `LegacyBuiltinInjector` 类注释）。
+4. `CHANGE_LOG.md` 15-ITERATION 条目（素材 = 两个提交信息 `21461ea` + `399e6a3` + §9.1 表；
+   口径：四类归零 + reserved/texture2DGradARB 第二波 + 572 单测）。
+5. 收尾 commit + push（轮次纪律：每轮结束都提交并推送）。
+
+### 9.3 已登记课题（不阻塞主线）
+
+- 单位纹理矩阵的**视觉正确性**（截图轮验证 UV 采样无回归 —— 替换语义对不对最终看画面）；
+- Complementary / Sildur 包扫描（BSL 打通后）；Iris 对比 = 环境极限（登记不追）；
+- dh duplicate-WARN（先于本轮存在）；pack 自声明 gl_ 名（声明行留原样 → 驱动可见）；
+  表外旧名（`gl_MultiTexCoord2` / `gl_TextureMatrixOffset` / `gl_TexCoord`）→ 真被用时驱动
+  T11 报错再扩表（X9 不猜）；
+- 属性绑定数据的**运行时正确性**（vec4 输入绑 vec2 格式沿 mc_Entity 先例，画面轮确认）。
+
+### 9.4 环境与红线速查（详见持久记忆 + §6）
+
+- 一切 java/gradle 前缀 `export JAVA_TOOL_OPTIONS="-Djava.net.preferIPv4Stack=true"`（隧道 hook.so 否则 EINVAL）；
+- 禁止前台 `sleep`、禁止 `pkill -f GradleDaemon`（游戏进程 `kill <pid>` 可以）、禁止 `--rerun-tasks`、
+  解压用 Python zipfile；hash 证据在游戏退出后取；
+- **输入注入已封**（XTEST/xdotool/ydotool/wtype 及任何替代 = 同样失败结论）：证据只走配置热加载 +
+  进程内组件调用（p416/p417/p418 同源法）；窗口 id 每次启动都变，枚举用 `x11_capture.py --list-windows`；
+- 红线不变：IrisShaders/glsl-transformer **按禁止处理零代码并入**（MIT only）、X9 不猜测
+  （javap/字节码算验证）、T5 业务包不 import `com.mojang.renderpearl.*`/blaze3d（bridge/ 例外）、
+  L11/X18 `sodium|caffeinemc` 零命中、`docs/` 归本机 env-1。
