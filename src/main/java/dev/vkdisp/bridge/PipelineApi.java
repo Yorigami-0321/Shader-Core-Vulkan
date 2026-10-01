@@ -91,6 +91,91 @@ public final class PipelineApi {
      */
     public static final String BUILTINS_UNIFORM = "VkDispBuiltins";
 
+    /**
+     * P4.1.2：包片元自由 sampler 注册清单（驱动层反射门控）。
+     *
+     * <p>取证（javap {@code PipelineBuilder.generateBackendCreateInfo}，:277 抛点）：SPIR-V
+     * 反射出的每个 descriptor 名都必须能在 {@code flattenUniforms(绑定组)} 里查到，查不到即
+     * {@code Unable to find shader defined uniform (名字)}。P4.1 收编后包片元块外只剩透明
+     * sampler，因此库存包 composite/deferred 的 sampler 必须逐一注册；反向（布局条目多于
+     * SPIR-V）字节码无校验 —— 多注册无害（fixture/blit 不声明 Globals 仍可绘制的既有实测）。
+     *
+     * <p>清单来源 = 库存 BSL_v10.1.8 的 world0/composite + world0/deferred include 闭包
+     * 实测（18 名，run/shaderpacks/BSL_v10.1.8.zip 程序化扫描；colortex/depthtex/noisetex
+     * 等命名与 OptiFine 官方 Uniforms 表同源 —— UniformDecl 的既有参考口径）。换包扩充按
+     * 同法闭包扫描（P4.2 切包回归登记）。
+     *
+     * <p>draw 侧实测（P4.1.2 首轮 runClient，javap {@code FrontendRenderPass.validateDraw}
+     * :553 取证）：STRICT_VALIDATION 下 {@code draw()} 传空排除集 → **布局每个条目都必须
+     * setUniform**，缺即 {@code Missing uniform 名 (should be 类型)}；COMBINED_IMAGE_SAMPLER
+     * 的值须为未关闭的 TextureViewAndSampler（视图 usage 含采样位）。故 {@link
+     * #setPackSamplerUniforms} 一并绑定，见该方法 javadoc 的占位口径。
+     */
+    private static final String[] PACK_FRAGMENT_SAMPLERS = {
+            "colortex0", "colortex1", "colortex6", "colortex8", "colortex9",
+            "depthtex0", "depthtex1", "noisetex",
+            "shadowcolor0", "shadowtex0", "shadowtex1",
+            "gaux1", "lighttex0", "lighttex1",
+            "vxDepthTexOpaque", "vxDepthTexTrans",
+            "dhDepthTex0", "dhDepthTex1",
+    };
+
+    /**
+     * P4.1.2 draw 侧：把 {@link #PACK_FRAGMENT_SAMPLERS} 全部 setUniform（按名分视图）。
+     *
+     * <p>必须在包片元管线（composite / composite_scene / deferred）{@code draw()} 之前调用
+     * —— validateDraw 按**布局**逐条校验（不是按 SPIR-V 引用），缺一条即抛（首条缺的是
+     * colortex0，实测 15k+ 次/帧）。
+     *
+     * <p>视图映射（OF 合成语义，BSL 源实测定的口径）：
+     * <ul>
+     *   <li>{@code colortex0} := {@code colorView} —— OF 里 composite 的彩色主输入；
+     *       deferred 的 {@code DRAWBUFFERS:4} **不写 0 号**，场景色跨 deferred 步不变
+     *       （首跑把 colortex0 绑成 deferred 输出 = AO/NaN 缓冲 → composite 读 color
+     *       全黑，p412_world.png 实测根因）；</li>
+     *   <li>{@code gaux1} := {@code auxView} —— OF 身份 {@code gaux1 = colortex4}
+     *       = deferred 的输出缓冲（我们单输出链里 deferred 的 AO 就落在这里）；</li>
+     *   <li>其余 16 名（含 lighttex0/1 sampler3D、shadowtex0/1 sampler2DShadow，
+     *       布局均登记 COMBINED_IMAGE_SAMPLER） := {@code colorView} 占位 —— 采到何值不
+     *       承诺（真值随 OfUniformManager 上传链 / MRT 后补，18-PARALLEL §5 P4.1 ⑤）；
+     *       驱动层对维数/比较采样若报错，按实测原文迭代（X9 不猜）。</li>
+     * </ul>
+     *
+     * @param pass 当前 render pass（包片元管线已 setPipeline）
+     * @param colorView 彩色主输入视图（非 null）
+     * @param auxView 辅助缓冲视图（非 null；无 deferred 链时与 colorView 同源）
+     * @param sampler 原版 clamp-to-edge 采样器（与 InSampler 同一个）
+     */
+    static void setPackSamplerUniforms(
+            com.mojang.renderpearl.api.commands.RenderPass pass,
+            com.mojang.renderpearl.api.textures.GpuTextureView colorView,
+            com.mojang.renderpearl.api.textures.GpuTextureView auxView,
+            com.mojang.renderpearl.api.textures.GpuSampler sampler) {
+        for (String name : PACK_FRAGMENT_SAMPLERS) {
+            // colortex0 与其余 16 名 → colorView；仅 gaux1 → auxView（OF 身份 colortex4）。
+            com.mojang.renderpearl.api.textures.GpuTextureView view =
+                    name.equals("gaux1") ? auxView : colorView;
+            pass.setUniform(name, view, sampler);
+        }
+    }
+
+    /**
+     * 包片元管线绑定组：{@link #BUILTINS_UNIFORM} + {@link #SAMPLER_UNIFORM} + {@link #PACK_FRAGMENT_SAMPLERS}。
+     *
+     * <p>composite / composite_scene / deferred 三条管线共用（片元同源 = 虚拟包
+     * {@code vkdisp_pack:composite} / {@code :deferred}）。组内顺序沿 P-1f ②：
+     * 内建块在源中最靠前 → 块在前、采样器随后。
+     */
+    private static BindGroupLayout packFragmentLayout() {
+        BindGroupLayout.Builder builder = BindGroupLayout.builder()
+                .withUniform(BUILTINS_UNIFORM, UniformType.UNIFORM_BUFFER)
+                .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER);
+        for (String name : PACK_FRAGMENT_SAMPLERS) {
+            builder = builder.withUniform(name, UniformType.COMBINED_IMAGE_SAMPLER);
+        }
+        return builder.build();
+    }
+
     /** 深度可视化管线 location（P3 前置：采样深度纹理 → 灰度输出，用于验证深度附件链路）。 */
     public static final String DEPTHVIS_LOCATION = "vkdisp:pipeline/depthviz";
 
@@ -323,18 +408,15 @@ public final class PipelineApi {
      *
      * <p>片元 = 虚拟包 {@code vkdisp_pack:composite}（库存包源或内置兜底），
      * 顶点 = {@code vkdisp:fullscreen_flipv}（1-v 翻转上移到顶点，P-1f）。
-     * 绑定组同一组、顺序与包源 GLSL 声明一致（P-1f ②）：先 {@link #BUILTINS_UNIFORM}
-     * （D 线注入的内建块在源中最靠前）后 {@link #SAMPLER_UNIFORM}。
+     * 绑定组 = {@link #packFragmentLayout()}（P4.1.2 反射门控：BUILTINS + InSampler +
+     * 18 包 sampler 超集），组内顺序与 P-1f ② 一致（块在源中最靠前 → 块在前）。
      */
     public static void registerCompositePipeline(RegisterRenderPipelinesEvent event) {
         RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
                 .withLocation(COMPOSITE_PIPELINE_ID)
                 .withVertexShader(FULLSCREEN_FLIPV_SHADER_ID)
                 .withFragmentShader(COMPOSITE_SHADER_ID)
-                .withBindGroupLayout(BindGroupLayout.builder()
-                        .withUniform(BUILTINS_UNIFORM, UniformType.UNIFORM_BUFFER)
-                        .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
-                        .build())
+                .withBindGroupLayout(packFragmentLayout())
                 .withColorTargetState(ColorTargetState.DEFAULT)
                 .build();
         event.registerPipeline(pipeline);
@@ -358,10 +440,7 @@ public final class PipelineApi {
                 .withLocation(COMPOSITE_SCENE_PIPELINE_ID)
                 .withVertexShader(FULLSCREEN_SHADER_ID)
                 .withFragmentShader(COMPOSITE_SHADER_ID)
-                .withBindGroupLayout(BindGroupLayout.builder()
-                        .withUniform(BUILTINS_UNIFORM, UniformType.UNIFORM_BUFFER)
-                        .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
-                        .build())
+                .withBindGroupLayout(packFragmentLayout())
                 .withColorTargetState(ColorTargetState.DEFAULT)
                 .build();
         event.registerPipeline(pipeline);
@@ -377,8 +456,9 @@ public final class PipelineApi {
      *
      * <p>片元 = 虚拟包 {@code vkdisp_pack:deferred}（包源或内置 passthrough），
      * 顶点 = {@code vkdisp:fullscreen_flipv}（净翻转守恒推导，见 {@link #DEFERRED_PIPELINE_ID}），
-     * 绑定组与 composite 完全同款（BUILTINS + InSampler 同组 —— D 线对所有阶段统一注入，
-     * 18-PARALLEL §5 P3.3 ①）。deferred 只在世界内执行，但管线**必须无条件注册**
+     * 绑定组 = {@link #packFragmentLayout()}，与 composite 完全同款（D 线对所有阶段统一
+     * 注入 + P4.1.2 反射门控超集 —— deferred 的 noisetex 反射名也在 18 名清单内）。
+     * deferred 只在世界内执行，但管线**必须无条件注册**
      * （required：注册缺失会让 registered≠compiled 计数断言失败）。
      */
     public static void registerDeferredPipeline(RegisterRenderPipelinesEvent event) {
@@ -386,10 +466,7 @@ public final class PipelineApi {
                 .withLocation(DEFERRED_PIPELINE_ID)
                 .withVertexShader(FULLSCREEN_FLIPV_SHADER_ID)
                 .withFragmentShader(DEFERRED_SHADER_ID)
-                .withBindGroupLayout(BindGroupLayout.builder()
-                        .withUniform(BUILTINS_UNIFORM, UniformType.UNIFORM_BUFFER)
-                        .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
-                        .build())
+                .withBindGroupLayout(packFragmentLayout())
                 .withColorTargetState(ColorTargetState.DEFAULT)
                 .build();
         event.registerPipeline(pipeline);

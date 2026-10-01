@@ -688,6 +688,11 @@ public final class FrameApi {
                 RenderSystem.bindDefaultUniforms(pass);
                 pass.setUniform(PipelineApi.BUILTINS_UNIFORM, builtinsRing().currentBuffer());
                 pass.setUniform(PipelineApi.SAMPLER_UNIFORM, SceneCaptureApi.sceneColorView(), sampler);
+                // P4.1.2：validateDraw 按布局逐条校验（javap 取证）—— 18 包 sampler 缺一即抛。
+                // deferred 只读场景色（其 DRAWBUFFERS:4 写出的 AO 落在本步输出 viewC），
+                // 不采样 gaux1 → color/aux 同绑场景色占位。
+                PipelineApi.setPackSamplerUniforms(pass,
+                        SceneCaptureApi.sceneColorView(), SceneCaptureApi.sceneColorView(), sampler);
                 pass.draw(3, 1, 0, 0);
             }
         }
@@ -728,6 +733,14 @@ public final class FrameApi {
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform(PipelineApi.BUILTINS_UNIFORM, builtinsRing().currentBuffer());
             pass.setUniform(PipelineApi.SAMPLER_UNIFORM, compositeInput, sampler);
+            // P4.1.2：布局 18 包 sampler 必须全部 setUniform 才能 draw（validateDraw 逐条校验）。
+            // OF 合成语义（BSL 源实测）：deferred 步 DRAWBUFFERS:4 不改写 colortex0 ——
+            // 链模式下 composite 的彩色主输入仍是**场景色**（绑 viewC=AO/NaN 缓冲即首跑全黑
+            // 根因），我方 deferred 输出（AO）按 gaux1=colortex4 身份挂辅助位；
+            // 直连/菜单模式无此分叉（color=aux=compositeInput）。
+            GpuTextureView packColor = deferredChain ? SceneCaptureApi.sceneColorView() : compositeInput;
+            GpuTextureView packAux = deferredChain ? viewC : packColor;
+            PipelineApi.setPackSamplerUniforms(pass, packColor, packAux, sampler);
             pass.draw(3, 1, 0, 0);
         }
         builtinsRing().rotate();

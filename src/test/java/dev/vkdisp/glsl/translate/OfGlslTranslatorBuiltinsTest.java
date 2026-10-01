@@ -26,17 +26,17 @@ import dev.vkdisp.glsl.TranslateResult;
  *    + F3 契约给出的 C/D 背靠背用法（逐级 compose + locatedAt 回填）的落地断言。
  * 2. 备选：无 —— 文本级 golden 断言最直接。
  * 3. 我们的差异点：二期新增两个插入点（合成片元输出声明 + 内建 uniform 注入），因此专门断言
- *    ① 端到端文本 golden（五级流水线串起来仍然逐字可预期）；
+ *    ① 端到端文本 golden（七级流水线串起来仍然逐字可预期）；
  *    ② 幂等：输出文本是不动点，第二遍无新增诊断；
- *    ③ **诊断定位按级取映射**：⑤ 级（注入）运行在 ④ 级插入之后，若直接拿上游映射回填会整体错位 ——
- *    这里用"注入阶段产生的 WARN 必须落在原文件正确行号"把它钉死。
+ *    ③ **诊断定位按级取映射**：⑦ 级（注入）运行在 ⑥ 级（合成片元输出）插入之后，若直接拿上游
+ *    映射回填会整体错位 —— 这里用"注入阶段产生的 WARN 必须落在原文件正确行号"把它钉死。
  * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：测试代码不进运行时；冷路径无性能要求（18-PARALLEL §7.7）。
  */
 /**
  * {@link OfGlslTranslator} 二期能力的端到端单测：gl_ 内建输出 + 旧纹理函数 + ftransform 一起过
- * 五级流水线的 golden、幂等，以及两个插入点叠加后的行号映射与诊断回填。
+ * 七级流水线的 golden、幂等，以及两个插入点叠加后的行号映射与诊断回填。
  */
 class OfGlslTranslatorBuiltinsTest {
 
@@ -55,7 +55,7 @@ class OfGlslTranslatorBuiltinsTest {
 
     /** {@link #FRAGMENT_SAMPLE} 的期望输出（内建 uniform 匿名 std140 块 + 合成片元输出声明两个插入点）。 */
     private static final String FRAGMENT_EXPECTED = """
-            #version 120
+            #version 410
             // self-made OF-dialect fragment sample for unit tests (not from any third-party pack)
             // vkdisp: OF builtin uniforms (04-SPEC 3.2)
             layout(std140) uniform VkDispBuiltins {
@@ -85,7 +85,7 @@ class OfGlslTranslatorBuiltinsTest {
             };
             layout(location = 0) out vec4 vkdispFragOut0;
             uniform sampler2D gtexture;
-            in vec2 texcoord;
+            layout(location = 0) in vec2 texcoord;
             /* DRAWBUFFERS:0 */
             void main() {
                 vec4 color = texture(gtexture, texcoord);
@@ -97,7 +97,7 @@ class OfGlslTranslatorBuiltinsTest {
     void goldenFragmentTranslationOfSelfMadeSample() {
         TranslateResult result = OfGlslTranslator.translate(ShaderStage.FRAGMENT, FRAGMENT_SAMPLE);
         assertTrue(result.isSuccess(), "样本无错误，必须成功：" + result.diagnostics());
-        assertEquals(FRAGMENT_EXPECTED, result.text(), "五级流水线输出必须与预期字符串逐字一致");
+        assertEquals(FRAGMENT_EXPECTED, result.text(), "七级流水线输出必须与预期字符串逐字一致");
         assertEquals(1, result.diagnostics().size(), result.diagnostics().toString());
         assertEquals(TranslateDiagnostic.Severity.INFO, result.diagnostics().get(0).severity());
         assertTrue(result.diagnostics().get(0).message().contains("合成"));
@@ -118,7 +118,7 @@ class OfGlslTranslatorBuiltinsTest {
                 """;
         TranslateResult result = OfGlslTranslator.translate(ShaderStage.VERTEX, source);
         assertTrue(result.isSuccess(), "样本无错误，必须成功：" + result.diagnostics());
-        assertTrue(result.text().startsWith("#version 120\n// self-made OF-dialect vertex sample"),
+        assertTrue(result.text().startsWith("#version 410\n// self-made OF-dialect vertex sample"),
                 result.text());
         assertTrue(result.text().contains("\nmat4 gbufferModelView;\n"),
                 "内建 uniform 应以匿名块成员注入：" + result.text());
@@ -147,8 +147,8 @@ class OfGlslTranslatorBuiltinsTest {
     }
 
     /**
-     * ⑤ 级（内建 uniform 注入）运行在 ④ 级（合成片元输出）插入之后：注入阶段的诊断行号在
-     * "④ 输出"坐标系里，必须经 ④ 级映射回填，否则插入点之后的诊断会整体错位一行。
+     * ⑦ 级（内建 uniform 注入）运行在 ⑥ 级（合成片元输出）插入之后：注入阶段的诊断行号在
+     * "⑥ 输出"坐标系里，必须经 ⑥ 级映射回填，否则插入点之后的诊断会整体错位一行。
      */
     @Test
     void injectorDiagnosticsAreLocatedThroughTheInsertedOutDeclaration() {
@@ -173,7 +173,7 @@ class OfGlslTranslatorBuiltinsTest {
         assertNotNull(typeMismatch, "必须报出内建 uniform 类型不符：" + result.diagnostics());
         assertEquals(TranslateDiagnostic.Severity.WARN, typeMismatch.severity());
         assertEquals("shaders/composite.fsh", typeMismatch.sourceFile(),
-                "⑤ 级诊断必须经 ④ 级映射后回填原文件（直接用上游映射会错位）：" + typeMismatch.format());
+                "⑦ 级诊断必须经 ⑥ 级映射后回填原文件（直接用上游映射会错位）：" + typeMismatch.format());
         assertEquals(2, typeMismatch.line(), typeMismatch.format());
 
         // P4.1 收编：原行文本被抹空（声明原样移进块），"找回原行"靠行号映射而非文本 ——
@@ -217,9 +217,61 @@ class OfGlslTranslatorBuiltinsTest {
         TranslateResult result = OfGlslTranslator.translate(ShaderStage.FRAGMENT, source);
         assertTrue(result.isSuccess());
         assertTrue(result.text().contains("fragColor = vec4(1.0);"));
-        assertEquals(0, count(result.text(), "layout(location"), "包内已有 out，不该再合成声明");
-        assertFalse(result.text().contains("vkdispFragOut"));
+        // P4.1.2：包内已有 out 现在由 ⑤ IoLocationAdapter 补 location（SPIR-V 强制）——
+        // ⑥ 合成器仍不得再造第二条 out 声明。
+        assertEquals(1, count(result.text(), "layout(location = 0) out vec4 fragColor;"),
+                "包内已有 out 由 ⑤ 补 location，恰好一条");
+        assertFalse(result.text().contains("vkdispFragOut"), "不该再合成声明");
         assertTrue(result.diagnostics().isEmpty(), result.diagnostics().toString());
+    }
+
+    /**
+     * P4.1.2 驱动层 6 类错误的端到端复刻（自造样本，形态对齐 runClient 实测 shaderc 报错，
+     * 标识符全部自造 —— 18-PARALLEL §7.6 不抄任何包源码）：① #version 120（低于 140）、
+     * ② 逗号多名字 uniform 的重复注入撞名、③ 片元 in 无 location、④ 逗号多名字 varying、
+     * ⑤ 合成片元输出、⑥ 二次转译逐字节幂等。
+     */
+    @Test
+    void driverErrorClassesAreAllGoneEndToEnd() {
+        String source = """
+                #version 120
+                // self-made driver-mirror sample for P4.1.2 (not from any third-party pack)
+                uniform float viewWidth, viewHeight, aspectRatio;
+                uniform float far, near;
+                varying vec2 uv;
+                varying vec3 lightDir, upDir;
+                void main() {
+                    gl_FragColor = vec4(uv, lightDir.xy);
+                }
+                """;
+        TranslateResult result = OfGlslTranslator.translate(ShaderStage.FRAGMENT, source);
+        assertTrue(result.isSuccess(), "驱动层 6 类错误必须全部消除：" + result.diagnostics());
+        String text = result.text();
+
+        // ① #version 120 → 410（shaderc 140 地板 + glslang 410/SSO location 门控，见 VersionAdapter）。
+        assertTrue(text.startsWith("#version 410\n"), "版本升级：" + text);
+
+        // ③④ 片元 in 全部带 location：uv=0、lightDir=1、upDir=2（同行拆语句，单空格）。
+        assertTrue(text.contains("layout(location = 0) in vec2 uv;"), text);
+        assertTrue(text.contains(
+                        "layout(location = 1) in vec3 lightDir; layout(location = 2) in vec3 upDir;"),
+                "逗号多声明名各自独占 location：" + text);
+
+        // ② 逗号多名字 uniform 整行收编恰好一次，后续名不再按目录重复注入。
+        assertEquals(1, count(text, "float viewWidth, viewHeight, aspectRatio;"),
+                "整行收编一次");
+        assertEquals(1, count(text, "float far, near;"), "整行收编一次");
+        assertEquals(0, count(text, "\nfloat viewWidth;\n"), "viewWidth 不许重复注入");
+        assertEquals(0, count(text, "\nfloat far;\n"), "far 不许重复注入");
+        assertEquals(0, count(text, "\nfloat near;\n"), "near 不许重复注入");
+
+        // ⑤ 合成片元输出就位。
+        assertTrue(text.contains("layout(location = 0) out vec4 vkdispFragOut0;"), text);
+
+        // ⑥ 第二遍逐字节相同且无新诊断（收编行在块内整行登记 + IO 已带 location）。
+        TranslateResult second = OfGlslTranslator.translate(ShaderStage.FRAGMENT, text);
+        assertEquals(text, second.text(), "输出文本是转译的不动点");
+        assertTrue(second.diagnostics().isEmpty(), () -> "第二遍不该再有诊断：" + second.diagnostics());
     }
 
     @Test

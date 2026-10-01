@@ -129,8 +129,8 @@ class GlslPipelineTest {
                 ShaderStage.FRAGMENT, "composite.fsh", MAIN_FSH, mainResolver());
         assertTrue(r.isSuccess(), r.diagnostics().toString());
 
-        // 被包含文件里重写过的行（in vec3 vHelper;）→ lib/common.glsl 第 2 行
-        int helperLine = indexOfLine(r.text(), "in vec3 vHelper;");
+        // 被包含文件里重写过的行（⑤ 补写后 layout(location = 0) in vec3 vHelper;）→ lib/common.glsl 第 2 行
+        int helperLine = indexOfLine(r.text(), "layout(location = 0) in vec3 vHelper;");
         assertEquals(new SourceLineMap.LineOrigin("lib/common.glsl", 2), r.originOf(helperLine),
                 "经 include 展开 + define 删除 + 注入位移后，行号仍须指回被包含文件原行");
         // 主文件里的行 → composite.fsh 原始行号（void main 在原文件第 14 行）

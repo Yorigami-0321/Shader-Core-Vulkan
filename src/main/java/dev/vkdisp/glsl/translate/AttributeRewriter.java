@@ -22,7 +22,9 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：core profile GLSL 限定符语义 —— 顶点阶段 in/out、片元阶段 in、attribute 仅限顶点阶段；
  *    转译目标形态取自 04-SPEC §3.3「OF GLSL → M GLSL 的源码级转译后交给原版编译」与 §4 的
- *    "字段名必须与 attribute 声明完全一致"（因此**不注入 layout(location=)**，绑定靠名字匹配）。
+ *    "字段名必须与 attribute 声明完全一致"（因此**顶点属性不注入 layout(location=)**，绑定靠
+ *    名字匹配；P4.1.2 起跨阶段 varying 的 in/out 由 ⑤ IoLocationAdapter 统一补 location ——
+ *    SPIR-V 强制，与属性名字绑定契约无关）。
  * 2. 备选：无 —— 不建 AST、不引入 glslang/ANTLR；只做行内关键字替换（冷路径清晰优先，18-PARALLEL §7.7）。
  * 3. 我们的差异点：① 只替换限定符关键字本身，缩进 / 注释 / 行尾内容 / 行数全部不变 ——
  *    C 线（预处理）的行号映射不被切断，D 线自己的输出行号映射也因此是纯恒等；
@@ -44,8 +46,9 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *   <tr><td>{@code varying}</td><td>{@code out}</td><td>{@code in}</td></tr>
  * </table>
  *
- * <p><b>不改的东西</b>：不注入 {@code layout(location = N)}（04-SPEC §4 要求属性名与
- * {@code VertexFormat} 字段字面一致，绑定靠名字）；不碰 {@code #include} / {@code #define}
+ * <p><b>不改的东西</b>：顶点属性不注入 {@code layout(location = N)}（04-SPEC §4 要求属性名与
+ * {@code VertexFormat} 字段字面一致，绑定靠名字；跨阶段 varying 的 location 由 ⑤
+ * IoLocationAdapter 补写）；不碰 {@code #include} / {@code #define}
  * （C 线职责，18-PARALLEL §4 D 线"不许做"）；不改 uniform 声明（UniformInjector 只补缺失项）。
  *
  * <p><b>行号契约</b>：重写是**行内等长替换之外的等行数**操作 —— 输出行数与输入逐行对齐，

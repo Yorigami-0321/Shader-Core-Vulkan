@@ -198,6 +198,85 @@ class UniformInjectorTest {
                 "抹空保行号：输出行数 = 输入行数 + 插入行数");
     }
 
+    /**
+     * P4.1.2 逗号多名字（BSL 实测形态自造样本，非抄包）：{@code uniform float far, near;} 的
+     * **全部**声明名必须登记 —— 只记首名会让 near 被当成缺失再注入一次，与收编进块的整行撞名
+     * （驱动实测 {@code duplicate member name} 取证）。
+     */
+    @Test
+    void commaSeparatedPlainUniformsAreAdoptedOnceWithEveryNameRegistered() {
+        String source = """
+                #version 330 core
+                uniform float viewWidth, viewHeight, aspectRatio;
+                uniform float far, near;
+                void main() {}
+                """;
+        UniformInjector.Result result = UniformInjector.inject(source);
+        assertEquals(1, count(result.text(), "float viewWidth, viewHeight, aspectRatio;"),
+                "逗号多名字整行收编，只出现一次");
+        assertEquals(1, count(result.text(), "float far, near;"),
+                "逗号多名字整行收编，只出现一次");
+        assertEquals(0, count(result.text(), "\nfloat viewWidth;\n"),
+                "viewWidth 已随收编行登记，不许按目录再注入一份");
+        assertEquals(0, count(result.text(), "\nfloat viewHeight;\n"),
+                "viewHeight 是后续声明名，同样已登记");
+        assertEquals(0, count(result.text(), "\nfloat far;\n"), "far 已登记，不再注入");
+        assertEquals(0, count(result.text(), "\nfloat near;\n"), "near 已登记，不再注入");
+        assertEquals(19, result.injected().size(),
+                "viewWidth/viewHeight/far/near 四条已声明 → 只注入其余 19 条");
+        assertEquals(0, count(result.text(), "uniform float viewWidth"),
+                "原行抹空（保行号契约）");
+        assertTrue(result.diagnostics().stream().anyMatch(d -> d.message().contains("2 条")),
+                () -> "两行收编应报一条数量 INFO：" + result.diagnostics());
+
+        // 幂等：收编行在块内以逗号多名字形态被整行记录 → 第二遍无缺失、无收编、逐字节相同。
+        UniformInjector.Result second = UniformInjector.inject(result.text());
+        assertEquals(result.text(), second.text(), "第二遍必须逐字节相同");
+        assertTrue(second.injected().isEmpty());
+        assertTrue(second.diagnostics().isEmpty(),
+                () -> "第二遍不该有诊断：" + second.diagnostics());
+    }
+
+    /**
+     * 逗号行里任一名字已被收编 → 整行不再收编（部分进块会撞名），重复名字照常 WARN（T11）。
+     */
+    @Test
+    void duplicateNameInCommaListWarnsAndLeavesLaterLineOutside() {
+        String source = """
+                #version 330 core
+                uniform float a, b;
+                uniform float b;
+                void main() {}
+                """;
+        UniformInjector.Result result = UniformInjector.inject(source);
+        assertTrue(result.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.WARN
+                                && d.message().contains("b 重复声明") && d.line() == 3),
+                () -> "第二行的 b 重复必须 WARN 且指回第 3 行：" + result.diagnostics());
+        assertEquals(1, count(result.text(), "\nfloat a, b;\n"), "首行整行收编一次");
+        assertEquals(1, count(result.text(), "uniform float b;"),
+                "重名行保留原样（不部分收编），交由驱动显式报错");
+    }
+
+    /** 第二遍扫描块成员时，逗号多名字成员的全部名字都要记作已声明（幂等的另一半）。 */
+    @Test
+    void commaSeparatedBlockMembersAreAllRecordedForIdempotency() {
+        String source = """
+                #version 330 core
+                layout(std140) uniform VkDispBuiltins {
+                float far, near;
+                };
+                void main() {}
+                """;
+        UniformInjector.Result result = UniformInjector.inject(source);
+        assertEquals(21, result.injected().size(),
+                "far / near 已在块内（逗号成员全登记）→ 只注入其余 21 条");
+        assertEquals(0, count(result.text(), "\nfloat far;\n"), "far 不许再注入");
+        assertEquals(0, count(result.text(), "\nfloat near;\n"), "near 不许再注入");
+        assertEquals(1, count(result.text(), "float far, near;"), "包声明原样保留");
+        assertTrue(result.diagnostics().isEmpty(), () -> "无重复无类型冲突：" + result.diagnostics());
+    }
+
     @Test
     void injectionIsIdempotent() {
         UniformInjector.Result first = UniformInjector.inject(MINIMAL);

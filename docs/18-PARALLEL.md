@@ -423,7 +423,8 @@ F1–F4 全部落地 → 放行并行
         同位姿逐像素镜像判定 = 未覆盖（需输入隔离环境重跑）；fixture 取证后已复原
         （deferred 回名 + zip 6 条目 3313B）。
    🟡 P4.1 主流包 BSL（01-DEV-LOOP §10 P4.1「BSL 主要效果可用（与 Iris 对比截图）」，
-      转译层已通、驱动层在途，分 P4.1.1/P4.1.2 子轮推进）｜验收 = 08-TESTING §4/§5。
+      转译层 P4.1.1 ✅、驱动层 P4.1.2 ✅（见 ⑥，判据①②达成），剩余画面质量子项
+      （uniform 上传 / final 步 / 141 阶段矩阵）留后续）｜验收 = 08-TESTING §4/§5。
       设计（X9 实测取证，全部非猜测）：
       ① **包结构实测**（临时探针跑真 zip `run/shaderpacks/BSL_v10.1.8.zip`，gitignored）：
       91 program / 284 option / profiles=[]（shaders.properties 解析失败：`#if 表达式含
@@ -435,12 +436,12 @@ F1–F4 全部落地 → 放行并行
       （文本原样移动、原行抹空保行号、透明类型留原位、重名/跨行/多语句不收、INFO 计数）；
       PackCompositeSource 维度偏好 world0 > 根 > 其它 + deferred 同维度配对（TreeMap 序
       `world-1/…` 先于 `world0/…`，旧首成者会选中下界）。
-      ③ **P4.1.2 驱动层工作清单**（按 p41a runClient 错误原文逐条登记，见④）：
-      逗号多名声明全名登记（`uniform float far, near;` 类只记首名 → 后名被二次注入 →
-      块内 duplicate，BSL program/composite.glsl L27/32/39 与驱动报文逐一吻合）；
-      `#version 120 → ≥140` 升级（shaderc 硬门槛，连带 `location qualifier on output`）；
-      包 varying 显式 `layout(location)`（SPIR-V 硬要求）；之后复验驱动矩阵 +
-      VkDispPackScan 全量矩阵（事件在失败重载上未送达，本轮未触达）。
+      ③ **P4.1.2 驱动层工作清单**（按 p41a runClient 错误原文逐条登记，见④；
+      **✅ 2026-10-01 全部交付，见 ⑥**）：逗号多名声明全名登记（`uniform float far, near;`
+      类只记首名 → 后名被二次注入 → 块内 duplicate，BSL program/composite.glsl L27/32/39
+      与驱动报文逐一吻合）；`#version 120 → ≥140` 升级（shaderc 硬门槛，连带
+      `location qualifier on output`）；包 varying 显式 `layout(location)`（SPIR-V 硬要求）；
+      之后复验驱动矩阵 + VkDispPackScan 全量矩阵（事件在失败重载上未送达，本轮未触达）。
       ④ **本轮实测（P4.1.1，2026-09-30）**：单测 434 全绿；探针
       `compile stages=182 ok=182 fail=0`（修复前 composite 片元 0 成功）、
       `generate → pack=BSL_v10.1.8 fallback=false hasDeferred=true sourceBytes=24505`
@@ -456,6 +457,32 @@ F1–F4 全部落地 → 放行并行
       （对照 fixture 基线可检伪）→ 与 Iris 对比截图（环境缺 Iris = 已登记限制）；
       uniform 数值仍全零上传（OfUniformManager 缺口）→ sunVec 系效果可能 NaN 的
       质量问题与 profiles 解析失败均留后续子轮。
+      **2026-10-01 结果**：判据① 三跑均 `registered=8, compiled=8 (aligned)` ✅；
+      判据② run2 黑（0.951/0.466%）→ run3 可见（11.901/30.69%）单变量归因 ✅；
+      判据③ 环境缺 Iris = 照旧登记限制 ⚠️。
+      ⑥ **P4.1.2 驱动层交付（2026-10-01，四修 + 三跑闭环）**：
+      转译扩七段 —— **VersionAdapter**（#version 三段式升 410：<140 必升 / 140–409 无
+      SSO 扩展升 / ≥410、ES 不动）+ **IoLocationAdapter**（片元 in/out、顶点 out 显式
+      layout(location)；顶点属性按 04-SPEC §4 留名字绑定）；**UniformInjector** BLOCK_MEMBER
+      扩逗号多声明全名登记（recordMemberNames/declaratorNames → declaredAtLine +
+      adoptedNames，后名不再二次注入）；驱动侧四修：**A** 顶点 fullscreen*.vsh 补
+      `layout(location=1/2) out sunVec/upVec`（接口链接）、**B**
+      `PipelineApi.PACK_FRAGMENT_SAMPLERS` 18 名片元采样器布局超集
+      （PipelineBuilder :277 单向 SPIR-V→layout，多项合法）、**C**
+      `setPackSamplerUniforms` 两处 draw 前全量 setUniform（validateDraw 遍历
+      boundPipeline.uniforms 缺一即抛）、**D** OF 语义视图映射（链内 colortex0→
+      sceneColorView、gaux1→viewC=colortex4 身份、其余 16 名同场景 view）。
+      实测三跑（`evidence/p412-driver-layer.md` 全文 + sha256 + 关键行原文）：
+      run1 Missing uniform 15679 + fullscreen pass failed 15679 → run2 +C 后 0/0
+      但纯黑（0.951/0.466%）→ run3 +D 后 0/0 且可见（11.901/30.69%，luma 桶 35–45
+      连续谱）；三跑 pack 矩阵逐字节一致 `stages=190 ok=49 failed=141`，
+      **0 个 composite/deferred FRAGMENT 失败**（入链双 program 每轮 spvBytes=
+      76576/25632 compiled OK），run3 vkdisp ERROR（排除 pack compile）= 0。
+      单测 469 全绿（434→469：VersionAdapter 16 + IoLocation 15 + UniformInjector 3 +
+      Builtins 1，探针取证后删除）。141 阶段失败分类学（91 VERTEX + 50 FRAGMENT：
+      location×36 / gl_MultiTexCoord0×33 / gl_TextureMatrix×20 / Position×2 /
+      texture 函数语法×44 / gbufferProjectionInverse 重定义×6，全在 gbuffers/dh/
+      final/shadow 系）= **P4.2 切包回归范围**，不阻 P4.1 判据。
    ✅ P2.1/P2.2 主线接入（A/B/C 线汇合后接启动期扫包钩子，随本轮提交）：
       `VkDispPackScan`（ClientResourceLoadFinishedEvent → gameDir/shaderpacks → ShaderPackService.loadAll）
       实测 latest.log：packs=2（kind=zip + kind=dir 各一）programs=2 options=8 problems=0 diagnostics=0，
@@ -560,7 +587,9 @@ F1–F4 全部落地 → 放行并行
 
 ### 7.3 证据规范（并行线 ≠ 关键路径，证据格式不同）
 
-关键路径要求「日志 + 截图」，并行线**没有画面**，所以证据换成：
+关键路径要求「日志 + 截图」，并行线**没有画面**（冷路径不 import GPU 类，产出里本来
+就没有帧可看 —— 这是**分工**事实，非环境限制；各环境的 runClient 能力见 §8.3），
+所以证据换成：
 
 ```
 [ ] JUnit 单测全绿（贴测试类名 + 用例数 + 通过数）
@@ -646,6 +675,20 @@ F1–F4 全部落地 → 放行并行
 
 > 优先级判据：**先做「做错了代价最大」的**。C/D 是 `04-SPEC.md` §7 里的高风险项，
 > 且 D 依赖 C 的冻结产物 —— 这条链越长越该早开工。
+
+### 8.3 环境能力现状（2026-10-01 更新，G-07）
+
+历史口径「本环境无 GPU/图形环境、不执行 runClient」**已被实测推翻，作废**。现状两台
+验证机均可端到端跑 `runClient` 并出画取证：
+
+| 环境 | GPU / Vulkan | 已实测 |
+|---|---|---|
+| env-1（WSL2，本仓库 `docs/` 归属） | llvmpipe 软件 Vulkan（Mesa 26.2.3，`tools/vulkan-local/` 本地 ICD） | P0.3→P4.1.2 全部关键路径轮次（build + runClient + X11 截图 + 客户区像素统计） |
+| 第二验证机（Windows 11 物理机） | NVIDIA RTX 4060 Laptop（真实独显 Vulkan） | `b15f55e` 基线 build 35s + 434 用例全绿 + runClient 出画，报告见 `review/2026-09-30-本机构建与runClient验证.md` |
+
+对 §7.3 / §9 的影响：并行线证据格式**不变**（那是分工事实，见 §7.3 注），但
+「环境跑不了 runClient」不再构成任何跳过关键路径取证的理由；证据入库统一走
+根目录 `evidence/` 文本摘要（G-01，索引见 `evidence/README.md`）。
 
 ---
 

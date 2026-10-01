@@ -53,7 +53,7 @@ class OfGlslTranslatorTest {
 
     /** 与 {@link #OF_SAMPLE} 对应的期望输出（注入块按 04-SPEC §3.2 顺序展开，匿名 std140 块包裹）。 */
     private static final String EXPECTED = """
-            #version 330 core
+            #version 410 core
             // self-made OF-dialect sample for unit tests (not from any third-party pack)
             // vkdisp: OF builtin uniforms (04-SPEC 3.2)
             layout(std140) uniform VkDispBuiltins {
@@ -82,7 +82,7 @@ class OfGlslTranslatorTest {
             ivec2 eyeBrightnessSmooth;
             };
             in vec4 mc_Entity;
-            out vec3 vNormal;
+            layout(location = 0) out vec3 vNormal;
             void main() {
                 vNormal = vec3(1.0);
             }
@@ -167,7 +167,7 @@ class OfGlslTranslatorTest {
         assertEquals(new SourceLineMap.LineOrigin("shaders/a.glsl", 1), result.originOf(1));
         assertEquals(TranslateDiagnostic.UNKNOWN_LINE, result.originOf(2).sourceLine(),
                 "注入的声明行是合成行（映射未命中）");
-        int rewrittenLine = indexOfLine(result.text(), "out vec3 vView;");
+        int rewrittenLine = indexOfLine(result.text(), "layout(location = 0) out vec3 vView;");
         assertEquals(new SourceLineMap.LineOrigin("shaders/lib/common.glsl", 10),
                 result.originOf(rewrittenLine), "重写后的行必须仍指回原文件原行号");
         int mainLine = indexOfLine(result.text(), "void main() {}");

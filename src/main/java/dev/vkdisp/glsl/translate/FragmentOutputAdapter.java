@@ -62,6 +62,10 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *   <li>阶段不是片元（含 {@link ShaderStage#UNKNOWN} / {@code null}）→ ERROR，且不改写（拒绝猜测，X9）。</li>
  * </ol>
  *
+ * <p><b>与 ⑤ IoLocationAdapter 的分工（P4.1.2）</b>：本类运行在 ⑤ 之后，包内未标 location 的
+ * out 声明已被 ⑤ 按声明序补过号 —— 规则 2/5 只剩"⑤ 被边界跳过（同行多语句等）"的罕见形态兜底，
+ * 判定语义不变。
+ *
  * <p><b>幂等</b>：改写后源码里不再有 {@code gl_FragColor} / {@code gl_FragData}，第二遍扫描
  * 「没有任何内建输出可改」→ 不插入、不改写、无新增诊断，文本逐字节不变。
  *

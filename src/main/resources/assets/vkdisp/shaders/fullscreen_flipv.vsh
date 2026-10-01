@@ -12,9 +12,21 @@
 // 与 fullscreen.vsh 唯一的差别就是最后的 vUv 赋值。
 
 layout(location = 0) out vec2 vUv;
+// P4.1.2 驱动层接口链接（PipelineBuilder:204 逐 location 校验，javap 取证）：
+// 包 composite 片元的插值输入 = texCoord(vec2) + sunVec/upVec(vec3)，顶点必须在
+// location/类型/插值三者上一一对齐，否则 `Vertex shader missing output at location N`。
+// sunVec/upVec 真值依赖 timeAngle / gbufferModelView 的 uniform 上传（OfUniformManager
+// 缺口，18-PARALLEL §5 P4.1 ⑤ 已登记 sunVec 系 NaN 风险）→ 本子轮按登记口径发
+// vec3(0) 占位：dot(0,0)=0 ⇒ sunVisibility=0.5 为有限值（比零矩阵 normalize 出的 NaN 安全）。
+// 已知边界：换 varying 集不同的包需按包生成顶点（P4.2+ 待办），未消费的多余顶点输出
+// 不参与校验（本文件供 fullscreen/blit/fixture 等无此输入的片元时同样成立）。
+layout(location = 1) out vec3 sunVec;
+layout(location = 2) out vec3 upVec;
 
 void main() {
     vec2 uv = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);
     gl_Position = vec4(uv * vec2(2, 2) + vec2(-1, -1), 0, 1);
     vUv = vec2(uv.x, 1.0 - uv.y);
+    sunVec = vec3(0.0);
+    upVec = vec3(0.0);
 }

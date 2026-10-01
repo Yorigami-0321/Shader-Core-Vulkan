@@ -79,9 +79,16 @@ public final class UniformInjector {
     private static final java.util.regex.Pattern LAYOUT_UNIFORM_BLOCK_OPEN =
             java.util.regex.Pattern.compile("layout\\s*\\(.*\\)\\s*uniform\\s+\\w+\\s*\\{\\s*$");
 
-    /** 块成员声明行：{@code [精度] 类型 名字[数组];} —— 只识别到名字与类型（幂等记录 + 类型核对）。 */
+    /**
+     * 块成员声明行：{@code [精度] 类型 名字[数组]([, 名字[数组]])*;} —— 识别类型与全部声明名
+     * （幂等记录 + 类型核对）。P4.1.2：BSL 实测 {@code uniform float far, near;} 逗号多名字形态
+     * 收编进块后，第二遍必须把两个名字都记作已声明，否则会重复注入并在块内撞名（驱动实测
+     * {@code duplicate member name} 取证）。
+     */
     private static final java.util.regex.Pattern BLOCK_MEMBER = java.util.regex.Pattern.compile(
-            "(?:(?:lowp|mediump|highp)\\s+)?([A-Za-z_]\\w*)\\s+([A-Za-z_]\\w*)\\s*(?:\\[[^]]*\\])?\\s*;");
+            "(?:(?:lowp|mediump|highp)\\s+)?([A-Za-z_]\\w*)\\s+"
+                    + "([A-Za-z_]\\w*(?:\\s*\\[[^]]*\\])?"
+                    + "(?:\\s*,\\s*[A-Za-z_]\\w*(?:\\s*\\[[^]]*\\])?)*)\\s*;");
 
     private UniformInjector() {}
 
@@ -140,7 +147,7 @@ public final class UniformInjector {
                     String before = trimmed.substring(0, closeBrace).strip();
                     java.util.regex.Matcher member = BLOCK_MEMBER.matcher(before);
                     if (member.matches()) {
-                        recordDeclaration(member.group(2), member.group(1), lineNumber,
+                        recordMemberNames(member.group(2), member.group(1), lineNumber,
                                 declaredAtLine, diagnostics);
                     }
                     inLayoutBlock = false;
@@ -148,7 +155,8 @@ public final class UniformInjector {
                 }
                 java.util.regex.Matcher member = BLOCK_MEMBER.matcher(trimmed);
                 if (member.matches()) {
-                    recordDeclaration(member.group(2), member.group(1), lineNumber, declaredAtLine, diagnostics);
+                    recordMemberNames(member.group(2), member.group(1), lineNumber,
+                            declaredAtLine, diagnostics);
                 }
                 continue;
             }
@@ -169,18 +177,30 @@ public final class UniformInjector {
                 }
                 continue;
             }
-            recordDeclaration(declaration.name, declaration.type, lineNumber, declaredAtLine, diagnostics);
+            // P4.1.2：逗号多名字（uniform float far, near;）必须把**全部**声明名登记进
+            // declaredAtLine —— 只记首名会让 near/viewHeight/gbufferProjectionInverse 这类
+            // 后续名被当成"缺失"再次注入，与收编进块的整行撞名（驱动实测 duplicate member name 取证）。
+            List<String> declaratorNames = declaratorNames(code, declaration);
+            for (String name : declaratorNames) {
+                recordDeclaration(name, declaration.type, lineNumber, declaredAtLine, diagnostics);
+            }
             // 游离非透明 uniform → 收编候选；采样器/图像类型留原位（Vulkan 允许块外，且不能进 UBO）。
-            // 边界：① 重名只收首现（重复声明已 WARN，两个同名成员进块会撞车）；
+            // 边界：① 任一声明名已被收编过则整行不收（部分名进块会撞名，重复声明已 WARN）；
             //      ② 语句前后有别的代码（同行多语句）不收 —— 抹行会连带删掉别的语句，宁可留给驱动报错；
             //      ③ 多行声明（无分号）不收（声明文本跨行，收编会截断）。
-            if (declaration.terminated && !isOpaqueType(declaration.type)
-                    && !adoptedNames.contains(declaration.name)) {
+            if (declaration.terminated && !isOpaqueType(declaration.type)) {
                 int semi = code.indexOf(';', declaration.keywordEnd);
                 String prefix = code.substring(0, declaration.keywordStart).strip();
                 String suffix = semi >= 0 ? code.substring(semi + 1).strip() : "x";
-                if (semi >= 0 && prefix.isEmpty() && suffix.isEmpty()) {
-                    adoptedNames.add(declaration.name);
+                boolean alreadyAdopted = false;
+                for (String name : declaratorNames) {
+                    if (adoptedNames.contains(name)) {
+                        alreadyAdopted = true;
+                        break;
+                    }
+                }
+                if (semi >= 0 && prefix.isEmpty() && suffix.isEmpty() && !alreadyAdopted) {
+                    adoptedNames.addAll(declaratorNames);
                     adoptable.put(index, code.substring(declaration.keywordEnd, semi + 1).strip());
                 }
             }
@@ -245,6 +265,56 @@ public final class UniformInjector {
     /** 透明性判定：采样器 / 图像类型不能进 UBO 块（Vulkan GLSL 公开语义），留在块外。 */
     private static boolean isOpaqueType(String type) {
         return type != null && (type.matches("(?:u|i)?sampler\\w*") || type.matches("(?:u|i)?image\\w*"));
+    }
+
+    /**
+     * 取一条游离 uniform 声明的**全部**声明名（P4.1.2）：{@code uniform float far, near;} →
+     * {@code [far, near]}。按逗号切段后取每段首标识符 —— 数组下标里的标识符
+     * （{@code weights[TAPS]}）留在段内，不会被误登记。
+     *
+     * <p>跨行（无分号）退化为首名（与既有"多行声明不收编"边界一致）。
+     */
+    private static List<String> declaratorNames(String code, GlslDeclaration declaration) {
+        List<String> names = new ArrayList<>();
+        int typeStart = GlslTextScan.skipWhitespace(code, declaration.keywordEnd);
+        int typeEnd = typeStart + declaration.type.length();
+        int semi = code.indexOf(';', typeEnd);
+        if (semi < 0) {
+            names.add(declaration.name);
+            return names;
+        }
+        int segmentStart = GlslTextScan.skipWhitespace(code, typeEnd);
+        for (int cursor = typeEnd; cursor <= semi; cursor++) {
+            if (cursor != semi && code.charAt(cursor) != ',') {
+                continue;
+            }
+            String segment = code.substring(segmentStart, cursor);
+            int[] span = GlslTextScan.identifierAt(segment, GlslTextScan.skipWhitespace(segment, 0));
+            if (span != null) {
+                names.add(segment.substring(span[0], span[1]));
+            }
+            segmentStart = cursor + 1;
+        }
+        if (names.isEmpty()) {
+            names.add(declaration.name);
+        }
+        return names;
+    }
+
+    /**
+     * 记录块成员声明的全部名字（{@code float far, near;} → far、near 各记一次，共用同一类型）
+     * —— 第二遍转译据此把收编行整体认作"已声明"（幂等 + 不重复注入，P4.1.2）。
+     */
+    private static void recordMemberNames(String declarators, String type, int lineNumber,
+            Map<String, Integer> declaredAtLine, List<TranslateDiagnostic> diagnostics) {
+        for (String part : declarators.split(",")) {
+            int[] span = GlslTextScan.identifierAt(part, GlslTextScan.skipWhitespace(part, 0));
+            if (span == null) {
+                continue;
+            }
+            recordDeclaration(part.substring(span[0], span[1]), type, lineNumber,
+                    declaredAtLine, diagnostics);
+        }
     }
 
     /**

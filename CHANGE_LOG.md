@@ -5,6 +5,86 @@
 
 ---
 
+## 2026-10-01 — P4.1.2 驱动层四修：转译七段补齐（VersionAdapter + IoLocationAdapter）+ 18 采样器布局超集 + draw 侧全量绑定 + OF 语义视图映射，三跑闭环 15679→0→可见（0.951→11.901）
+
+- **本次改了什么**（四修一组，全部按 p41a 驱动错误原文逐一闭环，X9 取证）：
+  1. **转译管线扩为七段**（`OfGlslTranslator`）：新增 **`VersionAdapter`**（`#version`
+     三段式升级到 410：<140 必升、140–409 无活跃 SSO 扩展则升、≥410/ES 原样 ——
+     杀 shaderc 硬门槛 `require version 140 or higher` 及连坐的
+     `location qualifier not supported for this version`）与 **`IoLocationAdapter`**
+     （片元 in/out、顶点 out 显式 `layout(location=N)` —— 杀 `SPIR-V requires location
+     for user input/output`；顶点属性按 04-SPEC §4 留名字绑定不加 location）。
+     插位 FtransformExpander 之后、FragmentOutputAdapter 之前，javadoc ①–⑦ 重编号。
+  2. **`UniformInjector` 逗号多名声明全名登记**：BLOCK_MEMBER 模式扩为捕获全部
+     声明子句，`recordMemberNames`/`declaratorNames` 把每个名字都记进
+     declaredAtLine/adoptedNames —— `uniform float far, near;` 类后名不再被当缺失
+     **二次注入**块内（BSL L27/32/39 的 duplicate member / nameless block 撞名
+     与 P4.1.1 驱动报文逐一吻合的根因）。
+  3. **管线链接 + 反射 + draw 三修**（`fullscreen.vsh`/`fullscreen_flipv.vsh` +
+     `PipelineApi`）：顶点补 `layout(location=1/2) out sunVec/upVec`（=vec3(0)，修 A
+     接口链接）；新增 `PACK_FRAGMENT_SAMPLERS` 18 名片元采样器**布局超集**经
+     `packFragmentLayout()` 挂进三条 register 方法（PipelineBuilder :277 只做
+     SPIR-V→layout 单向查询，布局多项合法 —— 修 B）；新增
+     `setPackSamplerUniforms(pass, …)` 在 deferred/composite 两处 `draw()` 前把 18 名
+     全量 `setUniform`（FrontendRenderPass.validateDraw 遍历 boundPipeline.uniforms
+     缺一即抛 `Missing uniform NAME` —— 修 C）。
+  4. **OF 语义视图映射**（`FrameApi`，修 D）：deferred 链内 colortex0 →
+     `sceneColorView()`（场景色输入）、gaux1 → `viewC`（OF 身份 colortex4），
+     其余 16 名 → 同场景 view；deferred draw 只喂 scene。链式
+     `packColor = deferredChain ? sceneColorView() : compositeInput`。
+  5. **测试**：新增 `VersionAdapterTest`（16 用例）、`IoLocationAdapterTest`（15）；
+     `UniformInjectorTest` +3（逗号多名全登记/行号契约/幂等）；
+     `OfGlslTranslatorBuiltinsTest` +1（驱动报文复刻金样）；
+     `OfGlslTranslatorTest`/`GlslPipelineTest` 样本随七段重排调整。
+     另随本轮入库的 batch-0 审查修复（独立提交）：VkDisp 配置注册
+     COMMON→CLIENT、neoforge.mods.toml 死链 22-版本基线→05-VERSION、
+     04-SPEC/05-VERSION/06-MIGRATION 三处文档口径更正（mixin 现状 = 0）。
+- **为什么改**：P4.1 判据⑤「registered==compiled → 进世界 → 取证」的堵点在**驱动洋葱
+  第 2–3 层**——转译通过 ≠ shaderc 通过 ≠ 链接通过 ≠ draw 通过。P4.1.1 取证的 6 类
+  驱动错误（#version<140 / duplicate member×3+撞名 / location×2）逐条对应上面 1/2/3 修；
+  0 错误黑屏则证明「名字绑对 ≠ 内容喂对」（run2 colortex0 喂空纹理全黑），
+  OF 语义（deferred 只写 AO 到 DRAWBUFFERS:4，composite L254 读 colortex0 当场景色）
+  实测驱动了修 4 的映射方向。
+- **影响的文档**：本 `CHANGE_LOG.md`；`evidence/p412-driver-layer.md` + `evidence/README.md`
+  （G-01 首批入库：三跑 sha256 + 关键行原文 + 141 失败分类学 + 复现命令）；
+  `docs/18-PARALLEL.md` §5 P4.1 块（③ 工作清单标记交付 + P4.1.2 交付记录 + ⑤ 判据结果）；
+  `docs/04-SPEC.md`/`docs/05-VERSION.md`/`docs/06-MIGRATION.md`（batch-0）；
+  源码 `glsl/translate/`×6（含新增 2）+ `bridge/`×2 + 顶点着色器×2 + 测试×6。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；`cleanTest test` **469 用例 0 失败 0 错误**
+    （434 → 469，净增 35：VersionAdapter 16 + IoLocation 15 + UniformInjector 3 +
+    Builtins 1；临时探针 ScratchBslProbeTest 取证后删除不入库）。
+  - ✅ **runClient `-PquickPlay` 三跑闭环**（证据全文 + sha256 见
+    `evidence/p412-driver-layer.md`）：
+    - run1（B 修在、C 修缺）：`Missing uniform colortex0` **15679** 次 +
+      `fullscreen pass failed` **15679** 次（validateDraw 拒画）；
+    - run2（+C 全量绑定，colortex0→空 view）：两类计数 **0/0**，但客户区
+      mean_luma **0.951**、非黑 **0.466%**（纯黑，406504 像素 luma=0 + 1904 个 204 文字像素）；
+    - run3（+D OF 映射，colortex0→scene）：**0/0** 且可见 —— 客户区 mean_luma
+      **11.901**、非黑 **30.69%**（125337 px，luma 桶 35–45 连续谱）；
+    - 三跑共有：`pipeline count check: registered=8, compiled=8 (aligned)`、
+      `deferred chain wired: scene -> offscreen2 -> main (pack deferred)`、
+      `composite input source: deferred output (P3.3)`、
+      world0/composite spvBytes=76576、world0/deferred spvBytes=25632、
+      `pack compile done: stages=190 ok=49 failed=141`（三跑逐字节一致）、
+      run3 vkdisp ERROR（排除 pack compile）= **0**。
+- **未覆盖**（如实登记）：
+  - **141 pack 阶段失败**（91 VERTEX + 50 FRAGMENT，分类学见 evidence 文件）：
+    'location'×36（仅 VERTEX，全文 66 行含续行全 .vsh）、gl_MultiTexCoord0×33、
+    gl_TextureMatrix×20、Position×2、'texture' 函数语法×44（FRAGMENT gbuffers/dh）、
+    gbufferProjectionInverse 重定义×6 —— **0 个 composite/deferred FRAGMENT 失败**，
+    全部属 gbuffers/dh/final/shadow 系 = P4.2 切包回归范围；composite/deferred VERTEX
+    的 gl_MultiTexCoord0 失败不入链（主线配自造 fullscreen 顶点），P4.2 启用 pack
+    顶点前须先修；
+  - uniform 数值仍全零上传（OfUniformManager 缺口）→ sunVec 系效果可能 NaN；
+  - 无 final/tonemap 步（deferred 后 raw 上主目标）；深度/噪声/阴影/3D 纹理占位绑定；
+  - profiles 解析失败照旧（`#if` 含 `>`）；Iris 对比截图 = 环境缺 Iris（判据③已登记限制）；
+  - G-05 配置文件名 `vkdisp-common.toml`→`vkdisp-client.toml` 待切（config type 已改 CLIENT）；
+  - OpenAL/authlib 日志 = 环境噪音。
+- **是否已提交**：随本轮两个 commit（batch-0 审查修复 + P4.1.2）提交并推送 origin/master。
+
+---
+
 ## 2026-09-30 — P4.1.1 转译层接管 BSL：函数宏组号修复 + 游离 uniform 收编 + 维度偏好选中，182/182 阶段转译全绿，驱动层 6 类错误原文取证
 
 - **本次改了什么**（三处主线修复，全部 X9 实测取证驱动，非猜测）：
