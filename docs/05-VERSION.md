@@ -65,9 +65,9 @@
 | 隔离层 | 做法 | 目的 |
 |---|---|---|
 | **渲染 API 访问** | 所有原版渲染 API 调用集中在一个 `bridge` 包，业务代码不直接 import `com.mojang.renderpearl.*` | 升级时只改 bridge |
-| **mixin 目标** | mixin 集中登记在 `mixins.json`，每个 mixin 只做转发、不写业务逻辑 | 目标签名变化时改动最小 |
+| **帧注入点** | 当前走 NeoForge 官方 `RenderFrameEvent.Post`（`render/FullscreenPassHook`）；历史 mixin 路线已弃用、未建 `mixins.json`（`MIXIN_CONFIG_COUNT = 0`）。若将来启用 mixin：集中登记、只转发不写业务 | 事件签名变化时改动集中在 hook 类 |
 | **着色器格式解析** | 解析层完全独立，不依赖任何原版类型 | OF/Iris 格式本身不随 MC 变 |
-| **版本常量** | 版本号只出现在 `gradle.properties` 与一处 `Versions.java` | 单一数据源 |
+| **版本常量** | 版本号只出现在 `gradle.properties`（当前未建 `Versions.java`，也不做运行时版本判断） | 单一数据源 |
 
 ### 4.2 升级流程（26.4 出现时执行）
 

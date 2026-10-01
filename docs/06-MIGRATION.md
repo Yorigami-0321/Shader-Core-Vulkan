@@ -26,21 +26,30 @@ bridge/
   DeviceApi.java          // GpuDevice / CommandEncoder 获取
   FrameApi.java           // LevelRenderer / FrameGraphBuilder 插入
   TextureApi.java         // GpuTexture / GpuTextureView / RenderTarget
-  MixinTargets.java       // 所有 mixin 目标的类名常量（便于集中改）
+  MixinTargets.java       // 所有 mixin 目标的类名常量（便于集中改；当前 mixin 数 = 0）
 ```
 
 **规矩**：
+- **现状**：主线不走 mixin——帧注入用 NeoForge 官方 `RenderFrameEvent.Post`
+  （`render/FullscreenPassHook`），历史 mixin 路线已弃用、尚未启用
+  （`MixinTargets.MIXIN_CONFIG_COUNT = 0`，`mixin/` 包未建立）
 - `pack/` / `glsl/` / `config/` / `screen/` 等业务包 **一律不得** `import com.mojang.renderpearl.*`
-- 只有 `bridge/` 与 `mixin/` 允许 import 原版渲染类型
+- 只有 `bridge/` 允许 import 原版渲染类型（若将来启用 `mixin/`，同样只允许转发）
 - **`accel/`（加速层）例外说明**：它的接口只用纯 Java 类型，实现里若需触碰原版类型，
   同样必须经 `bridge/`。FFI（Panama）调用原生库不涉及原版渲染类型，因此可以直接做。
-- 升级时 grep 这两个目录就够了：
+- 升级时用这条 grep 核对就够了：
   ```bash
   grep -rl "com\.mojang\.\(renderpearl\|blaze3d\)" src/main/java | sort
   ```
 - **若含原生库**：升级时还要重建全部平台产物（`17-NATIVE.md` §6.3，回归项 R11）
 
 ### 2.2 mixin 只转发，不写业务
+
+> **历史路线已弃用，当前不使用 mixin。** 主线帧注入走 NeoForge 官方
+> `RenderFrameEvent.Post`（`render/FullscreenPassHook`），`neoforge.mods.toml` 的
+> `[[mixins]]` 保持注释，`MixinTargets.MIXIN_CONFIG_COUNT = 0`。
+
+**若将来启用 mixin**，规矩不变——mixin 只转发、不写业务（目标签名一变全废）：
 
 ```java
 // ✅ 对：只转发
@@ -52,10 +61,12 @@ private void hook(FrameGraphBuilder builder, /* ... */ CallbackInfo ci) {
 // ❌ 错：业务逻辑写在 mixin 里，目标签名一变全废
 ```
 
+> 启用时另见 `07-CONSTRAINTS.md` T1：`mixins.json` 的 `compatibilityLevel` 必须 `JAVA_25`。
+
 ### 2.3 版本常量单一数据源
 
 - `gradle.properties`：`minecraft_version` / `minecraft_version_range` / `neo_version`（唯一数据源）
-- `Versions.java`：只在需要运行时判断时用，**不要散落**
+- 运行时版本判断：当前不需要，也未建 `Versions.java`；若将来需要，常量同样只放一处、**不要散落**
 
 ---
 

@@ -40,6 +40,8 @@ public final class VkDisp {
 
     // FML 会识别 IEventBus / ModContainer 这类参数并自动注入
     public VkDisp(IEventBus modEventBus, ModContainer modContainer) {
-        modContainer.registerConfig(ModConfig.Type.COMMON, VkDispConfig.SPEC);
+        // 纯客户端模组（VkDispClient @Mod(dist = Dist.CLIENT)、mods.toml side=CLIENT），
+        // 配置只在客户端生效，故注册为 CLIENT 而非 COMMON
+        modContainer.registerConfig(ModConfig.Type.CLIENT, VkDispConfig.SPEC);
     }
 }

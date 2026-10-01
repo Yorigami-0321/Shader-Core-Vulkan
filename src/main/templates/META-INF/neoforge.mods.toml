@@ -76,7 +76,7 @@ description='''
 [[dependencies.${mod_id}]]
     modId="minecraft"
     type="required"
-    # 版本基线：支持 26.3 及之后（见 docs/22-版本基线.md）
+    # 版本基线：支持 26.3 及之后（见 docs/05-VERSION.md）
     versionRange="${minecraft_version_range}"
     ordering="NONE"
     side="BOTH"

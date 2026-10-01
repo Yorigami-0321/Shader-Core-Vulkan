@@ -83,7 +83,7 @@ glsl/
   OfGlslTranslator.java    // OF GLSL → M GLSL 的入口
   AttributeRewriter.java   // OF 老式 attribute/varying → M 语法
   UniformInjector.java     // 注入 OF 内建 uniform 声明
-  IncludeProcessor.java    // 处理 #include（OF: 相对路径；Iris: namespace:path）
+  IncludeProcessor.java    // 处理 #include（绝对 / 前缀与相对路径两种形式）
   DefineProcessor.java     // #define / #undef / 条件编译
   ConstEvaluator.java      // OF 的 const int X = ... 选项常量
 ```
