@@ -236,11 +236,12 @@ class OfGlslTranslatorTest {
     }
 
     /**
-     * 141 阶段矩阵 ① 类端到端：顶点旧内建「用而未声明」→ ⑤ 注入裸声明 → ⑥ 补 location →
-     * ⑧ 把游离矩阵 uniform 收编进块；第二遍是不动点且零诊断。
+     * 141 阶段矩阵端到端：顶点旧内建「用而未声明」→ ⑤ 等行替换 + 注入裸声明 → ⑥ 补 location；
+     * 输出零 {@code gl_} token（gl_ 前缀保留，注入声明必被驱动拒 —— reserved ×91 实测后的设计）；
+     * 第二遍是不动点且零诊断。
      */
     @Test
-    void legacyBuiltinsGetDeclaredLocatedAndAdopted() {
+    void legacyBuiltinsGetSubstitutedLocatedAndFixed() {
         String sample = """
                 #version 330 core
                 void main() {
@@ -249,16 +250,16 @@ class OfGlslTranslatorTest {
                 }
                 """;
         TranslateResult first = OfGlslTranslator.translate(ShaderStage.VERTEX, sample);
-        assertTrue(first.isSuccess(), "旧内建补齐后必须成功：" + first.diagnostics());
-        assertTrue(first.text().contains("layout(location = 0) in vec4 gl_MultiTexCoord0;"),
+        assertTrue(first.isSuccess(), "旧内建替换 / 注入后必须成功：" + first.diagnostics());
+        assertTrue(first.text().contains("layout(location = 0) in vec4 UV0;"),
                 "⑤ 注入的顶点 in 由 ⑥ 补 location：" + first.text());
-        assertTrue(first.text().contains("layout(location = 1) in vec3 gl_Normal;"),
+        assertTrue(first.text().contains("layout(location = 1) in vec3 Normal;"),
                 "属性按声明序取最小未占用号");
-        assertTrue(first.text().contains("mat4 gl_TextureMatrix[8];"),
-                "游离矩阵 uniform 被 ⑧ 收编进 VkDispBuiltins 块");
-        assertTrue(first.text().contains("mat3 gl_NormalMatrix;"), "同上（mat3）");
-        assertFalse(first.text().contains("uniform mat4 gl_TextureMatrix[8];"),
-                "原游离行已被抹空（收编 = 移动位置，非删除）");
+        assertTrue(first.text().contains("mat4(1.0)"), "gl_TextureMatrix[0] → 单位阵");
+        assertTrue(first.text().contains("(transpose(inverse(mat3(gbufferModelView))))"),
+                "gl_NormalMatrix → 法线矩阵公开定义");
+        assertFalse(first.text().contains("gl_"),
+                "输出零 gl_ token（reserved 类根治）：" + first.text());
         TranslateResult second = OfGlslTranslator.translate(ShaderStage.VERTEX, first.text());
         assertEquals(first.text(), second.text(), "输出文本是不动点");
         assertTrue(second.diagnostics().isEmpty(), () -> "第二遍零诊断：" + second.diagnostics());
@@ -311,12 +312,13 @@ class OfGlslTranslatorTest {
                         d.message().contains("同行多语句") && d.line() == 2
                                 && "shaders/a.glsl".equals(d.sourceFile())),
                 () -> "WARN 必须回填到原文件第 2 行（不被 ⑤ 注入行右移）：" + result.diagnostics());
-        assertTrue(result.text().contains("in vec4 gl_MultiTexCoord0;"), "本例确实触发了 ⑤ 插入");
+        assertTrue(result.text().contains("in vec4 UV0;"), "本例确实触发了 ⑤ 插入");
     }
 
     /**
-     * 三次插入（⑤ 旧内建声明、⑦ 合成片元输出、⑧ 内建 uniform 块）下的端到端映射：
-     * 合成行显式未命中，原有行仍指回原文件原行号。
+     * 三次插入（⑤ 旧内建属性声明、⑦ 合成片元输出、⑧ 内建 uniform 块）下的端到端映射：
+     * 合成行显式未命中，原有行仍指回原文件原行号（内容寻址，不依赖行邻接 —— ⑤ 的矩阵替换
+     * 是等行改写、零插入，旧的 outLine+1 邻接假设已失效）。
      */
     @Test
     void endToEndMapComposesAcrossAllThreeInsertionStages() {
@@ -335,15 +337,49 @@ class OfGlslTranslatorTest {
         int outLine = indexOfLine(result.text(), "layout(location = 0) out vec4 vkdispFragOut0;");
         assertEquals(TranslateDiagnostic.UNKNOWN_LINE, result.originOf(outLine).sourceLine(),
                 "⑦ 注入的片元输出声明行是合成行");
-        assertEquals(TranslateDiagnostic.UNKNOWN_LINE, result.originOf(outLine + 1).sourceLine(),
-                "⑤ 注入的旧内建 uniform 行（已收编抹空、行仍保留）是合成行");
+        int blockLine = indexOfLine(result.text(), UniformInjector.BLOCK_OPEN);
+        assertEquals(TranslateDiagnostic.UNKNOWN_LINE, result.originOf(blockLine).sourceLine(),
+                "⑧ 注入的内建 uniform 块开行是合成行");
         int mainLine = indexOfLine(result.text(), "void main() {");
         assertEquals(new SourceLineMap.LineOrigin("shaders/f.glsl", 2),
                 result.originOf(mainLine), "原有行跨越三次插入后仍指回原行号");
         int bodyLine = indexOfLine(result.text(),
-                "    vkdispFragOut0 = vec4(gl_ProjectionMatrix[2][2]);");
+                "    vkdispFragOut0 = vec4(gbufferProjection[2][2]);");
         assertEquals(new SourceLineMap.LineOrigin("shaders/f.glsl", 3),
-                result.originOf(bodyLine));
+                result.originOf(bodyLine), "⑤ 矩阵替换 + ⑦ 标识符改写的行仍是原行号");
+    }
+
+    /**
+     * 顶点侧端到端：⑤ 替换 + 注入（合成行）与 ⑧ 块（合成行）都显式未命中，原有行仍指回
+     * 原文件原行号 —— 与片元样本（⑤⑦⑧）互补，覆盖 ⑤ 真实插入时的映射合成。
+     */
+    @Test
+    void vertexEndToEndComposesLegacyInjectionWithUniformBlock() {
+        String source = """
+                #version 330
+                void main() {
+                    x = gl_Color;
+                }
+                """;
+        SourceLineMap upstream = SourceLineMap.builder("shaders/v.glsl")
+                .addIdentityRange(1, 3)
+                .build();
+        TranslateResult result = OfGlslTranslator.translate(
+                ShaderStage.VERTEX, TranslateResult.success(source, upstream));
+        assertTrue(result.isSuccess(), () -> "成功：" + result.diagnostics());
+        int injected = indexOfLine(result.text(), "layout(location = 0) in vec4 Color;");
+        assertEquals(TranslateDiagnostic.UNKNOWN_LINE, result.originOf(injected).sourceLine(),
+                "⑤ 注入的属性声明行是合成行");
+        int blockLine = indexOfLine(result.text(), UniformInjector.BLOCK_OPEN);
+        assertEquals(TranslateDiagnostic.UNKNOWN_LINE, result.originOf(blockLine).sourceLine(),
+                "⑧ 注入的内建 uniform 块开行是合成行");
+        int mainLine = indexOfLine(result.text(), "void main() {");
+        assertEquals(new SourceLineMap.LineOrigin("shaders/v.glsl", 2),
+                result.originOf(mainLine));
+        int bodyLine = indexOfLine(result.text(), "    x = Color;");
+        assertEquals(new SourceLineMap.LineOrigin("shaders/v.glsl", 3),
+                result.originOf(bodyLine), "⑤ 替换后的行仍指回原行号");
+        assertFalse(result.text().contains("gl_Color"), "⑤ 已把 gl_Color 替换掉：" + result.text());
     }
 
     @Test

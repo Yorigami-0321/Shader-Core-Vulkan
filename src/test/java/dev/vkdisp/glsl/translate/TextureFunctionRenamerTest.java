@@ -55,6 +55,7 @@ class TextureFunctionRenamerTest {
         {"textureCubeLod", "textureLod"},
         {"texture2DProjLod", "textureProjLod"},
         {"texture3DProjLod", "textureProjLod"},
+        {"texture2DGradARB", "textureGrad"},
     };
 
     /** shadow 系列：旧名 → 现代名（实现在调用点包 vec4(...)）。 */
@@ -95,6 +96,24 @@ class TextureFunctionRenamerTest {
             assertEquals(1, result.renamedCount(), pair[0]);
             assertTrue(result.diagnostics().isEmpty(), pair[0]);
         }
+    }
+
+    /** texture2DGradARB（ARB_shader_texture_lod）四参显式导数签名 → 330 core textureGrad 同参改名。 */
+    @Test
+    void texture2DGradARBRenamesToTextureGradWithFourArguments() {
+        String source = """
+                void main() {
+                    vec4 c = texture2DGradARB(colortex0, uv, ddx(uv), ddy(uv));
+                }
+                """;
+        TextureFunctionRenamer.Result result = TextureFunctionRenamer.rename(source);
+        assertEquals("""
+                void main() {
+                    vec4 c = textureGrad(colortex0, uv, ddx(uv), ddy(uv));
+                }
+                """, result.text());
+        assertEquals(1, result.renamedCount());
+        assertTrue(result.diagnostics().isEmpty(), "同参纯改名不产生诊断");
     }
 
     @Test
