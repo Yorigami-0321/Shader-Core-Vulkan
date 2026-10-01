@@ -77,6 +77,167 @@ class ShaderPropertiesTest {
     }
 
     @Test
+    void numericComparisonEvaluatesDefinedStateAsZeroOrOne() {
+        // 未定义标识符 → 0（与 GLSL 侧 DefineProcessor.ExprEval 同口径）：0 >= 11800 假 → 走 #else。
+        String text = """
+                #if MC_VERSION >= 11800
+                newStyle=true
+                #else
+                oldStyle=true
+                #endif
+                """;
+        ShaderProperties undef = ShaderProperties.parse(text);
+        assertFalse(undef.directives().containsKey("newStyle"));
+        assertEquals("true", undef.directives().get("oldStyle"));
+
+        // 定义态按 1 计：1 >= 11800 仍为假（值环境未取证，X9 不猜 —— 见类 javadoc 登记）。
+        ShaderProperties defined = ShaderProperties.parse(text, Set.of("MC_VERSION"));
+        assertFalse(defined.directives().containsKey("newStyle"));
+        assertEquals("true", defined.directives().get("oldStyle"));
+
+        // 等值比较：#if FLAG == 1 只在 FLAG 已定义时命中。
+        String flag = """
+                #if FLAG == 1
+                selected=yes
+                #endif
+                """;
+        assertFalse(ShaderProperties.parse(flag).directives().containsKey("selected"));
+        assertEquals("yes", ShaderProperties.parse(flag, Set.of("FLAG")).directives().get("selected"));
+    }
+
+    @Test
+    void elifChainPicksFirstTrueBranch() {
+        String text = """
+                #if A == 1
+                branch=first
+                #elif B == 1
+                branch=second
+                #elif C == 1
+                branch=third
+                #else
+                branch=fallback
+                #endif
+                """;
+        assertEquals("second", ShaderProperties.parse(text, Set.of("B")).directives().get("branch"));
+        assertEquals("first", ShaderProperties.parse(text, Set.of("A")).directives().get("branch"));
+        assertEquals("fallback", ShaderProperties.parse(text).directives().get("branch"));
+        assertEquals("third", ShaderProperties.parse(text, Set.of("C")).directives().get("branch"));
+    }
+
+    @Test
+    void elseInsideExcludedParentStaysExcluded() {
+        // 回归：嵌套在被剔除父级下的 #else 不得放行（旧实现用 !include 反转会错误放行）。
+        String text = """
+                #ifdef NEVER
+                #if A == 1
+                leaked=bad
+                #else
+                leaked=bad
+                #endif
+                #endif
+                keep=ok
+                """;
+        ShaderProperties p = ShaderProperties.parse(text);
+        assertFalse(p.directives().containsKey("leaked"));
+        assertEquals("ok", p.directives().get("keep"));
+    }
+
+    @Test
+    void orChainConsumesRightOperandWhenLeftIsTrue() {
+        // 回归：旧实现用 Java 短路求值，A 为真时右侧 token 不被消费 → 误报「多余符号」。
+        String text = """
+                #if A || B
+                hit=yes
+                #endif
+                """;
+        assertEquals("yes", ShaderProperties.parse(text, Set.of("A")).directives().get("hit"));
+        assertEquals("yes", ShaderProperties.parse(text, Set.of("B")).directives().get("hit"));
+        assertFalse(ShaderProperties.parse(text).directives().containsKey("hit"));
+
+        String mixed = """
+                #if (A || B) && !C
+                hit=yes
+                #endif
+                """;
+        assertEquals("yes", ShaderProperties.parse(mixed, Set.of("A")).directives().get("hit"));
+        assertEquals("yes", ShaderProperties.parse(mixed, Set.of("B")).directives().get("hit"));
+        assertFalse(ShaderProperties.parse(mixed, Set.of("A", "C")).directives().containsKey("hit"));
+    }
+
+    @Test
+    void comparisonSyntaxErrorsAreExplicit() {
+        IllegalArgumentException incomplete = assertThrows(IllegalArgumentException.class,
+                () -> ShaderProperties.parse("#if A >=\n"));
+        assertTrue(incomplete.getMessage().contains("不完整"), incomplete.getMessage());
+
+        IllegalArgumentException illegal = assertThrows(IllegalArgumentException.class,
+                () -> ShaderProperties.parse("#if A @ B\n"));
+        assertTrue(illegal.getMessage().contains("非法字符 '@'"), illegal.getMessage());
+
+        IllegalArgumentException extra = assertThrows(IllegalArgumentException.class,
+                () -> ShaderProperties.parse("#if A B\n"));
+        assertTrue(extra.getMessage().contains("多余符号"), extra.getMessage());
+
+        IllegalArgumentException danglingElif = assertThrows(IllegalArgumentException.class,
+                () -> ShaderProperties.parse("#elif A == 1\n"));
+        assertTrue(danglingElif.getMessage().contains("没有匹配"), danglingElif.getMessage());
+
+        IllegalArgumentException duplicateElse = assertThrows(IllegalArgumentException.class,
+                () -> ShaderProperties.parse("#ifdef X\n#else\n#else\n#endif\n"));
+        assertTrue(duplicateElse.getMessage().contains("重复"), duplicateElse.getMessage());
+
+        IllegalArgumentException elifAfterElse = assertThrows(IllegalArgumentException.class,
+                () -> ShaderProperties.parse("#if A == 1\nx=1\n#else\ny=1\n#elif B == 1\nz=1\n#endif\n"));
+        assertTrue(elifAfterElse.getMessage().contains("#else 之后"), elifAfterElse.getMessage());
+    }
+
+    @Test
+    void decimalComparisonIsParsedWithoutThrowing() {
+        String text = """
+                #if RATIO >= 1.5
+                big=yes
+                #else
+                big=no
+                #endif
+                """;
+        assertEquals("no", ShaderProperties.parse(text).directives().get("big"));
+        assertEquals("no", ShaderProperties.parse(text, Set.of("RATIO")).directives().get("big"));
+    }
+
+    @Test
+    void lineContinuationJoinsBeforeDirectiveRecognition() {
+        String value = """
+                name=v1 \\
+                v2
+                """;
+        assertEquals("v1 v2", ShaderProperties.parse(value).directives().get("name"));
+
+        // 续行合并发生在条件识别**之前**：#if 的条件本身可以跨行。
+        String condition = """
+                #if A && \\
+                B
+                hit=yes
+                #endif
+                """;
+        assertEquals("yes", ShaderProperties.parse(condition, Set.of("A", "B")).directives().get("hit"));
+        assertFalse(ShaderProperties.parse(condition, Set.of("A")).directives().containsKey("hit"));
+
+        // 行尾偶数个反斜杠 = 转义出的字面反斜杠，不是续行。
+        String escaped = "name=v1\\\\\nnext=x\n";
+        assertEquals("v1\\\\", ShaderProperties.parse(escaped).directives().get("name"));
+        assertEquals("x", ShaderProperties.parse(escaped).directives().get("next"));
+    }
+
+    @Test
+    void crlfLineEndingsStillJoinContinuations() {
+        // BSL shaders.properties 全文 CRLF：`\` 后紧跟 \r，续行判定必须先摘 \r（p415 run1 缺陷回归）。
+        String text = "name=v1 \\\r\nv2\r\n#ifdef EXTRA\r\nmore=on\r\n#endif\r\n";
+        ShaderProperties p = ShaderProperties.parse(text, Set.of("EXTRA"));
+        assertEquals("v1 v2", p.directives().get("name"));
+        assertEquals("on", p.directives().get("more"));
+    }
+
+    @Test
     void unsupportedDefineDirectiveIsRejected() {
         String text = "#define SSAO\n";
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> ShaderProperties.parse(text));

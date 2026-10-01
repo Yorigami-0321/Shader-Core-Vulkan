@@ -80,6 +80,34 @@ class BlockItemPropertiesTest {
     }
 
     @Test
+    void idMapSupportsElifAndLineContinuation() {
+        // MC_VERSION 未定义 → 0：首支 0>=11300 假 → #elif 0==0 真 → 只收 block.33。
+        String text = """
+                block.31=a
+                #if MC_VERSION >= 11300
+                block.32=b \\
+                  c
+                #elif MC_VERSION == 0
+                block.33=d
+                #endif
+                """;
+        BlockProperties p = BlockProperties.parse(text);
+        assertEquals(Set.of(31, 33), p.mappings().keySet());
+
+        // 续行在生效分支内并成一行 → 两个映射对象同 ID 入列。
+        String joined = """
+                #ifdef EXTRA
+                block.32=b \\
+                c
+                #endif
+                """;
+        BlockProperties on = BlockProperties.parse(joined, Set.of("EXTRA"));
+        assertEquals(Set.of(32), on.mappings().keySet());
+        assertEquals(List.of("b", "c"),
+                on.mappings().get(32).stream().map(IdMapProperties.MappedId::id).toList());
+    }
+
+    @Test
     void fixtureMinimalPackParses() {
         BlockProperties b = BlockProperties.parse(
                 new java.io.InputStreamReader(require("/packs/minimal/block.properties")));
