@@ -63,9 +63,15 @@ import org.joml.Vector3f;
  */
 public final class OfUniformManager {
 
-    /** 一次性 INFO：同一槽位（composite/deferred）只打一次上传摘要。 */
-    private static boolean compositeLogDone;
-    private static boolean deferredLogDone;
+    /**
+     * 一次性 INFO：同一槽位（composite/deferred/final…）只打一次上传摘要。
+     *
+     * <p>P4.1.4 教训：曾用两个布尔（deferred ? deferredLogDone : compositeLogDone）——
+     * 未知槽位（final）会落 else 分支被 composite 标志吞掉，composite 先打过就永远不出 final 行。
+     * 改为按槽位名做集合门（新槽位天然各自一次，无需再改门）。
+     * 仅渲染线程调用（drawFullscreen 内），普通 HashSet 足够。
+     */
+    private static final java.util.Set<String> UPLOAD_LOGGED_SLOTS = new java.util.HashSet<>();
 
     /** frameTimeCounter 累加器（换世界重置；单帧截断防切窗尖峰）。 */
     private static long lastFrameNanos = -1L;
@@ -303,17 +309,11 @@ public final class OfUniformManager {
         return false;
     }
 
-    /** 一次性上传摘要（composite/deferred 各一次；T11：填没填都要在日志里看得见）。 */
+    /** 一次性上传摘要（每槽各一次；T11：填没填都要在日志里看得见）。 */
     public static void logUploadOnce(String slot, BuiltinsBlockLayout layout,
             WriteStats stats, Map<String, Object> values) {
-        boolean done = "deferred".equals(slot) ? deferredLogDone : compositeLogDone;
-        if (done) {
+        if (!UPLOAD_LOGGED_SLOTS.add(slot)) {
             return;
-        }
-        if ("deferred".equals(slot)) {
-            deferredLogDone = true;
-        } else {
-            compositeLogDone = true;
         }
         List<String> missing = stats.missingNames();
         String shown = missing.size() <= 8

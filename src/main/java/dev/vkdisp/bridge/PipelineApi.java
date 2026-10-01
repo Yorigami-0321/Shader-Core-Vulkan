@@ -81,6 +81,9 @@ public final class PipelineApi {
     /** P3.3 deferred 步管线 location（纯字符串视图，错误信息用）。 */
     public static final String DEFERRED_LOCATION = "vkdisp:pipeline/deferred";
 
+    /** P4.1.4 final 步管线 location（纯字符串视图，错误信息用）。 */
+    public static final String FINAL_LOCATION = "vkdisp:pipeline/final";
+
     /**
      * P2.4：合成管线的内建 uniform 块名（纯字符串视图）。
      *
@@ -237,6 +240,18 @@ public final class PipelineApi {
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/deferred");
 
     /**
+     * P4.1.4 final 步管线 location id。
+     *
+     * <p>为什么顶点**不翻转**（attachment 恒等拷贝推导，非经验规则）：final 的输入是
+     * composite 刚写入的我方中间目标 —— 同一 composite pass 换附件不换光栅化（同 viewport、
+     * 同帧缓冲位置），故该中间目标的 texel(x,y) 恒等于旧链路 main 的 texel(x,y)。
+     * final 以不翻转顶点做 texel→texel 恒等采样 → main 内容逐位不变 → 显示与旧链路一致；
+     * 若用 flipv 则把旧画面垂直镜像。旧 main → 屏幕的显示变换对新旧内容同样生效，不引入额外因子。
+     */
+    private static final Identifier FINAL_PIPELINE_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/final");
+
+    /**
      * 合成管线片元着色器 id：vkdisp_pack:composite → {@code assets/vkdisp_pack/shaders/composite.fsh}。
      *
      * <p>P2.4 起指向**虚拟资源包** {@code vkdisp_pack}（04-SPEC §2）——源由
@@ -255,6 +270,15 @@ public final class PipelineApi {
      */
     private static final Identifier DEFERRED_SHADER_ID =
             Identifier.fromNamespaceAndPath("vkdisp_pack", "deferred");
+
+    /**
+     * P4.1.4 final 步片元着色器 id：vkdisp_pack:final → {@code assets/vkdisp_pack/shaders/final.fsh}。
+     *
+     * <p>与 composite/deferred 同款出自**虚拟资源包**：源 = 所选库存包的 final 片元
+     * （同包同维度配对），包无 final / 兜底路径 = 内置 passthrough（required 管线必须总有源可编）。
+     */
+    private static final Identifier FINAL_SHADER_ID =
+            Identifier.fromNamespaceAndPath("vkdisp_pack", "final");
 
     /**
      * 合成管线顶点着色器 id：vkdisp:fullscreen_flipv → {@code assets/vkdisp/shaders/fullscreen_flipv.vsh}。
@@ -303,6 +327,9 @@ public final class PipelineApi {
 
     /** 注册成功后暂存的 P3.3 deferred 步管线实例；未注册时为 null。 */
     private static RenderPipeline deferredPipeline;
+
+    /** 注册成功后暂存的 P4.1.4 final 步管线实例；未注册时为 null。 */
+    private static RenderPipeline finalPipeline;
 
     /** 注册成功后暂存的深度可视化管线实例；未注册时为 null。 */
     private static RenderPipeline depthVisPipeline;
@@ -477,6 +504,36 @@ public final class PipelineApi {
                 DEFERRED_SHADER_ID, FULLSCREEN_FLIPV_SHADER_ID);
     }
 
+    /**
+     * 构建并注册 P4.1.4 final 步管线（{@link #FINAL_LOCATION}）。
+     *
+     * <p>片元 = 虚拟包 {@code vkdisp_pack:final}（包源或内置 passthrough），
+     * 顶点 = {@code vkdisp:fullscreen}（**不翻转** —— attachment 恒等拷贝推导，见
+     * {@link #FINAL_PIPELINE_ID}），绑定组 = {@link #packFragmentLayout()}（与 composite 同款超集）。
+     * final 只在包声明 final 片元时执行，但管线**必须无条件注册**
+     * （required：注册缺失会让 registered≠compiled 计数断言失败）。
+     */
+    public static void registerFinalPipeline(RegisterRenderPipelinesEvent event) {
+        RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                .withLocation(FINAL_PIPELINE_ID)
+                .withVertexShader(FULLSCREEN_SHADER_ID)
+                .withFragmentShader(FINAL_SHADER_ID)
+                .withBindGroupLayout(packFragmentLayout())
+                .withColorTargetState(ColorTargetState.DEFAULT)
+                .build();
+        event.registerPipeline(pipeline);
+        finalPipeline = pipeline;
+        REGISTERED_PIPELINES.add(pipeline);
+        VkDisp.LOGGER.info(
+                "vkdisp: final pipeline wired: fragment={} vertex={} (P4.1.4 final step; no v-flip by attachment-identity)",
+                FINAL_SHADER_ID, FULLSCREEN_SHADER_ID);
+    }
+
+    /** P4.1.4 final 步管线是否已注册完成（纯布尔视图）。 */
+    public static boolean isFinalPipelineRegistered() {
+        return finalPipeline != null;
+    }
+
     /** P3.3 deferred 步管线是否已注册完成（纯布尔视图）。 */
     public static boolean isDeferredPipelineRegistered() {
         return deferredPipeline != null;
@@ -646,6 +703,15 @@ public final class PipelineApi {
         RenderPipeline pipeline = deferredPipeline;
         if (pipeline == null) {
             throw new IllegalStateException("vkdisp: deferred pipeline not registered yet");
+        }
+        return pipeline;
+    }
+
+    /** P4.1.4 final 步管线；未注册时抛出（与 {@link #compositePipeline()} 同口径）。 */
+    static RenderPipeline finalPipeline() {
+        RenderPipeline pipeline = finalPipeline;
+        if (pipeline == null) {
+            throw new IllegalStateException("vkdisp: final pipeline not registered yet");
         }
         return pipeline;
     }

@@ -424,7 +424,8 @@ F1–F4 全部落地 → 放行并行
         （deferred 回名 + zip 6 条目 3313B）。
    🟡 P4.1 主流包 BSL（01-DEV-LOOP §10 P4.1「BSL 主要效果可用（与 Iris 对比截图）」，
       转译层 P4.1.1 ✅、驱动层 P4.1.2 ✅（见 ⑥，判据①②达成）、uniform 上传 P4.1.3 ✅
-      （见 ⑦），剩余画面质量子项（final 步 / 141 阶段矩阵）留后续）｜验收 = 08-TESTING §4/§5。
+      （见 ⑦）、final 步 P4.1.4 ✅（见 ⑧），剩余画面质量子项（141 阶段矩阵 / profiles
+      `#if` 解析）留后续）｜验收 = 08-TESTING §4/§5。
       设计（X9 实测取证，全部非猜测）：
       ① **包结构实测**（临时探针跑真 zip `run/shaderpacks/BSL_v10.1.8.zip`，gitignored）：
       91 program / 284 option / profiles=[]（shaders.properties 解析失败：`#if 表达式含
@@ -499,6 +500,25 @@ F1–F4 全部落地 → 放行并行
       （与 SkyRenderer:119-125 逐位同源），run2 样本归零。存档取证
       `world_clocks.dat total_ticks=0 + advance_time=0` → `worldTime=0` 为实值。
       单测 487 全绿（469→487：BuiltinsBlockLayout 11 + OfUniformManager 7）。
+      ⑧ **P4.1.4 final 步接线（2026-10-01，两跑闭环）**：第 9 管线 final —— 顶点 =
+      `fullscreen` **不翻转**（attachment 恒等拷贝**推导**写进
+      `PipelineApi.FINAL_PIPELINE_ID` javadoc：composite 换附件不换光栅化 → offscreen3
+      texel 逐位 ≡ 旧链 main texel → final 恒等采样拷回 → 显示与旧链一致；flipv 会把
+      旧画面垂直镜像，截图方向 = 该推导的实测检验点）；`PackCompositeSource` 一次扫描
+      三产出（composite + deferred + final 同包同维度配对，缺/坏 → passthrough +
+      INFO/T11 WARN），`VkDispVirtualPack` 三资源三布局，`FrameApi` final 链
+      `composite → offscreen3(slot3) → main`（final 是最后且唯一 main 写入者）+ 第三环
+      （final 24 成员/512B → 1024B 环；`packAux = deferredChain ? viewC : viewD` 保
+      gaux1 身份），`FullscreenPipelineRegistrar` 9 段 try/catch 全量对齐；
+      `OfUniformManager.logUploadOnce` **双布尔门缺陷**（slot=final 落 else 分支被
+      composite 标志先占吞行）改按槽位名 `UPLOAD_LOGGED_SLOTS` Set 门。实测两跑
+      （`evidence/p414-final-step.md` 全文 + sha256 + 关键行原文）：registered=9
+      compiled=9 (aligned)、`final source ready: present=true pack=BSL_v10.1.8
+      bytes=5616`、三布局 42/24/24 解析、uploaded written 26/24/24 全部
+      mismatched=0/overflow=0、run1 门缺陷 `uploaded: slot=final` 0 条 → run2 修复后
+      `written=24 unfilled=0` 可见、客户区 9.1930/23.75% 与 p413 基线 9.0767/22.45%
+      同量级且截图**未镜像**（树冠朝上 = 恒等拷贝推导实测吻合）、vkdisp ERROR
+      （排除 pack compile 141）= 0。单测 492 全绿（487→492：PackCompositeSourceTest 5）。
    ✅ P2.1/P2.2 主线接入（A/B/C 线汇合后接启动期扫包钩子，随本轮提交）：
       `VkDispPackScan`（ClientResourceLoadFinishedEvent → gameDir/shaderpacks → ShaderPackService.loadAll）
       实测 latest.log：packs=2（kind=zip + kind=dir 各一）programs=2 options=8 problems=0 diagnostics=0，

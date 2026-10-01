@@ -134,8 +134,9 @@ glsl/
 | **不填充（恒 0 + 一次性 INFO 列名）** | `timeBrightness`（OF 公式未取证，X9 拒猜）、blindFactor / darknessFactor / nightVision / endFlash* / shadowFade / bedrockLevel / dh* / gbufferPrevious* 等非目录项 |
 
 **布局与缓冲（P4.1.3）**：块成员顺序 = 收编声明在前 + 目录缺失在后（`UniformInjector` 发射序，
-本表顺序只决定缺失尾部）；BSL 的 composite 与 deferred 收编集不同 → **两套 std140 布局、
-两条环形缓冲**，按 pass 各绑各的。布局由 `glsl/translate/BuiltinsBlockLayout` 从**转译终稿
+本表顺序只决定缺失尾部）；BSL 的 composite / deferred / final 收编集各不相同 → **三套
+std140 布局、三条环形缓冲**（P4.1.3 双槽 42/24 成员，P4.1.4 补 final 第三槽 24/512），
+按 pass 各绑各的。布局由 `glsl/translate/BuiltinsBlockLayout` 从**转译终稿
 文本**重解析（F3 冻结契约：`TranslateResult` 不外传 Injector 内部结果，终稿即驱动编译的
 真源）。太阳走**原版路径**（非 BSL `sunPathRotation=-40°` 包天空）—— 与当前画面里 vanilla
 渲染的天空一致；P4.2 启用包天空后复审（18-PARALLEL 未覆盖登记）。

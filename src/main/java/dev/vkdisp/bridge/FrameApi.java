@@ -141,6 +141,13 @@ public final class FrameApi {
     private static boolean deferredChainActive;
 
     /**
+     * P4.1.4 final 链上一次是否激活。激活沿（false→true）打一次性埋点
+     * {@code final chain wired: composite -> offscreen3 -> main}（final 的输入 = composite 的
+     * 输出）；停用沿不打日志（composite input source 切换埋点已可见）。
+     */
+    private static boolean finalChainActive;
+
+    /**
      * 光空间列表（懒构建 + 缓存）。首次构建打验收埋点：
      * 非空 → {@code light-space list ready: size=… source=…}；空 → ERROR（T11，后续帧由
      * {@link #lightSpaceMatrix()} 拒绝出帧，hook 打 ERROR 原文本帧跳过影子链）。
@@ -365,9 +372,9 @@ public final class FrameApi {
     }
 
     /**
-     * P4.1.3：VkDispBuiltins 内建块的上传环 —— **两套布局两条环**。
+     * P4.1.3：VkDispBuiltins 内建块的上传环 —— **各步布局各一条环**（P4.1.4 起三槽）。
      *
-     * <p>composite 与 deferred 的块收编集不同（04-SPEC §3.2 上传注记「布局与缓冲」）→
+     * <p>composite / deferred / final 的块收编集不同（04-SPEC §3.2 上传注记「布局与缓冲」）→
      * std140 偏移不同，一条共享环必然写错位；故按槽位各一条，尺寸 =
      * max(1024, 各自块字节数)，布局来自 {@code VkDispVirtualPack} 冷路径解析。
      * 布局空（兜底 passthrough 无块）→ 不写，绑定初始缓冲（P2.4 零填充基线不变）。
@@ -380,6 +387,9 @@ public final class FrameApi {
 
     private static MappableRingBuffer builtinsDeferredRing;
     private static int builtinsDeferredRingBytes;
+
+    private static MappableRingBuffer builtinsFinalRing;
+    private static int builtinsFinalRingBytes;
 
     /** composite 槽位环（懒建/按布局字节扩容）。 */
     private static MappableRingBuffer builtinsCompositeRing(int wantBytes) {
@@ -411,6 +421,23 @@ public final class FrameApi {
             builtinsDeferredRingBytes = wantBytes;
             dev.vkdisp.VkDisp.LOGGER.info(
                     "vkdisp: builtins uniform buffer created: slot=deferred bytes={}", wantBytes);
+        }
+        return ring;
+    }
+
+    /** final 槽位环（P4.1.4 第三布局第三环；懒建/按布局字节扩容）。 */
+    private static MappableRingBuffer builtinsFinalRing(int wantBytes) {
+        MappableRingBuffer ring = builtinsFinalRing;
+        if (ring == null || wantBytes > builtinsFinalRingBytes) {
+            closeStaleBuiltinsRing(ring, "final");
+            ring = new MappableRingBuffer(
+                    () -> "vkdisp builtins final",
+                    GpuBuffer.USAGE_MAP_WRITE | GpuBuffer.USAGE_UNIFORM,
+                    wantBytes);
+            builtinsFinalRing = ring;
+            builtinsFinalRingBytes = wantBytes;
+            dev.vkdisp.VkDisp.LOGGER.info(
+                    "vkdisp: builtins uniform buffer created: slot=final bytes={}", wantBytes);
         }
         return ring;
     }
@@ -472,9 +499,11 @@ public final class FrameApi {
     private static TextureTarget offscreenTargetB;
     /** P3.3：槽 2 = deferred 步输出（只在链路激活时懒建，颜色专用无深度）。 */
     private static TextureTarget offscreenTargetC;
+    /** P4.1.4：槽 3 = composite 输出（仅 final 链激活时懒建，颜色专用无深度）。 */
+    private static TextureTarget offscreenTargetD;
 
     /**
-     * 按主目标尺寸取第 {@code slot} 个离屏目标（0/1 ping-pong 两端 + 2 deferred 输出）。
+     * 按主目标尺寸取第 {@code slot} 个离屏目标（0/1 ping-pong 两端 + 2 deferred 输出 + 3 composite 输出）。
      *
      * <p>尺寸变化时 resize，不每帧重建；所有目标都按主目标尺寸分配，保证中间级分辨率一致。
      */
@@ -482,11 +511,13 @@ public final class FrameApi {
         TextureTarget target = switch (slot) {
             case 0 -> offscreenTargetA;
             case 1 -> offscreenTargetB;
-            default -> offscreenTargetC;
+            case 2 -> offscreenTargetC;
+            default -> offscreenTargetD;
         };
         if (target == null) {
             // 槽 0 带深度附件（P3 前置：图案 pass 写深度、depthviz pass 采样它）；
-            // 槽 1 只做颜色 ping-pong、槽 2 只承载 deferred 输出，都不需要深度。
+            // 槽 1 只做颜色 ping-pong、槽 2 承载 deferred 输出、槽 3 承载 final 链的
+            // composite 输出，都不需要深度。
             target = new TextureTarget(
                     "vkdisp offscreen " + slot,
                     width,
@@ -496,7 +527,8 @@ public final class FrameApi {
             switch (slot) {
                 case 0 -> offscreenTargetA = target;
                 case 1 -> offscreenTargetB = target;
-                default -> offscreenTargetC = target;
+                case 2 -> offscreenTargetC = target;
+                default -> offscreenTargetD = target;
             }
         } else if (target.width != width || target.height != height) {
             target.resize(width, height);
@@ -595,13 +627,15 @@ public final class FrameApi {
                 && PipelineApi.isCompositePipelineRegistered()
                 && PipelineApi.isCompositeScenePipelineRegistered()
                 && PipelineApi.isDeferredPipelineRegistered()
+                && PipelineApi.isFinalPipelineRegistered()
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.geometryPipeline()) != null
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.shadowedPipeline()) != null
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.compositePipeline()) != null
                 && RenderSystem.getCompiledPipelineNullable(PipelineApi.compositeScenePipeline()) != null
                 // P3.3：deferred 是 required 管线（虚拟包总有源可编）→ 就绪判据一并要求它编译完成，
-                // 否则「世界内开链」会在帧中途撞未编译。
-                && RenderSystem.getCompiledPipelineNullable(PipelineApi.deferredPipeline()) != null;
+                // 否则「世界内开链」会在帧中途撞未编译。P4.1.4 final 同理（required，兜底总有源）。
+                && RenderSystem.getCompiledPipelineNullable(PipelineApi.deferredPipeline()) != null
+                && RenderSystem.getCompiledPipelineNullable(PipelineApi.finalPipeline()) != null;
     }
 
     /**
@@ -671,6 +705,14 @@ public final class FrameApi {
             throw new IllegalStateException(
                     "vkdisp: deferred pipeline not compiled yet: " + PipelineApi.DEFERRED_LOCATION);
         }
+        // P4.1.4：final 步管线（不翻转 + vkdisp_pack:final）；isPipelineReady 已含此判据，
+        // 走到这里仍 null = 编译期异常，抛出不静默（T11）。
+        CompiledRenderPipeline finalStepPipeline =
+                RenderSystem.getCompiledPipelineNullable(PipelineApi.finalPipeline());
+        if (finalStepPipeline == null) {
+            throw new IllegalStateException(
+                    "vkdisp: final pipeline not compiled yet: " + PipelineApi.FINAL_LOCATION);
+        }
 
         // P3.2：相机矩阵（世界内=原版 GameRenderer，菜单=占位回退，来源切换见日志）；map/close 仍在开启 pass 之前。
         MappableRingBuffer camRing = cameraRing();
@@ -712,16 +754,37 @@ public final class FrameApi {
         } else {
             deferredChainActive = false;
         }
+        // P4.1.4 链路判定：所选包声明 final 片元 → 开 final 步（composite 改写中间目标 offscreen3，
+        // final 再拷回主目标）。**不要求 useScene** —— final 是屏幕空间末步，菜单/世界同语义。
+        boolean finalChain = dev.vkdisp.VkDispVirtualPack.hasFinalProgram();
+        GpuTextureView viewD = null;
+        if (finalChain) {
+            viewD = offscreenTarget(3, width, height).getColorTextureView();
+            if (viewD == null) {
+                throw new IllegalStateException("vkdisp: offscreen3 (composite output) color texture view is null");
+            }
+            if (!finalChainActive) {
+                finalChainActive = true;
+                dev.vkdisp.VkDisp.LOGGER.info(
+                        "vkdisp: final chain wired: composite -> offscreen3 -> main (pack final)");
+            }
+        } else {
+            finalChainActive = false;
+        }
 
-        // P4.1.3：内建 uniform 上传（两套布局 → 两条环；map/close 仍在开启 pass 之前，
+        // P4.1.3：内建 uniform 上传（各步布局 → 各环；map/close 仍在开启 pass 之前，
         // 遵守「pass 打开期间不动 encoder」的实测规则）。布局空 = 兜底无块 → 不写，
         // 绑初始缓冲（P2.4 零填充基线不变）；值采集只在有成员可写时发生。
         BuiltinsBlockLayout compositeLayout =
                 dev.vkdisp.VkDispVirtualPack.compositeBuiltinsLayout();
         BuiltinsBlockLayout deferredLayout =
                 dev.vkdisp.VkDispVirtualPack.deferredBuiltinsLayout();
+        BuiltinsBlockLayout finalLayout =
+                dev.vkdisp.VkDispVirtualPack.finalBuiltinsLayout();
         Map<String, Object> builtinsValues = null;
-        if (!compositeLayout.isEmpty() || (deferredChain && !deferredLayout.isEmpty())) {
+        if (!compositeLayout.isEmpty()
+                || (deferredChain && !deferredLayout.isEmpty())
+                || (finalChain && !finalLayout.isEmpty())) {
             builtinsValues = OfUniformManager.gather(
                     Minecraft.getInstance(), width, height, blockAtlasSize(), lightSpaceList());
         }
@@ -748,12 +811,27 @@ public final class FrameApi {
                 }
             }
         }
+        MappableRingBuffer finalBuiltins = null;
+        if (finalChain) {
+            finalBuiltins = builtinsFinalRing(
+                    Math.max(BUILTINS_MIN_BYTES, finalLayout.byteSize()));
+            if (!finalLayout.isEmpty()) {
+                try (GpuBufferSlice.MappedView view =
+                        finalBuiltins.currentBuffer().map(false, true)) {
+                    OfUniformManager.logUploadOnce("final", finalLayout,
+                            OfUniformManager.write(finalLayout, builtinsValues, view.data()),
+                            builtinsValues);
+                }
+            }
+        }
 
         // 链段（各自不同附件 —— 规避「同一附件第二次 createRenderPass 不生效」）：
         //  Pass 1 阴影贴图：清屏(黑, 深度1.0) → 几何(经光空间矩阵) → offscreen0 的**深度**即阴影贴图
         //  Pass 2 世界视图：采样阴影贴图深度 → offscreen1（受阴影片元变暗）
         //  Pass 3（仅 P3.3 链）：scene → offscreen2（deferred 步，flipv = 净翻转守恒）
-        //  Pass 4/3：输入 → 主目标（**P2.4 起 = 包 composite**，1-v 翻转在 flipv 顶点完成）
+        //  Pass 4/3：输入 → 主目标或 offscreen3（**P2.4 起 = 包 composite**，1-v 翻转在 flipv
+        //        顶点完成；P4.1.4 final 链激活时 composite 落中间目标，见 Pass 5/4）
+        //  Pass 5/4（仅 P4.1.4 链）：offscreen3 → 主目标（包 final，不翻转顶点恒等拷贝）
         // 说明：图案背景本轮**不进链** —— 阴影贴图只应包含遮挡物深度，背景深度会污染贴图；
         //       pattern/blit/depthviz 管线仍注册并通过计数断言，只是不在本帧执行。
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
@@ -831,11 +909,16 @@ public final class FrameApi {
             compositeInputSource = compositeSource;
             dev.vkdisp.VkDisp.LOGGER.info("vkdisp: composite input source: {}", compositeSource);
         }
-        // pass 编号随链路态：有链时 deferred 占 3、本 pass 是 4；无链时保持 3（调试标签口径）。
+        // pass 编号随链路态：有 deferred 链时其占 3、本 pass 是 4；无 deferred 链保持 3（调试标签口径）。
+        // P4.1.4：final 链激活时 composite 落中间目标 offscreen3（主目标只由 final 写一次 ——
+        // 规避「同一附件第二次 createRenderPass 不生效」）。
         String compositeStep = deferredChain ? " 4" : " 3";
+        GpuTextureView compositeOutput = finalChain ? viewD : colorView;
+        String compositeTargetLabel = finalChain ? "offscreen3" : "main";
         try (RenderPass pass = encoder.createRenderPass(
-                () -> label + compositeStep + " (" + compositeSource + " -> main, pack composite)",
-                colorView, Optional.empty(), null, OptionalDouble.empty())) {
+                () -> label + compositeStep + " (" + compositeSource + " -> "
+                        + compositeTargetLabel + ", pack composite)",
+                compositeOutput, Optional.empty(), null, OptionalDouble.empty())) {
             // 顶点随输入源切换：链输出/fixture = 我方中间目标 → flipv（P-1f 1-v 翻转基线，
             // 链路经 deferred 步已翻一次、此处再翻 = 净零，与 P3.2 直连同向）；
             // scene 直连 = vanilla 帧图目标 → 无翻转（首轮 flipv 实测镜像，−yaw 符号已证）。
@@ -853,11 +936,33 @@ public final class FrameApi {
             PipelineApi.setPackSamplerUniforms(pass, packColor, packAux, sampler);
             pass.draw(3, 1, 0, 0);
         }
-        // P4.1.3：两条内建环都在绘制后 rotate（deferred 只在链激活写过才轮换，
-        // 未写槽轮换无害但没必要 —— 链未激活时 deferred 环整段不创建/不写）。
+        // P4.1.4 Pass 5（final 链激活时）：offscreen3 → 主目标（**final 是最后且唯一的主目标写入**）。
+        // 顶点不翻转（attachment 恒等拷贝推导，见 PipelineApi.FINAL_PIPELINE_ID）：
+        // composite 换附件不换光栅化 → offscreen3 的 texel 逐位等于旧链路 main 的 texel，
+        // final 恒等采样拷回 → 显示与旧链路一致（若 flipv 会垂直镜像）。
+        // 采样语义：colortex0/colortex1（BSL final 读 colortex1）→ color = composite 输出；
+        // gaux1 保持 deferred/colortex4 身份（链激活时 viewC，否则同 color）。
+        if (finalChain) {
+            String finalPassNo = deferredChain ? " 5" : " 4";
+            try (RenderPass pass = encoder.createRenderPass(
+                    () -> label + finalPassNo + " (offscreen3 -> main, pack final)",
+                    colorView, Optional.empty(), null, OptionalDouble.empty())) {
+                pass.setPipeline(finalStepPipeline);
+                RenderSystem.bindDefaultUniforms(pass);
+                pass.setUniform(PipelineApi.BUILTINS_UNIFORM, finalBuiltins.currentBuffer());
+                pass.setUniform(PipelineApi.SAMPLER_UNIFORM, viewD, sampler);
+                GpuTextureView finalAux = deferredChain ? viewC : viewD;
+                PipelineApi.setPackSamplerUniforms(pass, viewD, finalAux, sampler);
+                pass.draw(3, 1, 0, 0);
+            }
+        }
+        // P4.1.3：各内建环都在绘制后 rotate（未激活步的环不创建/不写也就无需轮换）。
         compositeBuiltins.rotate();
         if (deferredBuiltins != null) {
             deferredBuiltins.rotate();
+        }
+        if (finalBuiltins != null) {
+            finalBuiltins.rotate();
         }
         // 原版 PostPass 同款：绘制后再 rotate，保证本帧写入的槽在 GPU 用完前不被复用。
         ring.rotate();

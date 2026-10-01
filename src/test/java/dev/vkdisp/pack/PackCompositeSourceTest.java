@@ -235,6 +235,66 @@ class PackCompositeSourceTest {
                 () -> "坏 deferred 必须显式 WARN（T11），实际: " + result.diagnostics());
     }
 
+    // ------------------------------------------------------------------ final 步（P4.1.4）
+
+    @Test
+    void fallbackPathExposesPassthroughFinalAndFalseFlag() {
+        PackCompositeSource.Result result = PackCompositeSource.generate(null, "");
+
+        assertFalse(result.hasFinalProgram(), "兜底路径不开 final 步");
+        assertEquals(PackCompositeSource.FALLBACK_GLSL, result.finalSource(),
+                "final 源永不 null：兜底 = passthrough（required 管线必须总有源可编）");
+    }
+
+    @Test
+    void packWithoutFinalExposesPassthroughAndFalseFlag() throws IOException {
+        writeFixturePack();
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "");
+
+        assertFalse(result.hasFinalProgram(), "包无 final 程序 → 链路不开 final 步");
+        assertEquals(PackCompositeSource.FALLBACK_GLSL, result.finalSource());
+        assertTrue(result.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.INFO
+                                && d.message().contains("不含 final 程序")),
+                () -> "跳过 final 必须显式可见（T11），实际: " + result.diagnostics());
+        assertFragmentInlined(result.source());
+    }
+
+    @Test
+    void packWithFinalExposesMarkedFinalSourceAndTrueFlag() throws IOException {
+        writeFixturePack();
+        writeFinalProgram();
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "");
+
+        assertFalse(result.fallback(), "可用包不该兜底");
+        assertTrue(result.hasFinalProgram(), "包声明且编出 final → 链路开 final 步");
+        assertFalse(result.finalSource().contains("vkdisp 内置兜底"),
+                () -> "应是包的 final 源而非兜底，实际:\n" + result.finalSource());
+        assertTrue(result.finalSource().contains("finalMarker"),
+                () -> "final 源必须带 fixture 标识符（像素判据入口），实际:\n" + result.finalSource());
+        assertFragmentInlined(result.source());
+    }
+
+    @Test
+    void brokenFinalFragmentFallsBackToNoFinalWithWarn() throws IOException {
+        writeFixturePack();
+        // 声明了 final 但片元编译必失败 → 按无 final 处理 + WARN（T11，不硬开步）。
+        write(inventory.resolve("fixture"), "shaders/final.fsh",
+                "#version 330\n#include \"/lib/missing.glsl\"\nvoid main() {}\n");
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "");
+
+        assertFalse(result.fallback(), "final 坏掉不影响 composite 可用");
+        assertFalse(result.hasFinalProgram(), "片元无成功产出 → 按无 final 处理");
+        assertEquals(PackCompositeSource.FALLBACK_GLSL, result.finalSource());
+        assertTrue(result.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.WARN
+                                && d.message().contains("final 步按未启用处理")),
+                () -> "坏 final 必须显式 WARN（T11），实际: " + result.diagnostics());
+    }
+
     // ------------------------------------------------------------------ 维度选择（P4.1）
 
     @Test
@@ -271,6 +331,20 @@ class PackCompositeSourceTest {
     }
 
     @Test
+    void finalPairsWithSameDimensionAsComposite() throws IOException {
+        writeDimensionPrograms();
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "");
+
+        assertTrue(result.hasFinalProgram(), "维度包的 final 应编出成功产出");
+        assertTrue(result.finalSource().contains("overworldFinalTint"),
+                () -> "final 必须与 composite 同维度（world0），实际:\n" + result.finalSource());
+        assertFalse(result.finalSource().contains("netherFinalTint"),
+                () -> "不许链起「world0 composite + world-1 final」，实际:\n"
+                        + result.finalSource());
+    }
+
+    @Test
     void rootCompositePreferredOverOtherDimensionWhenNoWorld0() throws IOException {
         writeFixturePack();
         write(inventory.resolve("fixture"), "shaders/world-1/composite.fsh", """
@@ -298,13 +372,15 @@ class PackCompositeSourceTest {
         assertFragmentInlined(result.source());
     }
 
-    /** 多维度 fixture：world-1 与 world0 各有 composite/deferred，标识符可区分（18-PARALLEL §7.6）。 */
+    /** 多维度 fixture：world-1 与 world0 各有 composite/deferred/final，标识符可区分（18-PARALLEL §7.6）。 */
     private void writeDimensionPrograms() throws IOException {
         Path pack = packDir("dim");
         writeDimensionComposite(pack, "world0", "overworldTint", "vec3(1.0)");
         writeDimensionComposite(pack, "world-1", "netherTint", "vec3(1.0, 0.0, 0.0)");
         writeDimensionDeferred(pack, "world0", "overworldDeferredTint", "vec3(0.7, 1.0, 0.7)");
         writeDimensionDeferred(pack, "world-1", "netherDeferredTint", "vec3(1.0, 0.3, 0.1)");
+        writeDimensionFinal(pack, "world0", "overworldFinalTint", "vec3(0.9, 0.9, 1.0)");
+        writeDimensionFinal(pack, "world-1", "netherFinalTint", "vec3(1.0, 1.0, 0.3)");
     }
 
     private void writeDimensionComposite(Path pack, String dimension, String marker, String tint)
@@ -341,6 +417,26 @@ class PackCompositeSourceTest {
                 }
                 """.formatted(marker, tint, marker));
         write(pack, "shaders/" + dimension + "/deferred.vsh", """
+                #version 330
+                layout(location = 0) in vec3 vaPosition;
+                void main() { gl_Position = vec4(vaPosition, 1.0); }
+                """);
+    }
+
+    private void writeDimensionFinal(Path pack, String dimension, String marker, String tint)
+            throws IOException {
+        write(pack, "shaders/" + dimension + "/final.fsh", """
+                #version 330
+                #extension GL_ARB_separate_shader_objects : require
+                uniform sampler2D InSampler;
+                layout(location = 0) in vec2 vUv;
+                layout(location = 0) out vec4 fragColor;
+                void main() {
+                    vec3 %s = %s;
+                    fragColor = vec4(texture(InSampler, vUv).rgb * %s, 1.0);
+                }
+                """.formatted(marker, tint, marker));
+        write(pack, "shaders/" + dimension + "/final.vsh", """
                 #version 330
                 layout(location = 0) in vec3 vaPosition;
                 void main() { gl_Position = vec4(vaPosition, 1.0); }
@@ -425,6 +521,28 @@ class PackCompositeSourceTest {
                 void main() {
                     gl_Position = vec4(vaPosition, 1.0);
                 }
+                """);
+    }
+
+    /** 根命名空间 final（P4.1.4）：带 finalMarker 标识符，形状与 composite 同款。 */
+    private void writeFinalProgram() throws IOException {
+        Path pack = inventory.resolve("fixture");
+        write(pack, "shaders/final.fsh", """
+                #version 330
+                #extension GL_ARB_separate_shader_objects : require
+                uniform sampler2D InSampler;
+                layout(location = 0) in vec2 vUv;
+                layout(location = 0) out vec4 fragColor;
+                void main() {
+                    vec3 finalMarker = vec3(1.0, 0.9, 0.7);
+                    fragColor = vec4(texture(InSampler, vUv).rgb * finalMarker, 1.0);
+                }
+                """);
+        write(pack, "shaders/final.vsh", """
+                #version 330
+                #extension GL_ARB_separate_shader_objects : require
+                layout(location = 0) in vec3 vaPosition;
+                void main() { gl_Position = vec4(vaPosition, 1.0); }
                 """);
     }
 

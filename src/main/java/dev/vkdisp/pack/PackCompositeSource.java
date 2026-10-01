@@ -43,7 +43,8 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    （18-PARALLEL §7.7、07-CONSTRAINTS T14 / X14）。
  */
 /**
- * 生成 Pass 3 所需的 composite 片元源（P2.4 ③）+ P3.3 deferred 步片元源（同一次扫描双产出）。
+ * 生成 Pass 3 所需的 composite 片元源（P2.4 ③）+ P3.3 deferred 步片元源 + P4.1.4 final 步片元源
+ * （同一次扫描三产出，后两者与 composite 同包同维度配对）。
  *
  * <p>被 {@code dev.vkdisp.VkDispVirtualPack} 在虚拟资源包 {@code openResources} 时调用
  * （时机：ClientModLoader.finish 之后、首次资源加载之前 —— 此刻配置已加载，见 18-PARALLEL §5 P2.4 ②）。
@@ -68,17 +69,26 @@ public final class PackCompositeSource {
     public static final String DEFERRED_PROGRAM = "deferred";
 
     /**
+     * P4.1.4 final 步的程序名（与 {@link #COMPOSITE_PROGRAM} 同一次选包扫描产出）。
+     *
+     * <p>同包同维度配对（与 deferred 同规则）：final 是「present 到主目标前的最后一步」，
+     * 它的输入语义建立在同包 composite 链的输出之上，跨包/跨维度串链比没有 final 更糟。
+     */
+    public static final String FINAL_PROGRAM = "final";
+
+    /**
      * 内置兜底源（T11）：passthrough —— 采样 InSampler 原样输出。
      *
      * <p>顶点侧用的是 {@code fullscreen_flipv}（1-v 已在顶点完成），故片元用**原始 vUv**，
      * 与旧行为（blit.fsh 在片元翻转）数学等价。无 {@code #include}、无选项行，
      * 在没有库存包 / 总开关关闭时保证 composite 管线必有源可编（required 管线编译失败会砸启动）。
-     * P3.3 起同一文本也兜底 {@code shaders/deferred.fsh}（deferred 亦是 required 管线）。
+     * P3.3 起同一文本也兜底 {@code shaders/deferred.fsh}；P4.1.4 起兜底 {@code shaders/final.fsh}
+     * （deferred / final 亦是 required 管线，必须总有源可编）。
      */
     public static final String FALLBACK_GLSL = """
             #version 330
             #extension GL_ARB_separate_shader_objects : require
-            // vkdisp 内置兜底源（P2.4 composite / P3.3 deferred T11）：passthrough。
+            // vkdisp 内置兜底源（P2.4 composite / P3.3 deferred / P4.1.4 final T11）：passthrough。
             // 顶点 fullscreen_flipv 已完成 1-v 翻转（P-1f），此处用原始 vUv。
             uniform sampler2D InSampler;
 
@@ -91,11 +101,13 @@ public final class PackCompositeSource {
             """;
 
     /**
-     * 一次生成的结果（P3.3 起双源：composite + deferred 同一次扫描产出）。
+     * 一次生成的结果（P3.3 双源 → P4.1.4 三源：composite + deferred + final 同一次扫描产出）。
      *
      * @param source             Pass 3 composite 片元源（永不 null / 空）
      * @param deferredSource     P3.3 deferred 步片元源（永不 null / 空：取不到 → 内置 passthrough）
      * @param hasDeferredProgram 所选包真实产出了 deferred 片元（false = 链路不开 deferred 步）
+     * @param finalSource        P4.1.4 final 步片元源（永不 null / 空：取不到 → 内置 passthrough）
+     * @param hasFinalProgram    所选包真实产出了 final 片元（false = 链路不开 final 步）
      * @param packName           产出源的包名；兜底时为 {@code null}
      * @param fallback           true = 使用了内置兜底（必然伴随 WARN 诊断）
      * @param profile            实际生效的 profile 名（空串 = 默认值路径）
@@ -105,12 +117,14 @@ public final class PackCompositeSource {
             String source,
             String deferredSource,
             boolean hasDeferredProgram,
+            String finalSource,
+            boolean hasFinalProgram,
             String packName,
             boolean fallback,
             String profile,
             List<TranslateDiagnostic> diagnostics) {
 
-        /** 归一构造：两源非空（空视为调用方错误直接抛），profile 归一，列表冻结。 */
+        /** 归一构造：三源非空（空视为调用方错误直接抛），profile 归一，列表冻结。 */
         public Result {
             Objects.requireNonNull(source, "source");
             if (source.isBlank()) {
@@ -119,6 +133,10 @@ public final class PackCompositeSource {
             Objects.requireNonNull(deferredSource, "deferredSource");
             if (deferredSource.isBlank()) {
                 throw new IllegalArgumentException("vkdisp: deferred 源不许为空白");
+            }
+            Objects.requireNonNull(finalSource, "finalSource");
+            if (finalSource.isBlank()) {
+                throw new IllegalArgumentException("vkdisp: final 源不许为空白");
             }
             profile = profile == null ? "" : profile;
             diagnostics = diagnostics == null ? List.of() : List.copyOf(diagnostics);
@@ -205,8 +223,30 @@ public final class PackCompositeSource {
                                 pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
                     }
                 }
+                // P4.1.4：同一次编译产物里再顺带取 final 片元（同包 + 与 composite 同维度配对，
+                // 与 deferred 完全同规则 —— final 是 present 前最后一步，输入语义建立在本包链输出上）。
+                String finalSource = selectFinalSource(compiled, compositeDimension);
+                boolean hasFinal = finalSource != null;
+                if (!hasFinal) {
+                    finalSource = FALLBACK_GLSL;
+                    boolean declaredFinal = pack.programs().stream()
+                            .anyMatch(program -> FINAL_PROGRAM.equals(program.name()));
+                    if (declaredFinal) {
+                        diagnostics.add(TranslateDiagnostic.of(
+                                TranslateDiagnostic.Severity.WARN,
+                                "vkdisp: 包 '" + pack.name() + "' 声明了 final 但片元阶段无成功产出"
+                                        + "，P4.1.4 final 步按未启用处理",
+                                pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+                    } else {
+                        diagnostics.add(TranslateDiagnostic.of(
+                                TranslateDiagnostic.Severity.INFO,
+                                "vkdisp: 包 '" + pack.name() + "' 不含 final 程序，"
+                                        + "P4.1.4 final 步按未启用处理（composite 直写主目标）",
+                                pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+                    }
+                }
                 return new Result(composite.source(), deferredSource, hasDeferred,
-                        pack.name(), false, profile, diagnostics);
+                        finalSource, hasFinal, pack.name(), false, profile, diagnostics);
             }
             diagnostics.add(TranslateDiagnostic.of(
                     TranslateDiagnostic.Severity.WARN,
@@ -219,7 +259,8 @@ public final class PackCompositeSource {
                 "vkdisp: 库存中没有可用的 composite 片元源，使用内置 passthrough 兜底"
                         + "（inventory=" + inventoryDir + ", profile='" + profile + "')",
                 String.valueOf(inventoryDir), TranslateDiagnostic.UNKNOWN_LINE));
-        return new Result(FALLBACK_GLSL, FALLBACK_GLSL, false, null, true, profile, diagnostics);
+        return new Result(FALLBACK_GLSL, FALLBACK_GLSL, false, FALLBACK_GLSL, false,
+                null, true, profile, diagnostics);
     }
 
     /** 覆盖表 = 当前值与有效默认值的差分（只送真正被改掉的选项进改写器）。 */
@@ -264,6 +305,16 @@ public final class PackCompositeSource {
     private static String selectDeferredSource(ShaderPackCompiler.CompileResult compiled,
             String compositeDimension) {
         Selection selection = selectProgramFragment(compiled, DEFERRED_PROGRAM, compositeDimension);
+        return selection == null ? null : selection.source();
+    }
+
+    /**
+     * final 片元选择（P4.1.4）：与 deferred 同规则 —— 优先与 composite **同维度目录**，
+     * 否则按维度偏好（world0 > 根 > 其它）；无成功产出返回 null。
+     */
+    private static String selectFinalSource(ShaderPackCompiler.CompileResult compiled,
+            String compositeDimension) {
+        Selection selection = selectProgramFragment(compiled, FINAL_PROGRAM, compositeDimension);
         return selection == null ? null : selection.source();
     }
 

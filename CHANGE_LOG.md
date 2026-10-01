@@ -5,6 +5,65 @@
 
 ---
 
+## 2026-10-01 — P4.1.4 final 步接线：9 管线三布局三环 + attachment 恒等拷贝顶点推导 + 上传日志门缺陷修复，两跑取证 registered=9 对齐、written=24 归零（492 单测全绿）
+
+- **本次改了什么**（补上 P4.1 画面质量链的最后一环：present 前的 final 步）：
+  1. **第 9 条管线 final**（`PipelineApi` + `FullscreenPipelineRegistrar`）：
+     `registerFinalPipeline` 挂 `vkdisp:pipeline/final` —— 顶点复用
+     `fullscreen`（**不翻转**，attachment 恒等拷贝**推导**写进
+     `FINAL_PIPELINE_ID` javadoc：composite 换附件不换光栅化 → offscreen3 的 texel
+     逐位 ≡ 旧链 main 的 texel → final 恒等采样拷回 → 显示与旧链一致；flipv 会把
+     旧画面垂直镜像，截图方向 = 该推导的实测检验点）、片元 `vkdisp_pack:final`、
+     同 packFragmentLayout；注册段 5/9 插在 deferred 后，全 9 段序号重排。
+  2. **同扫描三产出**（`PackCompositeSource` + `VkDispVirtualPack`）：一次选包扫描
+     顺带取 final 片元（与 deferred 同规则 —— 同包 + 与 composite 同维度配对，
+     `selectFinalSource` 镜像 `selectDeferredSource`；缺/坏 → passthrough +
+     INFO（包无 final）或 T11 WARN（声明了但产出失败）按未启用处理）；
+     `Result` 扩五元源字段、虚拟包补 `shaders/final.fsh` 第三资源、
+     `hasFinalProgram` / `finalBuiltinsLayout` volatile 双标志（所有失败路径同步复位）。
+  3. **final 链接线**（`bridge/FrameApi`）：包有 final 时 `composite → offscreen3
+     (slot 3, offscreenTargetD) → main`（final pass 是最后且**唯一** main 写入者；
+     Pass 序 composite=3/4 → final=4/5），绑定 `InSampler=viewD`、
+     `packAux = deferredChain ? viewC : viewD`（gaux1 保持 deferred/colortex4 身份）、
+     内建 uniform 走第三环（final 24 成员/512B → 1024B 环，帧末与其余两环同转）；
+     `composite input source` 与 `final chain wired` 埋点各一次。
+  4. **上传日志门缺陷修复（run1 实测暴露）**：`OfUniformManager.logUploadOnce`
+     双布尔门（`"deferred".equals(slot) ? deferredLogDone : compositeLogDone`）把
+     未知 slot 落进 else 分支 —— composite 每帧先上传先置位 → `slot=final` 摘要行
+     永远被吞（run1 有 created 无 uploaded，0 条）。改为按槽位名
+     `UPLOAD_LOGGED_SLOTS` Set 门，run2 `uploaded: slot=final written=24` 可见。
+  5. **测试（+5）**：`PackCompositeSourceTest` 补 final 四态（无 final → passthrough
+     + INFO、有 final → 标记源 + true、final 片元坏 → WARN 按未启用、同维度配对
+     world0 vs world-1）+ 兜底三源贯通例。
+- **为什么改**：01-DEV-LOOP §10 P4.1「BSL 主要效果可用」的质量子项 —— BSL 的
+  色差/锐化在 final 程序里，缺这一步则 composite 输出直写主目标、present 效果恒关；
+  且「第 9 管线没接上」类静默缺口必须由 registered/compiled 计数对齐 + 一次性
+  chain 埋点可证（T11）。
+- **影响的文档**：本 `CHANGE_LOG.md`；`evidence/p414-final-step.md` + `evidence/README.md`
+  （两跑 sha256 + 关键行原文 + run1/run2 门缺陷对照 + 判定表）；`docs/04-SPEC.md` §3.2
+  （两套布局 → 三套三环）；`docs/18-PARALLEL.md` §5 P4.1（头部子项行更新 + 新增 ⑧
+  交付记录）；源码 7 文件（PackCompositeSource / VkDispVirtualPack / PipelineApi /
+  FullscreenPipelineRegistrar / FrameApi / OfUniformManager / 测试）。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；**492 用例 0 失败 0 错误**（487 → 492，+5）。
+  - ✅ **runClient 两跑闭环**（证据全文见 `evidence/p414-final-step.md`）：
+    run1：`(5/9) final` 注册 + `final source ready: present=true pack=BSL_v10.1.8
+    bytes=5616` + 三布局 42/24/24 + `registered=9 compiled=9 (aligned)` +
+    `final chain wired` + 客户区 **9.1930**/23.75%（截图 p414_world.png 未镜像，
+    与 p413 构图同向 = 恒等拷贝推导实测吻合）—— 但 `uploaded: slot=final` **0 条**
+    （日志门缺陷）→ 修复；
+    run2（修复后）：`uploaded: slot=final members=24 bytes=512 written=24 unfilled=0
+    mismatched=0 overflow=0` 可见、composite written=26 unfilled=16 与 p413 逐字一致、
+    `far=32.0 worldTime=0 rainStrength=0.0` 样本吻合、vkdisp ERROR（排除 141 条
+    pack compile）= 0、`fullscreen pass failed`/`Missing uniform` = 0。
+- **未覆盖**（如实登记）：final 视觉效果强度 A/B（色差/锐化按选项开关的像素差，
+  留 P4.2 切包回归取证）；composite1–7 多步链（真 OF 里 final 输入经 1–7 后才到，
+  本轮 single-composite 是最小近似）；包 final.vsh VERTEX 失败（管线顶点用
+  fullscreen，恒不触发）；profiles `#if >` 解析、141 阶段失败（= P4.2 范围）照旧。
+- **是否已提交**：随本轮 commit 提交并推送 origin/master。
+
+---
+
 ## 2026-10-01 — P4.1.3 内建 uniform 上传闭环：std140 布局解析 + OfUniformManager 双槽双环，两跑取证 26/24 成员落字节、雨量取值源缺陷修复归零（487 单测全绿）
 
 - **本次改了什么**（消掉 P4.1.1/P4.1.2 遗留的「uniform 全零上传」缺口）：

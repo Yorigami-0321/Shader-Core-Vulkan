@@ -23,7 +23,7 @@ package dev.vkdisp;
  *       两个事件的字节码偏移实测见 18-PARALLEL §5 P2.4 ②；
  *    ② **永不抛穿资源加载**：生成链任意 Throwable → ERROR 原文 + 内置 passthrough 兜底
  *       （composite / deferred 都是 required 管线，抛穿会砸启动；T11 要求显式可见而非静默）；
- *    ③ PackResources 是内存实现（双资源：shaders/composite.fsh + shaders/deferred.fsh），
+ *    ③ PackResources 是内存实现（三资源：composite/deferred/final 三片元），
  *       无文件句柄，close 为空操作。
  * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只观察官方签名（07-CONSTRAINTS L5-L8 / X19-X21）。
  * 5. 性能基线：❄️ 冷路径（注册一次 + 每次资源加载生成一次），清晰优先不做优化（18-PARALLEL §7.7）。
@@ -82,7 +82,10 @@ import net.neoforged.neoforge.event.AddPackFindersEvent;
 @EventBusSubscriber(modid = VkDisp.MOD_ID, value = Dist.CLIENT)
 public final class VkDispVirtualPack {
 
-    /** 虚拟包命名空间（04-SPEC §2）；管线片元 id = {@code vkdisp_pack:composite} / {@code :deferred}。 */
+    /**
+     * 虚拟包命名空间（04-SPEC §2）；管线片元 id = {@code vkdisp_pack:composite} /
+     * {@code :deferred} / {@code :final}。
+     */
     public static final String NAMESPACE = "vkdisp_pack";
 
     /** 包内资源：composite 片元（相对 assets/ 的路径）。 */
@@ -99,6 +102,13 @@ public final class VkDispVirtualPack {
     private static final Identifier DEFERRED_ID =
             Identifier.fromNamespaceAndPath(NAMESPACE, DEFERRED_PATH);
 
+    /** 包内资源（P4.1.4）：final 步片元（相对 assets/ 的路径）。 */
+    public static final String FINAL_PATH = "shaders/final.fsh";
+
+    /** 全量资源 id（P4.1.4）：assets/vkdisp_pack/shaders/final.fsh。 */
+    private static final Identifier FINAL_ID =
+            Identifier.fromNamespaceAndPath(NAMESPACE, FINAL_PATH);
+
     /**
      * P3.3 链路开关：最近一次 {@code openResources} 生成时，所选包是否真实产出了 deferred 片元。
      *
@@ -110,6 +120,20 @@ public final class VkDispVirtualPack {
     /** P3.3：所选包是否声明并成功产出了 deferred 片元（FrameApi 链路判据，只读视图）。 */
     public static boolean hasDeferredProgram() {
         return hasDeferredProgram;
+    }
+
+    /**
+     * P4.1.4 链路开关：最近一次 {@code openResources} 生成时，所选包是否真实产出了 final 片元。
+     *
+     * <p>默认 false（资源加载前 / 兜底路径 / 总开关关闭均为 false → FrameApi 保持
+     * composite 直写主目标基线）。volatile：生成在资源加载线程写、渲染线程读（同
+     * {@link #hasDeferredProgram}）。
+     */
+    private static volatile boolean hasFinalProgram;
+
+    /** P4.1.4：所选包是否声明并成功产出了 final 片元（FrameApi 链路判据，只读视图）。 */
+    public static boolean hasFinalProgram() {
+        return hasFinalProgram;
     }
 
     /**
@@ -133,6 +157,14 @@ public final class VkDispVirtualPack {
     /** deferred 块布局（FrameApi 只读视图；空 = 零填充）。 */
     public static BuiltinsBlockLayout deferredBuiltinsLayout() {
         return deferredBuiltinsLayout;
+    }
+
+    /** P4.1.4：final 转译终稿的块布局（无 final 程序 = 空布局；三布局第三槽）。 */
+    private static volatile BuiltinsBlockLayout finalBuiltinsLayout = BuiltinsBlockLayout.empty();
+
+    /** final 块布局（FrameApi 只读视图；空 = 零填充 / 步未开）。 */
+    public static BuiltinsBlockLayout finalBuiltinsLayout() {
+        return finalBuiltinsLayout;
     }
 
     /**
@@ -187,7 +219,7 @@ public final class VkDispVirtualPack {
             @Override
             public PackMetadataResources openMetadata(PackLocationInfo loc) {
                 // 元数据读取可能早于配置加载：返回静态兜底源，不做库存扫描。
-                return new VirtualPackResources(loc,
+                return new VirtualPackResources(loc, PackCompositeSource.FALLBACK_GLSL,
                         PackCompositeSource.FALLBACK_GLSL, PackCompositeSource.FALLBACK_GLSL);
             }
 
@@ -195,7 +227,8 @@ public final class VkDispVirtualPack {
             public Stream<PackResources> openResources(PackLocationInfo loc, Pack.Metadata meta) {
                 // openAllSelected@3114：此刻配置已加载@3079 → 生成真正生效的源（P2.4 ③ 时机）。
                 GeneratedSources sources = generateSources();
-                return Stream.of(new VirtualPackResources(loc, sources.composite(), sources.deferred()));
+                return Stream.of(new VirtualPackResources(loc,
+                        sources.composite(), sources.deferred(), sources.finalSource()));
             }
         };
         Pack.Metadata metadata = new Pack.Metadata(
@@ -207,13 +240,17 @@ public final class VkDispVirtualPack {
         return new Pack(location, supplier, metadata, selection);
     }
 
-    /** P3.3 一次生成的双源（deferred 步开关 {@link #hasDeferredProgram} 随生成同步落盘）。 */
-    private record GeneratedSources(String composite, String deferred) {}
+    /**
+     * 一次生成的三源（P3.3 deferred / P4.1.4 final 开关
+     * {@link #hasDeferredProgram} / {@link #hasFinalProgram} 随生成同步落盘）。
+     */
+    private record GeneratedSources(String composite, String deferred, String finalSource) {}
 
     /**
-     * 生成 composite + deferred 双片元源（{@link PackCompositeSource} 冷路径编排）。
+     * 生成 composite + deferred + final 三片元源（{@link PackCompositeSource} 冷路径编排）。
      * 永不抛：任意失败 → ERROR 原文 + 内置 passthrough（required 管线必须总有源可编，T11）。
-     * 每条路径都显式写 {@link #hasDeferredProgram}（兜底/异常 = false → FrameApi 走 P3.2 基线）。
+     * 每条路径都显式写 {@link #hasDeferredProgram} / {@link #hasFinalProgram}
+     * （兜底/异常 = false → FrameApi 走基线：不开 deferred 链、composite 直写主目标）。
      */
     static GeneratedSources generateSources() {
         try {
@@ -221,13 +258,15 @@ public final class VkDispVirtualPack {
             String profile = VkDispConfig.PACK_PROFILE.get();
             if (!enabled) {
                 hasDeferredProgram = false;
+                hasFinalProgram = false;
                 compositeBuiltinsLayout = BuiltinsBlockLayout.empty();
                 deferredBuiltinsLayout = BuiltinsBlockLayout.empty();
+                finalBuiltinsLayout = BuiltinsBlockLayout.empty();
                 VkDisp.LOGGER.warn(
                         "vkdisp: composite source: mod disabled (vkdisp.enabled=false)"
                                 + " -> built-in passthrough fallback");
                 return new GeneratedSources(PackCompositeSource.FALLBACK_GLSL,
-                        PackCompositeSource.FALLBACK_GLSL);
+                        PackCompositeSource.FALLBACK_GLSL, PackCompositeSource.FALLBACK_GLSL);
             }
             Path inventory = inventoryDir();
             VkDisp.LOGGER.info("vkdisp: composite source generation start: profile='{}' inventory={}",
@@ -248,23 +287,36 @@ public final class VkDispVirtualPack {
                     "vkdisp: deferred source ready: present={} pack={} bytes={}",
                     result.hasDeferredProgram(), result.packName(),
                     result.deferredSource().getBytes(StandardCharsets.UTF_8).length);
+            hasFinalProgram = result.hasFinalProgram();
+            // P4.1.4 证据行：final 步是否开（present=true 才会走 composite -> offscreen3 -> main 链）。
+            VkDisp.LOGGER.info(
+                    "vkdisp: final source ready: present={} pack={} bytes={}",
+                    result.hasFinalProgram(), result.packName(),
+                    result.finalSource().getBytes(StandardCharsets.UTF_8).length);
             // P4.1.3：从转译终稿解析 VkDispBuiltins 块布局（F3 冻结契约：Injector 内部
-            // Result 不外传，终稿 = 驱动编译的真源）；两步收编集不同 → 双布局双环。
+            // Result 不外传，终稿 = 驱动编译的真源）；各步收编集不同 → 各布局各环。
             compositeBuiltinsLayout = BuiltinsBlockLayout.parse(result.source());
             deferredBuiltinsLayout = result.hasDeferredProgram()
                     ? BuiltinsBlockLayout.parse(result.deferredSource())
                     : BuiltinsBlockLayout.empty();
+            finalBuiltinsLayout = result.hasFinalProgram()
+                    ? BuiltinsBlockLayout.parse(result.finalSource())
+                    : BuiltinsBlockLayout.empty();
             logLayout("composite", compositeBuiltinsLayout);
             logLayout("deferred", deferredBuiltinsLayout);
-            return new GeneratedSources(result.source(), result.deferredSource());
+            logLayout("final", finalBuiltinsLayout);
+            return new GeneratedSources(
+                    result.source(), result.deferredSource(), result.finalSource());
         } catch (Throwable t) {
             hasDeferredProgram = false;
+            hasFinalProgram = false;
             compositeBuiltinsLayout = BuiltinsBlockLayout.empty();
             deferredBuiltinsLayout = BuiltinsBlockLayout.empty();
+            finalBuiltinsLayout = BuiltinsBlockLayout.empty();
             VkDisp.LOGGER.error("vkdisp: composite source generation FAILED (原文如下)"
                     + " -> built-in passthrough fallback", t);
             return new GeneratedSources(PackCompositeSource.FALLBACK_GLSL,
-                    PackCompositeSource.FALLBACK_GLSL);
+                    PackCompositeSource.FALLBACK_GLSL, PackCompositeSource.FALLBACK_GLSL);
         }
     }
 
@@ -303,8 +355,8 @@ public final class VkDispVirtualPack {
     }
 
     /**
-     * 内存 {@link PackResources}：服务两个资源（{@code shaders/composite.fsh} +
-     * {@code shaders/deferred.fsh}，P3.3 双管线双片元）。
+     * 内存 {@link PackResources}：服务三个资源（{@code shaders/composite.fsh} +
+     * {@code shaders/deferred.fsh} + {@code shaders/final.fsh}，P3.3/P4.1.4 三管线三片元）。
      *
      * <p>接口清单经 javap 核实：{@link PackResources} 三个抽象方法 + 继承自
      * {@code PackMetadataResources} 的 {@code location/getRootResource/getMetadataSection/close}
@@ -315,11 +367,14 @@ public final class VkDispVirtualPack {
         private final PackLocationInfo location;
         private final byte[] compositeBytes;
         private final byte[] deferredBytes;
+        private final byte[] finalBytes;
 
-        VirtualPackResources(PackLocationInfo location, String compositeSource, String deferredSource) {
+        VirtualPackResources(PackLocationInfo location, String compositeSource,
+                String deferredSource, String finalSource) {
             this.location = location;
             this.compositeBytes = compositeSource.getBytes(StandardCharsets.UTF_8);
             this.deferredBytes = deferredSource.getBytes(StandardCharsets.UTF_8);
+            this.finalBytes = finalSource.getBytes(StandardCharsets.UTF_8);
         }
 
         @Override
@@ -337,6 +392,9 @@ public final class VkDispVirtualPack {
             }
             if (DEFERRED_ID.equals(id)) {
                 return () -> new ByteArrayInputStream(deferredBytes);
+            }
+            if (FINAL_ID.equals(id)) {
+                return () -> new ByteArrayInputStream(finalBytes);
             }
             return null;
         }
@@ -357,6 +415,11 @@ public final class VkDispVirtualPack {
                     || DEFERRED_PATH.equals(normalized)
                     || DEFERRED_PATH.startsWith(normalized + "/")) {
                 output.accept(DEFERRED_ID, () -> new ByteArrayInputStream(deferredBytes));
+            }
+            if (normalized.isEmpty()
+                    || FINAL_PATH.equals(normalized)
+                    || FINAL_PATH.startsWith(normalized + "/")) {
+                output.accept(FINAL_ID, () -> new ByteArrayInputStream(finalBytes));
             }
         }
 
