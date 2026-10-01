@@ -54,12 +54,16 @@ import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import org.joml.Vector4f;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MappableRingBuffer;
+import dev.vkdisp.glsl.translate.BuiltinsBlockLayout;
+import dev.vkdisp.render.OfUniformManager;
 
 /**
  * 原版绘制 API 唯一入口（06-MIGRATION.md §2.1 的 bridge 红线，07-CONSTRAINTS T5）。
@@ -361,29 +365,99 @@ public final class FrameApi {
     }
 
     /**
-     * P2.4：VkDispBuiltins 内建块的零值环形缓冲。
+     * P4.1.3：VkDispBuiltins 内建块的上传环 —— **两套布局两条环**。
      *
-     * <p>23 条内建按 std140 布局共 508 字节，取 1024 留裕量（缓冲大于块合法）。
-     * 包 composite 源携带该块但当前不引用（fixture 只用 InSampler）→ 绑定零值即可；
-     * 正式值回填（OfUniformManager 上传链）是 P2.4+ 已登记缺口。
+     * <p>composite 与 deferred 的块收编集不同（04-SPEC §3.2 上传注记「布局与缓冲」）→
+     * std140 偏移不同，一条共享环必然写错位；故按槽位各一条，尺寸 =
+     * max(1024, 各自块字节数)，布局来自 {@code VkDispVirtualPack} 冷路径解析。
+     * 布局空（兜底 passthrough 无块）→ 不写，绑定初始缓冲（P2.4 零填充基线不变）。
+     * 块字节增长（换包）→ 旧环 close 后按新尺寸重建（MappableRingBuffer 实现 AutoCloseable）。
      */
-    private static final int BUILTINS_BYTES = 1024;
+    private static final int BUILTINS_MIN_BYTES = 1024;
 
-    private static MappableRingBuffer builtinsRing;
+    private static MappableRingBuffer builtinsCompositeRing;
+    private static int builtinsCompositeRingBytes;
 
-    private static MappableRingBuffer builtinsRing() {
-        MappableRingBuffer ring = builtinsRing;
-        if (ring == null) {
+    private static MappableRingBuffer builtinsDeferredRing;
+    private static int builtinsDeferredRingBytes;
+
+    /** composite 槽位环（懒建/按布局字节扩容）。 */
+    private static MappableRingBuffer builtinsCompositeRing(int wantBytes) {
+        MappableRingBuffer ring = builtinsCompositeRing;
+        if (ring == null || wantBytes > builtinsCompositeRingBytes) {
+            closeStaleBuiltinsRing(ring, "composite");
             ring = new MappableRingBuffer(
-                    () -> "vkdisp builtins",
+                    () -> "vkdisp builtins composite",
                     GpuBuffer.USAGE_MAP_WRITE | GpuBuffer.USAGE_UNIFORM,
-                    BUILTINS_BYTES);
-            builtinsRing = ring;
+                    wantBytes);
+            builtinsCompositeRing = ring;
+            builtinsCompositeRingBytes = wantBytes;
             dev.vkdisp.VkDisp.LOGGER.info(
-                    "vkdisp: builtins uniform buffer created (bytes={}, zero-filled until OfUniformManager)",
-                    BUILTINS_BYTES);
+                    "vkdisp: builtins uniform buffer created: slot=composite bytes={}", wantBytes);
         }
         return ring;
+    }
+
+    /** deferred 槽位环（懒建/按布局字节扩容）。 */
+    private static MappableRingBuffer builtinsDeferredRing(int wantBytes) {
+        MappableRingBuffer ring = builtinsDeferredRing;
+        if (ring == null || wantBytes > builtinsDeferredRingBytes) {
+            closeStaleBuiltinsRing(ring, "deferred");
+            ring = new MappableRingBuffer(
+                    () -> "vkdisp builtins deferred",
+                    GpuBuffer.USAGE_MAP_WRITE | GpuBuffer.USAGE_UNIFORM,
+                    wantBytes);
+            builtinsDeferredRing = ring;
+            builtinsDeferredRingBytes = wantBytes;
+            dev.vkdisp.VkDisp.LOGGER.info(
+                    "vkdisp: builtins uniform buffer created: slot=deferred bytes={}", wantBytes);
+        }
+        return ring;
+    }
+
+    /** 换尺寸重建时关闭旧环（失败只 WARN —— 旧缓冲随后无人引用，泄漏可接受）。 */
+    private static void closeStaleBuiltinsRing(MappableRingBuffer stale, String slot) {
+        if (stale == null) {
+            return;
+        }
+        try {
+            stale.close();
+        } catch (RuntimeException ex) {
+            dev.vkdisp.VkDisp.LOGGER.warn(
+                    "vkdisp: builtins ring close failed on resize: slot={} reason={}", slot, ex);
+        }
+    }
+
+    /**
+     * 方块图集 {w,h}（OfUniformManager.gather 用）。
+     *
+     * <p>取图必须走 {@code GpuTexture.getWidth(int)} —— 该类型属于 com.mojang.renderpearl，
+     * T5 红线业务包不得引用，故封在 bridge 内（06-MIGRATION §2.1）。失败返回 {0,0}
+     * 并一次性 WARN（T11 不静默；图集是常驻资源，真失败会持续可见）。
+     */
+    private static boolean atlasWarned;
+
+    private static int[] blockAtlasSize() {
+        try {
+            net.minecraft.client.renderer.texture.AbstractTexture texture =
+                    Minecraft.getInstance().getTextureManager().getTexture(
+                            net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS);
+            if (texture == null) {
+                return new int[] {0, 0};
+            }
+            GpuTexture gpu = texture.getTexture();
+            if (gpu == null) {
+                return new int[] {0, 0};
+            }
+            return new int[] {gpu.getWidth(0), gpu.getHeight(0)};
+        } catch (RuntimeException ex) {
+            if (!atlasWarned) {
+                atlasWarned = true;
+                dev.vkdisp.VkDisp.LOGGER.warn(
+                        "vkdisp: block atlas size unavailable (atlasSize=0,0): {}", ex.toString());
+            }
+            return new int[] {0, 0};
+        }
     }
 
     /**
@@ -639,6 +713,42 @@ public final class FrameApi {
             deferredChainActive = false;
         }
 
+        // P4.1.3：内建 uniform 上传（两套布局 → 两条环；map/close 仍在开启 pass 之前，
+        // 遵守「pass 打开期间不动 encoder」的实测规则）。布局空 = 兜底无块 → 不写，
+        // 绑初始缓冲（P2.4 零填充基线不变）；值采集只在有成员可写时发生。
+        BuiltinsBlockLayout compositeLayout =
+                dev.vkdisp.VkDispVirtualPack.compositeBuiltinsLayout();
+        BuiltinsBlockLayout deferredLayout =
+                dev.vkdisp.VkDispVirtualPack.deferredBuiltinsLayout();
+        Map<String, Object> builtinsValues = null;
+        if (!compositeLayout.isEmpty() || (deferredChain && !deferredLayout.isEmpty())) {
+            builtinsValues = OfUniformManager.gather(
+                    Minecraft.getInstance(), width, height, blockAtlasSize(), lightSpaceList());
+        }
+        MappableRingBuffer compositeBuiltins = builtinsCompositeRing(
+                Math.max(BUILTINS_MIN_BYTES, compositeLayout.byteSize()));
+        if (!compositeLayout.isEmpty()) {
+            try (GpuBufferSlice.MappedView view =
+                    compositeBuiltins.currentBuffer().map(false, true)) {
+                OfUniformManager.logUploadOnce("composite", compositeLayout,
+                        OfUniformManager.write(compositeLayout, builtinsValues, view.data()),
+                        builtinsValues);
+            }
+        }
+        MappableRingBuffer deferredBuiltins = null;
+        if (deferredChain) {
+            deferredBuiltins = builtinsDeferredRing(
+                    Math.max(BUILTINS_MIN_BYTES, deferredLayout.byteSize()));
+            if (!deferredLayout.isEmpty()) {
+                try (GpuBufferSlice.MappedView view =
+                        deferredBuiltins.currentBuffer().map(false, true)) {
+                    OfUniformManager.logUploadOnce("deferred", deferredLayout,
+                            OfUniformManager.write(deferredLayout, builtinsValues, view.data()),
+                            builtinsValues);
+                }
+            }
+        }
+
         // 链段（各自不同附件 —— 规避「同一附件第二次 createRenderPass 不生效」）：
         //  Pass 1 阴影贴图：清屏(黑, 深度1.0) → 几何(经光空间矩阵) → offscreen0 的**深度**即阴影贴图
         //  Pass 2 世界视图：采样阴影贴图深度 → offscreen1（受阴影片元变暗）
@@ -686,7 +796,7 @@ public final class FrameApi {
                     viewC, Optional.empty(), null, OptionalDouble.empty())) {
                 pass.setPipeline(deferred);
                 RenderSystem.bindDefaultUniforms(pass);
-                pass.setUniform(PipelineApi.BUILTINS_UNIFORM, builtinsRing().currentBuffer());
+                pass.setUniform(PipelineApi.BUILTINS_UNIFORM, deferredBuiltins.currentBuffer());
                 pass.setUniform(PipelineApi.SAMPLER_UNIFORM, SceneCaptureApi.sceneColorView(), sampler);
                 // P4.1.2：validateDraw 按布局逐条校验（javap 取证）—— 18 包 sampler 缺一即抛。
                 // deferred 只读场景色（其 DRAWBUFFERS:4 写出的 AO 落在本步输出 viewC），
@@ -703,8 +813,8 @@ public final class FrameApi {
         //   菜单回退 → offscreen1 fixture（P2.4 基线）
         // ⚠️ 采样的必须是**本帧有内容的那个目标**（实测教训：曾误采样本链未写入的目标）。
         // P2.4：fixture/链路路径管线 = 包 composite + fullscreen_flipv（1-v 翻转 P-1f 基线）；
-        //       VkDispBuiltins 是 D 线注入进包源的内建块 —— 未被片元引用时绑定零值缓冲无副作用
-        //       （被引用的正式上传链 OfUniformManager 属 P2.4+ 登记缺口）。
+        //       VkDispBuiltins 自 P4.1.3 起按 composite 槽位布局写入真实值（OfUniformManager），
+        //       布局空（兜底无块）时绑定初始零值缓冲（P2.4 基线语义）。
         GpuTextureView compositeInput;
         String compositeSource;
         if (deferredChain) {
@@ -731,7 +841,7 @@ public final class FrameApi {
             // scene 直连 = vanilla 帧图目标 → 无翻转（首轮 flipv 实测镜像，−yaw 符号已证）。
             pass.setPipeline(useScene && !deferredChain ? compositeScene : composite);
             RenderSystem.bindDefaultUniforms(pass);
-            pass.setUniform(PipelineApi.BUILTINS_UNIFORM, builtinsRing().currentBuffer());
+            pass.setUniform(PipelineApi.BUILTINS_UNIFORM, compositeBuiltins.currentBuffer());
             pass.setUniform(PipelineApi.SAMPLER_UNIFORM, compositeInput, sampler);
             // P4.1.2：布局 18 包 sampler 必须全部 setUniform 才能 draw（validateDraw 逐条校验）。
             // OF 合成语义（BSL 源实测）：deferred 步 DRAWBUFFERS:4 不改写 colortex0 ——
@@ -743,7 +853,12 @@ public final class FrameApi {
             PipelineApi.setPackSamplerUniforms(pass, packColor, packAux, sampler);
             pass.draw(3, 1, 0, 0);
         }
-        builtinsRing().rotate();
+        // P4.1.3：两条内建环都在绘制后 rotate（deferred 只在链激活写过才轮换，
+        // 未写槽轮换无害但没必要 —— 链未激活时 deferred 环整段不创建/不写）。
+        compositeBuiltins.rotate();
+        if (deferredBuiltins != null) {
+            deferredBuiltins.rotate();
+        }
         // 原版 PostPass 同款：绘制后再 rotate，保证本帧写入的槽在 GPU 用完前不被复用。
         ring.rotate();
         return new FrameSize(width, height);

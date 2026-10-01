@@ -5,6 +5,60 @@
 
 ---
 
+## 2026-10-01 — P4.1.3 内建 uniform 上传闭环：std140 布局解析 + OfUniformManager 双槽双环，两跑取证 26/24 成员落字节、雨量取值源缺陷修复归零（487 单测全绿）
+
+- **本次改了什么**（消掉 P4.1.1/P4.1.2 遗留的「uniform 全零上传」缺口）：
+  1. **`glsl/translate/BuiltinsBlockLayout`（新增）**：从转译终稿文本解析
+     `VkDispBuiltins` 块的 std140 布局（收编声明序在前 + 目录缺失尾部；float/vec/mat/
+     数组对齐规则手算金样：23 目录项 0..496、块 512B）。解析永不抛 —— 未知类型/非字面
+     数组长/重名 → 失败态空布局（回退零填充 + WARN 原文，T11）。
+  2. **`render/OfUniformManager`（新增）**：`gather` 按 04-SPEC §3.2 上传注记逐条
+     从游戏状态取值（矩阵/方向/时间/天气/图集/眼亮度，每条出处写进文档）；
+     `write` 按布局绝对偏移 + 原生字节序把命中成员写进 ByteBuffer（vanilla
+     Std140Builder 无 seek，收编序下顺序重放必错）——纯函数，类型不匹配/越界跳过并
+     计数，绝不猜值。未取证项（timeBrightness 等）恒 0 + 一次性 INFO 列名。
+  3. **双布局双环接线**（`VkDispVirtualPack` + `bridge/FrameApi`）：composite 与
+     deferred 收编集不同 → 两套布局，冷路径从**转译终稿**各解析一次（F3 冻结契约，
+     volatile 双槽）；FrameApi 按 `max(1024, byteSize)` 各建 MappableRingBuffer，
+     deferred/composite 两处 draw 各绑各的、帧末同转，扩容时 close 旧环。
+     `blockAtlasSize()` 封在 FrameApi 取 `GpuTexture`（T5：业务包零 renderpearl）。
+  4. **取值源修复（run1 实测暴露）**：雨量/角度/月相原直读 `SkyRenderState` 提取态
+     ——该字段只在 LevelExtractor 跑过后有效，首帧为默认 0 → 雨量样本误报 1.0
+     （存档实为晴）。改为与 SkyRenderer:119-125 **逐位同源**的直读：
+     `attributeProbe(SUN_ANGLE/MOON_ANGLE)`（度×π/180）、`attributeProbe(MOON_PHASE)`、
+     `Level.getRainLevel(partialTicks)`（= `1 − rainBrightness` 恒等变形）。
+  5. **测试（+18）**：`BuiltinsBlockLayoutTest` 11 例（手算偏移金样/收编序/数组步进/
+     失败态/真实转译输出对账幂等）+ `OfUniformManagerTest` 7 例（五类型绝对偏移落
+     字节含 mat4 列主序平移列、缺失/错配/越界/null 安全/数值宽化）。
+- **为什么改**：P4.1 判据⑤的质量子项 —— 此前环形缓冲零填充，BSL 的
+  sunVec/时间/矩阵系 uniform 全为 0（效果 NaN 风险）；且「上传了」必须可取证
+  （T11：写没写、写了多少、谁没填，日志一行看得见）。
+- **影响的文档**：本 `CHANGE_LOG.md`；`evidence/p413-uniform-upload.md` + `evidence/README.md`
+  （两跑 sha256 + 关键行原文 + 存档基线取证 + 判定表）；`docs/04-SPEC.md` §3.2
+  （新增「上传语义」块 + sun/moon/rain/moonPhase 三行取值源更新）；
+  `docs/18-PARALLEL.md` §5 P4.1（⑤ 缺口行闭环 + 新增 ⑦ 交付记录）；
+  源码新增 `BuiltinsBlockLayout`/`OfUniformManager` + `VkDispVirtualPack`/`FrameApi` 接线 + 测试×2。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；**487 用例 0 失败 0 错误**（469 → 487，+18）。
+  - ✅ **runClient 两跑闭环**（证据全文见 `evidence/p413-uniform-upload.md`）：
+    run1：`builtins layout parsed: slot=composite members=42 bytes=608` /
+    `slot=deferred members=24 bytes=512` → 双环 `created bytes=1024` →
+    `builtins uploaded: written=26 unfilled=16 / written=24 unfilled=0`、
+    `mismatched=0 overflow=0`、vkdisp ERROR（排除 141 条 pack compile）= 0、
+    `registered=8 compiled=8`、客户区 mean_luma **10.8189** 非黑 29.18%；
+    但 deferred 样本 `rainStrength=1.0` 与存档晴天（weather.dat raining=0）矛盾
+    → 定位 SkyRenderState 提取前默认值缺陷 → 修复；
+    run2（修复后）：同链全绿、样本 `rainStrength=0.0 worldTime=0` 与存档逐项吻合
+    （`world_clocks.dat total_ticks=0 + advance_time=0` → 时钟冻结实值）、
+    客户区 mean_luma **9.0767** 非黑 22.45%（与 p412 基线 11.901/30.69% 同量级可见）。
+- **未覆盖**（如实登记）：非零 `worldTime` 的运行期观测（本测试存档时钟冻结为 0，
+  公式本身由单测覆盖）；`frameTimeCounter` 稳态样本（一次性 INFO 只拍首帧）；
+  timeBrightness/eyeBrightness 精确语义、wetness OF 平滑、sunPathRotation 包天空、
+  final/tonemap、profiles `#if >`、141 阶段失败（= P4.2 范围）—— 照旧登记。
+- **是否已提交**：随本轮 commit 提交并推送 origin/master。
+
+---
+
 ## 2026-10-01 — P4.1.2 驱动层四修：转译七段补齐（VersionAdapter + IoLocationAdapter）+ 18 采样器布局超集 + draw 侧全量绑定 + OF 语义视图映射，三跑闭环 15679→0→可见（0.951→11.901）
 
 - **本次改了什么**（四修一组，全部按 p41a 驱动错误原文逐一闭环，X9 取证）：

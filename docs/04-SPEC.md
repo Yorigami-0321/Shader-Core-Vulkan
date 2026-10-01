@@ -110,6 +110,36 @@ glsl/
 | `atlasSize` | ivec2 | 方块图集尺寸 |
 | `eyeBrightnessSmooth` | ivec2 | 亮度 |
 
+**上传语义（P4.1.3 起 `render/OfUniformManager` 实现；出处 = 原版 26.3 反编译实证 + BSL
+消费点实测，X9 非猜测；表本身（上表名称/类型/顺序）是冻结契约，见 `UniformCatalogTest` 硬编码对照）**：
+
+| 值 | 语义与出处 |
+|---|---|
+| `gbufferModelView` | `viewRotationMatrix × translate(−pos)`（`CameraRenderState`，与 FrameApi 相机同链但**不含锚点** —— 包侧必须看真实相机） |
+| `gbufferProjection` | `cameraState.projectionMatrix` 原样拷贝；两个逆矩阵 = JOML `.invert()`（奇异时回退单位阵） |
+| `sunPosition` / `moonPosition` | **眼空间**单位方向：世界向量 `(−sinθ, cosθ, 0)`，θ = `attributeProbe` 的 `SUN_ANGLE`/`MOON_ANGLE`（**度 × π/180 转弧度**，与 SkyRenderer:119-120 逐位同源；即原版天空渲染链 `Ry(−90°)·Rx(θ)·(0,1,0)`，晨东/午顶/昏西三点校验过）× viewRotation × 归一。**直读 probe 不经 `SkyRenderState`**（其字段仅在 LevelExtractor 跑过后有效，首帧/加载帧为默认 0，p413 run1 实测）。缩放无关性已证：BSL `gbufferProjection * vec4(sunPosition, 1.0)` 透视除法齐次，单位与 ×2000 同像 |
+| `shadowLightPosition` | 太阳方向 y>0 取太阳、否则取月亮（BSL 未消费本项，口径如实登记） |
+| `shadowModelView` / `shadowProjection` | `LightSpaceList.Entry` 首级联分矩阵（P3.1 同源；列表空 → 单位阵） |
+| `cameraPosition` | `CameraRenderState.pos`（float 化） |
+| `frameTimeCounter` | wall-clock 秒逐帧累加（换世界重置；单帧增量截断 ≤0.5s 防切窗尖峰） |
+| `frameCounter` | 自增 int（跨世界持续） |
+| `near` / `far` | 世界内 `Camera.PROJECTION_Z_NEAR=0.05` / `cameraState.depthFar`（与构建投影同参，Camera:43/95/109 实证）；菜单占位 0.1/32（与 `placeholderCamera` 同参） |
+| `viewWidth` / `viewHeight` | 本 pass 主目标宽高 |
+| `rainStrength` | `Level.getRainLevel(partialTicks)` 直读（= SkyRenderer:122 的 `1 − rainBrightness` 恒等变形，等价但不依赖 `SkyRenderState` 提取态 —— p413 run1 曾因提取前默认值误报 1.0）；`wetness` v1 = rainStrength（OF 级平滑未做，登记） |
+| `isEyeInWater` | `cameraState.fogType` 映射：NONE/ATMOSPHERIC→0，WATER→1，LAVA→2，POWDER_SNOW→3 |
+| `worldTime` / `worldDay` | `Level.getDefaultClockTime()`（26.3 无 `getDayTime`，ClockManager 实证）：`floorMod(t,24000)` / `floorDiv(t,24000)` |
+| `atlasSize` | `TextureManager.getTexture(LOCATION_BLOCKS)` → `GpuTexture.getWidth/Height(0)` |
+| `eyeBrightnessSmooth` | **近似 v1（登记）**：`ivec2(block×16, round(clamp(sky,0,15)×clamp(skyLightFactor,0,1)×16))` 各 clamp 到 0..240；block/sky = eye 处 `LightLayer`，factor = `SKY_LIGHT_FACTOR` 属性 probe —— OF 精确曲线与平滑未取证（X9） |
+| 非目录填充 | `aspectRatio = viewWidth/viewHeight`（BSL `vec2(aspectRatio,1.0)` 消费）、`timeAngle = (t%24000)/24000`（与 BSL 夜窗 0.5325–0.9675 = 12780/24000–23220/24000 吻合）、`moonPhase = attributeProbe(MOON_PHASE).index()`（SkyRenderer:125 同源，null 回退 `SkyRenderState`；原版序直传；与 OF 相位序一致性未取证，登记） |
+| **不填充（恒 0 + 一次性 INFO 列名）** | `timeBrightness`（OF 公式未取证，X9 拒猜）、blindFactor / darknessFactor / nightVision / endFlash* / shadowFade / bedrockLevel / dh* / gbufferPrevious* 等非目录项 |
+
+**布局与缓冲（P4.1.3）**：块成员顺序 = 收编声明在前 + 目录缺失在后（`UniformInjector` 发射序，
+本表顺序只决定缺失尾部）；BSL 的 composite 与 deferred 收编集不同 → **两套 std140 布局、
+两条环形缓冲**，按 pass 各绑各的。布局由 `glsl/translate/BuiltinsBlockLayout` 从**转译终稿
+文本**重解析（F3 冻结契约：`TranslateResult` 不外传 Injector 内部结果，终稿即驱动编译的
+真源）。太阳走**原版路径**（非 BSL `sunPathRotation=-40°` 包天空）—— 与当前画面里 vanilla
+渲染的天空一致；P4.2 启用包天空后复审（18-PARALLEL 未覆盖登记）。
+
 ### 3.3 管线构建层（`pipeline/`）
 
 ```java

@@ -423,8 +423,8 @@ F1–F4 全部落地 → 放行并行
         同位姿逐像素镜像判定 = 未覆盖（需输入隔离环境重跑）；fixture 取证后已复原
         （deferred 回名 + zip 6 条目 3313B）。
    🟡 P4.1 主流包 BSL（01-DEV-LOOP §10 P4.1「BSL 主要效果可用（与 Iris 对比截图）」，
-      转译层 P4.1.1 ✅、驱动层 P4.1.2 ✅（见 ⑥，判据①②达成），剩余画面质量子项
-      （uniform 上传 / final 步 / 141 阶段矩阵）留后续）｜验收 = 08-TESTING §4/§5。
+      转译层 P4.1.1 ✅、驱动层 P4.1.2 ✅（见 ⑥，判据①②达成）、uniform 上传 P4.1.3 ✅
+      （见 ⑦），剩余画面质量子项（final 步 / 141 阶段矩阵）留后续）｜验收 = 08-TESTING §4/§5。
       设计（X9 实测取证，全部非猜测）：
       ① **包结构实测**（临时探针跑真 zip `run/shaderpacks/BSL_v10.1.8.zip`，gitignored）：
       91 program / 284 option / profiles=[]（shaders.properties 解析失败：`#if 表达式含
@@ -455,8 +455,8 @@ F1–F4 全部落地 → 放行并行
       **转译通过 ≠ 驱动通过**，此原文即驱动级证据。
       ⑤ **P4.1 完成判据（不变）**：管线 registered==compiled → 进世界 BSL 视觉生效
       （对照 fixture 基线可检伪）→ 与 Iris 对比截图（环境缺 Iris = 已登记限制）；
-      uniform 数值仍全零上传（OfUniformManager 缺口）→ sunVec 系效果可能 NaN 的
-      质量问题与 profiles 解析失败均留后续子轮。
+      ~~uniform 数值仍全零上传（OfUniformManager 缺口）→ sunVec 系效果可能 NaN~~
+      **已闭环（见 ⑦，P4.1.3）**；profiles 解析失败（`#if` 含 `>`）仍留后续子轮。
       **2026-10-01 结果**：判据① 三跑均 `registered=8, compiled=8 (aligned)` ✅；
       判据② run2 黑（0.951/0.466%）→ run3 可见（11.901/30.69%）单变量归因 ✅；
       判据③ 环境缺 Iris = 照旧登记限制 ⚠️。
@@ -483,6 +483,22 @@ F1–F4 全部落地 → 放行并行
       location×36 / gl_MultiTexCoord0×33 / gl_TextureMatrix×20 / Position×2 /
       texture 函数语法×44 / gbufferProjectionInverse 重定义×6，全在 gbuffers/dh/
       final/shadow 系）= **P4.2 切包回归范围**，不阻 P4.1 判据。
+      ⑦ **P4.1.3 uniform 上传交付（2026-10-01，两跑闭环）**：
+      新增 `glsl/translate/BuiltinsBlockLayout`（std140 布局解析：收编序+目录尾，
+      手算 23 项偏移 0..496/512 金样）+ `render/OfUniformManager`（gather 语义 =
+      04-SPEC §3.2 上传注记逐条，write 按绝对偏移落字节，纯函数单测）；布局从**转译终稿**
+      重解析（F3 冻结契约，VkDispVirtualPack 双槽 volatile），composite/deferred
+      **双布局双环**（42 成员/608B、24/512B → 各 1024B 环，FrameApi 绑定/rotate）。
+      实测两跑（`evidence/p413-uniform-upload.md` 全文 + sha256）：written 26/24、
+      unfilled 16/0（timeBrightness 等 X9 未取证项恒 0 + 一次性列名）、mismatched=0、
+      overflow=0、vkdisp ERROR（排除 pack compile）=0、registered=8 compiled=8、
+      客户区 9.08/22.45% 与 p412 基线 11.901/30.69% 同量级可见。
+      run1 暴露并修复**取值源缺陷**：`SkyRenderState` 字段在 LevelExtractor 提取前
+      为默认 0（雨量样本误报 1.0，存档 weather.dat 实为晴）→ 改为直读
+      `attributeProbe(SUN_ANGLE/MOON_ANGLE/MOON_PHASE)` + `Level.getRainLevel`
+      （与 SkyRenderer:119-125 逐位同源），run2 样本归零。存档取证
+      `world_clocks.dat total_ticks=0 + advance_time=0` → `worldTime=0` 为实值。
+      单测 487 全绿（469→487：BuiltinsBlockLayout 11 + OfUniformManager 7）。
    ✅ P2.1/P2.2 主线接入（A/B/C 线汇合后接启动期扫包钩子，随本轮提交）：
       `VkDispPackScan`（ClientResourceLoadFinishedEvent → gameDir/shaderpacks → ShaderPackService.loadAll）
       实测 latest.log：packs=2（kind=zip + kind=dir 各一）programs=2 options=8 problems=0 diagnostics=0，

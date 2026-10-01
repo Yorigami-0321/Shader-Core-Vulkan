@@ -41,6 +41,7 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.glsl.translate.BuiltinsBlockLayout;
 import dev.vkdisp.pack.PackCompositeSource;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
@@ -109,6 +110,29 @@ public final class VkDispVirtualPack {
     /** P3.3：所选包是否声明并成功产出了 deferred 片元（FrameApi 链路判据，只读视图）。 */
     public static boolean hasDeferredProgram() {
         return hasDeferredProgram;
+    }
+
+    /**
+     * P4.1.3：composite 转译终稿的 VkDispBuiltins std140 布局（冷路径解析一次）。
+     *
+     * <p>块成员顺序 = 收编声明（源序）在前 + 目录缺失在后 → composite 与 deferred
+     * **收编集不同 → 布局不同**，各自解析、各绑各的环形缓冲（04-SPEC §3.2 上传注记）。
+     * volatile：生成在资源加载线程写、渲染线程读（与 {@link #hasDeferredProgram} 同款）。
+     * 空布局（兜底 passthrough 无块 / 解析失败）= FrameApi 回退零填充。
+     */
+    private static volatile BuiltinsBlockLayout compositeBuiltinsLayout = BuiltinsBlockLayout.empty();
+
+    /** P4.1.3：deferred 转译终稿的块布局（无 deferred 程序 = 空布局）。 */
+    private static volatile BuiltinsBlockLayout deferredBuiltinsLayout = BuiltinsBlockLayout.empty();
+
+    /** composite 块布局（FrameApi 只读视图；空 = 零填充）。 */
+    public static BuiltinsBlockLayout compositeBuiltinsLayout() {
+        return compositeBuiltinsLayout;
+    }
+
+    /** deferred 块布局（FrameApi 只读视图；空 = 零填充）。 */
+    public static BuiltinsBlockLayout deferredBuiltinsLayout() {
+        return deferredBuiltinsLayout;
     }
 
     /**
@@ -197,6 +221,8 @@ public final class VkDispVirtualPack {
             String profile = VkDispConfig.PACK_PROFILE.get();
             if (!enabled) {
                 hasDeferredProgram = false;
+                compositeBuiltinsLayout = BuiltinsBlockLayout.empty();
+                deferredBuiltinsLayout = BuiltinsBlockLayout.empty();
                 VkDisp.LOGGER.warn(
                         "vkdisp: composite source: mod disabled (vkdisp.enabled=false)"
                                 + " -> built-in passthrough fallback");
@@ -222,14 +248,40 @@ public final class VkDispVirtualPack {
                     "vkdisp: deferred source ready: present={} pack={} bytes={}",
                     result.hasDeferredProgram(), result.packName(),
                     result.deferredSource().getBytes(StandardCharsets.UTF_8).length);
+            // P4.1.3：从转译终稿解析 VkDispBuiltins 块布局（F3 冻结契约：Injector 内部
+            // Result 不外传，终稿 = 驱动编译的真源）；两步收编集不同 → 双布局双环。
+            compositeBuiltinsLayout = BuiltinsBlockLayout.parse(result.source());
+            deferredBuiltinsLayout = result.hasDeferredProgram()
+                    ? BuiltinsBlockLayout.parse(result.deferredSource())
+                    : BuiltinsBlockLayout.empty();
+            logLayout("composite", compositeBuiltinsLayout);
+            logLayout("deferred", deferredBuiltinsLayout);
             return new GeneratedSources(result.source(), result.deferredSource());
         } catch (Throwable t) {
             hasDeferredProgram = false;
+            compositeBuiltinsLayout = BuiltinsBlockLayout.empty();
+            deferredBuiltinsLayout = BuiltinsBlockLayout.empty();
             VkDisp.LOGGER.error("vkdisp: composite source generation FAILED (原文如下)"
                     + " -> built-in passthrough fallback", t);
             return new GeneratedSources(PackCompositeSource.FALLBACK_GLSL,
                     PackCompositeSource.FALLBACK_GLSL);
         }
+    }
+
+    /**
+     * P4.1.3 布局证据行（每轮 generateSources 一条）：成员数 / 块字节数；
+     * 解析失败按 WARN 原文打出（T11）—— FrameApi 侧回退零填充。
+     */
+    private static void logLayout(String slot, BuiltinsBlockLayout layout) {
+        if (layout.failure() != null) {
+            VkDisp.LOGGER.warn(
+                    "vkdisp: builtins layout FAILED (zero-fill fallback): slot={} reason={}",
+                    slot, layout.failure());
+            return;
+        }
+        VkDisp.LOGGER.info(
+                "vkdisp: builtins layout parsed: slot={} members={} bytes={}",
+                slot, layout.members().size(), layout.byteSize());
     }
 
     /** 库存目录（{@code <gameDir>/shaderpacks}）；不可用返回 null（扫描器会产出显式诊断）。 */
