@@ -17,6 +17,7 @@ package dev.vkdisp.pack;
  * 5. 性能基线：❄️ 冷路径单测（毫秒级），无性能断言（X14）。
  */
 
+import dev.vkdisp.config.PackOptionStore;
 import dev.vkdisp.glsl.TranslateDiagnostic;
 import dev.vkdisp.glsl.translate.ShaderStage;
 import org.junit.jupiter.api.Test;
@@ -536,6 +537,138 @@ class PackCompositeSourceTest {
                 () -> "指定包失败必须显式 WARN 且声明不换包，实际: " + result.diagnostics());
         assertFalse(result.source().contains("SHADOW_DARKNESS"),
                 "不许静默换成 fixture 包");
+    }
+
+    // ------------------------------------------------------------------ 选项存储接线（P4.3）
+
+    @Test
+    void storeOverrideIsRewrittenIntoSourceWithExplicitInfo() throws IOException {
+        writeFixturePack();
+        PackOptionStore store = PackOptionStore.empty();
+        store.put("fixture", "SHADOW_DARKNESS", "0.05");
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "", "", store);
+
+        assertFalse(result.fallback(), "可用包不该兜底");
+        assertFragmentInlined(result.source());
+        assertTrue(result.source().contains("0.05"),
+                () -> "存储回放必须把 0.05 写进最终源，实际输出:\n" + result.source());
+        assertFalse(result.source().contains("0.10"),
+                () -> "存储覆盖不该残留默认 0.10，实际输出:\n" + result.source());
+        assertTrue(result.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.INFO
+                                && d.message().contains("选项覆盖已改写进源")
+                                && d.message().contains("SHADOW_DARKNESS=0.05")),
+                () -> "改写进源必须有 INFO 锚点（P4.3 取证），实际: " + result.diagnostics());
+    }
+
+    @Test
+    void storeEntriesForOtherPacksAreNotReplayed() throws IOException {
+        writeFixturePack();
+        PackOptionStore store = PackOptionStore.empty();
+        store.put("other-pack", "SHADOW_DARKNESS", "0.05");
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "", "", store);
+
+        assertFalse(result.fallback(), "可用包不该兜底");
+        assertTrue(result.source().contains("0.10"),
+                () -> "别的包的存储条目不许污染本包（按包名隔离），实际输出:\n" + result.source());
+        assertFalse(result.source().contains("0.05"),
+                () -> "不该回放 other-pack 的覆盖，实际输出:\n" + result.source());
+        assertFalse(result.diagnostics().stream().anyMatch(d ->
+                        d.message().contains("选项覆盖已改写进源")),
+                () -> "零命中不该打改写 INFO，实际: " + result.diagnostics());
+    }
+
+    @Test
+    void unknownStoreOptionIsDiagnosedAndKeptForItsPack() throws IOException {
+        writeFixturePack();
+        PackOptionStore store = PackOptionStore.empty();
+        store.put("fixture", "NO_SUCH_OPTION", "1");
+        store.put("fixture", "SHADOW_DARKNESS", "0.05");
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "", "", store);
+
+        assertFalse(result.fallback(), "未知存储项不是致命错：包仍可用");
+        assertTrue(result.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.WARN
+                                && d.message().contains("STORE_UNKNOWN_OPTION")
+                                && d.message().contains("NO_SUCH_OPTION")),
+                () -> "未知存储项必须显式 WARN（T11），实际: " + result.diagnostics());
+        assertTrue(result.source().contains("0.05"),
+                () -> "同包的合法覆盖仍要生效（未知项只跳过自己），实际输出:\n" + result.source());
+    }
+
+    @Test
+    void storeOverridesBeatProfileInSameSession() throws IOException {
+        writeFixturePack();
+        PackOptionStore store = PackOptionStore.empty();
+        store.put("fixture", "SHADOW_DARKNESS", "0.05");
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "HIGH", "", store);
+
+        assertFalse(result.fallback(), "可用包不该兜底");
+        assertEquals("HIGH", result.profile(), "profile 仍是会话上下文（只是被存储覆盖压过）");
+        assertTrue(result.source().contains("0.05"),
+                () -> "存储回放排在 profile 之后 → GUI 改动优先，实际输出:\n" + result.source());
+        assertFalse(result.source().contains("0.20"),
+                () -> "profile HIGH 不该压过已存的 GUI 改动，实际输出:\n" + result.source());
+        assertFalse(result.source().contains("0.10"),
+                () -> "默认值不该复活，实际输出:\n" + result.source());
+    }
+
+    @Test
+    void nullStoreKeepsLegacyBehaviorByteForByte() throws IOException {
+        writeFixturePack();
+
+        PackCompositeSource.Result legacy = PackCompositeSource.generate(inventory, "HIGH", "");
+        PackCompositeSource.Result withStore = PackCompositeSource.generate(inventory, "HIGH", "", null);
+
+        assertEquals(legacy.source(), withStore.source(), "null 存储 = 与旧行为逐字节等价");
+        assertEquals(
+                legacy.diagnostics().stream()
+                        .map(d -> d.severity() + " " + d.message()).toList(),
+                withStore.diagnostics().stream()
+                        .map(d -> d.severity() + " " + d.message()).toList(),
+                "诊断也必须逐条相同");
+    }
+
+    // ------------------------------------------------------------------ 屏幕取包（P4.3）
+
+    @Test
+    void loadSelectedForOptionsFollowsThreeStateSelection() throws IOException {
+        writeFixturePack();
+        writeMarkerPack("alpha", "alphaPackMarker");
+
+        // "" = 自动：与 generate 同一口径（扫描顺序首包），不假定具体扫描序。
+        assertEquals(PackCompositeSource.generate(inventory, "").packName(),
+                PackCompositeSource.loadSelectedForOptions(inventory, "").map(ShaderPack::name).orElse(null),
+                "自动选择必须与 generate 同口径（同一扫描顺序首包）");
+        // 精确名：不受扫描顺序影响。
+        assertEquals("alpha",
+                PackCompositeSource.loadSelectedForOptions(inventory, "alpha").map(ShaderPack::name).orElse(null));
+        // none = 强制无包。
+        assertTrue(PackCompositeSource.loadSelectedForOptions(inventory, "none").isEmpty(),
+                "保留名 none 必须选空（与 generate 兜底对齐）");
+        // 名不存在 = 选空（不落到别的包）。
+        assertTrue(PackCompositeSource.loadSelectedForOptions(inventory, "no-such-pack").isEmpty(),
+                "缺名必须选空，绝不静默换包");
+    }
+
+    @Test
+    void loadSelectedForOptionsSkipsPackWithoutCompositeAndStopsAtNone() throws IOException {
+        // 只有 gbuffers、没有 composite 的包 → 不算可选（开屏要的是有选项声明的生效包）。
+        Path noComposite = packDir("gbufferonly");
+        write(noComposite, "shaders/gbuffers_textured.fsh",
+                "#version 150\nvoid main() { gl_FragColor = vec4(1.0); }\n");
+
+        assertTrue(PackCompositeSource.loadSelectedForOptions(inventory, "").isEmpty(),
+                "库存只有无 composite 的包 → 选空（屏幕不开空会话）");
+        assertTrue(PackCompositeSource.loadSelectedForOptions(inventory, "gbufferonly").isEmpty(),
+                "按名指到无 composite 的包也选空");
+        // 空/不存在的库存目录同样是空。
+        assertTrue(PackCompositeSource.loadSelectedForOptions(inventory.resolve("absent"), "").isEmpty(),
+                "库存目录不存在 → 选空");
     }
 
     // ------------------------------------------------------------------ helpers

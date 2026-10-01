@@ -18,7 +18,8 @@ package dev.vkdisp.config;
  *    "#ifdef NAME"（要求真值时只定义、假值时未定义），也可能被写成 "#if NAME"（要求真值是 1）。
  *    这两种写法互斥，因此本类把风格做成显式枚举 DefineStyle，默认 LITERAL，各自都有快照单测。
  * 2. 备选：只支持一种风格、硬编码进代码 —— 否决（会在没有 GPU 证据的情况下把一处未经验证的假设
- *    固化进契约；07-CONSTRAINTS X9 禁止猜值，故把它做成显式开关 + 文档化差异点，等真实包验证后再定默认）。
+ *    固化进契约；07-CONSTRAINTS X9 禁止猜值，故把它做成显式开关 + 文档化差异点；
+ *    默认已由 P4.3 真实包证据定稿为 LITERAL，开关保留以便未来包证伪时一行切换，见类 javadoc 定稿段）。
  *    备选：让 OptionBinding 直接产出最终 GLSL 文本 —— 否决（#include / 条件编译是 C 线的活；
  *    F 线只产"宏名 → 替换文本"这张表，由 C/D 线决定怎么拼接）。
  * 3. 我们的差异点：① 主产物是 Map<宏名, 替换文本>（空串 = 只有宏名没有替换文本），
@@ -69,13 +70,30 @@ import dev.vkdisp.pack.OptionType;
  *   <li><b>消费方式（语言事实，非猜测）</b>：{@code IFDEF_TRUE} 的空替换文本只能配 {@code #ifdef / #ifndef}
  *       （{@code #if NAME} 下表达式为空 → 预处理器报错）；{@code LITERAL} 的宏在真假两态下都"已定义"
  *       （{@code #ifdef NAME} 不区分真假），且 {@code #if NAME} 会把 {@code true / false} 这类非预处理器常量
- *       带进表达式 —— 它在真实包里的实际求值行为留给 P4.2 实测，本类不下结论。</li>
+ *       带进表达式 —— P4.2/P4.3 实测未观测到任何包这样消费布尔选项（见下方定稿段边界 ②）。</li>
  * </ul>
  *
- * <p><b>仍未决（07-CONSTRAINTS X9：不填猜值）</b>：默认 {@link DefineStyle} 的选定缺真实包证据 ——
- * 真实包里布尔选项到底用 {@code #ifdef} 还是 {@code #if} 消费尚未统计，故默认暂留 {@link DefineStyle#LITERAL}
- * （切换是一行改动，见 {@link #of(PackOptions, DefineStyle)}）。定稿判据：P4.2 切主流包 / P4.3 选项 GUI 时
- * 取真实包的条件编译写法据实选定，再由 env-1 同步 18-PARALLEL §10 的 P-1e 状态行。
+ * <p><b>P-1e 定稿（P4.3，2026-10-01）：默认风格 = {@link DefineStyle#LITERAL}（维持现状，定稿不再留待）</b>。
+ * 证据全部来自真实包 BSL v10.1.8（4 次扫包日志 p417-run1.log + 包源码统计）与本仓库 fixture：
+ * <ul>
+ *   <li><b>BSL 的 284 个 OF 模型选项里零个布尔声明</b>（{@code // [true false]} 计 0 ——
+ *       INTEGER 156 / FLOAT 125 / STRING 3）：布尔风格问题在 BSL 上根本不出现；</li>
+ *   <li><b>BSL 的 60 个裸开关消费为 ifdef 家族 257 : 0</b>（{@code #ifdef} 227 + {@code #ifndef} 16 +
+ *       {@code #if defined} 14，裸 {@code #if 开关} 计 0）—— 若这些是选项，风格该选 IFDEF_TRUE；
+ *       但它们<b>没有值列表、不进 OF 选项表</b>，也就永远到不了 OptionBinding；</li>
+ *   <li><b>语料里唯一的 BOOLEAN 选项是 fixture 的 {@code #define ENABLE_FOG true // [true false]}</b>，
+ *       消费方式是<b>运行时表达式</b> {@code if (!ENABLE_FOG)} —— LITERAL 下假值仍出
+ *       {@code #define ENABLE_FOG false}，GLSL 求值正常；IFDEF_TRUE 下假值出 {@code #undef}
+ *       → 未声明标识符，编译错误。翻默认会弄坏语料里<b>唯一工作着的</b>布尔选项；</li>
+ *   <li>数值选项（BSL 的 281 个）在两种风格下逐字节相同（真值表单测），选谁都不影响 BSL。</li>
+ * </ul>
+ * 合起来：保留 LITERAL 对已观测全部真实包零风险，翻默认反而引入回归 —— 据实定稿 LITERAL。
+ * 两处已知边界（登记，不猜）：① 若未来包把布尔写成裸 {@code #if 开关} 消费且声明为选项，
+ * 应切 {@link DefineStyle#IFDEF_TRUE}（一行改动，见 {@link #of(PackOptions, DefineStyle)}）；
+ * ② LITERAL 下 {@code #define 开关 true} 配<b>预处理器</b> {@code #if 开关} 求值时，
+ * {@code true} 不是预处理器常量（未定义标识符按 0 计）—— 未观测到任何包这样消费，
+ * 真实出现时要么包自带 0/1 字面量、要么切风格 —— 留待该包实证再定（X9）。
+ * 同步记录：18-PARALLEL §10 P-1e 状态行（env-1，同轮更新）。
  *
  * <p><b>该对比测试未覆盖</b>（18-PARALLEL §7.3 要求显式列出）：① 经 C 线拼接后的真实预处理语义
  * （需真实包 + GPU）；② STRING 自由文本（含空白 / 引号 / 路径）如何进 GLSL —— 本类一律跳过 + WARN，

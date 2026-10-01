@@ -5,6 +5,78 @@
 
 ---
 
+## 2026-10-01 — P4.3 选项 GUI：packOptionsScreen 热驱动选项屏幕 + 帧注入点 Post→AfterLevel 迁移（GUI 覆盖根因修复），八张截图单会话闭环（fixture 改值像素比 0.8910=理论 0.8889，532 单测全绿）
+
+- **本次改了什么**（01-DEV-LOOP P4.3 / `08-TESTING.md` §1「pack 声明的选项能渲染并能改 | 截图」）：
+  1. **GUI 覆盖根因修复（P0 级，先于功能验收解决）**：帧注入点从 `RenderFrameEvent.Post`
+     迁移到 **`RenderLevelStageEvent.AfterLevel`**（`render/FullscreenPassHook`）—— Post 在
+     `GameRenderer.render()` 返回**之后**触发，GUI 已画进 main target，我方 final blit
+     整屏覆盖 GUI（实测：选项屏幕 GUI 层消失、`p03_mainmenu_pattern.png` 图案盖住主菜单）；
+     AfterLevel post 点在 `LevelRenderer.render()` 返回后、`guiRenderer.render()`（GUI 合成）
+     之前 —— 我方写入先落、GUI 后合成在其上（X9：合并 jar 字节码顺序实测）。
+     连带设计决定：AfterLevel 只在世界内触发 → **菜单态不再绘制全屏 pass**（菜单图案
+     本是实测否决的覆盖，不是功能；菜单验收行只需启动不崩）。`FrameApi` 类注释、
+     `docs/05-VERSION.md` 帧注入点行、`docs/06-MIGRATION.md` 两处同步改记。
+  2. **选项屏幕与三层快照（新增 `dev.vkdisp.screen` 包 + `config` 三件）**：
+     `PackOptionsSession`（默认 → profile → store 三层基线、触碰差分、提交语义、分页纯函数）、
+     `PackOptionStore`（`vkdisp-pack-options.properties` 持久化，只写触碰项、改回基线即删）、
+     `PackOptionsScreen`（控件渲染：名称+值按钮、翻页、放弃/重置本包/完成；头行实时显示
+     options/changed/page 与 last 驱动回执）、`ScreenDriveCommand`（驱动语法解析）。
+  3. **驱动链（`VkDispConfig.packOptionsScreen` + `VkDispConfigHotReload` 边沿分割）**：
+     外部改 TOML → FileWatcher → `ModConfigEvent.Reloading` → edge-split →
+     `minecraft.execute` → `PackOptionsDrive.run`（**不触发资源重载**；`done` 的保存/改写
+     自身触发重载，互不嵌套）。语法 `""`/`open`/`set:名=值`/`page:N`/`done`；
+     `set`/`page`/`done` 要求屏幕已开，否则 **WARN 拒绝**（T11，实测拒绝行取证）。
+     与 p416/p417 同源方法 —— 输入注入被禁，全程配置热加载 + 进程内 widget 调用。
+  4. **改写生效链**：`done` → 会话提交 → store 落盘 → `PackCompositeSource.generate`
+     差分出 overrides → `ShaderPackCompiler`（`OptionSourceRewriter` 保留行尾注释改写
+     `#define` 声明行，含 include 文本）→ INFO `选项覆盖已改写进源: 命中 X/Y [..]`
+     → 资源重载上屏。真实包证据：BSL `settings.glsl:251 #define SHARPEN -1 //[-1 0 1 2 3 4]`
+     命中 1/1。
+  5. **P-1e 定稿 `LITERAL`**（`OptionBinding` 类 javadoc「P-1e 定稿」段 + `18-PARALLEL`
+     §10 P-1e 行）：BSL 284 个 OF 选项零布尔声明、60 个裸开关消费 ifdef 家族 257:0、
+     语料唯一 BOOLEAN（fixture `ENABLE_FOG`）要求 LITERAL、数值选项两风格逐字节相同 ——
+     保留 LITERAL 零风险、翻默认反引入回归。
+  6. **bytes=24515 疑点核销（X9 当轮闭环）**：composite 恒 24515 = SHARPEN 在其 include
+     图里只出现在预处理指令行（`DefineProcessor` 删除所有指令）且 `SHARPEN_ENABLED`
+     条件两分支等价（FXAA/TAA 无条件定义、`#ifdef RETRO_FILTER` 的 `#undef` 不可达）；
+     final 5616(−1)→5615(3/4) 恰 −1 字节 = `final.glsl:59 0.0625 * SHARPEN` 替换点
+     字符数差，逐轮吻合。
+- **为什么改**：验收行要求「pack 声明的选项能渲染并能改」的截图证据，而选项屏幕一开即被
+  GUI 覆盖 bug 抹掉 —— 不修注入点无法取证；且本环境输入注入被禁（红线），必须沿用
+  p416/p417 已确认的配置热加载同源方法驱动 UI。bytes 疑点是上轮登记的待核项，随本轮
+  真实包改值证据一并核销（不猜，逐条字节码/包源核实）。
+- **影响的文档**：`docs/08-TESTING.md` §6（追加 P4.3 选项 GUI 取证段）；
+  `docs/05-VERSION.md` / `docs/06-MIGRATION.md`（注入点改记）；`docs/18-PARALLEL.md`
+  §10 P-1e 行（LITERAL 定稿）；`evidence/p418-options-gui.md`（新建，G-01 全格式）+
+  `evidence/README.md`（索引行）；源码 8 改 4 新增（FullscreenPassHook / FrameApi /
+  VkDispConfig / VkDispConfigHotReload / PackCompositeSource / ShaderPackCompiler /
+  VkDispVirtualPack / OptionBinding + screen 包三件 + PackOptionStore +
+  PackOptionsSession + ScreenDriveCommand）+ 单测 3 新增 1 扩充。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；**532 用例 0 失败 0 错误**（505 → 532，新增
+    `PackOptionStoreTest` / `PackOptionsSessionTest` / `ScreenDriveCommandTest` +
+    `PackCompositeSourceTest` store 差分组）。
+  - ✅ **单会话八张截图**（`evidence/p418-options-gui.md`）：BSL 半场 open
+    （284 选项分页渲染）→ set `SHARPEN=3`（回执 `previous=4 applied=3` 实时渲染进头行，
+    控件区逐像素 0.00% 不变）→ page:2（第 2 页行内容换血，284÷18 → 16 页与日志一致）→
+    done（`stored=1 changed=[SHARPEN=3]` → `命中 1/1` → 世界 GUI 全可见）；fixture 半场
+    open（4 选项含 BOOLEAN `ENABLE_FOG true`）→ 未开屏 set **WARN 拒绝**（T11 正向证据）→
+    open → set `SHADOW_DARKNESS 0.10→0.20`（`changed=1` + 回执渲染）→ done →
+    **地面带（y510–535,x60–260）luma 109.7547→97.7959，ratio=0.8910 vs 理论 0.8889
+    （delta 0.0021）**。
+  - ✅ 零回归：`stages=190 ok=49 failed=141` ×6 逐字一致；ERROR 直方图 = 已知 141 矩阵
+    既有指纹（按 ×6 份数）+ 环境类（SoundEngine ×6、Narrator ×1）—— **零新错误类**；
+    `registered=9 compiled=9`、`Missing uniform`=0、`fullscreen pass failed`=0、
+    `解析失败`=0；红线复检（renderpearl/blaze3d 仅 bridge/、sodium 零命中）。
+- **未覆盖**（如实登记，全表见 evidence 未覆盖节）：真实输入路径（鼠标/键盘操作控件 ——
+  输入注入被禁，全部经配置热驱动）；滑杆型控件（语料值列表全为循环按钮，不猜）；
+  选项屏幕打开时切包；菜单态 drive；STRING 选项编辑；run1 时段旧截图（三张同哈希）作废；
+  外部点完成/关窗干扰 ×3（每轮隔离日志重开受控复跑绕开）。
+- **是否已提交**：随本轮 commit 提交并推送 origin/master。
+
+---
+
 ## 2026-10-01 — P4.2 切包回归：shaderPack 三态选择 + FML 配置热加载驱动会话内切包，四张截图单会话闭环（S1↔S4 静态地面带 identity=+1.0000，505 单测全绿）
 
 - **本次改了什么**（01-DEV-LOOP P4.2 / `08-TESTING.md` §6 四张截图法）：

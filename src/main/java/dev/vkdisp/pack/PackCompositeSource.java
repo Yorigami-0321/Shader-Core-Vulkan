@@ -6,18 +6,21 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import dev.vkdisp.config.OptionDiagnostic;
-import dev.vkdisp.config.OptionDiagnosticSink;
+import dev.vkdisp.config.PackOptionStore;
 import dev.vkdisp.config.PackOptions;
+import dev.vkdisp.config.PackOptionsSession;
 import dev.vkdisp.glsl.TranslateDiagnostic;
 
 /**
  * 【参考调研】P2.4 composite 源生成（库存包 → 可绘制的 composite 片元源）
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
  *    参考对象 = 本仓库 docs/04-SPEC.md §2（虚拟资源包命名空间）/ §3.1（只读不写用户包）、
- *    docs/18-PARALLEL.md §5 P2.4 设计 ③④（源生成时机与选项覆盖链）与 docs/07-CONSTRAINTS.md T11
- *    （降级必须显式 WARN）。仓库内文档事实，不受版权保护。
+ *    docs/18-PARALLEL.md §5 P2.4 设计 ③④（源生成时机与选项覆盖链）、docs/08-TESTING.md §1
+ *    P4.3 行（"pack 声明的选项能渲染并能改" —— "改"经 PackOptionStore 回放进本生效链）与
+ *    docs/07-CONSTRAINTS.md T11（降级必须显式 WARN）。仓库内文档事实，不受版权保护。
  *    外部候选 IrisShaders / glsl-transformer（GPL-3.0 + 例外条款）→ 按禁止处理
  *    （07-CONSTRAINTS L12 §1.3 陷阱 2 / X21），本任务不读其代码、零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 编排类，不含任何第三方项目代码；
@@ -34,8 +37,10 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *       编译；片元成功即返回，全部失败/缺失才落到内置 passthrough（T11：兜底必有 WARN）；
  *    ② **profile 空名跳过**（{@code PackOptions.applyProfile("")} 是 EMPTY_PROFILE_NAME 错误，
  *       默认值路径不该产生噪音诊断）；
- *    ③ **覆盖表 = values 与 defaults 的差分**：只把真正被 profile 改掉的选项送进
+ *    ③ **覆盖表 = values 与 defaults 的差分**：只把真正被 profile / 选项屏幕改掉的选项送进
  *       {@code ShaderPackCompiler}，未动的选项保持包内默认行（改写器零命中 → 零改动）；
+ *       P4.3 起 profile 之后回放 {@link PackOptionStore}（GUI 改动优先于 profile，与
+ *       {@link PackOptionsSession} 同链 —— 选项屏幕与生效路径共用一条编排，单一真源）；
  *    ④ 输出全是内存数据，不触碰 {@code com.mojang.*}（18-PARALLEL §2 并行判据）。
  * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
@@ -165,6 +170,18 @@ public final class PackCompositeSource {
 
     /**
      * 扫描库存并生成 composite 片元源（P4.2 起带包选择过滤，{@code 08-TESTING.md} §6 切包驱动）。
+     * 无选项存储（P4.3 {@link #generate(Path, String, String, PackOptionStore)} 传 null 的等价形式）。
+     *
+     * @param inventoryDir  {@code <gameDir>/shaderpacks}；null / 不存在 → 直接兜底（扫描器产出诊断）
+     * @param profileName   profile 预设名；null / 空白 = 使用包默认值
+     * @param packSelection 包选择三态，语义见 {@link #generate(Path, String, String, PackOptionStore)}
+     */
+    public static Result generate(Path inventoryDir, String profileName, String packSelection) {
+        return generate(inventoryDir, profileName, packSelection, null);
+    }
+
+    /**
+     * 扫描库存并生成 composite 片元源（P4.2 三态选择 + P4.3 选项存储回放）。
      * 永不抛非受检异常（所有失败降级为诊断 + 最终兜底）。
      *
      * @param inventoryDir  {@code <gameDir>/shaderpacks}；null / 不存在 → 直接兜底（扫描器产出诊断）
@@ -174,8 +191,12 @@ public final class PackCompositeSource {
      *                      （{@code DiscoveredPack.name} = 扫包日志 {@code pack[N] name=}）——
      *                      只有该包参与选择，匹配失败 / 无成功产出 → 显式 WARN + 兜底，
      *                      <b>绝不静默落到别的包</b>（否则 §6 的 S2 判据失去意义）
+     * @param store         P4.3 选项存储：在 profile 之后、覆盖差分之前按包回放（GUI 优先于
+     *                      profile）；null = 无存储（与旧行为逐字节等价）。只回放<b>所选包</b>
+     *                      自己的条目（存储按键的包段过滤）
      */
-    public static Result generate(Path inventoryDir, String profileName, String packSelection) {
+    public static Result generate(Path inventoryDir, String profileName, String packSelection,
+            PackOptionStore store) {
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         String profile = profileName == null ? "" : profileName.trim();
         String selection = packSelection == null ? "" : packSelection.trim();
@@ -229,16 +250,13 @@ public final class PackCompositeSource {
                 continue;
             }
 
-            // F 线选项链：默认值容器 → 应用 profile（空名跳过）→ 与默认值差分出覆盖表。
-            List<OptionDiagnostic> optionDiagnostics = new ArrayList<>();
-            PackOptions options = PackOptions.of(pack, OptionDiagnosticSink.collecting(optionDiagnostics));
-            if (!profile.isEmpty()) {
-                options.applyProfile(profile, pack.profiles());
-            }
-            for (OptionDiagnostic diagnostic : optionDiagnostics) {
+            // F 线选项链：默认 → profile → 选项存储回放（P4.3，GUI 优先）→ 与默认值差分出覆盖表。
+            // 与选项屏幕共用 PackOptionsSession（同一编排 = 单一真源，两侧永不漂移）。
+            PackOptionsSession session = PackOptionsSession.create(pack, profile, store);
+            for (OptionDiagnostic diagnostic : session.buildDiagnostics()) {
                 diagnostics.add(optionDiagnostic(diagnostic, pack.name()));
             }
-            Map<String, String> overrides = diffAgainstDefaults(options);
+            Map<String, String> overrides = diffAgainstDefaults(session.options());
 
             ShaderPackCompiler.CompileResult compiled = ShaderPackCompiler.compile(discovered, overrides);
             diagnostics.addAll(compiled.diagnostics());
@@ -333,6 +351,45 @@ public final class PackCompositeSource {
     private static Result fallbackResult(String profile, List<TranslateDiagnostic> diagnostics) {
         return new Result(FALLBACK_GLSL, FALLBACK_GLSL, false, FALLBACK_GLSL, false,
                 null, true, profile, diagnostics);
+    }
+
+    /**
+     * 选项屏幕（P4.3）取"当前生效包"的模型：与 {@link #generate} <b>同一套三态选择</b>
+     * （{@code ""} 扫描顺序 / {@link #SELECTION_NONE} 保留名 / 其它精确匹配），但<b>只到装载</b>为止
+     * —— 不编译（开屏只读选项表，编译是秒级冷路径，屏幕上没有它的语义）。
+     *
+     * <p><b>已知未覆盖（登记，不假装一致）</b>：本方法按「有 composite 程序」选包，
+     * 而 {@code generate} 按「composite <b>编译成功</b>」选包 —— 当某个包 composite 编译失败、
+     * 库存里还有下一个可用包时，两者会选出不同的包（屏幕改的是 A，画面用的是 B）。
+     * 该分叉只在"能装载但编译不过"的坏包上出现，出现时 generate 侧必有 ERROR 诊断可见；
+     * 修复方向（让屏幕也走一次编译选包）留待真实复现时再定（X9：没有实证不预修）。
+     *
+     * @param inventoryDir  {@code <gameDir>/shaderpacks}；null / 不存在 → 空
+     * @param packSelection 三态同 {@link #generate(Path, String, String, PackOptionStore)}
+     * @return 所选包的模型；无可选包（含 {@code none}、指定名不存在）= 空
+     */
+    public static Optional<ShaderPack> loadSelectedForOptions(Path inventoryDir, String packSelection) {
+        String selection = packSelection == null ? "" : packSelection.trim();
+        if (SELECTION_NONE.equals(selection)) {
+            return Optional.empty(); // 保留名 = 强制无包（与 generate 的兜底语义对齐）
+        }
+        ShaderPackScanner.ScanResult scan = ShaderPackScanner.scan(inventoryDir);
+        boolean named = !selection.isEmpty();
+        for (ShaderPackScanner.DiscoveredPack discovered : scan.packs()) {
+            if (named && !selection.equals(discovered.name())) {
+                continue;
+            }
+            ShaderPack pack = ShaderPackService.load(discovered).pack();
+            if (pack == null) {
+                continue; // load 诊断已产生（本方法不转交，屏幕侧只要"选不到"这一事实）
+            }
+            boolean hasComposite = pack.programs().stream()
+                    .anyMatch(program -> COMPOSITE_PROGRAM.equals(program.name()));
+            if (hasComposite) {
+                return Optional.of(pack);
+            }
+        }
+        return Optional.empty();
     }
 
     /** 覆盖表 = 当前值与有效默认值的差分（只送真正被改掉的选项进改写器）。 */

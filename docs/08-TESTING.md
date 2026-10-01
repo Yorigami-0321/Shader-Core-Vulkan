@@ -153,6 +153,16 @@ if (meshStride != bindStride) {
 每步等日志 `client resources loaded (initial=false)` 再截图。
 首跑取证 `evidence/p417-pack-switch.md`：S1↔S4 静态地面带 identity=+1.0000、S2/S3 尖刺 0.000%。
 
+**选项 GUI 取证（P4.3 落地，2026-10-01）**：选项屏幕由 `vkdisp-client.toml` 的
+`packOptionsScreen` 驱动（同一 FileWatcher 热加载链，但走边沿分割 →
+`PackOptionsDrive.run`，**不触发资源重载**；`done` 保存/改写自身触发重载）。
+语法 `""` / `open` / `set:NAME=VALUE` / `page:N` / `done`；`set`/`page`/`done` 要求
+屏幕已开，否则 WARN 拒绝（T11）。**帧注入点 = `RenderLevelStageEvent.AfterLevel`**
+（`render/FullscreenPassHook`；P4.3 从 `RenderFrameEvent.Post` 迁移 —— Post 在 GUI
+合成之后触发会整屏覆盖 GUI，实测否决），菜单态不再绘制全屏 pass。
+取证 `evidence/p418-options-gui.md`：单会话八截图（BSL 284 项分页渲染 + set 回执 +
+fixture 改值像素比 0.8910 = 理论 0.8889 + 未开屏 WARN 拒绝正向证据）。
+
 ---
 
 ## 7. 边界条件清单

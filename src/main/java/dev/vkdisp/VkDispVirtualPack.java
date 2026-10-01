@@ -40,6 +40,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
+import dev.vkdisp.config.PackOptionStore;
 import dev.vkdisp.glsl.TranslateDiagnostic;
 import dev.vkdisp.glsl.translate.BuiltinsBlockLayout;
 import dev.vkdisp.pack.PackCompositeSource;
@@ -274,7 +275,18 @@ public final class VkDispVirtualPack {
             VkDisp.LOGGER.info(
                     "vkdisp: composite source generation start: profile='{}' selection='{}' inventory={}",
                     profile, selection, inventory);
-            PackCompositeSource.Result result = PackCompositeSource.generate(inventory, profile, selection);
+            // P4.3：回放选项屏幕的持久化覆盖（文件不进 FML 监听 —— 每次生成读一次，冷路径）。
+            PackOptionStore store = PackOptionStore.load(PackOptionStore.pathFor(gameDir()));
+            if (!store.isEmpty()) {
+                VkDisp.LOGGER.info(
+                        "vkdisp: pack option overrides loaded: entries={} packs={} file={}",
+                        store.size(), store.packNames(), PackOptionStore.FILE_NAME);
+            }
+            for (String warning : store.loadWarnings()) {
+                VkDisp.LOGGER.warn("vkdisp: pack option store: {}", warning);
+            }
+            PackCompositeSource.Result result =
+                    PackCompositeSource.generate(inventory, profile, selection, store);
             for (TranslateDiagnostic diagnostic : result.diagnostics()) {
                 logDiagnostic(diagnostic);
             }
@@ -340,13 +352,19 @@ public final class VkDispVirtualPack {
                 slot, layout.members().size(), layout.byteSize());
     }
 
-    /** 库存目录（{@code <gameDir>/shaderpacks}）；不可用返回 null（扫描器会产出显式诊断）。 */
-    private static Path inventoryDir() {
+    /** 游戏根目录；客户端未就绪返回 null（选项存储与库存目录都退化为"无"）。 */
+    private static Path gameDir() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.gameDirectory == null) {
             return null;
         }
-        return minecraft.gameDirectory.toPath().resolve("shaderpacks");
+        return minecraft.gameDirectory.toPath();
+    }
+
+    /** 库存目录（{@code <gameDir>/shaderpacks}）；不可用返回 null（扫描器会产出显式诊断）。 */
+    private static Path inventoryDir() {
+        Path gameDir = gameDir();
+        return gameDir == null ? null : gameDir.resolve("shaderpacks");
     }
 
     /** 诊断按原 severity 分流（与 VkDispPackScan 同口径）。 */

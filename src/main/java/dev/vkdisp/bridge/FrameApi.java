@@ -11,10 +11,14 @@ package dev.vkdisp.bridge;
  * 1. 官方/主实现：原版 PostPass#addToFrame 的 pass 执行序列（createRenderPass(label, colorView,
  *    Optional.empty(), depth|null, OptionalDouble.empty()) → setPipeline(getCompiledPipeline) →
  *    bindDefaultUniforms → draw(3,1,0,0)，无顶点绑定；全屏三角形顶点由 gl_VertexIndex 推出）；
- *    触发时机 = NeoForge ClientHooks.fireRenderFramePost —— Minecraft.renderFrame 中
- *    GameRenderer.render() 之后、swapchainBlit（主目标上屏）之前，此刻写 main target 必然出现在屏幕上。
- * 2. 备选：FrameGraphSetupEvent 帧图插 pass —— 调研否决（vanilla clear pass 会随后全清 main target，
- *    图案必被抹掉），不采用；RenderFrameEvent 属官方事件，无需 GAP 登记。
+ *    触发时机 = NeoForge RenderLevelStageEvent.AfterLevel —— GameRenderer#renderLevel 内
+ *    LevelRenderer.render() 返回之后（帧图已执行 → SceneCaptureApi 已捕获本帧地形）、
+ *    render3dHud 与 GameRenderer.render() 的 guiRenderer.render()（GUI 合成）之前，
+ *    此刻写 main target 必然先于 GUI 出现在屏幕上（X9：合并 jar 字节码顺序实测，2026-10-01 P4.3）。
+ * 2. 备选：① RenderFrameEvent.Post —— **实测否决（P4.3 根因）**：触发在 GameRenderer.render()
+ *    返回之后，GUI 已画进 main target，我方 final blit 整屏覆盖 GUI（实证 p03_mainmenu_pattern.png
+ *    与 P4.3 世界内截图）；② FrameGraphSetupEvent 帧图插 pass —— 调研否决（vanilla clear pass
+ *    会随后全清 main target，图案必被抹掉）；上述事件均属官方事件，无需 GAP 登记。
  * 1b.（P1.1 补充）自定义 uniform 上传：原版 PostPass 用 MappableRingBuffer(usage=MAP_WRITE|UNIFORM=130)
  *    + Std140Builder 写 UBO + setUniform(name, buffer) 的官方序列；GLSL 侧块名与绑定布局 uniform 名一致
  *    （原版范本 assets/minecraft/shaders/core/clouds.vsh 的 layout(std140) uniform CloudInfo）。
@@ -641,7 +645,8 @@ public final class FrameApi {
     /**
      * 在主渲染目标（main target）上执行一次全屏绘制。
      *
-     * <p>必须在渲染线程调用（RenderFrameEvent.Post 即是）；此处位于 swapchain 上屏之前，
+     * <p>必须在渲染线程调用（RenderLevelStageEvent.AfterLevel 即是，见类【参考调研】第 1 条）；
+     * 此处位于 swapchain 上屏之前、GUI 合成之前，
      * 写入的颜色会出现在本帧画面上。
      *
      * @param label  render pass 调试标签（renderdoc / Vulkan 调试层可读）
@@ -736,7 +741,8 @@ public final class FrameApi {
 
         // P3.3 链路判定（必须在开启任何 pass 之前定：决定槽 2 懒建与 pass 序列）：
         //   世界内 && scene 已捕获 && 所选包声明 deferred → 开 deferred 步；否则保持既有基线
-        //   （世界内无 deferred = P3.2 直连 scene；菜单/未捕获 = P2.4 fixture，见 Pass 4）。
+        //   （世界内无 deferred = P3.2 直连 scene；未捕获首帧 = P2.4 fixture，见 Pass 4）。
+        //   P4.3 起入口只在世界内（AfterLevel），菜单不再到达本方法（菜单态图案 = 实测否决的 GUI 覆盖）。
         boolean useScene = Minecraft.getInstance().level != null && SceneCaptureApi.hasScene()
                 && SceneCaptureApi.sceneColorView() != null;
         boolean deferredChain = useScene && dev.vkdisp.VkDispVirtualPack.hasDeferredProgram();
@@ -756,7 +762,8 @@ public final class FrameApi {
             deferredChainActive = false;
         }
         // P4.1.4 链路判定：所选包声明 final 片元 → 开 final 步（composite 改写中间目标 offscreen3，
-        // final 再拷回主目标）。**不要求 useScene** —— final 是屏幕空间末步，菜单/世界同语义。
+        // final 再拷回主目标）。**不要求 useScene** —— final 是屏幕空间末步（世界内同语义；
+        // 入口 AfterLevel 只在世界内触发，见类【参考调研】第 1 条）。
         boolean finalChain = dev.vkdisp.VkDispVirtualPack.hasFinalProgram();
         GpuTextureView viewD = null;
         if (finalChain) {

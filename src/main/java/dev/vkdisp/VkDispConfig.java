@@ -70,6 +70,27 @@ public final class VkDispConfig {
                     + "改值保存后自动生效（配置热加载 → 资源重载）。")
             .define("shaderPack", "");
 
+    /**
+     * P4.3 选项 GUI 的驱动通道：改值保存 → FML 热加载边沿 → 解析执行一次屏幕动作
+     * （语法 = {@code dev.vkdisp.config.ScreenDriveCommand}，解析可单测；动作执行在
+     * {@code dev.vkdisp.screen.PackOptionsDrive}）。
+     *
+     * <p>与 {@link #SHADER_PACK} 的关键差异：<b>不触发资源重载</b> ——
+     * {@link VkDispConfigHotReload} 只在前四个核心项（enabled/debugLog/packProfile/shaderPack）
+     * 变化时重载；本条目变化只跑屏幕动作（打开 / 改值 / 翻页 / 完成）。"done" 动作自己会
+     * 调一次资源重载（改值要落进着色器）。
+     *
+     * <p>驱动值是<b>边沿语义</b>：与上一次快照不同才执行；执行完若不回写空串，下一个动作
+     * 直接写新值即可（如 {@code open} → {@code set:SHARPEN=4} → {@code done} 三次保存）。
+     * 空串 = 中性（把值清回 {@code ""} 不执行任何动作）。
+     */
+    public static final ModConfigSpec.ConfigValue<String> PACK_OPTIONS_SCREEN = BUILDER
+            .comment("选项 GUI 驱动（P4.3，边沿执行一次）：\"\" = 无动作；\"open\" = 打开选项界面；"
+                    + "\"set:选项名=值\" = 修改当前界面里的选项；\"page:页号\" = 翻页；"
+                    + "\"done\" = 保存并关闭（落盘 + 资源重载）。改值保存即触发对应动作，"
+                    + "且不单独触发资源重载（done 除外）。")
+            .define("packOptionsScreen", "");
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     private VkDispConfig() {

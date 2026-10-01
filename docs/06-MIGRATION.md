@@ -30,7 +30,7 @@ bridge/
 ```
 
 **规矩**：
-- **现状**：主线不走 mixin——帧注入用 NeoForge 官方 `RenderFrameEvent.Post`
+- **现状**：主线不走 mixin——帧注入用 NeoForge 官方 `RenderLevelStageEvent.AfterLevel`（P4.3 起，原因见 05-VERSION 帧注入点行）
   （`render/FullscreenPassHook`），历史 mixin 路线已弃用、尚未启用
   （`MixinTargets.MIXIN_CONFIG_COUNT = 0`，`mixin/` 包未建立）
 - `pack/` / `glsl/` / `config/` / `screen/` 等业务包 **一律不得** `import com.mojang.renderpearl.*`
@@ -46,7 +46,7 @@ bridge/
 ### 2.2 mixin 只转发，不写业务
 
 > **历史路线已弃用，当前不使用 mixin。** 主线帧注入走 NeoForge 官方
-> `RenderFrameEvent.Post`（`render/FullscreenPassHook`），`neoforge.mods.toml` 的
+> `RenderLevelStageEvent.AfterLevel`（`render/FullscreenPassHook`），`neoforge.mods.toml` 的
 > `[[mixins]]` 保持注释，`MixinTargets.MIXIN_CONFIG_COUNT = 0`。
 
 **若将来启用 mixin**，规矩不变——mixin 只转发、不写业务（目标签名一变全废）：

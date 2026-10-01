@@ -125,7 +125,8 @@ public final class ShaderPackCompiler {
      * <p>改写发生在预处理**之前**：主文件与被 {@code #include} 的文件都过
      * {@link OptionSourceRewriter}（保行号保注释），宏值随后由 C 线正常展开进最终源。
      * 整包范围内始终没有命中任何声明行的覆盖名 → WARN（逐文件缺失不算：选项可能只声明在
-     * 另一个文件里；P2.4 画面对比是最终判据）。
+     * 另一个文件里；P2.4 画面对比是最终判据）；命中过的 → INFO 列出全部
+     * {@code 名=值}（P4.3 取证锚点：grep 即可复核"改动进了源"）。
      *
      * @param optionOverrides 选项名 → 新值；null / 空表 = 无覆盖（与单参重载等价）
      */
@@ -183,6 +184,22 @@ public final class ShaderPackCompiler {
                         "vkdisp: 选项覆盖 '" + name + "' 未在任何源文件中命中声明行（该值未进入着色器）",
                         String.valueOf(discovered.source()), TranslateDiagnostic.UNKNOWN_LINE));
             }
+        }
+        // 命中正证（P4.3 取证锚点）：改写器真的把哪些 名=值 写进了源 —— 没有这一行，
+        // 「GUI 改的值进了着色器」只能靠画面反推；有了它，grep 一个名字即可复核。
+        if (!overrides.isEmpty() && !appliedNames.isEmpty()) {
+            StringBuilder applied = new StringBuilder();
+            for (String name : appliedNames) {
+                if (applied.length() > 0) {
+                    applied.append(", ");
+                }
+                applied.append(name).append('=').append(overrides.get(name));
+            }
+            diagnostics.add(TranslateDiagnostic.of(
+                    TranslateDiagnostic.Severity.INFO,
+                    "vkdisp: 选项覆盖已改写进源: 命中 " + appliedNames.size() + "/" + overrides.size()
+                            + " [" + applied + "]",
+                    String.valueOf(discovered.source()), TranslateDiagnostic.UNKNOWN_LINE));
         }
         return new CompileResult(pack, stages, diagnostics);
     }
