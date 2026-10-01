@@ -339,12 +339,19 @@ F1–F4 全部落地 → 放行并行
          **deferred 管线 = flipv 顶点**。等价表述：scene 行序与我方中间目标行序差一次
          翻转，deferred 把 scene 翻成中间目标约定、composite 再翻回 —— 两连翻净零，
          画面不镜像（不引入新猜测，是 P-1f ③ + P3.2 实测的代数合成）。
+         ⚠️ **本推导已被 p416 推翻（见 P4.1 记录 ⑩）**：deferred 不改写 colortex0
+         （P4.1.2 绑 viewC 首跑全黑实证），链 composite 的彩色主输入一直是**场景色**
+         而非 deferred 输出 —— deferred 的 flipv 从不参与彩色净翻转，「1+1」错算了一跳，
+         实际链 = scene→[composite flipv]→…→main = **净 +1**，自 P3.3 起画面颠倒
+         （p416_run1 强制位姿实测地平线 204 = 翻转）。终态规则 = **顶点翻转跟随彩色
+         采样源**（场景源 → noflip），deferred/final/链 composite 均 noflip，见 ⑩。
       ③ **链拓扑**（只在「世界内 && scene 已捕获 && 所选包声明 deferred」时开新步；
          其余路径既有基线**逐字节不动**）：
-         - 世界内 + 包有 deferred：Pass 3 deferred（scene → offscreen2，flipv）→
-           Pass 4 composite（offscreen2 → main，flipv）；
+         - 世界内 + 包有 deferred：Pass 3 deferred（scene → offscreen2，~~flipv~~
+           **noflip**，p416 更正）→ Pass 4 composite（链彩色源 = 场景 →
+           `composite_scene` **noflip**，p416 更正；~~offscreen2 → main，flipv~~）；
          - 世界内 + 包无 deferred：维持 P3.2 `composite_scene` 直连 scene（基线）；
-         - 菜单 / 未捕获：维持 P2.4 fixture → composite flipv（基线）；
+         - 菜单 / 未捕获：维持 P2.4 fixture → composite flipv（基线，p416 保留不动）；
          - Pass 1/2 影子链不动（P3.1 验收对象）。
       ④ **脚手架改动**：
          - `PackCompositeSource`：`DEFERRED_PROGRAM="deferred"`；`Result` 扩
@@ -424,12 +431,12 @@ F1–F4 全部落地 → 放行并行
         （deferred 回名 + zip 6 条目 3313B）。
    🟡 P4.1 主流包 BSL（01-DEV-LOOP §10 P4.1「BSL 主要效果可用（与 Iris 对比截图）」，
       转译层 P4.1.1 ✅、驱动层 P4.1.2 ✅（见 ⑥，判据①②达成）、uniform 上传 P4.1.3 ✅
-      （见 ⑦）、final 步 P4.1.4 ✅（见 ⑧），剩余画面质量子项（141 阶段矩阵 / profiles
-      `#if` 解析）留后续）｜验收 = 08-TESTING §4/§5。
+      （见 ⑦）、final 步 P4.1.4 ✅（见 ⑧）、properties 条件编译 P4.1.5 ✅（见 ⑨）、
+      画面方向矫正 P4.1.6 ✅（见 ⑩），剩余画面质量子项（141 阶段矩阵）留后续）｜验收 = 08-TESTING §4/§5。
       设计（X9 实测取证，全部非猜测）：
       ① **包结构实测**（临时探针跑真 zip `run/shaderpacks/BSL_v10.1.8.zip`，gitignored）：
       91 program / 284 option / profiles=[]（shaders.properties 解析失败：`#if 表达式含
-      非法字符 '>'`，登记项）/ dims=[world-1, world0, world1] / 182 个编译阶段；
+      非法字符 '>'`，登记项 —— ~~已由 ⑨ 闭环，见下~~ **已闭环（见 ⑨）**）/ dims=[world-1, world0, world1] / 182 个编译阶段；
       扫描序 BSL ZIP 先于 fixture → BSL 转译成功即自动入选。
       ② **P4.1.1 转译层三修复**（随本轮提交）：DefineProcessor 函数宏组号错位
       （`No group 4` IndexOutOfBoundsException 使全部 program 转译失败）+ FUNC_DEFINE
@@ -457,7 +464,8 @@ F1–F4 全部落地 → 放行并行
       ⑤ **P4.1 完成判据（不变）**：管线 registered==compiled → 进世界 BSL 视觉生效
       （对照 fixture 基线可检伪）→ 与 Iris 对比截图（环境缺 Iris = 已登记限制）；
       ~~uniform 数值仍全零上传（OfUniformManager 缺口）→ sunVec 系效果可能 NaN~~
-      **已闭环（见 ⑦，P4.1.3）**；profiles 解析失败（`#if` 含 `>`）仍留后续子轮。
+      **已闭环（见 ⑦，P4.1.3）**；~~profiles 解析失败（`#if` 含 `>`）仍留后续子轮~~
+      **已闭环（见 ⑨，P4.1.5）**。
       **2026-10-01 结果**：判据① 三跑均 `registered=8, compiled=8 (aligned)` ✅；
       判据② run2 黑（0.951/0.466%）→ run3 可见（11.901/30.69%）单变量归因 ✅；
       判据③ 环境缺 Iris = 照旧登记限制 ⚠️。
@@ -517,8 +525,35 @@ F1–F4 全部落地 → 放行并行
       bytes=5616`、三布局 42/24/24 解析、uploaded written 26/24/24 全部
       mismatched=0/overflow=0、run1 门缺陷 `uploaded: slot=final` 0 条 → run2 修复后
       `written=24 unfilled=0` 可见、客户区 9.1930/23.75% 与 p413 基线 9.0767/22.45%
-      同量级且截图**未镜像**（树冠朝上 = 恒等拷贝推导实测吻合）、vkdisp ERROR
+      同量级且截图**未镜像**（树冠朝上 = 恒等拷贝推导实测吻合 —— ⚠️ 该判据基于云团
+      构图、分辨不出上下，**已由 p416 强制位姿法取代**：恒等拷贝推导本身在上游
+      链顶点修正后才成立，见 ⑩）、vkdisp ERROR
       （排除 pack compile 141）= 0。单测 492 全绿（487→492：PackCompositeSourceTest 5）。
+      ⑨ **P4.1.5 properties 条件编译（2026-10-01，两跑闭环）**：`ConditionalPreprocessor`
+      扩 OF/Iris `#if` 族 —— **CRLF 归一先于续行判定**（BSL 全文 CRLF，`\` 后 `\r`
+      破坏行尾奇数反斜杠判定 → 后半行缺 `=` → 整份解析失败）、**`#elif` 链**
+      （Frame 重设计 parentInclude/taken/include/afterElse，嵌套被剔除父级下的
+      `#else` 不放行）、**数值比较** `== != < <= > >=`（两侧恒定求值不用 Java 短路；
+      标识符已定义→1 未定义→0，口径对齐自有 DefineProcessor.ExprEval；取值环境
+      未取证按 X9 登记两态）、指令头/空表达式显式报错（T11）。实测两跑
+      （`evidence/p415-properties-conditionals.md`）：run1 解析失败 ×3 +
+      `profiles=[]` → 修复后 run2 归零 + `profiles=[ULTRA, MINIMUM, MEDIUM, LOW, HIGH]`，
+      WARN 集 diff 只删该文本零新增，链路/上传/阶段矩阵不变量逐字一致。
+      单测 501 全绿（492→501：ShaderPropertiesTest 8 + BlockItemPropertiesTest 1）。
+      ⑩ **P4.1.6 画面方向矫正（2026-10-01，强制位姿三跑闭环）**：用户报「镜头反了」。
+      强制位姿法（NBT Rotation=[0.0,−15.0]，地平线理论正立≈403/翻转≈199）实测：
+      原码 run1 地平线 **204 = 翻转**；根因 = **P3.3 链 composite 顶点**
+      （`FrameApi:934` 链彩色源 = 场景色 —— deferred 不改写 colortex0，P4.1.2 全黑
+      根因实证；P3.3「净翻转守恒」把 deferred 错算成彩色一跳 → 链净 +1 翻转自 P3.3
+      起颠倒，P4.1.4 恒等拷贝保住了错；包源无罪 = BSL 三程序 texCoord=gl_MultiTexCoord0
+      且 final.fsh 无 gl_FragCoord）。修复 = **顶点翻转跟随彩色采样源**单条规则：
+      链 composite 改走 `composite_scene` 不翻转（line 925 `useScene ? …`）+
+      deferred 不翻转（顺带修正 depth 配对与 gaux1 行序对齐）+ final 维持恒等；
+      fixture/菜单 flipv 路径不动（P-1f 保留）。实测三跑
+      （`evidence/p416-orientation.md`）：run2 对冲版 392 正立 → run3 终版 392 正立，
+      run3↔run2 地面带 identity=+1.0000、run1↔run3 镜像 +0.9450，WARN 集双向 diff=0，
+      链路/上传不变量零回归。单测 501 全绿。⚠️ p414「未镜像（树冠朝上）」云团判据作废，
+      以本法为准。
    ✅ P2.1/P2.2 主线接入（A/B/C 线汇合后接启动期扫包钩子，随本轮提交）：
       `VkDispPackScan`（ClientResourceLoadFinishedEvent → gameDir/shaderpacks → ShaderPackService.loadAll）
       实测 latest.log：packs=2（kind=zip + kind=dir 各一）programs=2 options=8 problems=0 diagnostics=0，

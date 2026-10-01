@@ -233,8 +233,15 @@ public final class PipelineApi {
     /**
      * P3.3 deferred 步管线 location id。
      *
-     * <p>为什么 flipv：净翻转守恒（18-PARALLEL §5 P3.3 ②）—— scene 直连 = 0 翻转（P3.2 实测），
-     * 链路 composite 固定 flipv（+1），deferred 必须也 +1 才能与直连同向（1+1 ≡ 0 (mod 2)）。
+     * <p>为什么顶点 **不翻转**（p416 方向矫正，推翻 P3.3 首版的「净翻转守恒」推导）：
+     * 首版 flipv 的理由是「composite 固定 flipv（+1），deferred 也 +1 才能 1+1 ≡ 0」——
+     * 但该推导把 deferred 当成了彩色链上的一跳；P4.1.2 已实测（绑 viewC 首跑全黑的根因）
+     * OF 语义下 deferred 不改写 colortex0，链模式 composite 的**彩色主输入仍是场景色**，
+     * deferred 只落 gaux1 辅助位 —— 它的 flipv 从不参与彩色净翻转，守恒算式不成立。
+     * 顶点选择规则与 P3.2 同源：**采样源是 vanilla 场景 → 不翻转**（deferred 的
+     * color/depthtex0 都绑场景），顺带修正 depth 配对（原 flipv 使行 y 写 AO 却读
+     * scene 深度行 1−y）与 gaux1 对齐（deferred 输出行序 = 场景行序后，
+     * composite 同一 texCoord 采 color/aux 才同行）。p416_run3 实测地平线回正。
      */
     private static final Identifier DEFERRED_PIPELINE_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/deferred");
@@ -242,11 +249,18 @@ public final class PipelineApi {
     /**
      * P4.1.4 final 步管线 location id。
      *
-     * <p>为什么顶点**不翻转**（attachment 恒等拷贝推导，非经验规则）：final 的输入是
-     * composite 刚写入的我方中间目标 —— 同一 composite pass 换附件不换光栅化（同 viewport、
-     * 同帧缓冲位置），故该中间目标的 texel(x,y) 恒等于旧链路 main 的 texel(x,y)。
-     * final 以不翻转顶点做 texel→texel 恒等采样 → main 内容逐位不变 → 显示与旧链路一致；
-     * 若用 flipv 则把旧画面垂直镜像。旧 main → 屏幕的显示变换对新旧内容同样生效，不引入额外因子。
+     * <p>为什么顶点**不翻转**（attachment 恒等拷贝推导，p416 复核后维持原判）：
+     * final 的输入是 composite 刚写入的我方中间目标 —— 同一 composite pass 换附件不换
+     * 光栅化（同 viewport、同帧缓冲位置），故该中间目标的 texel(x,y) 恒等于「composite
+     * 直写 main」的 texel(x,y)；final 恒等采样拷回 → 显示与 composite 直写等价。
+     * 该推导的前提 = **composite 写出的内容本身是正立行序** —— p416_run1（强制位姿
+     * pitch=−15°）实测地平线 row 205（翻转预测 199 / 正立 403）证伪的不是本推导，
+     * 而是上游 P3.3 链 composite 的 flipv 顶点（彩色源是场景却被 +1，净翻转守恒的
+     * 算式算错了一跳）；p416_run2 以 final flipv 顶点对冲先行回正（纯 V 无 H：
+     * run1↔run2 地面带互为垂直镜像 corr=+0.937，V∘H corr=−0.027），
+     * 终版 B+ 把矫正落回源头（链 composite 换 composite_scene 不翻转 + deferred 不翻转），
+     * final 恢复恒等身份（p416_run3 复测回正）。p414 证据「未镜像」判据基于云团构图、
+     * 分辨不出上下，已在 p416 证据更正。
      */
     private static final Identifier FINAL_PIPELINE_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/final");
@@ -460,7 +474,9 @@ public final class PipelineApi {
      *
      * <p>与 {@link #registerCompositePipeline} 唯一差别 = 顶点用不翻转的 {@code vkdisp:fullscreen}：
      * scene 是 vanilla 帧图目标（P3.2 首轮实测用翻转顶点采样出镜像）；fixture 是我方中间目标
-     * （P-1f 实测需翻转）。片元/绑定组完全一致，按输入源在 FrameApi Pass 3 选择。
+     * （P-1f 实测需翻转）。片元/绑定组完全一致，按输入源在 FrameApi Pass 3 选择 ——
+     * **含链模式**（p416 方向矫正后，链 composite 的彩色主输入 = 场景色，按采样源规则
+     * 同样走不翻转顶点，见 {@link #DEFERRED_PIPELINE_ID} javadoc 的根因段）。
      */
     public static void registerCompositeScenePipeline(RegisterRenderPipelinesEvent event) {
         RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
@@ -482,7 +498,8 @@ public final class PipelineApi {
      * 构建并注册 P3.3 deferred 步管线（{@link #DEFERRED_LOCATION}）。
      *
      * <p>片元 = 虚拟包 {@code vkdisp_pack:deferred}（包源或内置 passthrough），
-     * 顶点 = {@code vkdisp:fullscreen_flipv}（净翻转守恒推导，见 {@link #DEFERRED_PIPELINE_ID}），
+     * 顶点 = {@code vkdisp:fullscreen}（**不翻转** —— 采样源是场景 ⇒ 同 P3.2 规则不翻转，
+     * p416 推翻首版净翻转守恒推导，见 {@link #DEFERRED_PIPELINE_ID}），
      * 绑定组 = {@link #packFragmentLayout()}，与 composite 完全同款（D 线对所有阶段统一
      * 注入 + P4.1.2 反射门控超集 —— deferred 的 noisetex 反射名也在 18 名清单内）。
      * deferred 只在世界内执行，但管线**必须无条件注册**
@@ -491,7 +508,7 @@ public final class PipelineApi {
     public static void registerDeferredPipeline(RegisterRenderPipelinesEvent event) {
         RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
                 .withLocation(DEFERRED_PIPELINE_ID)
-                .withVertexShader(FULLSCREEN_FLIPV_SHADER_ID)
+                .withVertexShader(FULLSCREEN_SHADER_ID)
                 .withFragmentShader(DEFERRED_SHADER_ID)
                 .withBindGroupLayout(packFragmentLayout())
                 .withColorTargetState(ColorTargetState.DEFAULT)
@@ -500,17 +517,17 @@ public final class PipelineApi {
         deferredPipeline = pipeline;
         REGISTERED_PIPELINES.add(pipeline);
         VkDisp.LOGGER.info(
-                "vkdisp: deferred pipeline wired: fragment={} vertex={} (P3.3 chain step; flipv by net-parity)",
-                DEFERRED_SHADER_ID, FULLSCREEN_FLIPV_SHADER_ID);
+                "vkdisp: deferred pipeline wired: fragment={} vertex={} (P3.3 chain step; no v-flip by scene-source, p416)",
+                DEFERRED_SHADER_ID, FULLSCREEN_SHADER_ID);
     }
 
     /**
      * 构建并注册 P4.1.4 final 步管线（{@link #FINAL_LOCATION}）。
      *
      * <p>片元 = 虚拟包 {@code vkdisp_pack:final}（包源或内置 passthrough），
-     * 顶点 = {@code vkdisp:fullscreen}（**不翻转** —— attachment 恒等拷贝推导，见
-     * {@link #FINAL_PIPELINE_ID}），绑定组 = {@link #packFragmentLayout()}（与 composite 同款超集）。
-     * final 只在包声明 final 片元时执行，但管线**必须无条件注册**
+     * 顶点 = {@code vkdisp:fullscreen}（**不翻转** —— attachment 恒等拷贝推导，
+     * p416 复核维持，见 {@link #FINAL_PIPELINE_ID}），绑定组 = {@link #packFragmentLayout()}
+     * （与 composite 同款超集）。final 只在包声明 final 片元时执行，但管线**必须无条件注册**
      * （required：注册缺失会让 registered≠compiled 计数断言失败）。
      */
     public static void registerFinalPipeline(RegisterRenderPipelinesEvent event) {

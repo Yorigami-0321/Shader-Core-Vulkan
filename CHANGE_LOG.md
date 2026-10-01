@@ -5,6 +5,103 @@
 
 ---
 
+## 2026-10-01 — P4.1.6 画面方向矫正：强制位姿三跑钉死 P3.3 链 composite 顶点根因，「顶点翻转跟随彩色采样源」三处落地，地平线 204（翻转）→ 392（正立）镜像闭合（501 单测全绿）
+
+- **本次改了什么**（用户报「镜头反了：下方是黑色的天空、上方是黄色的地面」的根因修复）：
+  1. **取证法 —— 强制位姿**：玩家 NBT `Rotation=[0.0, −15.0]`（yaw 朝南、pitch 上抬
+     15°；原值备份 `.bak-pose`），superflat 地平线理论位置可算（正立≈403 /
+     翻转≈199，6.83 px/度）。三跑同位姿单变量：run1 原码地平线 **204 = 翻转**；
+     run2 对冲版（final 改 flipv）392 = 正立；run3 终版 392 = 正立。
+  2. **根因**（推翻 P3.3「净翻转守恒」）：`FrameApi` 链模式 `packColor = sceneColorView()`
+     —— OF 语义下 deferred 的 DRAWBUFFERS:4 **不改写 colortex0**（P4.1.2 绑 viewC
+     首跑全黑实证），链彩色主输入一直是**场景色**；deferred 只落 gaux1，**不在彩色
+     净翻转的算式里**，P3.3 却按「deferred + composite 各 +1 抵消」把链顶点定成
+     flipv → 实际链 `scene →[composite flipv]→ offscreen3 →[final 恒等]→ main`
+     = **净 +1 翻转，自 P3.3 起上下颠倒**；P4.1.4 的恒等拷贝推导本身没错，
+     只是忠实地保住了上游的错。**包源排除**：Python zipfile 读本地 BSL 源核验，
+     composite/deferred/final 全部 `texCoord = gl_MultiTexCoord0.xy`（我方 vUv、
+     无翻转），final.fsh 无 `gl_FragCoord`（p414 疑 final 片元坐标求值 —— 排除）；
+     present（菜单）路径本就正立。
+  3. **修复（B+，单条规则：顶点翻转跟随彩色采样源）**：
+     ① `FrameApi` line 925 `useScene && !deferredChain ? compositeScene : composite`
+     → **`useScene ? compositeScene : composite`**（链彩色源 = 场景 ⇒ 同 P3.2 规则
+     不翻转；fixture 仍 flipv，P-1f 基线不动）；
+     ② `registerDeferredPipeline` flipv → **noflip**（color/depthtex0 都采场景；
+     顺带修正 depth 配对 —— 原 flipv 使行 y 写 AO 却读 scene 深度行 1−y，
+     且 gaux1 与 color 行序对齐）；
+     ③ `registerFinalPipeline` **维持恒等不翻转**（run2 的 flipv 对冲撤回，
+     attachment 恒等拷贝推导在上游修正后恢复有效）。
+     代数自检：世界链 = noflip∘noflip ≡ P3.2 直连（实测正立）；fixture/菜单 =
+     flipv→main = P-1f 原样。两版 javadoc（DEFERRED/FINAL_PIPELINE_ID）与
+     FrameApi 各注释按根因改写，wired 日志行改为可复核的代码状态指纹。
+  4. **证据矫正**：p414 判定表「截图未镜像（树冠朝上）」基于云团构图、分辨不出上下，
+     **作废**，方向判定以本强制位姿法为准。
+- **为什么改**：方向错误 = 画面不可用（用户一眼可见）；且原「守恒」推导被写成
+  「P-1f + P3.2 实测的代数合成，非猜测」——实测前提（deferred 在彩色链上）本身
+  错了，必须用可重复的位姿实验重新钉死根因，而不是继续在下游对冲（X9：不猜）。
+- **影响的文档**：本 `CHANGE_LOG.md`；`evidence/p416-orientation.md`（三跑 sha256 +
+  地平线测量 + 相关性判据 + 根因链原文）+ `evidence/README.md`（索引行、p414 判定
+  注记）；`docs/18-PARALLEL.md`（P3.3 ②③ 记录追加推翻注记、P4.1 头部子项行、
+  ⑧ 判据注记、新增 ⑩ 交付记录）；源码 2 文件（PipelineApi / FrameApi）。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；**501 用例 0 失败 0 错误**（零行为变更，
+    javadoc/接线文案随根因改写，测试全量复跑）。
+  - ✅ **三跑取证**（`evidence/p416-orientation.md`）：地平线 204→392→392；
+    run3↔run2 地面带 luma identity=**+1.0000**（同向同构，B+ 未引入再翻转）、
+    run1↔run3 地面带镜像 **+0.9450**（= run1↔run2 同值，互为垂直镜像闭合）；
+    暖地（R−B +9.1）在下、暗天在上；`registered=9 compiled=9`、stages 190/49/141、
+    final/deferred chain wired、uploaded 26/24/24 不变量零回归；
+    **WARN/ERROR 集 run2→run3 双向 diff = 0**；`解析失败`=0（p415 修复仍在）。
+- **未覆盖**（如实登记）：fixture/菜单路径方向抽证（代数 = P-1f 原样，未单独截菜单帧）；
+  同位姿逐像素精确镜像（云带两次截图间飘移，静态地面带才精确比对 0.9450）；
+  deferred depth 配对修正的直接像素证据（无强阴影对照物，留 P4.2）。
+- **是否已提交**：随本轮 commit 提交并推送 origin/master。
+
+---
+
+## 2026-10-01 — P4.1.5 properties 条件编译：#elif 链 + 数值比较 + 续行/CRLF 归一，两跑取证解析失败归零、profiles 五档枚举可见（501 单测全绿）
+
+- **本次改了什么**（shaders.properties 条件编译补全，18-PARALLEL §6.2）：
+  1. **`ConditionalPreprocessor` 四扩**：
+     - **CRLF 归一先于续行判定** —— `.properties` 行尾奇数个 `\` = 续行，但 BSL
+       文件全文 CRLF，`\` 后紧跟 `\r` 会破坏「看最后一个字符」的判定 → 续行不并 →
+       后半行缺 `=` → 整份解析失败（run1 实证，行 129 `smooth(11, …) + \`）；
+     - **`#elif` 链**（Frame 重设计 `parentInclude/taken/include/afterElse`：
+       嵌套在被剔除父级下的 `#else` 不得放行 —— 旧 `!include` 反转会错误放行；
+       `#elif` 出现在 `#else` 后 / 重复 `#else` / 孤立指令显式报错 T11）；
+     - **数值比较** `== != < <= > >=`（含小数字面量；两侧恒定求值不用 Java 短路 ——
+       否则 `A || B` 在 A 为真时右侧 token 不被消费会误报「多余符号」；标识符
+       已定义 → 1、未定义 → 0，口径对齐本仓库自有 `DefineProcessor.ExprEval`）；
+     - 指令头匹配收紧（`#if` 后跟空白才算条件指令，`#ifdef` 不再误配）+ 空表达式显式报错。
+  2. **测试 +9**（492 → 501）：`ShaderPropertiesTest` +8（数值比较按定义态 0/1 求值 /
+     #elif 首真支 / **CRLF 续行回归（注释标注 p415 run1 缺陷）** / 续行合并先于指令
+     识别 / 嵌套 #else 不放行 / 或链不短路 / 比较语法错误显式报错 / 小数比较不抛）+
+     `BlockItemPropertiesTest` +1（idMap `#if/#elif` + 续行）。
+- **为什么改**：BSL `shaders.properties` 真实用到 `#if MC_VERSION >= …`、续行与
+  profile 段 —— 解析失败即整份配置按无处理（T11 WARN 可见但 profiles/选项全丢），
+  P4.1「BSL 主要效果可用」的 profile 子项被卡；X9 不猜 OF 语义细节，求值口径
+  对齐仓库自有实现，取值环境（MC_VERSION 编码/选项当前数值）未取证 → 两态求值
+  并在 javadoc 登记缺口。
+- **影响的文档**：本 `CHANGE_LOG.md`；`evidence/p415-properties-conditionals.md`
+  （两跑 sha256 + 关键行原文 + WARN 集 diff + 判定表）+ `evidence/README.md`（索引行）；
+  `docs/18-PARALLEL.md`（P4.1 头部子项行 + ①/⑤ profiles 登记闭环 + 新增 ⑨ 交付记录）；
+  源码 3 文件（ConditionalPreprocessor + 2 测试）。
+- **测试结果**：
+  - ✅ `./gradlew build` exit=0；**501 用例 0 失败 0 错误**（492 → 501，+9）。
+  - ✅ **runClient 两跑闭环**（`evidence/p415-properties-conditionals.md`）：
+    run1 解析失败 **×3**（2× composite source diagnostic + 1× pack diagnostic，
+    同一句「行缺少 '='（行 129）」）+ `profiles=[]` → 修复 → run2 解析失败 **0** +
+    `profiles=[ULTRA, MINIMUM, MEDIUM, LOW, HIGH]`；**WARN/ERROR 集 diff = 只删
+    该 2 条唯一文本、零新增**；链路/上传/阶段矩阵不变量两跑逐字一致
+    （registered=9 compiled=9、final chain wired、uploaded 26/24/24、stages 190/49/141）；
+    截图客户区 26.2996/43.27% 同量级可见。
+- **未覆盖**（如实登记）：比较式取值环境（MC_VERSION 编码、选项当前数值）仍按
+  「已定义=1/未定义=0」两态求值（X9 登记，`#if MC_VERSION >= 11800` 恒走 #else）；
+  profiles 的应用语义（切档改写 `#define`）沿 P2.4 链路，本轮只证枚举可见。
+- **是否已提交**：随本轮 commit 提交并推送 origin/master。
+
+---
+
 ## 2026-10-01 — P4.1.4 final 步接线：9 管线三布局三环 + attachment 恒等拷贝顶点推导 + 上传日志门缺陷修复，两跑取证 registered=9 对齐、written=24 归零（492 单测全绿）
 
 - **本次改了什么**（补上 P4.1 画面质量链的最后一环：present 前的 final 步）：
@@ -50,7 +147,8 @@
     run1：`(5/9) final` 注册 + `final source ready: present=true pack=BSL_v10.1.8
     bytes=5616` + 三布局 42/24/24 + `registered=9 compiled=9 (aligned)` +
     `final chain wired` + 客户区 **9.1930**/23.75%（截图 p414_world.png 未镜像，
-    与 p413 构图同向 = 恒等拷贝推导实测吻合）—— 但 `uploaded: slot=final` **0 条**
+    与 p413 构图同向 —— ⚠️ 该方向判据基于云团构图、分辨不出上下，**已由 p416
+    强制位姿法取代**，见 P4.1.6 条目）—— 但 `uploaded: slot=final` **0 条**
     （日志门缺陷）→ 修复；
     run2（修复后）：`uploaded: slot=final members=24 bytes=512 written=24 unfilled=0
     mismatched=0 overflow=0` 可见、composite written=26 unfilled=16 与 p413 逐字一致、

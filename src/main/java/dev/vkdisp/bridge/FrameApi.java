@@ -698,15 +698,16 @@ public final class FrameApi {
             throw new IllegalStateException(
                     "vkdisp: composite scene pipeline not compiled yet: " + PipelineApi.COMPOSITE_SCENE_LOCATION);
         }
-        // P3.3：deferred 步管线（flipv + vkdisp_pack:deferred）；isPipelineReady 已含此判据，
+        // P3.3：deferred 步管线（不翻转顶点 + vkdisp_pack:deferred，p416 采样源规则）；isPipelineReady 已含此判据，
         // 走到这里仍 null = 编译期异常，抛出不静默（T11）。
         CompiledRenderPipeline deferred = RenderSystem.getCompiledPipelineNullable(PipelineApi.deferredPipeline());
         if (deferred == null) {
             throw new IllegalStateException(
                     "vkdisp: deferred pipeline not compiled yet: " + PipelineApi.DEFERRED_LOCATION);
         }
-        // P4.1.4：final 步管线（不翻转 + vkdisp_pack:final）；isPipelineReady 已含此判据，
-        // 走到这里仍 null = 编译期异常，抛出不静默（T11）。
+        // P4.1.4：final 步管线（恒等不翻转顶点 + vkdisp_pack:final，attachment 恒等拷贝；
+        // p416 复核维持，根因在上游链顶点，见 PipelineApi.FINAL_PIPELINE_ID）；
+        // isPipelineReady 已含此判据，走到这里仍 null = 编译期异常，抛出不静默（T11）。
         CompiledRenderPipeline finalStepPipeline =
                 RenderSystem.getCompiledPipelineNullable(PipelineApi.finalPipeline());
         if (finalStepPipeline == null) {
@@ -828,10 +829,11 @@ public final class FrameApi {
         // 链段（各自不同附件 —— 规避「同一附件第二次 createRenderPass 不生效」）：
         //  Pass 1 阴影贴图：清屏(黑, 深度1.0) → 几何(经光空间矩阵) → offscreen0 的**深度**即阴影贴图
         //  Pass 2 世界视图：采样阴影贴图深度 → offscreen1（受阴影片元变暗）
-        //  Pass 3（仅 P3.3 链）：scene → offscreen2（deferred 步，flipv = 净翻转守恒）
-        //  Pass 4/3：输入 → 主目标或 offscreen3（**P2.4 起 = 包 composite**，1-v 翻转在 flipv
-        //        顶点完成；P4.1.4 final 链激活时 composite 落中间目标，见 Pass 5/4）
-        //  Pass 5/4（仅 P4.1.4 链）：offscreen3 → 主目标（包 final，不翻转顶点恒等拷贝）
+        //  Pass 3（仅 P3.3 链）：scene → offscreen2（deferred 步，不翻转 —— 采样源是场景）
+        //  Pass 4/3：输入 → 主目标或 offscreen3（**P2.4 起 = 包 composite**；顶点随采样源：
+        //        scene/链路径 → 不翻转，fixture → flipv（P-1f 基线）；P4.1.4 final 链激活时
+        //        composite 落中间目标，见 Pass 5/4）
+        //  Pass 5/4（仅 P4.1.4 链）：offscreen3 → 主目标（包 final，恒等不翻转 —— attachment 恒等拷贝）
         // 说明：图案背景本轮**不进链** —— 阴影贴图只应包含遮挡物深度，背景深度会污染贴图；
         //       pattern/blit/depthviz 管线仍注册并通过计数断言，只是不在本帧执行。
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
@@ -866,8 +868,10 @@ public final class FrameApi {
         // Pass 3（仅 P3.3 链）：scene → offscreen2（deferred 步）。
         // 输入 = SceneCaptureApi 捕获的地形（本帧帧图已写入）、输出 = 槽 2 ——
         // 书面链「每步的输入纹理是上一步的输出」的中间环（08-TESTING §5）。
-        // 顶点 flipv：净翻转守恒（18-PARALLEL §5 P3.3 ②）—— 直连 0 翻转、composite 固定 +1，
-        // 本步必须 +1 才不引入镜像（P-1f + P3.2 实测的代数合成，非猜测）。
+        // 顶点**不翻转**（p416 方向矫正，推翻首版「净翻转守恒」）：首版 flipv 的理由是与
+        // composite 的 +1 抵消，但 deferred 不改写 colortex0（P4.1.2 全黑根因实证）—— 它不在
+        // 彩色净翻转的算式里；color/depthtex0 都采样场景 ⇒ 与 P3.2 同规则不翻转，
+        // 顺带修正 depth 配对（原 flipv 使行 y 写 AO 却读 scene 深度行 1−y）。
         if (deferredChain) {
             try (RenderPass pass = encoder.createRenderPass(
                     () -> label + " 3 (deferred: scene -> offscreen2, pack deferred)",
@@ -890,7 +894,8 @@ public final class FrameApi {
         //   世界直连 → scene 捕获（P3.2：flipv 采 scene 实测镜像 → 无翻转顶点双管线）
         //   菜单回退 → offscreen1 fixture（P2.4 基线）
         // ⚠️ 采样的必须是**本帧有内容的那个目标**（实测教训：曾误采样本链未写入的目标）。
-        // P2.4：fixture/链路路径管线 = 包 composite + fullscreen_flipv（1-v 翻转 P-1f 基线）；
+        // P2.4：fixture 路径 = 包 composite + fullscreen_flipv（1-v 翻转 P-1f 基线）；
+        //       scene/链路径 = composite_scene 不翻转顶点（p416 采样源规则）；
         //       VkDispBuiltins 自 P4.1.3 起按 composite 槽位布局写入真实值（OfUniformManager），
         //       布局空（兜底无块）时绑定初始零值缓冲（P2.4 基线语义）。
         GpuTextureView compositeInput;
@@ -919,10 +924,13 @@ public final class FrameApi {
                 () -> label + compositeStep + " (" + compositeSource + " -> "
                         + compositeTargetLabel + ", pack composite)",
                 compositeOutput, Optional.empty(), null, OptionalDouble.empty())) {
-            // 顶点随输入源切换：链输出/fixture = 我方中间目标 → flipv（P-1f 1-v 翻转基线，
-            // 链路经 deferred 步已翻一次、此处再翻 = 净零，与 P3.2 直连同向）；
-            // scene 直连 = vanilla 帧图目标 → 无翻转（首轮 flipv 实测镜像，−yaw 符号已证）。
-            pass.setPipeline(useScene && !deferredChain ? compositeScene : composite);
+            // 顶点随**采样源**切换（p416 方向矫正的单条规则）：彩色采样源是 vanilla 场景
+            // （scene 直连 = packColor 场景；链模式 = OF 语义下 packColor 仍是场景色，见下方
+            // packColor 注释）→ 不翻转（composite_scene）；fixture = 我方中间目标 → flipv
+            // （P-1f 1-v 基线）。首版链模式走 flipv 是「净翻转守恒」推导错算了一跳
+            // —— deferred 不改写 colortex0，彩色路径 scene →[composite flipv]→ offscreen3
+            // →[final 恒等]→ main = 净 +1 翻转 = p416_run1 实测地平线 row 205（翻转）。
+            pass.setPipeline(useScene ? compositeScene : composite);
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform(PipelineApi.BUILTINS_UNIFORM, compositeBuiltins.currentBuffer());
             pass.setUniform(PipelineApi.SAMPLER_UNIFORM, compositeInput, sampler);
@@ -937,9 +945,9 @@ public final class FrameApi {
             pass.draw(3, 1, 0, 0);
         }
         // P4.1.4 Pass 5（final 链激活时）：offscreen3 → 主目标（**final 是最后且唯一的主目标写入**）。
-        // 顶点不翻转（attachment 恒等拷贝推导，见 PipelineApi.FINAL_PIPELINE_ID）：
-        // composite 换附件不换光栅化 → offscreen3 的 texel 逐位等于旧链路 main 的 texel，
-        // final 恒等采样拷回 → 显示与旧链路一致（若 flipv 会垂直镜像）。
+        // 顶点**恒等不翻转**（attachment 恒等拷贝推导，p416 复核维持 —— run1 翻转的根因在上游
+        // 链 composite 顶点，已在 Pass 4 修复；run2 曾临时用 final flipv 对冲回正，
+        // 见 PipelineApi.FINAL_PIPELINE_ID）。
         // 采样语义：colortex0/colortex1（BSL final 读 colortex1）→ color = composite 输出；
         // gaux1 保持 deferred/colortex4 身份（链激活时 viewC，否则同 color）。
         if (finalChain) {
