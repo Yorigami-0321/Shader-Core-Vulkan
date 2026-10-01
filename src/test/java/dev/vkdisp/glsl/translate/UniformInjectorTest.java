@@ -9,6 +9,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.glsl.TranslateResult;
 
 /**
  * 【参考调研】D 线单测（内建 uniform 注入）/ 04-SPEC §3.2 表
@@ -24,12 +25,16 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  * 2. 备选：无 —— 文本级断言足够，不引入快照框架。
  * 3. 我们的差异点：边界用例（空输入 / 仅注释 / 重复声明 / 类型不符 / 未闭合注释 / CRLF）
  *    全部显式断言"诊断而非崩溃"，对应 18-PARALLEL §7.3 的边界用例清单要求。
+ *    8-a（X9 redefinition 修复）另立 8 组自造样本：顶层无关键字全局登记生效 + 幂等、
+ *    函数体 / struct 体内同名仍注入、非 catalog 顶层同名不登记无假重复 WARN、uniform 混排、
+ *    逗号多名全登记、类型不符 WARN、以及 dh 形态样本端到端转译无同名块成员。
  * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：测试代码不进运行时；冷路径无性能要求（18-PARALLEL §7.7）。
  */
 /**
- * {@link UniformInjector} 的单测：注入完整性、不重复、注入点位置、幂等与边界输入。
+ * {@link UniformInjector} 的单测：注入完整性、不重复、注入点位置、幂等与边界输入，
+ * 以及顶层无关键字全局声明的登记（X9/8-a，dh/voxy 形态 redefinition 修复）。
  */
 class UniformInjectorTest {
 
@@ -275,6 +280,179 @@ class UniformInjectorTest {
         assertEquals(0, count(result.text(), "\nfloat near;\n"), "near 不许再注入");
         assertEquals(1, count(result.text(), "float far, near;"), "包声明原样保留");
         assertTrue(result.diagnostics().isEmpty(), () -> "无重复无类型冲突：" + result.diagnostics());
+    }
+
+    // ===== X9/8-a：顶层无关键字全局声明登记（dh/voxy 包 redefinition 修复，样本全部自造）=====
+
+    /**
+     * dh 形态（自造复刻）：{@code mat4 gbufferProjectionInverse = dhProjectionInverse;} 是顶层
+     * **无 uniform 关键字**的全局声明 —— 必须计为已声明：不注入同名块成员（否则驱动
+     * {@code 'redefinition'}），行文本与行数保持包源原样，第二遍逐字节幂等。
+     */
+    @Test
+    void topLevelKeywordLessBuiltinIsRegisteredInsteadOfInjected() {
+        String source = "#version 330 core\nmat4 gbufferProjectionInverse = dhProjectionInverse;\n"
+                + "void main() {}\n";
+        UniformInjector.Result first = UniformInjector.inject(source);
+        assertEquals(22, first.injected().size(), "gbufferProjectionInverse 已是顶层全局 → 不再注入");
+        assertEquals(1, count(first.text(), "mat4 gbufferProjectionInverse = dhProjectionInverse;"),
+                "包源行必须原样保留（不收编、不改写）");
+        assertEquals(0, count(first.text(), "\nmat4 gbufferProjectionInverse;\n"),
+                "注入块内不许出现同名成员（redefinition 根因）");
+        assertTrue(first.diagnostics().isEmpty(),
+                () -> "类型相符、无重复 → 不该有诊断：" + first.diagnostics());
+        assertEquals(source.split("\n", -1).length + first.insertedLineCount(),
+                first.text().split("\n", -1).length, "只增注入块、不改包源行数（抹空契约不被破坏）");
+
+        UniformInjector.Result second = UniformInjector.inject(first.text());
+        assertEquals(first.text(), second.text(), "第二遍必须逐字节相同（幂等）");
+        assertTrue(second.injected().isEmpty());
+        assertTrue(second.diagnostics().isEmpty(), () -> "第二遍不该有诊断：" + second.diagnostics());
+    }
+
+    /** 函数体内的同名**局部**声明深度 ≥ 1 → 不算顶层已声明 → 照常注入（局部不与块成员撞名）。 */
+    @Test
+    void sameNameLocalInsideFunctionStillGetsTheBuiltinInjected() {
+        String source = """
+                #version 330 core
+                void main() {
+                    mat4 gbufferProjectionInverse = mat4(1.0);
+                    gl_FragColor = vec4(1.0);
+                }
+                """;
+        UniformInjector.Result result = UniformInjector.inject(source);
+        assertEquals(23, result.injected().size(), "函数体内局部不算已声明 → 23 条全注入");
+        assertEquals(1, count(result.text(), "\nmat4 gbufferProjectionInverse;\n"),
+                "块成员照常注入");
+        assertEquals(1, count(result.text(), "    mat4 gbufferProjectionInverse = mat4(1.0);"),
+                "局部声明行原样保留");
+    }
+
+    /** struct 体内的同名**字段**深度 ≥ 1 → 不登记 → 照常注入（字段作用域不与块成员撞名）。 */
+    @Test
+    void sameNameStructFieldStillGetsTheBuiltinInjected() {
+        String source = """
+                #version 330 core
+                struct SceneParams {
+                    mat4 gbufferProjectionInverse;
+                };
+                void main() {}
+                """;
+        UniformInjector.Result result = UniformInjector.inject(source);
+        assertEquals(23, result.injected().size(), "struct 字段不算顶层已声明 → 23 条全注入");
+        assertEquals(1, count(result.text(), "\nmat4 gbufferProjectionInverse;\n"),
+                "块成员照常注入（块成员行无缩进，struct 字段行有缩进，可区分）");
+        assertEquals(1, count(result.text(), "    mat4 gbufferProjectionInverse;"),
+                "struct 字段行原样保留");
+    }
+
+    /**
+     * 非 catalog 顶层同名 ×2（#ifdef 互斥双分支的平铺形态，dh 实证 program_dh_terrain.glsl
+     * :57,:59 / :309,:311 的双份 {@code float time}）：不登记、不产生假"重复声明"WARN ——
+     * 该名字本就不在注入范围，维持现状。
+     */
+    @Test
+    void nonCatalogTopLevelDuplicatesAreNotRegisteredAndDoNotWarn() {
+        String source = """
+                #version 330 core
+                float time = 1.0;
+                float time = 2.0;
+                void main() {}
+                """;
+        UniformInjector.Result result = UniformInjector.inject(source);
+        assertEquals(23, result.injected().size(), "非 catalog 名不在注入范围 → 23 条照常全注入");
+        assertTrue(result.diagnostics().stream().noneMatch(
+                        diagnostic -> diagnostic.severity() == TranslateDiagnostic.Severity.WARN),
+                () -> "非 catalog 顶层同名不许产生重复 WARN：" + result.diagnostics());
+        assertEquals(2, count(result.text(), "float time = "), "两行都原样保留");
+    }
+
+    /** uniform 行与无关键字全局混排：uniform 走既有收编，顶层 catalog 名只登记 → 只注入其余缺失项。 */
+    @Test
+    void mixedUniformAndKeywordLessGlobalsInjectOnlyRemainingMissingBuiltins() {
+        String source = """
+                #version 330 core
+                uniform mat4 gbufferModelView;
+                mat4 gbufferProjection = gbufferModelView;
+                void main() {}
+                """;
+        UniformInjector.Result result = UniformInjector.inject(source);
+        assertEquals(21, result.injected().size(),
+                "gbufferModelView（uniform 收编）+ gbufferProjection（顶层登记）已声明 → 只注入其余 21 条");
+        assertEquals(1, count(result.text(), "\nmat4 gbufferModelView;\n"), "uniform 内建收编进块");
+        assertEquals(0, count(result.text(), "\nmat4 gbufferProjection;\n"),
+                "顶层已登记 → 不注入同名成员");
+        assertEquals(1, count(result.text(), "mat4 gbufferProjection = gbufferModelView;"),
+                "顶层行原样保留");
+        assertEquals(0, count(result.text(), "uniform mat4 gbufferModelView;"), "原 uniform 行抹空");
+        assertTrue(result.diagnostics().stream().anyMatch(d -> d.message().contains("收编")),
+                () -> "收编必须显式可见（T11）：" + result.diagnostics());
+    }
+
+    /** 逗号多名无关键字全局：**全部** catalog 名登记 —— 只记首名会让第二个再被注入 → 块内撞名。 */
+    @Test
+    void commaSeparatedKeywordLessGlobalsRegisterEveryBuiltinName() {
+        String source = """
+                #version 330 core
+                mat4 gbufferModelView, gbufferProjection;
+                void main() {}
+                """;
+        UniformInjector.Result result = UniformInjector.inject(source);
+        assertEquals(21, result.injected().size(), "两个 catalog 名都已登记 → 只注入其余 21 条");
+        assertEquals(0, count(result.text(), "\nmat4 gbufferModelView;\n"), "gbufferModelView 不许再注入");
+        assertEquals(0, count(result.text(), "\nmat4 gbufferProjection;\n"), "gbufferProjection 不许再注入");
+        assertEquals(1, count(result.text(), "mat4 gbufferModelView, gbufferProjection;"),
+                "包源行原样出现恰好一次");
+        assertTrue(result.diagnostics().isEmpty(), () -> "两个类型都相符、无重复：" + result.diagnostics());
+
+        UniformInjector.Result second = UniformInjector.inject(result.text());
+        assertEquals(result.text(), second.text(), "第二遍必须逐字节相同");
+        assertTrue(second.diagnostics().isEmpty(), () -> "第二遍不该有诊断：" + second.diagnostics());
+    }
+
+    /** 类型不符的无关键字同名：走既有 {@code recordDeclaration} 类型核对 WARN（保留包源行、不注入该成员）。 */
+    @Test
+    void typeMismatchedKeywordLessBuiltinWarnsAndIsNotInjected() {
+        String source = "#version 330 core\nfloat gbufferProjection = 0.0;\nvoid main() {}\n";
+        UniformInjector.Result result = UniformInjector.inject(source);
+        assertEquals(22, result.injected().size(), "已登记 → 不注入同名成员");
+        assertEquals(0, count(result.text(), "\nmat4 gbufferProjection;\n"), "块内不许有同名成员");
+        assertEquals(1, count(result.text(), "float gbufferProjection = 0.0;"), "包源行原样保留");
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic ->
+                        diagnostic.severity() == TranslateDiagnostic.Severity.WARN
+                                && diagnostic.line() == 2
+                                && diagnostic.message().contains("float")
+                                && diagnostic.message().contains("mat4")),
+                () -> "类型不符必须 WARN 且指回第 2 行：" + result.diagnostics());
+    }
+
+    /**
+     * 端到端（X9 D 类复刻，自造 dh 形态样本）：完整七级转译后，顶层
+     * {@code mat4 gbufferProjectionInverse = …} 行保持无关键字全局出现，注入块内**无**同名成员
+     * —— 即 {@code 'redefinition'} 的文本成因已消除（文本断言，不跑真编译器）。
+     */
+    @Test
+    void dhShapedTopLevelGlobalSurvivesFullTranslationWithoutRedefinition() {
+        String source = """
+                #version 120
+                // self-made dh-shaped sample for X9/8-a unit test (not from any third-party pack)
+                uniform mat4 dhProjectionInverse;
+                mat4 gbufferProjectionInverse = dhProjectionInverse;
+                void main() {
+                    gl_FragColor = gbufferProjectionInverse * vec4(1.0);
+                }
+                """;
+        TranslateResult result = OfGlslTranslator.translate(ShaderStage.FRAGMENT, source);
+        assertTrue(result.isSuccess(), "自造样本必须转译成功：" + result.diagnostics());
+        String text = result.text();
+        assertEquals(1, count(text, "mat4 gbufferProjectionInverse = dhProjectionInverse;"),
+                "顶层无关键字声明行原样保留：" + text);
+        assertEquals(0, count(text, "\nmat4 gbufferProjectionInverse;\n"),
+                "注入块内不许出现同名成员（redefinition 根因）：" + text);
+        assertEquals(1, count(text, "\nmat4 dhProjectionInverse;"),
+                "初始化器引用的 uniform 收编进块后仍全局可见（无实例名块成员在全局作用域）：" + text);
+        assertEquals(1, count(text, UniformInjector.BLOCK_OPEN),
+                "恰好一个注入块（不许重复开块）：" + text);
     }
 
     @Test

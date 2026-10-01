@@ -15,14 +15,15 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    参考对象 = 本仓库 runClient 实测 shaderc 原文（2026-09-30，/tmp/p41a_runclient.log）：
  *    {@code 'location' : SPIR-V requires location for user input/output} 与
  *    {@code 'location' : not supported for this version or the enabled extensions} ——
- *    驱动报错事实；docs/04-SPEC.md §4「字段名必须与着色器里的 attribute 声明完全一致」
- *    （顶点属性按名字绑定 → 顶点 in 不注入 location）—— 仓库内文档事实。均不受版权保护。
+ *    驱动报错事实；P4.4 补充 BSL 36 个顶点 in 缺 location 同报此错 → 顶点 in 也注入
+ *    （绑定键仍是名字，location 从我方 SPIR-V 自反射读回 —— renderpearl PipelineBuilder:107/113，
+ *    merged jar 内嵌源码实测）；docs/04-SPEC.md §4 只约束名字字面一致。均不受版权保护。
  *    外部候选 IrisShaders/glsl-transformer（GPL-3.0 + 例外条款，18-PARALLEL §4 明示"按禁止处理"）→
  *    按禁止处理（07-CONSTRAINTS L12 §1.3 陷阱 2 / X21），零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 测试，样本全部为本任务自造（18-PARALLEL §7.6）。
  *    → 能否并入本项目（MIT）：可以（仅采纳不受版权保护的事实性信息）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
- * 1. 官方/主实现：JUnit 5 断言"片元 in/out 与顶点 out 补 location、顶点 in 跳过、in/out 独立
+ * 1. 官方/主实现：JUnit 5 断言"顶点 in / 片元 in/out / 顶点 out 全补 location、in/out 独立
  *    计数、已有 layout 占号、逗号拆语句、行数恒等、幂等、边界不崩溃"八件事。
  * 2. 备选：无 —— 文本级断言足够，不引入快照框架。
  * 3. 我们的差异点：边界用例（同行多语句 WARN / 注释保护 / 前置限定符 / 接口块 / null 阶段 /
@@ -83,7 +84,7 @@ class IoLocationAdapterTest {
     }
 
     @Test
-    void vertexAttributesAreSkippedButVertexOutputsAreLocated() {
+    void vertexInputsAreLocatedAndOutputsKeepSeparateCounting() {
         String source = """
                 in vec3 Position;
                 in vec4 mc_Entity;
@@ -91,12 +92,13 @@ class IoLocationAdapterTest {
                 """;
         IoLocationAdapter.Result result = IoLocationAdapter.locate(ShaderStage.VERTEX, source);
         List<String> lines = List.of(result.text().split("\n", -1));
-        assertEquals("in vec3 Position;", lines.get(0),
-                "顶点属性按 04-SPEC §4 名字绑定，不注入 location");
-        assertEquals("in vec4 mc_Entity;", lines.get(1), "同上");
+        assertEquals("layout(location = 0) in vec3 Position;", lines.get(0),
+                "P4.4：顶点 in 也注入 location（SPIR-V 强制；绑定键仍是名字）");
+        assertEquals("layout(location = 1) in vec4 mc_Entity;", lines.get(1),
+                "按声明序取最小未占用号");
         assertEquals("layout(location = 0) out vec2 vUv;", lines.get(2),
-                "顶点 out（跨阶段 varying）照补");
-        assertEquals(1, result.locatedCount());
+                "顶点 out 与 in 独立计数（各自从 0 起）");
+        assertEquals(3, result.locatedCount());
     }
 
     @Test
@@ -105,6 +107,24 @@ class IoLocationAdapterTest {
         assertEquals("layout(location = 0) in vec2 a;\n", result.text(),
                 "null 阶段按非顶点处理（javadoc 口径）：in 照补");
         assertEquals(1, result.locatedCount());
+    }
+
+    @Test
+    void vertexInputWithExistingLocationIsIdempotent() {
+        String source = """
+                layout(location = 0) in vec3 Position;
+                layout(location = 1) in vec2 uv0;
+                in vec4 color;
+                """;
+        IoLocationAdapter.Result first = IoLocationAdapter.locate(ShaderStage.VERTEX, source);
+        List<String> lines = List.of(first.text().split("\n", -1));
+        assertEquals("layout(location = 0) in vec3 Position;", lines.get(0), "已有 layout 原样");
+        assertEquals("layout(location = 1) in vec2 uv0;", lines.get(1));
+        assertEquals("layout(location = 2) in vec4 color;", lines.get(2),
+                "占号种子含顶点 in，后补取 2");
+        IoLocationAdapter.Result second = IoLocationAdapter.locate(ShaderStage.VERTEX, first.text());
+        assertEquals(first.text(), second.text(), "第二遍逐字节相同（幂等）");
+        assertEquals(0, second.locatedCount());
     }
 
     @Test

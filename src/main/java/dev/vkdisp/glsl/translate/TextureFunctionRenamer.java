@@ -1,6 +1,8 @@
 package dev.vkdisp.glsl.translate;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -27,6 +29,10 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    texture(sampler2D, vec2) 等；textureProj 对应旧的 *Proj；textureLod 对应旧的 *Lod。
  *    shadow2D(sampler2DShadow, vec3) 在 1.20 返回 **vec4**，而现代 texture(sampler2DShadow, vec3)
  *    返回 **float** —— 任务点名的「shadow2D → texture 需注意 sampler 类型」正指此处。
+ *    texture2DGradARB（GL_ARB_shader_texture_lod 扩展入口，141 阶段矩阵实测报
+ *    {@code 'texture2DGradARB' : no matching overloaded function} ×3 FRAGMENT）
+ *    四参签名 (sampler2D, vec2, vec2, vec2) 与 GLSL 330 core 的 textureGrad 逐一对应
+ *    （ARB 扩展被核心化时的同名同参重命名，公开扩展规范事实）→ 纯标识符等行改名。
  * 2. 备选：无 —— 不建 AST、不引入 glslang / ANTLR；只做标识符级改名 + 单行括号配对
  *    （冷路径清晰优先，18-PARALLEL §7.7）。
  * 3. 我们的差异点：① **只改真正的调用**（标识符后跟同行的 {@code (}），同名变量 / 宏参数不动；
@@ -35,7 +41,18 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    ③ 调用跨行（同行找不到配对右括号）时不猜：退化为纯改名并出 WARN，显式说明返回类型差异（T11）；
  *    ④ 只扫「无注释无字符串视图」的标识符，注释 / 字符串 / #define 续行一字不动；
  *    ⑤ 行内等长无关（改名会变长度），但**行数不变** —— C 线的行号映射不被切断；
- *    ⑥ 不改 {@code gl_*} 内建与 uniform（那是 FragmentOutputAdapter / UniformInjector 的职责）。
+ *    ⑥ 不改 {@code gl_*} 内建与 uniform（那是 FragmentOutputAdapter / UniformInjector 的职责）；
+ *    ⑦ **第二阶段·目标名冲突消解**（141 阶段矩阵 B 类 44 个 FRAGMENT 编译失败的修复，实测错误
+ *    原文 {@code 'texture' : can't use function syntax on variable} —— evidence/p412-driver-layer.md:103、
+ *    docs/18-PARALLEL.md:491）：第一阶段把 {@code texture2D(} 改名成 {@code texture(} 后，若同名变量
+ *    已由包声明（{@code uniform sampler2D texture;} 等），外层 {@code texture} 解析到该变量，shaderc
+ *    报上述错误。故在调用位改名之后追加第二阶段：对**目标名集合**（RENAMES 与 SHADOW_WRAPS 两表的
+ *    全部现代名 {texture, textureProj, textureLod, textureProjLod}）中「既有变量声明、又存在
+ *    {@code 名(} 调用位」的每个名字 T，把 T 的**全部非调用位标识符**（声明位、实参位、赋值位、
+ *    {@code .T} 成员访问位、同名形参位）改写为 {@code T_N}；N 从 0 起取第一个与源内全部 code-view
+ *    标识符及两表键集均不冲突的序号（确定性）。无调用位则不触发（护住只声明不调用的场景），
+ *    该改写不产生诊断（与调用位改名同口径的正常变换）。转译目标仓库事实：VersionAdapter
+ *    {@code TARGET_VERSION = 410}（VersionAdapter.java:81，shaderc 硬地板）。
  * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载期一次，08-TESTING §8 解析+转译全部 program ≤ 1 秒 由 P2 主线
@@ -52,16 +69,32 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *   <tr><td>texture2DProj / texture3DProj</td><td>textureProj</td></tr>
  *   <tr><td>texture2DLod / texture3DLod / textureCubeLod</td><td>textureLod</td></tr>
  *   <tr><td>texture2DProjLod / texture3DProjLod</td><td>textureProjLod</td></tr>
+ *   <tr><td>texture2DGradARB</td><td>textureGrad（ARB 扩展 → 330 core 同参重命名）</td></tr>
  *   <tr><td>shadow1D / shadow2D</td><td>vec4(texture(...))（返回类型适配）</td></tr>
  *   <tr><td>shadow1DProj / shadow2DProj</td><td>vec4(textureProj(...))（返回类型适配）</td></tr>
  * </table>
  *
  * <p><b>不改的东西</b>：{@code #define} / {@code #include}（C 线职责）、{@code gl_*} 内建输出
  * （{@link FragmentOutputAdapter}）、内建 uniform 声明（{@link UniformInjector}）、
- * 不在调用位置出现的同名标识符、跨行调用（显式 WARN 后只改名，不猜参数边界）。
+ * 不在调用位置出现的同名标识符（除非触发第二阶段目标名冲突消解，见下）、跨行调用
+ * （显式 WARN 后只改名，不猜参数边界）。
+ *
+ * <p><b>第二阶段·目标名冲突消解</b>（调用位改名之后执行）：若输出中存在名为 T 的**变量声明**
+ * （前一非空白词是类型 / 限定符词的 {@code <类型> T} 形态，覆盖 {@code uniform} / {@code const} /
+ * 普通全局 / 局部 / 形参；T ∈ {texture, textureProj, textureLod, textureProjLod}，即两映射表的全部
+ * 目标名），**且**存在 {@code T(} 形态的调用位，则把 T 的全部非调用位标识符改写为 {@code T_N}：
+ * N 从 0 起取第一个不与源内任何 code-view 标识符、两表键集和目标名集合冲突的序号（确定性）。
+ * 无调用位不触发（只声明不调用的文件逐字节透传）；无撞名时第二阶段同样逐字节透传；
+ * 调用位判定与第一阶段同构（{@code identifierAt} + {@code atTokenStart} + 跨空白同行 {@code (}，
+ * 注释 / 字符串 / {@code #} 行除外）；该改写**不产生诊断**。
+ * 理由：第三方包普遍声明 {@code uniform sampler2D texture;}，第一阶段产出的
+ * {@code texture(texture, uv)} 里外层 {@code texture} 会解析到包变量，shaderc 报
+ * {@code 'texture' : can't use function syntax on variable}
+ * （141 阶段矩阵 B 类 44 个 FRAGMENT 失败实测原文，evidence/p412-driver-layer.md:103）。
  *
  * <p><b>幂等</b>：改名后源码里不再有旧函数名，第二遍扫描无改写 → 文本逐字节不变、无新增诊断
- * （跨行 WARN 只出现在第一遍有旧函数名时）。
+ * （跨行 WARN 只出现在第一遍有旧函数名时）；第二阶段的改写同样是一次性的 —— 改写后 T 不再有
+ * 变量声明，第二遍的触发条件（声明 + 调用位）不再同时成立。
  *
  * <p><b>行号契约</b>：诊断的 {@code line} 是**本阶段输入**行号；{@code sourceFile} 留空由
  * {@link OfGlslTranslator} 经 F3 的 {@code SourceLineMap} 回填原文件。
@@ -73,6 +106,12 @@ public final class TextureFunctionRenamer {
 
     /** shadow 系列：旧名 → 现代名；调用点额外包 {@code vec4(...)}（返回类型 vec4 → float 的适配）。 */
     private static final Map<String, String> SHADOW_WRAPS = shadowWraps();
+
+    /**
+     * 第二阶段目标名集合：RENAMES 与 SHADOW_WRAPS 两表的全部现代名
+     * （LinkedHashSet 顺序 = 两表书写顺序，确定性）。
+     */
+    private static final Set<String> TARGET_NAMES = targetNames();
 
     /** 允许出现在调用前驱位置的空白之外的字符不做特殊处理：只要求同行的 {@code (}。 */
     private TextureFunctionRenamer() {}
@@ -116,6 +155,8 @@ public final class TextureFunctionRenamer {
             state.line = index + 1;
             renamed.add(rewriteRange(raw.get(index), codes.get(index), 0, codes.get(index).length(), state));
         }
+        // 第二阶段：目标名冲突消解（调用位改名之后；行结构 / skip 标记与阶段一相同，行数不变）
+        resolveTargetConflicts(renamed, skip);
         return new Result(SourceLines.join(renamed, lines.endsWithNewline()), diagnostics, state.renamedCount);
     }
 
@@ -195,6 +236,132 @@ public final class TextureFunctionRenamer {
         return out.toString();
     }
 
+    /**
+     * 第二阶段：目标名冲突消解（改写本身不产生诊断，与调用位改名同口径）。
+     *
+     * <p>触发条件：某个目标名 T 既有**变量声明**（{@code <类型> T} 形态：前一非空白词是标识符词，
+     * 覆盖 {@code uniform}/{@code const}/普通全局/局部/形参），又有 {@code T(} 形态的**调用位**
+     * （与第一阶段同构的判定，注释 / 字符串 / {@code #} 行除外）。无调用位 → 不触发。
+     *
+     * <p>改写：该 T 的全部非调用位标识符（声明位、实参位、赋值位、{@code .T} 成员位、同名形参）
+     * → {@code T_N}，N 取与源内全部 code-view 标识符 + 两表键集 + 目标名集合均不冲突的最小序号。
+     * 只在行内替换，行数不变；{@code skip} 行（{@code #} 指令及续行）一字不动。
+     *
+     * @param lines 第一阶段的输出行（就地改写）
+     * @param skip  与阶段一相同的预处理行标记（阶段一不改变行结构，标记仍有效）
+     */
+    private static void resolveTargetConflicts(List<String> lines, boolean[] skip) {
+        // 独立重建视图：阶段一已把块注释等诊断报进真实列表，这里传临时列表丢弃，避免重复上报。
+        List<String> codes = GlslTextScan.codeViews(lines, new ArrayList<>(0));
+        Set<String> used = new LinkedHashSet<>();
+        Set<String> declared = new HashSet<>();
+        Set<String> called = new HashSet<>();
+        for (int index = 0; index < lines.size(); index++) {
+            String code = codes.get(index);
+            int pos = 0;
+            while (pos < code.length()) {
+                int[] span = GlslTextScan.identifierAt(code, pos);
+                if (span == null) {
+                    pos++;
+                    continue;
+                }
+                String token = code.substring(span[0], span[1]);
+                used.add(token);
+                if (!skip[index] && TARGET_NAMES.contains(token)) {
+                    if (isCallSite(code, span)) {
+                        called.add(token);
+                    } else if (GlslTextScan.atTokenStart(code, span[0])
+                            && precededByTypeToken(code, span[0])) {
+                        declared.add(token);
+                    }
+                }
+                pos = span[1];
+            }
+        }
+        Map<String, String> planned = new LinkedHashMap<>();
+        for (String target : TARGET_NAMES) {
+            if (declared.contains(target) && called.contains(target)) {
+                planned.put(target, freeName(target, used));
+            }
+        }
+        if (planned.isEmpty()) {
+            return;
+        }
+        for (int index = 0; index < lines.size(); index++) {
+            if (skip[index]) {
+                continue;
+            }
+            String code = codes.get(index);
+            String raw = lines.get(index);
+            StringBuilder out = new StringBuilder(raw.length());
+            int cursor = 0;
+            boolean replaced = false;
+            int pos = 0;
+            while (pos < code.length()) {
+                int[] span = GlslTextScan.identifierAt(code, pos);
+                if (span == null) {
+                    pos++;
+                    continue;
+                }
+                String mapped = planned.get(code.substring(span[0], span[1]));
+                if (mapped == null || isCallSite(code, span)) {
+                    pos = span[1];
+                    continue;
+                }
+                out.append(raw, cursor, span[0]).append(mapped);
+                cursor = span[1];
+                replaced = true;
+                pos = span[1];
+            }
+            if (replaced) {
+                out.append(raw, cursor, raw.length());
+                lines.set(index, out.toString());
+            }
+        }
+    }
+
+    /**
+     * 调用位判定（与第一阶段 {@link #rewriteRange} 同构）：完整标识符起始 + 跨空白**同行**
+     * {@code (}。跨行括号、成员访问（{@code a.texture}）、半词（{@code mytexture}）都不是调用。
+     */
+    private static boolean isCallSite(String code, int[] span) {
+        if (!GlslTextScan.atTokenStart(code, span[0])) {
+            return false;
+        }
+        int open = GlslTextScan.skipWhitespace(code, span[1]);
+        return open < code.length() && code.charAt(open) == '(';
+    }
+
+    /**
+     * 声明位判定辅助：前一非空白字符是标识符字符 → 呈 {@code <类型/限定符词> T} 形态
+     * （{@code uniform sampler2D texture;}、{@code sampler2D texture} 形参、局部声明同构）。
+     * 赋值（{@code = texture;}）、实参（{@code f(texture)}）、成员（{@code .texture}）不满足。
+     */
+    private static boolean precededByTypeToken(String code, int start) {
+        int pos = start - 1;
+        while (pos >= 0 && (code.charAt(pos) == ' ' || code.charAt(pos) == '\t')) {
+            pos--;
+        }
+        return pos >= 0 && GlslTextScan.isIdentifierPart(code.charAt(pos));
+    }
+
+    /**
+     * 为 {@code target} 选空闲名 {@code target_N}：N 从 0 起，第一个与 {@code used}
+     * （源内全部 code-view 标识符）、目标名集合、RENAMES / SHADOW_WRAPS 两表键集都不冲突的序号。
+     * 每个目标名独立取号，互不干扰（{@code T_N} 形态不可能撞上另一目标名本名）。
+     */
+    private static String freeName(String target, Set<String> used) {
+        for (int suffix = 0; ; suffix++) {
+            String candidate = target + "_" + suffix;
+            if (!used.contains(candidate)
+                    && !TARGET_NAMES.contains(candidate)
+                    && !RENAMES.containsKey(candidate)
+                    && !SHADOW_WRAPS.containsKey(candidate)) {
+                return candidate;
+            }
+        }
+    }
+
     /** 旧名 → 现代名的固定表（LinkedHashMap：顺序稳定，便于文档逐条对照）。 */
     private static Map<String, String> renames() {
         Map<String, String> table = new LinkedHashMap<>();
@@ -209,6 +376,7 @@ public final class TextureFunctionRenamer {
         table.put("textureCubeLod", "textureLod");
         table.put("texture2DProjLod", "textureProjLod");
         table.put("texture3DProjLod", "textureProjLod");
+        table.put("texture2DGradARB", "textureGrad");
         return Map.copyOf(table);
     }
 
@@ -220,6 +388,14 @@ public final class TextureFunctionRenamer {
         table.put("shadow1DProj", "textureProj");
         table.put("shadow2DProj", "textureProj");
         return Map.copyOf(table);
+    }
+
+    /** 两映射表的全部目标名（第二阶段候选 T；按两表书写顺序去重）。 */
+    private static Set<String> targetNames() {
+        Set<String> names = new LinkedHashSet<>();
+        names.addAll(renames().values());
+        names.addAll(shadowWraps().values());
+        return Collections.unmodifiableSet(names);
     }
 
     /** 跨行扫描的可变状态（改名计数 + 每个名字只报一次的诊断）。 */

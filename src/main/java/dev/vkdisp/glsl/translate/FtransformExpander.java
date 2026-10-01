@@ -54,7 +54,8 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  * </ul>
  *
  * <p><b>不改的东西</b>：{@code #include} / {@code #define}（C 线）、位置属性声明本身
- * （不替包作者声明 {@code in vec3 Position;} —— 那属顶点格式绑定职责，见「未覆盖」）、
+ * （本级不替包作者声明 —— 展开后「用而未声明的冻结字面名」由下游
+ * {@link LegacyBuiltinInjector} 补 {@code in vec3 Position;}，见该类）、
  * 注释 / 字符串 / 预处理指令续行内的文本。
  *
  * <p><b>幂等</b>：展开后源码里不再有 {@code ftransform} 调用，第二遍扫描无改写 → 文本逐字节不变、
@@ -77,8 +78,11 @@ public final class FtransformExpander {
     /** 视图矩阵的冻结内建名（04-SPEC §3.2）。 */
     public static final String MODELVIEW_UNIFORM = "gbufferModelView";
 
-    /** 位置属性候选字面名（04-SPEC §4 的 Position；OF 1.17 风格的 vaPosition；老式 gl_Vertex）。 */
-    private static final List<String> POSITION_CANDIDATES = List.of("Position", "vaPosition", "gl_Vertex");
+    /**
+     * 位置属性候选字面名（04-SPEC §4 的 Position；OF 1.17 风格的 vaPosition；老式 gl_Vertex）。
+     * 包级可见：{@link LegacyBuiltinInjector} 的 gl_Vertex 替换按同一候选集认领声明（同口径）。
+     */
+    static final List<String> POSITION_CANDIDATES = List.of("Position", "vaPosition", "gl_Vertex");
 
     private FtransformExpander() {}
 

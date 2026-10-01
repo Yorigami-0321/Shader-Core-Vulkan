@@ -81,7 +81,7 @@ class OfGlslTranslatorTest {
             ivec2 atlasSize;
             ivec2 eyeBrightnessSmooth;
             };
-            in vec4 mc_Entity;
+            layout(location = 0) in vec4 mc_Entity;
             layout(location = 0) out vec3 vNormal;
             void main() {
                 vNormal = vec3(1.0);
@@ -233,6 +233,117 @@ class OfGlslTranslatorTest {
         TranslateResult result = OfGlslTranslator.translate(ShaderStage.VERTEX, "varying vec3 v;\n");
         assertTrue(result.text().startsWith(UniformInjector.BLOCK_HEADER), "没有 #version 头部时注释放最前");
         assertTrue(result.text().contains("out vec3 v;"));
+    }
+
+    /**
+     * 141 阶段矩阵 ① 类端到端：顶点旧内建「用而未声明」→ ⑤ 注入裸声明 → ⑥ 补 location →
+     * ⑧ 把游离矩阵 uniform 收编进块；第二遍是不动点且零诊断。
+     */
+    @Test
+    void legacyBuiltinsGetDeclaredLocatedAndAdopted() {
+        String sample = """
+                #version 330 core
+                void main() {
+                    texCoord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;
+                    normal = normalize(gl_NormalMatrix * gl_Normal);
+                }
+                """;
+        TranslateResult first = OfGlslTranslator.translate(ShaderStage.VERTEX, sample);
+        assertTrue(first.isSuccess(), "旧内建补齐后必须成功：" + first.diagnostics());
+        assertTrue(first.text().contains("layout(location = 0) in vec4 gl_MultiTexCoord0;"),
+                "⑤ 注入的顶点 in 由 ⑥ 补 location：" + first.text());
+        assertTrue(first.text().contains("layout(location = 1) in vec3 gl_Normal;"),
+                "属性按声明序取最小未占用号");
+        assertTrue(first.text().contains("mat4 gl_TextureMatrix[8];"),
+                "游离矩阵 uniform 被 ⑧ 收编进 VkDispBuiltins 块");
+        assertTrue(first.text().contains("mat3 gl_NormalMatrix;"), "同上（mat3）");
+        assertFalse(first.text().contains("uniform mat4 gl_TextureMatrix[8];"),
+                "原游离行已被抹空（收编 = 移动位置，非删除）");
+        TranslateResult second = OfGlslTranslator.translate(ShaderStage.VERTEX, first.text());
+        assertEquals(first.text(), second.text(), "输出文本是不动点");
+        assertTrue(second.diagnostics().isEmpty(), () -> "第二遍零诊断：" + second.diagnostics());
+    }
+
+    /**
+     * ftransform 展开（skybasic 形态，自造样本）：首遍③ 报「未声明位置属性」WARN 并按冻结字面名
+     * 展开，⑤ 随后补 {@code in vec3 Position;}；第二遍无 ftransform、已声明 → 动点 + 零诊断。
+     */
+    @Test
+    void ftransformExpansionGetsFrozenPositionDeclared() {
+        String sample = """
+                #version 410 core
+                void main() {
+                    gl_Position = ftransform();
+                }
+                """;
+        TranslateResult first = OfGlslTranslator.translate(ShaderStage.VERTEX, sample);
+        assertTrue(first.isSuccess(), () -> "成功：" + first.diagnostics());
+        assertTrue(first.text().contains(
+                        "(gbufferProjection * gbufferModelView * vec4(Position, 1.0))"),
+                "③ 按冻结字面名展开：" + first.text());
+        assertTrue(first.text().contains("layout(location = 0) in vec3 Position;"),
+                "⑤ 给展开后用而未声明的 Position 补 vec3 声明（04-SPEC §4）：" + first.text());
+        TranslateResult second = OfGlslTranslator.translate(ShaderStage.VERTEX, first.text());
+        assertEquals(first.text(), second.text(), "输出文本是不动点");
+        assertTrue(second.diagnostics().isEmpty(), () -> "第二遍零诊断：" + second.diagnostics());
+    }
+
+    /**
+     * ⑤ 插入之后，⑥ 级诊断（本阶段输入 = ⑤ 输出坐标）必须经 ⑤ 级映射 ∘ 上游回填 ——
+     * 多语句 WARN 的行号指回原文件行号，不被注入行右移。
+     */
+    @Test
+    void diagnosticsAfterLegacyInjectionLocateBackToOriginalLines() {
+        String source = """
+                #version 330
+                out vec2 v; float k = 1.0;
+                void main() {
+                    gl_Position = vec4(gl_MultiTexCoord0.x);
+                }
+                """;
+        SourceLineMap upstream = SourceLineMap.builder("shaders/a.glsl")
+                .addIdentityRange(1, 5)
+                .build();
+        TranslateResult result = OfGlslTranslator.translate(
+                ShaderStage.VERTEX, TranslateResult.success(source, upstream));
+        assertTrue(result.isSuccess(), "多语句只是 WARN：" + result.diagnostics());
+        assertTrue(result.diagnostics().stream().anyMatch(d ->
+                        d.message().contains("同行多语句") && d.line() == 2
+                                && "shaders/a.glsl".equals(d.sourceFile())),
+                () -> "WARN 必须回填到原文件第 2 行（不被 ⑤ 注入行右移）：" + result.diagnostics());
+        assertTrue(result.text().contains("in vec4 gl_MultiTexCoord0;"), "本例确实触发了 ⑤ 插入");
+    }
+
+    /**
+     * 三次插入（⑤ 旧内建声明、⑦ 合成片元输出、⑧ 内建 uniform 块）下的端到端映射：
+     * 合成行显式未命中，原有行仍指回原文件原行号。
+     */
+    @Test
+    void endToEndMapComposesAcrossAllThreeInsertionStages() {
+        String source = """
+                #version 330
+                void main() {
+                    gl_FragColor = vec4(gl_ProjectionMatrix[2][2]);
+                }
+                """;
+        SourceLineMap upstream = SourceLineMap.builder("shaders/f.glsl")
+                .addIdentityRange(1, 3)
+                .build();
+        TranslateResult result = OfGlslTranslator.translate(
+                ShaderStage.FRAGMENT, TranslateResult.success(source, upstream));
+        assertTrue(result.isSuccess(), () -> "成功：" + result.diagnostics());
+        int outLine = indexOfLine(result.text(), "layout(location = 0) out vec4 vkdispFragOut0;");
+        assertEquals(TranslateDiagnostic.UNKNOWN_LINE, result.originOf(outLine).sourceLine(),
+                "⑦ 注入的片元输出声明行是合成行");
+        assertEquals(TranslateDiagnostic.UNKNOWN_LINE, result.originOf(outLine + 1).sourceLine(),
+                "⑤ 注入的旧内建 uniform 行（已收编抹空、行仍保留）是合成行");
+        int mainLine = indexOfLine(result.text(), "void main() {");
+        assertEquals(new SourceLineMap.LineOrigin("shaders/f.glsl", 2),
+                result.originOf(mainLine), "原有行跨越三次插入后仍指回原行号");
+        int bodyLine = indexOfLine(result.text(),
+                "    vkdispFragOut0 = vec4(gl_ProjectionMatrix[2][2]);");
+        assertEquals(new SourceLineMap.LineOrigin("shaders/f.glsl", 3),
+                result.originOf(bodyLine));
     }
 
     @Test

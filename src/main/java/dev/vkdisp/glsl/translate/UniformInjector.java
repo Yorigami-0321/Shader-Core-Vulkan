@@ -33,6 +33,14 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    原版 89 个 shader 全是具名无实例名块，成员裸引用 —— 两条均为公开语言/原版事实，不受版权保护）。
  *    无实例名块的成员仍在全局作用域，包源码引用字面不变；扫描时把该块成员记作"已声明"
  *    以保证幂等与不撞名。
+ *    ⑤ 顶层**无关键字**全局声明（如 dh 包 {@code mat4 gbufferProjectionInverse = dhProjectionInverse;}，
+ *    X9 实证 program_dh_terrain.glsl:69 / program_dh_water.glsl:90,:92；program_voxy_opaque.glsl 与
+ *    program_voxy_translucent.glsl :37,:38,:40,:41 的 gbufferModelView/Inverse、gbufferProjection/Inverse
+ *    同形态（:39 gbufferPreviousModelView 不在 catalog，不撞））同样计为"已声明" —— 只**登记**
+ *    不改写：行文本与行数保持包源原样，但不再注入同名块成员（否则驱动报 {@code 'redefinition'}，
+ *    141 阶段矩阵 D 类 6×FRAGMENT + 8 潜伏）。登记范围仅限 {@link UniformCatalog} 的 23 条：
+ *    非内建顶层同名（如 #ifdef 互斥双分支的双份 {@code float time}，dh 实证 program_dh_terrain.glsl:57,:59
+ *    与 :309,:311）不登记、不 WARN，维持现状（不制造假"重复声明"）。
  * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载期一次）；两趟线性扫描，无缓存、无预优化
@@ -90,6 +98,29 @@ public final class UniformInjector {
                     + "([A-Za-z_]\\w*(?:\\s*\\[[^]]*\\])?"
                     + "(?:\\s*,\\s*[A-Za-z_]\\w*(?:\\s*\\[[^]]*\\])?)*)\\s*;");
 
+    /**
+     * 顶层**无关键字**全局声明行（X9/8-a 方案）：{@code 类型 名(,名)*[=初始化];}。
+     * 类型 / 名 = 标识符（可含 {@code []} 数组后缀），支持逗号多名与可选初始化器，
+     * **整行以分号收尾**（{@code \s*;\s*$} 锚定）。
+     *
+     * <p>实证（X9 调研，包源写法）：dh 包 {@code mat4 gbufferProjectionInverse = dhProjectionInverse;}
+     * （program_dh_terrain.glsl:69，初始化器引用的 dhProjectionInverse 是同文件 uniform :44；
+     * program_dh_water.glsl:90,:92 同形态）、voxy 包 {@code mat4 gbufferModelView = vxModelView; 等}
+     * （program_voxy_opaque.glsl / program_voxy_translucent.glsl :37,:38,:40,:41）——
+     * 无 {@code uniform} 关键字 → {@link GlslDeclaration#parse} 返回 {@code null} → 原先不登记
+     * declaredAtLine → 照常注入同名块成员 → 驱动 {@code 'redefinition'}（141 阶段矩阵 D 类）。
+     *
+     * <p>刻意收窄（识别不能太宽）：① 必须整行以 {@code ;} 结尾 —— 函数定义行 {@code void main() {}}
+     * 与调用行不匹配；② 只在 {} 深度 0 的行匹配（调用方判定）—— 函数体 / struct 体内的同名局部
+     * 与字段不登记，照常注入；③ 限定符链（{@code const float far = 1.0;} 两个类型位标识符）不匹配
+     * —— 按调研方案的行形「单类型标识符」，宁可漏记走现状（仍注入），不制造假登记。
+     */
+    private static final java.util.regex.Pattern TOP_LEVEL_GLOBAL = java.util.regex.Pattern.compile(
+            "^\\s*([A-Za-z_]\\w*(?:\\s*\\[[^]]*\\])?)\\s+"
+                    + "([A-Za-z_]\\w*(?:\\s*\\[[^]]*\\])?"
+                    + "(?:\\s*,\\s*[A-Za-z_]\\w*(?:\\s*\\[[^]]*\\])?)*)"
+                    + "(?:\\s*=\\s*[^;]*)?\\s*;\\s*$");
+
     private UniformInjector() {}
 
     /**
@@ -119,6 +150,12 @@ public final class UniformInjector {
      * {@code uniform float rainStrength;} 这类 OF 方言原生形态必须移动而不是改写 —— 声明文本原样保留，
      * 原行位抹空以保行号契约）。
      *
+     * <p>第三类登记（X9/8-a）：**顶层（{} 深度 0）无关键字全局声明**（{@code mat4 gbufferProjectionInverse
+     * = dhProjectionInverse;} 这种包源写法）—— 只登记 {@link UniformCatalog} 名字计为"已声明"
+     * （不再注入同名块成员，消除驱动 {@code 'redefinition'}），行文本与行数保持包源原样；
+     * 函数体 / struct 体内的同名局部与字段、以及非 catalog 顶层同名一律不登记（前者照常注入，
+     * 后者不 WARN 维持现状）。
+     *
      * @param source 输入 GLSL（{@code null} 按空串处理）
      * @return 注入结果；永不返回 {@code null}
      */
@@ -133,13 +170,24 @@ public final class UniformInjector {
         // 收编候选：0 基行下标 → 块内成员文本（原声明去掉 uniform 关键字，声明文本原样）。
         Map<Integer, String> adoptable = new java.util.LinkedHashMap<>();
         java.util.Set<String> adoptedNames = new java.util.HashSet<>();
+        // X9/8-a：{} 深度（0 = 顶层）。函数体 / struct 体 / uniform 块体内深度 ≥ 1，
+        // 只有深度 0 的行才可能是"顶层无关键字全局声明"（见 TOP_LEVEL_GLOBAL）。
+        int braceDepth = 0;
         for (int index = 0; index < sourceLines.size(); index++) {
             int lineNumber = index + 1;
             String code = comments.stripComments(sourceLines.get(index), lineNumber);
             String trimmed = code.strip();
             if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                // 空行无括号；# 行（含其宏体里的括号）不计深度 —— 宏体括号属展开点，
+                // 在宏调用所在的普通代码行计数才是预处理后的真实深度。
                 continue;
             }
+            // 登记/深度视图 = blankStrings(stripComments(行))：与 GlslTextScan.codeViews 单行内容
+            // 逐字节等价（GlslTextScan.java:199-210 正是这两步）。不直接调 codeViews 是因为它用独立
+            // CommentState 向传入的诊断列表再插一条"块注释未闭合"ERROR（GlslTextScan.java:205-208），
+            // 而本方法末尾已有同款"块注释未闭合"ERROR，直接调会重复报错；既有 CRLF/块注释诊断行为不变。
+            String scan = GlslTextScan.blankStrings(code);
+            braceDepth = advanceBraceDepth(braceDepth, scan);
             // 块内（具名 std140 / 原包自声明块）：无实例名块的成员是全局作用域声明（幂等记录）；} 收尾。
             if (inLayoutBlock) {
                 int closeBrace = trimmed.indexOf('}');
@@ -164,6 +212,18 @@ public final class UniformInjector {
                 inLayoutBlock = true;
                 layoutBlockStartLine = lineNumber;
                 continue;
+            }
+            // X9/8-a：顶层（{} 深度 0）无关键字全局声明 —— `mat4 gbufferProjectionInverse = dhProjectionInverse;`
+            // 这类行 GlslDeclaration.parse 返回 null（首 token 是类型不是关键字），下面的 uniform 关卡会跳过，
+            // 于是不登记 declaredAtLine → 照常注入同名块成员 → 驱动 'redefinition'。这里只**登记**（计为
+            // 已声明 → 不再注入），行文本与行数保持包源原样（不收编、不改写）。范围仅限 UniformCatalog：
+            // 非内建顶层同名（#ifdef 互斥双分支的 float time 等）不登记也不 WARN，维持现状。
+            if (braceDepth == 0) {
+                java.util.regex.Matcher topLevel = TOP_LEVEL_GLOBAL.matcher(scan);
+                if (topLevel.matches()) {
+                    registerTopLevelGlobals(topLevel.group(2), topLevel.group(1), lineNumber,
+                            declaredAtLine, diagnostics);
+                }
             }
             GlslDeclaration declaration = GlslDeclaration.parse(code);
             if (declaration == null || !"uniform".equals(declaration.keyword)) {
@@ -315,6 +375,47 @@ public final class UniformInjector {
             recordDeclaration(part.substring(span[0], span[1]), type, lineNumber,
                     declaredAtLine, diagnostics);
         }
+    }
+
+    /**
+     * 登记一条顶层无关键字全局声明里的**全部 catalog 名**（{@code mat4 gbufferModelView, gbufferProjection;}
+     * → 两个名字各记一次，共用同一类型，X9/8-a）。与 {@link #recordMemberNames} 的差别：只登记
+     * {@link UniformCatalog} 里的名字 —— 非内建顶层全局（#ifdef 互斥双分支的同名 {@code float time}、
+     * {@code float eBS = …} 等）不记也不 WARN（保持现状，不制造假"重复声明"）；catalog 名走既有
+     * {@link #recordDeclaration}，它不做关键字判定，顺带完成类型核对 WARN（无关键字声明类型与
+     * §3.2 不符同样 WARN、保留包源行、不注入该成员）。
+     */
+    private static void registerTopLevelGlobals(String declarators, String type, int lineNumber,
+            Map<String, Integer> declaredAtLine, List<TranslateDiagnostic> diagnostics) {
+        for (String part : declarators.split(",")) {
+            int[] span = GlslTextScan.identifierAt(part, GlslTextScan.skipWhitespace(part, 0));
+            if (span == null) {
+                continue;
+            }
+            String name = part.substring(span[0], span[1]);
+            if (!UniformCatalog.isBuiltin(name)) {
+                continue;
+            }
+            recordDeclaration(name, type, lineNumber, declaredAtLine, diagnostics);
+        }
+    }
+
+    /**
+     * 按单行无注释无字符串视图推进 {} 深度（X9/8-a）：{@code {}} 加一、{@code }} 减一（下限 0）。
+     * 视图已去注释与字符串 —— 注释 / 字符串里的括号不计；函数体、struct 体内深度 ≥ 1，
+     * 顶层全局声明行深度 0。不平衡的 {@code }}（残缺输入）钳在 0，宁可少登记走现状（仍注入）。
+     */
+    private static int advanceBraceDepth(int depth, String line) {
+        int result = depth;
+        for (int index = 0; index < line.length(); index++) {
+            char current = line.charAt(index);
+            if (current == '{') {
+                result++;
+            } else if (current == '}' && result > 0) {
+                result--;
+            }
+        }
+        return result;
     }
 
     /**

@@ -30,21 +30,28 @@ import dev.vkdisp.glsl.TranslateResult;
  *    gl_FragData[n] → layout(location = N) out vec4）、
  *    P4.1.2 驱动层补充：VersionAdapter（#version 三段升 410：&lt;140 恒升 shaderc 地板 /
  *    140–409 无活跃 SSO 扩展升 glslang location 门控 / ≥410 与 ES profile 原样）、IoLocationAdapter
- *    （片元 in/out 与顶点 out 补 layout(location)，顶点属性按 §4 名字绑定跳过）。
- * 2. 备选：无 —— 不引入任何转译框架；七级文本变换 + 两次插入映射合成，够用即停。
+ *    （片元与顶点 in/out 全补 layout(location)，P4.4 起顶点属性也补 —— 绑定键仍是名字）、
+ *    141 阶段矩阵修复：LegacyBuiltinInjector（GLSL 1.20 旧内建 token 级等行替换 —— 属性类换
+ *    UV0/UV2/Color/Normal/Position、矩阵类换 gbuffer 投影/视图或合成表达式，因 gl_ 前缀保留
+ *    注入声明必被驱动拒；另给「用而未声明」的属性名补裸 in 行）。
+ * 2. 备选：无 —— 不引入任何转译框架；八级文本变换 + 三次插入映射合成，够用即停。
  * 3. 我们的差异点：① 入口只做"编排 + 定位"，各级变换各自独立可测；
- *    ② **诊断定位按级取映射**：行内 / 等行数变换（①–⑤ 级）的诊断行号在 C 线输出坐标系里，
- *    直接经上游映射回填；⑦ 级（内建 uniform 注入）在 ⑥ 级插入之后运行，其诊断行号落在
- *    "⑥ 级输出"坐标系，必须先 {@code ⑥级映射.compose(上游映射)} 再回填 —— 否则插入行之后的
- *    诊断会整体错位；③ 端到端行号映射把两次插入的位移直接合成到一张映射上、再 compose 一次上游映射
- *    （不能写成"⑦ 级映射 compose ⑥ 级映射再 compose 上游"：F3 的 compose 在上游该行是合成行时会
- *    回退成"保留本阶段起源"，会让 ⑥ 级插入的合成声明被误标成某个真实源行号）；
+ *    ② **诊断定位按级取映射**：①–④ 级行内 / 等行数变换与 ⑤ 级（旧内建注入，自身输入是
+ *    C 线输出坐标）的诊断行号都在 C 线输出坐标系里，直接经上游映射回填；⑥ 级（location 补写）
+ *    与 ⑦ 级（片元输出适配）运行在 ⑤ 级输出之上，其诊断行号落在"⑤ 级输出"坐标系，必须先
+ *    {@code ⑤级映射.compose(上游映射)} 再回填；⑧ 级（内建 uniform 注入）在 ⑦ 级插入之后运行，
+ *    诊断行号落在"⑦ 级输出"坐标系，必须经 "combined(⑤,⑦).compose(上游)" 回填 —— 否则插入行
+ *    之后的诊断会整体错位；③ 端到端行号映射把三次插入（⑤ 旧内建声明、⑦ 合成片元输出、
+ *    ⑧ 内建 uniform 块）的位移直接合成到一张映射上、再 compose 一次上游映射
+ *    （不能写成逐级 compose 链：F3 的 compose 在上游该行是合成行时会回退成"保留本阶段起源"，
+ *    会让前级插入的合成声明被误标成某个真实源行号）；
  *    ④ 幂等性口径：**输出文本是转译的不动点**（再转译逐字节不变），且二次转译不产生任何
- *    WARN/ERROR；因为首次转译会插入新行（内建 uniform / 合成片元输出），输出行号映射本身按 F3
- *    语义必须变化，故幂等断言以文本为准（单测同时断言"全量已声明样本"下整个 TranslateResult 相等）。
+ *    WARN/ERROR；因为首次转译会插入新行（旧内建声明 / 合成片元输出 / 内建 uniform 块），
+ *    输出行号映射本身按 F3 语义必须变化，故幂等断言以文本为准（单测同时断言"全量已声明样本"
+ *    下整个 TranslateResult 相等）。
  * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
- * 5. 性能基线：❄️ 冷路径（包加载期一次）；七级线性扫描 + 两次映射合成，无缓存、无预优化
+ * 5. 性能基线：❄️ 冷路径（包加载期一次）；八级线性扫描 + 三次映射合成，无缓存、无预优化
  *    （18-PARALLEL §7.7、T14 达标即停）。
  */
 /**
@@ -61,20 +68,30 @@ import dev.vkdisp.glsl.TranslateResult;
  *   <li>{@link VersionAdapter}：{@code #version} 按三段规则就地升到 410 —— N &lt; 140 恒升
  *       （shaderc 地板）、140 ≤ N &lt; 410 且无活跃 SSO 扩展升（glslang location 门控）、
  *       N ≥ 410 / 已有 SSO / ES profile 原样（P4.1.2 驱动层，行数不变）；</li>
- *   <li>{@link IoLocationAdapter}：片元 in/out 与顶点 out 补 {@code layout(location = N)}
- *       （P4.1.2 驱动层；顶点 in 属性按 04-SPEC §4 名字绑定跳过，行数不变）；</li>
+ *   <li>{@link LegacyBuiltinInjector}：GLSL 1.20 旧内建**替换 + 注入**（gl_ 前缀被语言保留，
+ *    注入 gl_ 声明必被驱动拒 → 141 矩阵第二跑 91×reserved 实测后的设计）—— 先做 token 级
+ *    等行替换：属性类（gl_MultiTexCoord0/1、gl_Color、gl_Normal、gl_Vertex，仅顶点阶段）换
+ *    UV0/UV2/Color/Normal/位置操作数，矩阵类（gl_ProjectionMatrix / gl_ModelViewMatrix /
+ *    gl_ModelViewProjectionMatrix / gl_NormalMatrix / gl_TextureMatrix[n]）换 gbuffer 投影 /
+ *    视图矩阵或其合成 / 单位阵（任何阶段）；再给「用而未声明」的属性名（含 ftransform /
+ *    gl_Vertex 替换引入的冻结 Position）注入裸 {@code in} 行（下一级补 location；
+ *    可能插入声明行）；</li>
+ *   <li>{@link IoLocationAdapter}：片元与顶点 in/out 补 {@code layout(location = N)}
+ *       （P4.1.2 / P4.4 驱动层，行数不变）；</li>
  *   <li>{@link FragmentOutputAdapter}：{@code gl_FragColor} / {@code gl_FragData[n]} →
  *       {@code layout(location = N) out vec4} 声明 + 标识符改写（可能插入合成声明行）；</li>
- *   <li>{@link UniformInjector}：补齐 04-SPEC §3.2 的 23 条 OF 内建 uniform 声明（只补缺失项，
- *       在文件头部区插入若干行）。</li>
+ *   <li>{@link UniformInjector}：补齐 04-SPEC §3.2 的 23 条 OF 内建 uniform 声明、并把游离
+ *       非透明 uniform 收编进块（只补缺失项，在文件头部区插入若干行）。</li>
  * </ol>
  * {@code #include} / {@code #define} 属 C 线，本入口既不解析也不改写（18-PARALLEL §4 D 线"不许做"）。
  *
  * <p><b>输入输出都是 F3 契约</b>：C 线产出 {@link TranslateResult}，D 线消费它再产出同类型。
- * ①–⑤ 级的诊断行号在本阶段输入（= C 线输出）坐标系里；⑦ 级的诊断行号在⑥级输出坐标系里，
- * 出口按级取对应映射反查后再用 {@link TranslateDiagnostic#locatedAt} 回填原文件与原始行号；
- * 行号映射：把两次插入（⑥ 级合成输出声明、⑦ 级内建 uniform）的位移合成一张"最终行 → C 线输出行"
- * 的映射，再 {@link SourceLineMap#compose} 一次上游映射得到端到端映射（C 线 → D 线不变契约，不需要改 F3）。
+ * ①–④ 级与 ⑤ 级的诊断行号在本阶段输入（= C 线输出）坐标系里；⑥⑦ 级的诊断行号在 ⑤ 级输出
+ * 坐标系里；⑧ 级的诊断行号在 ⑦ 级输出坐标系里；出口按级取对应映射反查后再用
+ * {@link TranslateDiagnostic#locatedAt} 回填原文件与原始行号；
+ * 行号映射：把三次插入（⑤ 级旧内建声明、⑦ 级合成输出声明、⑧ 级内建 uniform 块）的位移合成
+ * 一张"最终行 → C 线输出行"的映射，再 {@link SourceLineMap#compose} 一次上游映射得到端到端
+ * 映射（C 线 → D 线不变契约，不需要改 F3）。
  *
  * <p><b>幂等口径</b>：{@code translate(stage, translate(stage, x).text()).text()}
  * 与 {@code translate(stage, x).text()} 逐字节相同 —— 输出文本是转译的不动点。
@@ -122,19 +139,30 @@ public final class OfGlslTranslator {
             return TranslateResult.withDiagnostics(upstream.text(), upstream.lineMap(), diagnostics);
         }
 
-        // ①–⑤ 行内 / 等行数变换：输出行号与输入行号一一对应，诊断行号 = C 线输出行号。
+        // ①–④ 行内 / 等行数变换：输出行号与输入行号一一对应，诊断行号 = C 线输出行号。
         AttributeRewriter.Result rewritten = AttributeRewriter.rewrite(stage, upstream.text());
         TextureFunctionRenamer.Result renamed = TextureFunctionRenamer.rename(rewritten.text());
         FtransformExpander.Result transformed = FtransformExpander.expand(stage, renamed.text());
         VersionAdapter.Result versioned = VersionAdapter.upgrade(transformed.text());
-        IoLocationAdapter.Result located = IoLocationAdapter.locate(stage, versioned.text());
 
-        // ⑥ 可能插入合成的片元输出声明：其诊断行号仍是插入前的（= C 线输出）行号。
+        // ⑤ 旧内建声明注入（可能插入行）：本级输入 = C 线输出坐标，诊断行号仍是 C 线输出行号。
+        LegacyBuiltinInjector.Result declared = LegacyBuiltinInjector.inject(stage, versioned.text());
+
+        // ⑥ location 补写：等行数，但输入已被 ⑤ 的插入行右移（诊断行号 = ⑤ 级输出行号）。
+        IoLocationAdapter.Result located = IoLocationAdapter.locate(stage, declared.text());
+
+        // ⑦ 可能插入合成的片元输出声明：其诊断行号是插入前的（= ⑤ 级输出）行号。
         FragmentOutputAdapter.Result adapted = FragmentOutputAdapter.adapt(stage, located.text());
 
-        // ⑦ 内建 uniform 注入：运行在 ⑥ 的输出上，诊断行号是 ⑥ 输出的行号（可能已被 ⑥ 右移）。
+        // ⑧ 内建 uniform 注入：运行在 ⑦ 的输出上，诊断行号是 ⑦ 输出的行号（可能已被 ⑦ 右移）。
         UniformInjector.Result injected = UniformInjector.inject(adapted.text());
 
+        int baseLineCount = SourceLines.of(versioned.text()).lineCount();
+
+        // ⑤ 级映射（⑤ 输出行 → C 线输出行）：⑥⑦ 的输入坐标 = ⑤ 的输出坐标。
+        SourceLineMap declaredMap = buildStageMap(
+                baseLineCount, declared.insertIndex(), declared.insertedLineCount());
+        SourceLineMap afterDeclared = declaredMap.compose(upstream.lineMap());
         for (TranslateDiagnostic diagnostic : rewritten.diagnostics()) {
             diagnostics.add(locate(diagnostic, upstream.lineMap()));
         }
@@ -147,30 +175,35 @@ public final class OfGlslTranslator {
         for (TranslateDiagnostic diagnostic : versioned.diagnostics()) {
             diagnostics.add(locate(diagnostic, upstream.lineMap()));
         }
-        for (TranslateDiagnostic diagnostic : located.diagnostics()) {
+        for (TranslateDiagnostic diagnostic : declared.diagnostics()) {
             diagnostics.add(locate(diagnostic, upstream.lineMap()));
+        }
+        for (TranslateDiagnostic diagnostic : located.diagnostics()) {
+            diagnostics.add(locate(diagnostic, afterDeclared));
         }
         for (TranslateDiagnostic diagnostic : adapted.diagnostics()) {
-            diagnostics.add(locate(diagnostic, upstream.lineMap()));
+            diagnostics.add(locate(diagnostic, afterDeclared));
         }
 
-        // ⑥ 级映射：⑥ 输出行 → C 线输出行；⑦ 的输入坐标 = ⑥ 的输出坐标。
-        SourceLineMap adaptedMap = buildStageMap(
-                SourceLines.of(located.text()).lineCount(),
-                adapted.insertIndex(), adapted.insertedLineCount());
-        SourceLineMap preInject = adaptedMap.compose(upstream.lineMap());
+        // ⑧ 的诊断行号在 ⑦ 级输出坐标系：先把 ⑤⑦ 两次插入的位移合成成 "⑦ 输出 → C 线输出"
+        // 一张映射，再 compose 上游（不能逐级 compose 链 —— F3 的 compose 在上游"该行是合成行"
+        // 时会回退成"保留本阶段起源"，前级插入的合成声明会被误标成某个真实源行号）。
+        SourceLineMap preInject = buildCombinedStageMap(baseLineCount,
+                new int[] {declared.insertIndex(), adapted.insertIndex()},
+                new int[] {declared.insertedLineCount(), adapted.insertedLineCount()})
+                .compose(upstream.lineMap());
         for (TranslateDiagnostic diagnostic : injected.diagnostics()) {
             diagnostics.add(locate(diagnostic, preInject));
         }
 
-        // 端到端映射：两次插入叠加。不能写成 injectedMap.compose(preInject) —— F3 的 compose 在
-        // 上游"该行是合成行"时会回退成"保留本阶段起源"，于是"⑦ 级插入点之后、⑥ 级合成行"会被
-        // 误标成上游的某个真实行号。这里按两次插入的位移直接算出"最终行 → ⑤ 级输出行"，
-        // 合成行显式保留为合成行，再 compose 一次上游映射（仍然只消费 F3 契约，不改它）。
-        SourceLineMap endToEnd = buildCombinedStageMap(
-                SourceLines.of(adapted.text()).lineCount(),
-                adapted.insertIndex(), adapted.insertedLineCount(),
-                injected.insertIndex(), injected.insertedLineCount()).compose(upstream.lineMap());
+        // 端到端映射：三次插入（⑤ 旧内建声明、⑦ 合成片元输出、⑧ 内建 uniform 块）的位移直接
+        // 合成一张"最终行 → C 线输出行"映射，合成行显式保留为合成行，再 compose 一次上游映射
+        // （仍然只消费 F3 契约，不改它）。
+        SourceLineMap endToEnd = buildCombinedStageMap(baseLineCount,
+                new int[] {declared.insertIndex(), adapted.insertIndex(), injected.insertIndex()},
+                new int[] {declared.insertedLineCount(), adapted.insertedLineCount(),
+                        injected.insertedLineCount()})
+                .compose(upstream.lineMap());
         return TranslateResult.withDiagnostics(injected.text(), endToEnd, diagnostics);
     }
 
@@ -200,34 +233,38 @@ public final class OfGlslTranslator {
     }
 
     /**
-     * 两次插入叠加后的"最终输出行 → ⑤ 级输出（= 上游输入）行"映射。
+     * 多级插入叠加后的"最终输出行 → C 线输出行"映射。
      *
      * <p>{@code resolveInsertedLine} 把某个阶段的输出行还原成该阶段的输入行：插入点之前原样、
-     * 插入区间内为 {@code null}（合成行）、之后整体前移插入行数。两级依次还原即可。
+     * 插入区间内为 {@code null}（合成行）、之后整体前移插入行数。按**逆流水线序**（最后插入的
+     * 级先还原）依次执行，任意级无插入（{@code insertedLineCount == 0}）时该级为恒等。
      *
-     * @param adaptedLineCount     ⑥ 级输出的行数（= ⑦ 级输入行数）
-     * @param adaptedInsertIndex   ⑥ 级插入点之前原有行数（0 基）
-     * @param adaptedInsertedCount ⑥ 级插入行数
-     * @param injectedInsertIndex  ⑦ 级插入点之前原有行数（0 基）
-     * @param injectedInsertedCount ⑦ 级插入行数
+     * @param baseLineCount C 线输出行数（①–④ 等行数链的末行数 = 首个插入级的输入行数）
+     * @param insertIndices 各插入级的插入点之前原有行数（0 基），按流水线顺序
+     * @param insertedCounts 各插入级的插入行数，与 {@code insertIndices} 对齐
      */
-    private static SourceLineMap buildCombinedStageMap(int adaptedLineCount,
-            int adaptedInsertIndex, int adaptedInsertedCount,
-            int injectedInsertIndex, int injectedInsertedCount) {
+    private static SourceLineMap buildCombinedStageMap(int baseLineCount,
+            int[] insertIndices, int[] insertedCounts) {
         SourceLineMap.Builder builder = SourceLineMap.builder(null);
-        int outputLineCount = adaptedLineCount + Math.max(0, injectedInsertedCount);
+        int outputLineCount = baseLineCount;
+        for (int count : insertedCounts) {
+            outputLineCount += Math.max(0, count);
+        }
         for (int outputLine = 1; outputLine <= outputLineCount; outputLine++) {
-            Integer adaptedLine = resolveInsertedLine(outputLine, injectedInsertIndex, injectedInsertedCount);
-            if (adaptedLine == null) {
-                builder.addSynthetic();
-                continue;
+            Integer line = outputLine;
+            boolean synthetic = false;
+            for (int stage = insertIndices.length - 1; stage >= 0; stage--) {
+                line = resolveInsertedLine(line, insertIndices[stage], insertedCounts[stage]);
+                if (line == null) {
+                    synthetic = true;
+                    break;
+                }
             }
-            Integer transformedLine = resolveInsertedLine(adaptedLine, adaptedInsertIndex, adaptedInsertedCount);
-            if (transformedLine == null) {
+            if (synthetic) {
                 builder.addSynthetic();
-                continue;
+            } else {
+                builder.add(line);
             }
-            builder.add(transformedLine);
         }
         return builder.build();
     }

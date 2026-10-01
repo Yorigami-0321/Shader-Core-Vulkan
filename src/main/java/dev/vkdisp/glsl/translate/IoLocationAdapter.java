@@ -15,9 +15,13 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    参考对象 = 本仓库 runClient 实测 shaderc 原文（2026-09-30，/tmp/p41a_runclient.log）：
  *    {@code 'location' : SPIR-V requires location for user input/output}（片元 in 无 location）
  *    与 {@code 'location' : not supported for this version or the enabled extensions}
- *    （低版本下的 layout 输出）—— 驱动报错事实；docs/04-SPEC.md §4「字段名必须与着色器里的
- *    attribute 声明完全一致」（顶点属性**按名字**绑定 VertexFormat，因此顶点 in 不注入 location）
- *    与 docs/04-SPEC.md §3.3（源码级转译交原版编译）—— 仓库内文档事实；另加 GLSL 公开语义
+ *    （低版本下的 layout 输出）—— 驱动报错事实；P4.4 实测（BSL 36 个顶点 in 缺 location 同报此错）
+ *    补充：顶点 in 也必须带 location（SPIR-V 强制），而**绑定键仍是名字**——
+ *    renderpearl PipelineBuilder 按 {@code element.name()} 查 SPIR-V 反射表（merged jar 内嵌源码
+ *    frontend/shaders/PipelineBuilder.java:107），{@code VkVertexInputAttributeDescription.location}
+ *    取自我方 SPIR-V 的反射值（:113/:201）→ 注入的 location 只需文件内唯一，不与绑定侧冲突；
+ *    docs/04-SPEC.md §4「字段名必须与着色器里的 attribute 声明完全一致」只约束名字字面，
+ *    未规定 location 数值；另加 GLSL 公开语义
  *    （layout(location = N) 自 GLSL 130/140 起可用于 in/out；无实例名块成员不重复分配 location）。
  *    外部候选 IrisShaders/glsl-transformer（GPL-3.0 + 例外条款，18-PARALLEL §4 D 线明示
  *    "按禁止处理"）→ 按禁止处理（07-CONSTRAINTS L12 §1.3 陷阱 2 / X21），零代码行并入。
@@ -29,9 +33,9 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    assets/vkdisp/shaders/fullscreen.vsh）；顶点属性另有名字绑定契约（04-SPEC §4，见差异点 ①）。
  * 2. 备选：无 —— 不建 AST、不引入解析框架；GlslDeclaration 行级解析 + 等长无注释视图就地改写，
  *    够用即停（08-TESTING §8.1 达标即停）。
- * 3. 我们的差异点：① **顶点 in（属性）不补**：04-SPEC §4 规定顶点属性按字段名字面匹配绑定，
- *    location 由绑定侧决定，注入任意序号可能与 VertexFormat 的槽位规划冲突（X9 拒绝猜测）；
- *    片元 in/out 与顶点 out（varying 跨阶段接口）不属于名字绑定契约 → 补写（驱动强制）；
+ * 3. 我们的差异点：① **顶点 in 同样补写**（P4.4 修订：旧实现跳过，被 BSL 36 个顶点阶段
+ *    SPIR-V location 报错实测否决）——绑定键是名字（PipelineBuilder:107 按 element.name()
+ *    查反射表），location 从我方 SPIR-V 自反射读回（:113），注入值只需文件内唯一；
  *    ② in / out 各自独立计数，按声明序取"最小未占用号"：已有 layout(location = K) 的声明先
  *    占号，不与后补的撞车；本仓库全屏 VS 的首 varying 在 0，包片元首个 in（首条 varying）
  *    因此落在 0 —— 这是接口契约不是巧合；③ **逗号多声明名同行拆语句**：
@@ -51,15 +55,17 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  * 给缺 location 的跨阶段 {@code in} / {@code out} 声明补写 {@code layout(location = N)}
  * （P4.1.2：片元输入无 location 过不了 Vulkan 的 SPIR-V 编译，shaderc 实测原文见类注释 0）。
  *
- * <p><b>作用范围</b>：片元 in / out、顶点 out（varying 跨阶段接口）；<b>顶点 in（属性）按
- * 04-SPEC §4 名字绑定契约跳过</b>（见类注释差异点 ①）。uniform / attribute / varying 残留 /
- * 预处理指令行不动。
+ * <p><b>作用范围</b>：顶点 in（属性）、片元 in / out、顶点 out —— SPIR-V 用户 in/out 全覆盖
+ * （P4.4 修订：顶点 in 此前按「名字绑定」跳过，被 BSL 36 个顶点阶段 location 报错实测否决；
+ * 绑定键仍是名字，注入 location 只需文件内唯一，见类注释 0）。uniform / attribute / varying
+ * 残留 / 预处理指令行不动。
  *
  * <p><b>编号规则</b>：每个方向独立、按声明序取最小未占用号；已有 {@code layout(location = K)}
- * 先占号（含顶点 in —— 即使本类不改它，它的号也不再发给别人）。
+ * 先占号。
  *
  * <p><b>行号契约</b>：等行数改写（逗号拆分同行完成），输出行号与输入一一对应；诊断的
- * {@code line} 是本阶段输入行号，由 {@link OfGlslTranslator} 按 ①–⑤ 级同款方式经上游映射回填。
+ * {@code line} 是本阶段输入行号，由 {@link OfGlslTranslator} 经「旧内建注入级（⑤）映射 ∘ 上游」
+ * 回填（⑤ 可能在本级之前插入声明行，输入坐标不再等于 C 线输出坐标）。
  */
 public final class IoLocationAdapter {
 
@@ -94,10 +100,9 @@ public final class IoLocationAdapter {
     }
 
     /**
-     * 给缺 location 的跨阶段 in/out 声明补写 {@code layout(location = N)}
-     * （顶点 in 属性按 04-SPEC §4 跳过；行数不变）。
+     * 给缺 location 的 in/out 声明补写 {@code layout(location = N)}（含顶点 in；行数不变）。
      *
-     * @param stage 着色器阶段；只用于判定"顶点 in 跳过"，{@code null} 按非顶点处理
+     * @param stage 着色器阶段（保留参数：诊断口径与未来阶段差异预留；当前各阶段规则一致）
      * @param source 输入 GLSL（{@code null} 按空串处理）
      * @return 补写结果；永不返回 {@code null}
      */
@@ -108,7 +113,7 @@ public final class IoLocationAdapter {
         List<String> codeLines = GlslTextScan.codeViews(rawLines, diagnostics);
         boolean[] skip = GlslTextScan.preprocessorSkipLines(rawLines, codeLines);
 
-        // 占号种子：已有 layout(location = K) 的 in/out 先占号（顶点 in 即使跳过改写也占号）。
+        // 占号种子：已有 layout(location = K) 的 in/out 先占号。
         Set<Integer> usedIn = new HashSet<>();
         Set<Integer> usedOut = new HashSet<>();
         for (String code : codeLines) {
@@ -134,11 +139,6 @@ public final class IoLocationAdapter {
             GlslDeclaration declaration = GlslDeclaration.parse(code);
             if (declaration == null
                     || (!"in".equals(declaration.keyword) && !"out".equals(declaration.keyword))) {
-                adapted.add(raw);
-                continue;
-            }
-            if (stage == ShaderStage.VERTEX && "in".equals(declaration.keyword)) {
-                // 04-SPEC §4：顶点属性按字段名绑定，location 归绑定侧，不注入（X9 拒绝猜测）。
                 adapted.add(raw);
                 continue;
             }
