@@ -227,12 +227,16 @@ F1–F4 全部落地 → 放行并行
 | **G0** Java 分段基准 | ✅ 完成 | `ColdPathBenchmark` + `evidence/g0-java-coldpath.md`（BSL 182 阶段，四段 + 生产入口） |
 | **G1** 等价 Rust 实现 | 🟡 **2/4 相完成** | inc 相与 pre 相**各 182/182 逐字节一致**（`evidence/g1-rust-equivalence.md`）；转译相 / `pack/` 解析相未做 |
 | **G2** FFM 打通 demo | ⛔ 未开始 | **G1 未完成不得开始**（§5.1 流程顺序） |
-| **G3** 对照报告 | ⛔ 未开始 | ⚠️ 进 G3 前须先补 **Java 侧 inc 单独计时**（G0 的预处理段是 include+define+const 合并，两侧目前没有同一口径的数字） |
-| **G4** 裁决 | ⛔ 未开始 | 按 §5.2 阈值 |
+| **G3** 对照报告 | 🟡 **前置数据已就位** | 9 轮**交替**分相对照：inc Rust **快 75.1%**、def Rust **慢 55.7%**、const **未移植且占预处理段 51%**。见 `evidence/g3-preliminary-phase-comparison.md` + `17-NATIVE.md` §7.4。🔴 **裁决仍未做**（G1 未完成） |
+| **G4** 裁决 | ⛔ 未开始 | ⚠️ **先决定 const 的归属**（移植 / 不移植）—— 它在「采用 / 不采用」的分界上；另需评估更便宜的 Java 侧「先挡后正则」路径 |
 
 - 对照 Rust 工程在**仓库外** `~/Minecraft/g1-rust-bench`：**零第三方 crate**，不碰 `build.gradle`、不建 `accel/`。
 - 三相 golden（`inc` / `pre` / `trans`，546 条 sha256）由 `--golden-only` 产出，**可反复重建而不动基准数字**。
-- 🔴 **G1 尚未完成 ⇒ 不得据此对性能下任何结论**（当前只有单次冷跑 n=1 的 Rust 耗时，两侧无同口径数字）。
+- 分相计时由 `--phase-timing`（Java）与 `--mode bench`（Rust）产出，两侧都吐 `G3DATA` 机器可读行，
+  交替编排脚本靠它抓数。口径对称性：Rust 的 def 直接读 golden 的 inc 产物，
+  Java 的 def 也必须用**计时外缓存**的 `IncludeProcessor.Result`（否则会混进 include 的工时）。
+- 🔴 **G1 尚未完成 ⇒ 不得对性能下最终结论**；且即便 G1 完成，**const 相的归属未定**之前，
+  裁决仍无解（见 `17-NATIVE.md` §7.4 的三种假设表）。
 
 ---
 

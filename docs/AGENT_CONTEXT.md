@@ -52,13 +52,16 @@
 - **G 线**：Rust vs Java 冷路径性能对比（`glsl/` 转译 + `pack/` 解析），流程 G0–G4，裁决阈值 20%。
   - ✅ **G0 已完成（2026-10-02）**：`ColdPathBenchmark`（`src/test/java/dev/vkdisp/pack/`）+ 
     `evidence/g0-java-coldpath.md`。BSL 182 阶段的分段基线已建立。
-  - 🟡 **G1 进行中（截至 2026-10-02 三）**：**inc 相与 pre 相各 182/182 逐字节一致**
+  - 🟡 **G1 进行中（截至 2026-10-02 五）**：**inc 相与 pre 相各 182/182 逐字节一致**
     （`evidence/g1-rust-equivalence.md`），对照工程在**仓库外** `~/Minecraft/g1-rust-bench`
-    （零第三方 crate，Rust 单测 32/32）。**转译相与 `pack/` 解析相未做 ⇒
-    G2 / G3 不得开始。** golden 已是三相（`inc`/`pre`/`trans`，546 条），用 `--golden-only` 重建不动基准数字。
-  - 🔴 **G1/G3 开跑前必读**：八趟实测跨次极差 ≈±9%，**与 20% 裁决阈值同量级** ⇒ G3 必须两侧
-    交替测量、样本 ≥9、报 p95，禁止用单次最好值比值（`17-NATIVE.md` §7.3 末的红线）；
-    且 G3 前须先补 **Java 侧 inc / pre 单独计时**，否则两侧没有同一口径的数字可比。
+    （零第三方 crate，Rust 单测 32/32）。**转译相与 `pack/` 解析相未做 ⇒ G1 未完成。**
+  - ✅ **G3 的口径阻塞已解除（2026-10-02 四）**：`evidence/g3-preliminary-phase-comparison.md`
+    + `17-NATIVE.md` §7.4。9 轮**交替**分相对照：inc **Rust 快 75.1%**（4.01×）、
+    def **Rust 慢 55.7%**（是首版实现慢，非语言天花板）、**const 243.9ms 未移植且占预处理段 51%**。
+    ⇒ **const 的归属是「采用 / 不采用」的分界线**（见 §7.4 三种假设表）。
+  - 🔴 **下一步不要直接去移植 4190 行的转译相**，先做这两件之一：
+    **P1** 实测 Java 侧「先挡后正则」能把 const 砍掉多少（更便宜：无 FFI / 四平台 / panic 边界）；
+    **P2** 决定 const 移植与否。
 - **H 线**：管线装配层 mixin（GAP-003 + GAP-004 同批），**本项目兼容目标的最大阻塞项**。
 
 ---
@@ -536,6 +539,56 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
      里给 `properties/options 解析` 段补一相导出。
   ③ **补 G3 前置**：给基准加一趟 inc / pre **单独计时**（像已有的 Pass B 那样另起一趟，
      不扰动既有四段口径），否则 G3 两侧没有同口径数字。
+
+### 9.4.5 续轮（2026-10-02 六）— G3 前置：分相对照数据（两侧第一次有同口径数字）
+
+- **成果**：新增 `evidence/g3-preliminary-phase-comparison.md` + `17-NATIVE.md` §7.4。
+  🔴 **不是 G3 裁决**（§5.1 要求 G1 先完成），但**终结了「两侧没有同口径数字」的阻塞**。
+- **两侧各加一个同口径的分相计时**（都不扰动既有口径）：
+  - Java：`ColdPathBenchmark --phase-timing` —— 预处理段拆成 inc / def / const 三段，
+    并在计时前逐阶段核对产物与 golden 逐字节一致（182/182 通过）；
+  - Rust：`g1-check --mode bench` —— 同样的预热/样本/中位数+p95 口径。
+  - 两侧都吐 `G3DATA` 机器可读行，供交替编排抓数。
+- 🔴 **口径对称性（这才是关键）**：Rust 的 def 直接读 golden 的 inc 产物，
+  所以 Java 的 def **必须**用**计时外缓存**的 `IncludeProcessor.Result`，
+  否则 def 的耗时里会混进 include 的工时 —— 那样两侧就不是同一个口径。
+- **数据**（9 轮交替，跨轮中位数，BSL 182 阶段）：
+
+  | 相位 | Java | Rust | 比值 |
+  |---|---:|---:|---|
+  | inc | 158.8ms | 39.6ms | **Rust 快 75.1%**（跨轮极差仅 1.4%，结论稳） |
+  | def | 76.4ms | 118.9ms | **Rust 慢 55.7%** |
+  | const | **243.9ms** | **未移植** | — |
+
+  交替协议确实把噪声压住了：inc/def 跨轮极差 1.4%–2.8%，远低于 G0 整趟的 ≈±9%。
+- 🔴 **本轮最大的发现**：**const（选项常量扫描）243.9ms，占预处理段 51%，且不产出任何文本变化**
+  （类注释原文「本处理器**不修改**文本」）。也就是说 **G1 移植的两段恰好是较小的 49%**。
+  三种假设下 const 的归属直接决定裁决方向：
+  不移植 → Rust 反而慢 16%；按 inc 的速度移植 → 快 54%；按 def 的速度（保守）→ 快 34%。
+  ⇒ **在搞清 const 之前，「要不要上 Rust」没有答案。**
+- ⚠️ **def 那 1.56× 的限定**：是**这个首版实现**的数，不是语言天花板。已排查并**排除分配瓶颈**
+  （把 `replace_all_word_bounded` 改成全字节扫描 + 未命中不分配，def 只从 118.2 → 118.3ms），
+  瓶颈在「逐字符推进 + 替换后重扫」的结构上。**不许拿它论证「Rust 不行」。**
+- **另一条更便宜的路**（本轮不实施，但要记）：`ConstEvaluator` 对每行无条件跑两条正则
+  （约 190 万行次，绝大多数立即失配），「先 `startsWith` 挡一道再上正则」是**纯 Java、
+  小改动、低风险**的优化。若它能吃掉大部分 243.9ms，同样的收益**不需要 FFI / 四平台产物 /
+  panic 边界防御 / 未来 ABI 维护** —— 而这些正是 §5.2 里 20% 阈值要显著超过的持续成本。
+- **怎么跑交替测量**（两侧命令见证据文件「口径对称性」一节）：
+  ```bash
+  export JAVA_TOOL_OPTIONS="-Djava.net.preferIPv4Stack=true"
+  for r in $(seq 1 9); do
+    java -cp build/classes/java/test:build/classes/java/main dev.vkdisp.pack.ColdPathBenchmark \
+        --inventory run/shaderpacks --pack BSL_v10.1.8 --warmup 3 --iterations 9 \
+        --golden build/bench-golden --phase-timing | grep G3DATA
+    ~/Minecraft/g1-rust-bench/target/release/g1-check --mode bench --warmup 3 --iterations 9 \
+        --input build/g1-input/BSL_v10.1.8 --golden build/bench-golden/BSL_v10.1.8 | grep G3DATA
+  done
+  ```
+- **下一轮入口（按优先级）**：
+  ① **P1（推荐）**：实测 Java 侧「先挡后正则」能把 const 砍掉多少 —— 便宜、低风险，
+     且直接决定 const 是否还需要 Rust；
+  ② **P2**：决定 const 移植与否（它是分界线）；
+  ③ 才是 G1 转译相（Java 4190 行，最重）—— 建议**等 P1/P2 的结论**再投入。
 
 ### 9.5 环境与红线速查（详见持久记忆 + §6）
 

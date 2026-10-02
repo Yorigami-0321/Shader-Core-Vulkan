@@ -2,6 +2,8 @@ package dev.vkdisp.pack;
 
 import dev.vkdisp.glsl.GlslPipeline;
 import dev.vkdisp.glsl.TranslateResult;
+import dev.vkdisp.glsl.preprocess.ConstEvaluator;
+import dev.vkdisp.glsl.preprocess.DefineProcessor;
 import dev.vkdisp.glsl.preprocess.GlslPreprocessor;
 import dev.vkdisp.glsl.preprocess.IncludeProcessor;
 import dev.vkdisp.glsl.preprocess.IncludeResolver;
@@ -69,6 +71,10 @@ public final class ColdPathBenchmark {
     static final String SEG_TRANS = "转译（8 段流水线）";
     static final String SEG_SUM = "合计（分段四段）";
     static final String SEG_ENTRY = "合计（生产入口）";
+    /** 预处理段再拆三段，供 G3 与 Rust 侧做**同口径**对照。 */
+    static final String SEG_INC = "预处理①#include 展开";
+    static final String SEG_DEF = "预处理②宏与条件编译";
+    static final String SEG_CONST = "预处理③选项常量扫描";
 
     private ColdPathBenchmark() {
     }
@@ -157,6 +163,15 @@ public final class ColdPathBenchmark {
             }
         }
 
+        // --phase-timing：只出 G3 对照所需的**分相**计时，不跑既有四段。
+        // 为什么要单独一趟：Rust 侧的 inc / def 各自只做一件事（def 直接吃 golden 的
+        // inc 产物），若 Java 侧把两者合在一起量，就没有「同一个口径」可言。
+        // 这一趟**不覆盖** SEG_* 的四段口径，G0 的历史数字继续可比。
+        if (a.phaseTiming()) {
+            runPhaseTiming(a, pack, fixture);
+            return;
+        }
+
         // ---- 预热（≥3 次，JIT 编译前不取样）----
         for (int i = 0; i < a.warmup; i++) {
             runPass(fixture);
@@ -227,6 +242,120 @@ public final class ColdPathBenchmark {
         System.out.printf("| %s | %.1f | %.1f | %.1f | %.1f | %d | %.1f%% |%n",
                 name, stats.millis(), stats.p95() / 1e6, stats.min() / 1e6, stats.max() / 1e6,
                 stats.samples(), 100.0 * stats.median() / total.median());
+    }
+
+    /**
+     * G3 对照用的**分相**计时：预处理段拆成 inc 与 def 两段，各自单独计时。
+     *
+     * <p><b>口径对称性（这是本方法存在的唯一理由）</b>：
+     * Rust 侧的 inc 是「源文件 → include 展开产物」，def 是「inc 产物 → 宏与条件编译产物」，
+     * 两段各只做一件事。所以 Java 侧也必须：
+     * <ul>
+     *   <li>{@code def} 的输入是**计时外**算好并缓存的 {@code IncludeProcessor.Result}
+     *       —— 否则 def 的耗时会混进 include 的工时，两侧就不是同一口径；</li>
+     *   <li>计时区间内不做任何 I/O、不打日志（与 G0 趟 A 同样的纪律）。</li>
+     * </ul>
+     * 产物文本会与 golden 里的 {@code .inc.glsl} / {@code .pre.glsl} 交叉核对一次，
+     * 确保这里量的确实是「同一份工作」而不是另一条路径。
+     */
+    private static void runPhaseTiming(Args a, ShaderPackScanner.DiscoveredPack pack, Fixture fixture)
+            throws IOException {
+        IncludeResolver resolver = ShaderPackService.resolverFor(fixture.plan());
+
+        // 计时外：算好 inc 结果，供 def 段复用（见方法注释的口径对称性说明）
+        List<IncludeProcessor.Result> incResults = new ArrayList<>();
+        for (StageInput input : fixture.inputs()) {
+            incResults.add(IncludeProcessor.process(input.file(), input.source(), resolver));
+        }
+        verifyAgainstGolden(a, fixture, incResults);
+
+        // 预热
+        for (int i = 0; i < a.warmup; i++) {
+            timeInc(fixture, resolver);
+            timeDef(incResults);
+            timeConst(incResults);
+        }
+
+        long[] incNanos = new long[a.iterations];
+        long[] defNanos = new long[a.iterations];
+        long[] constNanos = new long[a.iterations];
+        for (int i = 0; i < a.iterations; i++) {
+            incNanos[i] = timeInc(fixture, resolver);
+            defNanos[i] = timeDef(incResults);
+            constNanos[i] = timeConst(incResults);
+        }
+
+        Stats sInc = Stats.of(incNanos);
+        Stats sDef = Stats.of(defNanos);
+        Stats sConst = Stats.of(constNanos);
+        System.out.printf("| %s | %.1f | %.1f | %.1f | %.1f | %d |%n",
+                SEG_INC, sInc.millis(), sInc.p95() / 1e6, sInc.min() / 1e6, sInc.max() / 1e6, sInc.samples());
+        System.out.printf("| %s | %.1f | %.1f | %.1f | %.1f | %d |%n",
+                SEG_DEF, sDef.millis(), sDef.p95() / 1e6, sDef.min() / 1e6, sDef.max() / 1e6, sDef.samples());
+        System.out.printf("| %s | %.1f | %.1f | %.1f | %.1f | %d |%n",
+                SEG_CONST, sConst.millis(), sConst.p95() / 1e6, sConst.min() / 1e6, sConst.max() / 1e6,
+                sConst.samples());
+        // 机器可读行：G3 的交替测量编排脚本靠它抓数（见 docs/17-NATIVE.md §7.3 的红线）
+        System.out.printf("G3DATA\tjava\tinc\t%.3f\t%.3f\t%d%n", sInc.millis(), sInc.p95() / 1e6, sInc.samples());
+        System.out.printf("G3DATA\tjava\tdef\t%.3f\t%.3f\t%d%n", sDef.millis(), sDef.p95() / 1e6, sDef.samples());
+        System.out.printf("G3DATA\tjava\tconst\t%.3f\t%.3f\t%d%n",
+                sConst.millis(), sConst.p95() / 1e6, sConst.samples());
+    }
+
+    private static long timeInc(Fixture fixture, IncludeResolver resolver) {
+        long t0 = System.nanoTime();
+        for (StageInput input : fixture.inputs()) {
+            IncludeProcessor.process(input.file(), input.source(), resolver);
+        }
+        return System.nanoTime() - t0;
+    }
+
+    private static long timeDef(List<IncludeProcessor.Result> incResults) {
+        long t0 = System.nanoTime();
+        for (IncludeProcessor.Result inc : incResults) {
+            DefineProcessor.process(inc.text(), inc.lineMap());
+        }
+        return System.nanoTime() - t0;
+    }
+
+    private static long timeConst(List<IncludeProcessor.Result> incResults) {
+        long t0 = System.nanoTime();
+        for (IncludeProcessor.Result inc : incResults) {
+            ConstEvaluator.evaluate(inc.text(), inc.lineMap());
+        }
+        return System.nanoTime() - t0;
+    }
+
+    /**
+     * 交叉核对：这里算出的 inc / def 产物必须与 golden 的 {@code .inc.glsl} / {@code .pre.glsl}
+     * 一致 —— 否则「量到的」和「Rust 对齐的那个」不是同一份工作，对照无意义。
+     */
+    private static void verifyAgainstGolden(Args a, Fixture fixture,
+            List<IncludeProcessor.Result> incResults) throws IOException {
+        if (a.dumpGolden() == null) {
+            return;
+        }
+        Path dir = a.dumpGolden().resolve(fixture.discovered().name().replaceAll("[^A-Za-z0-9._-]", "_"));
+        IncludeResolver resolver = ShaderPackService.resolverFor(fixture.plan());
+        int checked = 0;
+        for (int i = 0; i < fixture.inputs().size(); i++) {
+            StageInput input = fixture.inputs().get(i);
+            String stem = input.file().replace('\\', '/').replace('/', '_');
+            Path incFile = dir.resolve(stem + ".inc.glsl");
+            if (Files.isReadable(incFile)
+                    && !Files.readString(incFile).equals(incResults.get(i).text())) {
+                throw new IOException("分相计时前自检失败：inc 产物与 golden 不一致 —— " + input.file());
+            }
+            Path preFile = dir.resolve(stem + ".pre.glsl");
+            if (Files.isReadable(preFile)) {
+                String defText = DefineProcessor.process(incResults.get(i).text(), incResults.get(i).lineMap()).text();
+                if (!Files.readString(preFile).equals(defText)) {
+                    throw new IOException("分相计时前自检失败：def 产物与 golden 不一致 —— " + input.file());
+                }
+            }
+            checked++;
+        }
+        System.out.println("     分相自检 = 通过（" + checked + " 个阶段与 golden 逐字节一致）");
     }
 
     /** 固定输入：库存目录 + 包发现 + 包模型 + 挂载规划 + 逐阶段源文本（全部在计时外准备好）。 */
@@ -513,7 +642,7 @@ public final class ColdPathBenchmark {
      */
     private record Args(Path inventory, String pack, int warmup, int iterations,
                         Path out, Path dumpGolden, Path dumpInput, String label, String notes,
-                        boolean goldenOnly) {
+                        boolean goldenOnly, boolean phaseTiming) {
 
         /** 主机描述：显式 `--label` 优先，否则自动采集 CPU + OS。 */
         String describe() {
@@ -549,10 +678,16 @@ public final class ColdPathBenchmark {
             String label = null;
             String notes = "unspecified";
             boolean goldenOnly = false;
+            boolean phaseTiming = false;
             for (int i = 0; i < argv.length; i += 2) {
                 if ("--golden-only".equals(argv[i])) {
                     goldenOnly = true;
                     i--; // 无值参数，吃掉本轮不成对的偏移
+                    continue;
+                }
+                if ("--phase-timing".equals(argv[i])) {
+                    phaseTiming = true;
+                    i--;
                     continue;
                 }
                 if (i + 1 >= argv.length) {
@@ -578,7 +713,8 @@ public final class ColdPathBenchmark {
             if (iterations < 5) {
                 throw new IllegalArgumentException("§7.1：样本必须 ≥5 次，收到 " + iterations);
             }
-            return new Args(inventory, pack, warmup, iterations, out, golden, inputDump, label, notes, goldenOnly);
+            return new Args(inventory, pack, warmup, iterations, out, golden, inputDump, label, notes,
+                    goldenOnly, phaseTiming);
         }
 
         /** 选包：指定名/序号优先，否则取第一个 zip（目录包只作兜底）。 */
