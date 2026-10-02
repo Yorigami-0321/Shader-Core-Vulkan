@@ -31,8 +31,11 @@ bridge/
 
 **规矩**：
 - **现状**：主线不走 mixin——帧注入用 NeoForge 官方 `RenderLevelStageEvent.AfterLevel`（P4.3 起，原因见 05-VERSION 帧注入点行）
-  （`render/FullscreenPassHook`），历史 mixin 路线已弃用、尚未启用
-  （`MixinTargets.MIXIN_CONFIG_COUNT = 0`，`mixin/` 包未建立）
+  （`render/FullscreenPassHook`）；mixin **有条件开闸**（`07-CONSTRAINTS` M1，2026-10-02 成文），
+  当前 `MixinTargets.MIXIN_CONFIG_COUNT = 0`，`mixin/` 包未建立。
+  **开闸后唯一允许的注入点** = `net.minecraft.client.renderer.chunk.ChunkSectionsToRender#renderLayers`（private），
+  且受 M1 五项编码约束 + X22–X26 约束。升级排查时**只改 `bridge/MixinTargets` 的常量**，
+  注入方法体本身不含业务逻辑（X25）
 - `pack/` / `glsl/` / `config/` / `screen/` 等业务包 **一律不得** `import com.mojang.renderpearl.*`
 - 只有 `bridge/` 允许 import 原版渲染类型（若将来启用 `mixin/`，同样只允许转发）
 - **`accel/`（加速层）例外说明**：它的接口只用纯 Java 类型，实现里若需触碰原版类型，

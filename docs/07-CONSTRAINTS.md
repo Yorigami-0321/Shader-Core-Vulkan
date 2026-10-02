@@ -44,6 +44,33 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 | **L10** | **jar 内必须包含 `LICENSE`** | MIT 署名要求 |
 | **L11** | 🔴 **与 Sodium 彻底隔绝：零代码、零依赖、零集成、零兼容、零引用** | 用户 2026-09-29 拍板：「不保留，和 sodium 彻底隔绝开」。见 §1.2 |
 | **L12** | 🔴 **调研参考前必须先核许可证（合规是第 0 步，不是最后一步）** | 一旦先读了代码，就难以自证"没受影响"；先判合规才能自证清白。见 §1.3 |
+| **M1** | 🔴 **默认零 mixin；开 mixin 须同时满足五个条件，且全局只许 1 个注入点** | 2026-10-02 源码级核实：地形管线唯一替换通道是 `ChunkSectionsToRender#renderLayers`（private，override 硬编码为 WIREFRAME）。见 §1.4 |
+
+### 1.4 M1 的落地尺度（mixin 有条件开闸）
+
+**背景（2026-10-02 核实，此前从未成文）**：零 mixin 一直只是 P0/P1 的**默认路线选择**，
+散落在 `05-VERSION` / `06-MIGRATION` / `MixinTargets.MIXIN_CONFIG_COUNT = 0`，
+**`L` 表与 `X` 表从未有条款**。M1 是把既成事实**升格为成文条款并划界**。
+
+**升级后的规则**：
+
+| 维度 | 要求 |
+|---|---|
+| 默认 | **零 mixin**。能用官方事件 / 资源包覆盖 / 管线派生的，一律不许开 mixin |
+| 唯一允许的注入点 | `net.minecraft.client.renderer.chunk.ChunkSectionsToRender#renderLayers`（private）。**理由**：地形管线唯一的替换通道就是它的两个 `@Nullable RenderPipeline renderPipelineOverride` 形参，而 `renderGroup` 把 override 硬编码为 `WIREFRAME`（仅线框模式），且 `renderLayers` 无任何官方 setter |
+| 开闸前提（须**全部**成立） | ① 官方事件路径已核实走不通；② 资源包覆盖取源已核实不足；③ `RenderPipeline` 派生已核实不足；④ 收益是**解锁 BSL 完整 gbuffer 管线**（不是别的）；⑤ 写入本节与 `MixinTargets` 后才允许建 `mixins.json` |
+| 数量上限 | **全局 1 个注入点 / 1 个 mixin 类**。需要第二个注入点 ⇒ 停下来重新评估路线，不是加第二个 mixin |
+| 编码约束 | ① 目标类名/方法名只许引用 `bridge/MixinTargets` 常量，不许散落字面量；② `compatibilityLevel` **必须 `JAVA_25`**（否则静默失效，见 X3）；③ 每个注入方法体**首行**打 `vkdisp: [注入点名] hit`（`01-DEV-LOOP` §注入点取证）；④ **只转发不写业务**（`06-MIGRATION` §2.2） |
+| 永久禁止（见 M2） | 注入 Sodium/caffeinemc 任何类、注入第三方区块渲染器、注入 `RenderSystem`/`GL11` 等底层状态类 |
+
+**M1 解决不了的三件事（写明以免反复评估）**：
+
+1. **不能覆盖原版管线的 location** —— `RenderPipelines.registerCustomPipelines` 用 `putIfAbsent`，
+   重复注册抛 `IllegalStateException`。只能**新增** location，改不了 `pipeline/solid_terrain`。
+2. **不能零成本增附件** —— `SOLID_TERRAIN` 等写死 `ColorTargetState.DEFAULT`（单附件 RGBA8）。
+   派生管线能改附件数，但**要被地形用到就必须走那个注入点** ⇒ **多附件 gbuffer 与本注入点是同一个开关的两面**。
+3. **不能给原版管线加自定义 uniform 块** —— bind group 布局在 `RenderPipeline` 构造时固化。
+   派生管线可加，但同样要靠那个注入点换上去（顺带解掉 `Globals` 仅 9 字段的限制）。
 
 ### 1.2 L11 的落地尺度（Sodium 彻底隔绝）
 
@@ -225,6 +252,11 @@ if (DEBUG) { LOGGER.info("cull kept={}", kept); }
 | X19 | 🔴 **没核许可证就开始读参考项目的代码 / 写实现** | 违反 L12；先读代码将无法自证实现未受影响 |
 | X20 | 🔴 **把无 LICENSE 文件的项目当"可以借鉴"** | 无 LICENSE = 默认 ARR = 不可用（L12 §1.3 陷阱 1） |
 | X21 | 🔴 **把「GPL + 例外条款」当成本项目可用** | 例外条款常只放开特定用途，一律按禁止处理（L12 §1.3 陷阱 2） |
+| X22 | 🔴 **开 `ChunkSectionsToRender#renderLayers` 之外的第二个 mixin 注入点** | 违反 M1 数量上限；第二个注入点说明路线该重评，不是加 mixin |
+| X23 | 🔴 **mixin 注入 Sodium / caffeinemc / 第三方区块渲染器的任何类** | 违反 L11 零集成 + M2 永久禁止（`03-DIRECTION` 已判定 Vitrail 的 `mixin/sodium/*` 路线本项目不用） |
+| X24 | 🔴 **mixin 注入 `RenderSystem` / `GlStateManager` / `GL11`/`GL14`/`GL15` 等底层状态类** | 绑死后端、违反 X7；VulkanMod 正是这条路，本项目走 `renderpearl` 不走它 |
+| X25 | 🔴 **在 mixin 类里写业务逻辑**（应只转发到 `bridge/` 或业务包） | 违反 M1 编码约束 ④ + `06-MIGRATION` §2.2；升级时无法只改一处 |
+| X26 | 🔴 **在未满足 M1 五项开闸前提时建 `vkdisp.mixins.json`** | 违反 M1；`neoforge.mods.toml` 的 `[[mixins]]` 段必须同时取消注释，否则 mixin 静默不加载 |
 
 ---
 
@@ -281,6 +313,9 @@ mod_group_id             = dev.vkdisp
 [ ] 🔴 【参考调研】**第 0 条写了合规结论**，且不是「未核实」（L12 / X19）
 [ ] 🔴 所有参考项目都查过仓库的 `LICENSE` 文件（不是只看平台页面）（L12 §1.3）
 [ ] 🔴 没有把「无 LICENSE」当可用、没有把「GPL + 例外条款」当成本项目可用（X20 / X21）
+[ ] 🔴 mixin 注入点数 ≤ 1，且是 `ChunkSectionsToRender#renderLayers`（M1 / X22）
+[ ] 🔴 若已开 mixin：M1 五项开闸前提已逐条核实并写入文档（M1 / X26）
+[ ] 🔴 mixin 类只转发不写业务、目标类名全部引用 `MixinTargets` 常量（M1 编码约束 / X25）
 [ ] 性能相关改动附实测数据（T14）
 [ ] **未擅自开始原生（C++/Rust）实现**（X17；可行性未验证前不动）
 [ ] 若含原生库：四平台产物齐全、Java 保底路径可用、A/B 开关存在（T15/T16）

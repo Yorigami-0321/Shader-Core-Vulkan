@@ -5,6 +5,74 @@
 
 ---
 
+## 2026-10-02（四）— mixin 红线重定（M1/M2 成文）+ P4.4-a 路线否决并回退
+
+> **verdict = REJECTED**：P4.4-a「零 mixin 覆盖原版 program」三轮实跑后被**否决并回退**，
+> 完整证据链见 `evidence/p4x4a-vanilla-override-rejected.md`。本条目唯一保留的产出是
+> **M1 红线成文**（`07-CONSTRAINTS` M1 + X22–X26 + `bridge/MixinTargets` 登记），
+> 它反被实跑**实证加强**。
+
+- **本次改了什么（回退后入库的只有 4 个文件）**：
+  ① **mixin 红线重定**（文档 + 契约，保留）—— 新增 `07-CONSTRAINTS` **M1**（默认零 mixin，
+  开闸须同时满足五项前提，全局只许 **1 个**注入点 = `ChunkSectionsToRender#renderLayers`）
+  与 **X22–X26** 五条禁止项，新增 §1.4 落地尺度（含「M1 解决不了的三件事」）；
+  同步 `05-VERSION` 帧注入点行、`06-MIGRATION` 现状段、`bridge/MixinTargets` 常量表
+  （新增 `CHUNK_SECTIONS_TO_RENDER` / `CHUNK_SECTIONS_RENDER_LAYERS` + 7 参实测签名）。
+  ② **新增证据文件** `evidence/p4x4a-vanilla-override-rejected.md` + `evidence/README.md` 登记。
+  ③ **已回退（不入库）**：`VkDispVirtualPack` 的覆盖接线（回到 `1678dde`）、
+  `pack/VanillaShaderOverrides` 与其单测（删除，备份在仓库外 `run/vkdisp-probe/`）。
+- **为什么回退**：三轮实跑把「覆盖 = 换掉任意原版 program」的乐观判断证伪。
+  资源包**优先级与加载机制成立**（`ShaderManager.loadConfigs` 走 `listResources("shaders", …)`，
+  本包 `required=true`/`position=TOP`），但**接口契约不兼容**——
+  覆盖要替换整份 program，而整份 program 的顶点输入/varyings/附件数必须匹配原版管线
+  固定的 `DefaultVertexFormat.BLOCK` 与 `ColorTargetState.DEFAULT`，
+  而 BSL 这类第三方 pack 的接口与之**结构性不同族**。这不是补差能救的，属路线级不兼容。
+- **三轮实跑（每轮根因都不同，均已修但最后撞墙）**：
+  | 轮 | 现象 | 根因 | 处置 |
+  |---|---|---|---|
+  | 1 | 游戏全黑、进不去 | **把文件路径当源文本**（`Program.vertexShader` 存路径不存源码，日志 `<- 28 chars` 即判据）+ 缺 GLSL 版本护栏 | 改取 `CompiledStage.result().text()`；加 `MIN_REQUIRED_GLSL_VERSION=140` 护栏 |
+  | 2 | 天空仍黑，汇总 `0/2` | `CompiledStage.programName()` 是**维度限定名**（实测 `world1/gbuffers_terrain`），裸名等值匹配永远 miss | 后缀匹配 + `dimensionRank` 多维度择优 |
+  | 3 | 覆盖 `2/2` 但仍启动失败 | **架构性证伪**（见下） | 无修法 ⇒ 回退 |
+- 🔴 **第三轮根因（决定性证据，非推断）**：日志原文（13 个地形管线全命中）
+  ```
+  ShaderCompileException: Not enough components for input attribute UV0 in
+  vertex shader minecraft:core/terrain, expected at least 4 got 2
+  ```
+  `PipelineBuilder.java:167-175` 判定 `shader.vectorSize() > vertexFormat.componentCount()`。
+  用产品 `GlslPipeline` **离线跑同一份 BSL 源码**取真实产物（vsh 10197 字符，与实跑 10217 吻合），
+  坐实**接口契约全面不兼容**：
+  `vec4 UV0` vs 原版 `RG32_FLOAT`（2 分量）、`vec4 UV2` vs `RG16_SINT`（2 分量）、
+  `mc_Entity`/`mc_midTexCoord` 原版**无此属性**、9 个 varying vs 原版 **5 个固定** varying、
+  单附件 vs BSL 多输出 gbuffer。
+  🔴 **不收工在首错上**：改完分量数还会连续撞 varyings 签名、附件数、bind group 三道墙
+  （「首错遮蔽」纪律，`p4xx-141-matrix` 同款教训）。
+- **对 M1 的实证支撑（本条目唯一保留产出的理由）**：换 program 文本必须**同时**换
+  **顶点格式**（`BLOCK` → BSL 的 7 属性布局）与**附件数**（单 → 多），
+  而这两者在零 mixin 下都无入口 ⇒ **二者是同一个开关的两面**，
+  正是 M1 唯一允许的注入点 `ChunkSectionsToRender#renderLayers`。
+  P4.4-b 走这条路（待用户拍板）。
+- **性能取向**（用户 2026-10-02 明确「主线以性能为主」）：P4.4-b 仍以「每帧零额外开销」为准绳 ——
+  换管线只发生在加载期，不新增每帧 draw call / 状态切换；覆盖面需按实测代价逐项评估。
+- **顺带坐实的既有疑点**：转译层只能塞 `mat4(1.0)` 桩（`gl_TextureMatrix[n]→mat4(1.0)`），
+  因为原版 `globals.glsl` 全文仅 9 字段、**无相机矩阵与太阳方向**
+  ⇒ 印证「uniform 半边仍🟡」：即便前三道墙都过，画面也不正确。
+- **教训（本轮最有价值的部分）**：
+  - **字段名不告诉你它是什么**：`Program.vertexShader` 叫「shader」，实际是**路径**不是文本。
+  - **日志里的数字就是判据**：`<- 28 chars` 一行锁定根因；只看「覆盖 2/2 成功」就收工会把缺陷当成功。
+  - **覆盖类改动的失败模式是「砸启动」不是「画错」**：required 管线编译失败 ⇒ 资源重载抛异常
+    ⇒ 游戏进不去。**单测绿不代表能启动**（当时 630/0 全绿，实跑直接崩）。
+  - **「机制成立」≠「路线可行」**：资源包覆盖机制确实成立且已实测，但机制成立不蕴含
+    目标 program 能在该机制下运行。**先验证接口契约，再动手接线**。
+  - **自查出一处真实缺陷**（虽已随回退作废，但方法论留档）：`Map.copyOf` 返回**无序** map，
+    会打乱「vsh 在前、fsh 在后」的稳定序 ⇒ 功能正确但诊断不可逐行比对，最隐蔽的一类回归。
+    修法 `Collections.unmodifiableMap(new LinkedHashMap<>(…))` + 测试锁顺序。
+- **测试结果（回退后实测）**：`gradle build` BUILD SUCCESSFUL 1m03s；
+  **607 用例 / 0 失败 / 0 错误 / 0 跳过**（50 个测试类，Gradle 原生 XML 报告为唯一权威口径），
+  零 `@Disabled`。回退撤销了 23 条 `VanillaShaderOverridesTest`（文件已删除），
+  故 630 → 607。本条目入库文件**不含产品代码逻辑变更**（仅 `MixinTargets` 常量 + 文档 + evidence）。
+- **是否已提交**：本条目随本次提交入库（回退已完成，游戏恢复可进）。
+
+
 ## 2026-10-02（三）— P4.5切包异步化 + P4.3 包选择屏与下拉空白修复
 
 - **本次改了什么**（三个commit）：
