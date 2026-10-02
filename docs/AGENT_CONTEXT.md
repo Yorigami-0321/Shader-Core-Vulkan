@@ -353,6 +353,19 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
   回归本轮未重跑（未动顶点格式链路，见 `evidence/p417-pack-switch.md`）。
 - **收尾**：commit + push（轮次纪律）待执行（续轮 §9.2 第 5 步）。
 
+### 9.4.1 续轮（2026-10-02 二）— P4.1 BSL 视觉正确性基线
+
+- **P4.1 视觉验证**：141 矩阵修复后确认 BSL 实际渲染连贯、无静默破坏。⚠️ **本会话 Agent 不支持查看图片**
+  （PNG Read 被内容过滤拒绝），视觉判读改 **luma 量化分带**（p418 同源口径）+ 日志诊断 + **用户目检** 三方交叉。
+- **A/B**：`shaderPack=""`（BSL）vs `shaderPack="none"`（passthrough，config 热加载切）截图 luma ——
+  BSL content 20.9 / 天空 6.9 / 地面 26.6；passthrough content 34.1 / 天空 28.3 / 地面 38.3
+  （BSL 偏暗、天空 0.24×，因相机朝天且世界时钟冻结黎明）。渲染连贯（无全黑/全白/彩色尖刺）、零 vkdisp ERROR；
+  **用户目检确认 BSL 观感正常**（更暗=晨昏风格化非缺陷）→ P4.1「BSL 主要效果可用」达成（Iris 对比局限内）。
+- **证据**：`evidence/p4x1-bsl-visual.md` + 截图 `run/screenshots/p41-bsl-world.png`(sha `049a579e…`) /
+  `p41-none-world.png`(sha `d11a2e98…`)。
+- **未覆盖（登记）**：§9.3 待登记课题（单位纹理矩阵视觉正确性 / 属性绑定运行时正确性）本轮仅 luma 量化未见异常，
+  未逐效果目检；Iris 金标准对比=环境极限；相机固定朝天+黎明，未验证正午/夜间/不同朝向。
+
 ### 9.5 环境与红线速查（详见持久记忆 + §6）
 
 - 一切 java/gradle 前缀 `export JAVA_TOOL_OPTIONS="-Djava.net.preferIPv4Stack=true"`（隧道 hook.so 否则 EINVAL）；

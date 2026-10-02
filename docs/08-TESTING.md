@@ -22,7 +22,7 @@
 | **P3** 完整链 | 影子 | `shadow` pass 输出非空、方向正确 | 调试视图 |
 | **P3** 完整链 | gbuffers | 地形/实体走自定义目标而非原版目标 | 调试视图 |
 | **P3** 完整链 | deferred | 延迟链各步输入输出正确 | 调试视图 |
-| **P4** 兼容 | 主流包 | BSL / Complementary / Sildur's 主要效果可用 | 与 Iris 对比截图 |
+| **P4** 兼容 | 主流包 | BSL / Complementary / Sildur's 主要效果可用 | 与 Iris 对比截图（环境缺 Iris = 登记限制，改 luma 量化 + 用户目检） |
 | **P4** 兼容 | 切包无残留 | 切包/切 none 无顶点格式错乱 | 4 张对比截图 |
 | **P4** 兼容 | 选项 GUI | pack 声明的选项能渲染并能改 | 截图 |
 | **P4** 兼容 | 转译矩阵修复 | BSL 全 190 stage 编译 `ok=190 failed=0`（141 阶段矩阵 + DH 兼容桩均已闭合） | 日志 `pack compile done` + `evidence/p4xx-141-matrix.md` |
@@ -173,6 +173,14 @@ Position undeclared + gl_ 前缀 reserved 两波）；首错遮蔽揭示的 Dist
 `pack compile done: stages=190 ok=190 failed=0` + `pipeline count check: registered=9,
 compiled=9 (aligned)`，零 `undeclared identifier` / `are reserved` / `Missing uniform` /
 `解析失败` / `fullscreen pass failed`，首错遮蔽闭合（DH 类已知、非未知类收轮）。
+
+**P4.1 BSL 视觉基线（2026-10-02）**：141 矩阵修复后确认 BSL 实际渲染连贯、无静默破坏。
+⚠️ 本环境 Agent 不支持查看图片（PNG Read 被内容过滤拒绝），视觉判读改 **luma 量化分带**
+（p418 同源口径）+ 日志诊断 + **用户目检** 三方交叉。A/B：`shaderPack=""`（BSL）vs
+`shaderPack="none"`（passthrough，config 热加载切）截图 luma —— BSL content 20.9 / 天空 6.9 /
+地面 26.6；passthrough content 34.1 / 天空 28.3 / 地面 38.3（BSL 偏暗、天空 0.24×，因相机朝天且
+世界时钟冻结黎明）；渲染连贯（无全黑/全白/彩色尖刺）、零 vkdisp ERROR、用户目检确认 BSL 观感正常
+（更暗=晨昏风格化非缺陷）。取证 `evidence/p4x1-bsl-visual.md`（含两截图 sha256 + 分带表）。
 
 ---
 

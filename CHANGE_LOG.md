@@ -5,6 +5,23 @@
 
 ---
 
+## 2026-10-02（二）— P4.1 BSL 视觉正确性基线（141 矩阵修复后渲染连贯性确认）
+
+- **本次改了什么**（01-DEV-LOOP P4.1 / `08-TESTING.md` §1 P4.1 行）：
+  确认 141 矩阵修复后 BSL 实际渲染连贯、无静默破坏。无代码改动——
+  纯 runClient 取证 + 量化判读。⚠️ 本会话 Agent 不支持查看图片（PNG Read 被内容过滤拒绝），
+  视觉判读改 **luma 量化分带**（p418 同源：luma=(r·299+g·587+b·114)/1000，内容区 crop +
+  步长 3 采样）+ 日志诊断 + **用户目检** 三方交叉。
+- **为什么改**：P4.1 验收「BSL 主要效果可用」需视觉验证；141 修复的 `gl_TextureMatrix[n]→mat4(1.0)`
+  等替换可能破坏动画纹理/图集 UV，必须确认。Iris 金标准对比 = 环境极限（登记），无法逐效果像素对比。
+- **影响的文档**：`evidence/p4x1-bsl-visual.md`（新增 G-01）+ `evidence/README.md` 索引行、
+  `08-TESTING.md` §1 P4.1 行（标注 Iris 对比局限）/ §6（补 P4.1 视觉基线段）、`AGENT_CONTEXT.md` §9.4 续轮。
+- **测试结果 / 证据**：BSL vs passthrough A/B（`shaderPack=""` vs `"none"`，config 热加载切）——
+  BSL content 20.9 / 天空 6.9 / 地面 26.6；passthrough content 34.1 / 天空 28.3 / 地面 38.3；
+  渲染连贯（无全黑/全白/彩色尖刺，`distinct_sampled`=104 正常）；零 vkdisp ERROR（仅已知 ftransform WARN 良性）；
+  用户目检确认 BSL 观感正常（偏暗=晨昏风格化，非渲染缺陷）。截图 sha256：BSL `049a579e…` / none `d11a2e98…`。
+- **是否已提交**：否（随本轮一并 commit + push）。
+
 ## 2026-10-02 — 141 阶段矩阵修复运行时闭环（LegacyBuiltinInjector 第 8 段转译 + Distant Horizons 兼容桩 GAP-002），stages=190 ok=190 failed=0
 
 - **本次改了什么**（01-DEV-LOOP 141 阶段矩阵修复轮 / `08-TESTING.md` §1「转译矩阵修复」行 / `docs/18-PARALLEL.md` ⑥-2）：
