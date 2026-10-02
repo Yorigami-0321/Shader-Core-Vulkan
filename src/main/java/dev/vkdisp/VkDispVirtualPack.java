@@ -43,7 +43,9 @@ import java.util.stream.Stream;
 import dev.vkdisp.config.PackOptionStore;
 import dev.vkdisp.glsl.TranslateDiagnostic;
 import dev.vkdisp.glsl.translate.BuiltinsBlockLayout;
+import dev.vkdisp.pack.PackCompileCache;
 import dev.vkdisp.pack.PackCompositeSource;
+import dev.vkdisp.pack.PackPrecompileScheduler;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -337,6 +339,47 @@ public final class VkDispVirtualPack {
     }
 
     /**
+     * P4.5：<b>后台线程</b>预编译 —— 把秒级冷路径编译移出渲染线程。
+     *
+     * <p>本方法只做「纯文件 IO + 纯 Java 转译」：读包、跑 {@link PackCompositeSource#generate}
+     * 走一遍（产物落进 {@link PackCompileCache}）。<b>刻意不做</b>：
+     * <ul>
+     *   <li>不写 {@link #hasDeferredProgram} / {@link #hasFinalProgram} 等渲染线程状态
+     *       ——那些由随后的同步 {@link #generateSources()} 设置，避免跨线程可见性问题；</li>
+     *   <li>不解析布局、不打布局证据行 —— 同上，留给同步路径；</li>
+     *   <li>不碰任何 GL / 渲染资源（编译 SPIR-V 需要设备上下文，留在同步路径）。</li>
+     * </ul>
+     *
+     * <p><b>失败语义</b>：任何异常 → ERROR 原文 + 不写缓存。真加载时 {@code openResources}
+     * 会同步重编一次并给出同样的诊断（T11：加速器故障不等于功能不可用）。
+     */
+    static void precompile(PackPrecompileScheduler.Target target) {
+        if (target == null) {
+            return;
+        }
+        try {
+            Path inventory = inventoryDir();
+            if (inventory == null) {
+                VkDisp.LOGGER.warn("vkdisp: precompile skipped (game directory unavailable)");
+                return;
+            }
+            // 选项差分表与同步路径同源：读同一个存储文件（只读，构造时一次完成）
+            PackOptionStore store = PackOptionStore.load(PackOptionStore.pathFor(gameDir()));
+            PackCompositeSource.Result result =
+                    PackCompositeSource.generate(inventory, target.profile(), target.selection(), store);
+            VkDisp.LOGGER.info(
+                    "vkdisp: pack precompile finished: pack={} fallback={} bytes={} diagnostics={}"
+                            + " (cache entries={})",
+                    result.packName(), result.fallback(),
+                    result.source().getBytes(StandardCharsets.UTF_8).length,
+                    result.diagnostics().size(), PackCompileCache.size());
+        } catch (Throwable t) {
+            // 不抛给后台线程（否则调度器状态卡在 COMPILING）；不阻断切换。
+            VkDisp.LOGGER.error("vkdisp: pack precompile failed (will retry synchronously on reload)", t);
+        }
+    }
+
+    /**
      * P4.1.3 布局证据行（每轮 generateSources 一条）：成员数 / 块字节数；
      * 解析失败按 WARN 原文打出（T11）—— FrameApi 侧回退零填充。
      */
@@ -352,7 +395,13 @@ public final class VkDispVirtualPack {
                 slot, layout.members().size(), layout.byteSize());
     }
 
-    /** 游戏根目录；客户端未就绪返回 null（选项存储与库存目录都退化为"无"）。 */
+    /**
+     * 游戏根目录；客户端未就绪返回 null（选项存储与库存目录都退化为"无"）。
+     *
+     * <p><b>线程</b>：{@code Minecraft.getInstance()} 在主线程创建后对其它线程可见，
+     * 读 {@code gameDirectory}（一个普通 {@link java.io.File} 字段）本身是安全的。
+     * P4.5 的后台预编译线程也走这里—— 故此处<b>不</b>做渲染线程断言（断言会在预编译时误报）。
+     */
     private static Path gameDir() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.gameDirectory == null) {

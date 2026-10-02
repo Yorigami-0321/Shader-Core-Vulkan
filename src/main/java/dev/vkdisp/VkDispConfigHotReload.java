@@ -34,6 +34,9 @@ package dev.vkdisp;
 import java.util.Objects;
 
 import dev.vkdisp.config.ScreenDriveCommand;
+import dev.vkdisp.pack.PackCompositeSource;
+import dev.vkdisp.pack.PackCompileCache;
+import dev.vkdisp.pack.PackPrecompileScheduler;
 import dev.vkdisp.screen.PackOptionsDrive;
 import net.minecraft.client.Minecraft;
 import net.neoforged.api.distmarker.Dist;
@@ -79,7 +82,59 @@ public final class VkDispConfigHotReload {
     /** 最近一次快照；null = 还没见 Loading（防御位，实际由首载 Loading 填充）。 */
     private static volatile Snapshot last;
 
+    /**
+     * P4.5 切包预编译调度器：<b>先在后台把包编好，再切资源</b>。
+     *
+     * <p>为什么需要（2026-10-02 用户实测「客户端进入未响应」）：切包的资源重载最终会触发
+     * 虚拟包 {@code openResources} → {@link PackCompositeSource#generate}，实测切到 BSL
+     * 单次 <b>3.97 秒</b>（切 {@code none} 走兜底仅 1 ms）。这段在渲染线程上跑 =
+     * 窗口无响应。改为：配置变化时先异步预编译（产物进 {@link PackCompileCache}），
+     * 完成后再执行 {@code reloadResourcePacks()} —— 那时 {@code openResources} 命中缓存，
+     * 毫秒级返回。
+     *
+     * <p><b>失败语义</b>：预编译失败不阻断切换 —— 真加载时 {@code openResources} 走同步路径
+     * 再编一次并给出完整诊断（T11：绝不因为加速器坏了就假装加载成功）。
+     */
+    private static volatile PackPrecompileScheduler scheduler;
+
     private VkDispConfigHotReload() {
+    }
+
+    /** 懒建调度器：后台线程 = 守护单线程，渲染线程回调 = {@code minecraft.execute}。 */
+    private static PackPrecompileScheduler scheduler() {
+        PackPrecompileScheduler local = scheduler;
+        if (local != null) {
+            return local;
+        }
+        synchronized (VkDispConfigHotReload.class) {
+            if (scheduler == null) {
+                java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newSingleThreadExecutor(
+                        runnable -> {
+                            Thread thread = new Thread(runnable, "vkdisp-pack-precompile");
+                            // 守护线程：绝不阻止游戏退出（用户可能正在等 JVM 关闭）
+                            thread.setDaemon(true);
+                            return thread;
+                        });
+                scheduler = new PackPrecompileScheduler(
+                        pool,
+                        // 渲染线程回调：用 minecraft.execute；拿不到实例时退回「就地执行」
+                        //（只会在极端关闭期发生，此时立即执行比丢事件更安全）
+                        runnable -> {
+                            Minecraft mc = Minecraft.getInstance();
+                            if (mc != null) {
+                                mc.execute(runnable);
+                            } else {
+                                runnable.run();
+                            }
+                        },
+                        target -> {
+                            // 预编译本体：走虚拟包同一条generate 路径（不含 MC 依赖，纯冷路径）
+                            VkDispVirtualPack.precompile(target);
+                            return true;
+                        });
+            }
+            return scheduler;
+        }
     }
 
     /** 配置首载（含启动）→ 只记快照，不触发任何动作（启动期重载是空转，P4.2 既定语义）。 */
@@ -130,8 +185,9 @@ public final class VkDispConfigHotReload {
                         current.enabled(), current.debugLog(),
                         current.packProfile(), current.shaderPack());
                 if (minecraft != null) {
-                    // 观察者线程（nightconfig FileWatcher）不能直接开资源重载 → 挪渲染线程。
-                    minecraft.execute(() -> minecraft.reloadResourcePacks());
+                    //观察者线程（nightconfig FileWatcher）不能直接开资源重载 → 挪渲染线程。
+                    // P4.5：先异步预编译，编译完成再重载（切 BSL 实测 3.97s 同步阻塞 → 未响应）。
+                    scheduleReloadWithPrecompile(current);
                 }
             }
 
@@ -154,9 +210,45 @@ public final class VkDispConfigHotReload {
         }
     }
 
+    /**
+     * P4.5：核心配置变化 → <b>先预编译再切资源</b>。
+     *
+     * <p>分流依据是「本次变化是否需要动包」：
+     * <ul>
+     *   <li><b>不换包</b>（只有 enabled / debugLog 变，或 profile 变但没换包）——
+     *       预编译仍可能有价值（profile 影响源），所以<b>一律预编译</b>，
+     *       但 {@code shaderPack} 未变时包已在缓存里，通常毫秒级命中。</li>
+     *   <li><b>换包</b> —— 必须等编译完成，否则就是原来那次 3.97s 的渲染线程阻塞。</li>
+     * </ul>
+     *
+     * <p>预编译失败不阻断：直接照常重载，让 {@code openResources} 走同步路径重编并打诊断
+     * （T11：加速器故障不能让功能不可用，也不能静默）。
+     */
+    private static void scheduleReloadWithPrecompile(Snapshot current) {
+        Minecraft minecraft = Minecraft.getInstance();
+        PackPrecompileScheduler active = scheduler();
+        PackPrecompileScheduler.Target target = new PackPrecompileScheduler.Target(
+                current.shaderPack(), current.packProfile(), java.util.Map.of());
+
+        long started = System.nanoTime();
+        active.request(target);
+        // T11：预编译的起止都留痕，可 grep 复核「慢的是预编译还是同步兜底」
+        VkDisp.LOGGER.info(
+                "vkdisp: pack precompile scheduled: selection='{}' profile='{}' (compile moved off render thread)",
+                current.shaderPack(), current.packProfile());
+
+        active.switchWhenReady(() -> {
+            long millis = (System.nanoTime() - started) / 1_000_000L;
+            VkDisp.LOGGER.info(
+                    "vkdisp: pack precompile done in {} ms -> resource reload (cache entries={}, hits={}, misses={})",
+                    millis, PackCompileCache.size(),
+                    PackCompileCache.hitCount(), PackCompileCache.missCount());
+            minecraft.reloadResourcePacks();
+        });
+    }
+
     /** 当前配置快照。 */
-    private static Snapshot snapshot() {
-        return new Snapshot(
+    private static Snapshot snapshot() {        return new Snapshot(
                 VkDispConfig.ENABLED.get(),
                 VkDispConfig.DEBUG_LOG.get(),
                 VkDispConfig.PACK_PROFILE.get(),
