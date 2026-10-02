@@ -17,6 +17,7 @@ package dev.vkdisp;
  */
 
 import dev.vkdisp.bridge.DeviceApi;
+import dev.vkdisp.screen.PackPickerScreen;
 import net.minecraft.client.Minecraft;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -24,7 +25,6 @@ import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
-import net.neoforged.neoforge.client.gui.ConfigurationScreen;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 
 /**
@@ -36,8 +36,12 @@ import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 @EventBusSubscriber(modid = VkDisp.MOD_ID, value = Dist.CLIENT)
 public final class VkDispClient {
     public VkDispClient(ModContainer container) {
-        // 让 NeoForge 为本模组的配置自动生成配置界面
-        container.registerExtensionPoint(IConfigScreenFactory.class, ConfigurationScreen::new);
+        // 【临时 · 测试用】包选择屏取代 NeoForge 自动生成的 ConfigurationScreen。
+        // 原版 ConfigurationScreen 是 final 类，无法继承加选项卡；要挂按钮只能自建屏。
+        // 本屏内附「完整 TOML 配置」按钮回原配置页，原有配置入口不丢。
+        // 待形态确定（是否像 Iris 那样挂进视频设置）后可能改走别的接线。
+        container.registerExtensionPoint(IConfigScreenFactory.class,
+                (modContainer, parentScreen) -> new PackPickerScreen(parentScreen));
     }
 
     @SubscribeEvent
