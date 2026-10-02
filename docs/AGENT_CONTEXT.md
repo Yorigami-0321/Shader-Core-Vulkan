@@ -419,6 +419,36 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
 - **未覆盖（登记）**：§9.3 待登记课题（单位纹理矩阵视觉正确性 / 属性绑定运行时正确性）本轮仅 luma 量化未见异常，
   未逐效果目检；Iris 金标准对比=环境极限；相机固定朝天+黎明，未验证正午/夜间/不同朝向。
 
+### 9.4.2 续轮（2026-10-02 三）— G 线 G0：Java 冷路径分段基准
+
+- **G0 已完成并推送**（`4dc951c`）：新增 `src/test/java/dev/vkdisp/pack/ColdPathBenchmark.java`
+  + `evidence/g0-java-coldpath.md`。BSL 91 program / 182 阶段的分段基线已建立，
+  **G1（等价 Rust 实现）的前置条件已满足**。
+- **怎么跑**（证据文件里有同一份，一行复现）：
+  ```bash
+  ./gradlew compileTestJava
+  java -cp build/classes/java/test:build/classes/java/main dev.vkdisp.pack.ColdPathBenchmark \
+      --inventory run/shaderpacks --pack BSL_v10.1.8 --warmup 3 --iterations 9 \
+      --out evidence/g0-java-coldpath.md --golden build/bench-golden --notes "..."
+  ```
+  纯 CPU、离屏、不需要游戏客户端；`--label/--notes` **只收 ASCII**（中文 argv 会被 locale 解成乱码），
+  主机信息由 `/proc/cpuinfo` 自动采集。
+- **基线数字**（Ryzen 7 8745H / JDK 25.0.4.1，n=9 中位数）：
+  解析 **588.7ms (40.9%)** > `#include` 预处理 **572.7ms (39.8%)** > 转译 **246.2ms (17.1%)** >
+  包扫描 0.5ms；**四段合计 1440.5ms**，生产入口 **1419.4ms**。
+  排序在七趟里稳定可引用，**具体百分比不要当精确值**（噪声内浮动）。
+- 🔴 **G1/G3 开跑前必读的噪声红线**：本机未锁电源/频率，七趟四段合计中位数
+  1438.0…1571.0ms，**极差 ≈9%**，**与 §5.2 的 20% 裁决阈值同量级** ⇒ 必须两侧**交替**测量、
+  样本 ≥9、同时报 p95，**禁止拿单次最好值比值下结论**。详见 `17-NATIVE.md` §7.3 末。
+- **golden 在 `build/bench-golden/`（不入库）**：364 条 sha256 清单，
+  自身 sha256 `a1f372aa…`。G1 的等价性测试按它逐字节比对；
+  不入库是因为内容派生自 BSL（第三方素材，`18-PARALLEL` §7.6），按上面命令可重新生成。
+- **下一轮入口（二选一，按定位重定后的优先级）**：
+  ① **G1**：Rust 等价实现（范围仅 `glsl/` 预处理+转译、`pack/` 解析）。⚠️ 8 段流水线的
+     **逐字节**等价是硬门槛，建议先只做预处理段（占 39.8%，且边界最清楚）再攻转译段。
+  ② **H 线 M-01**：管线装配层 mixin（GAP-003 多附件 + GAP-004 自定义 uniform 块**必须同批**），
+     支柱①兼容的最大阻塞项 —— 但需 `runClient` 取证，且要遵守 X28（先登记 `04` §5.0）/ X29（逐个开启）。
+
 ### 9.5 环境与红线速查（详见持久记忆 + §6）
 
 - 一切 java/gradle 前缀 `export JAVA_TOOL_OPTIONS="-Djava.net.preferIPv4Stack=true"`（隧道 hook.so 否则 EINVAL）；
