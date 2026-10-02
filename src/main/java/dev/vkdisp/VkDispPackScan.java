@@ -33,6 +33,7 @@ import dev.vkdisp.bridge.ShaderCompileApi;
 import dev.vkdisp.glsl.TranslateDiagnostic;
 import dev.vkdisp.glsl.translate.ShaderStage;
 import dev.vkdisp.pack.Option;
+import dev.vkdisp.pack.PackCompileCache;
 import dev.vkdisp.pack.Program;
 import dev.vkdisp.pack.ShaderPack;
 import dev.vkdisp.pack.ShaderPackCompiler;
@@ -176,7 +177,12 @@ public final class VkDispPackScan {
         int ok = 0;
         int failed = 0;
         for (ShaderPackScanner.DiscoveredPack discovered : scan.packs()) {
-            ShaderPackCompiler.CompileResult compiled = ShaderPackCompiler.compile(discovered);
+            // P4.5：走编译缓存。切包热路径（generateSources）刚编过同一个包时命中，
+            // 省掉一次全量转译（182 阶段 ≈ 3 秒，2026-10-02 用户报「客户端未响应」根因之一）。
+            // 取证侧无选项差分表，故仅当热路径的差分表也为空时同键命中——那正是
+            // 「用户没改过任何选项」的常见情况；改过选项则各编一次（正确的隔离，不硬合并）。
+            ShaderPackCompiler.CompileResult compiled =
+                    PackCompileCache.getOrCompile(discovered, java.util.Map.of());
             if (compiled.pack() == null) {
                 // 包模型没组装出来：load 级诊断已由 scanAndLog 打过（同一发现路径），这里显式标记编译被跳过。
                 failed++;

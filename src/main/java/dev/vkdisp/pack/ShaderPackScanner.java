@@ -41,6 +41,52 @@ public final class ShaderPackScanner {
         public Path effectiveShadersRoot() {
             return kind == Kind.DIRECTORY ? source.resolve(shadersPrefix) : source;
         }
+
+        /**
+         * 缓存身份（P4.5 {@link PackCompileCache} 用）：<b>路径 + 种类 + 大小 + 修改时间</b>。
+         *
+         * <p>为什么不只用路径：用户可能<b>原地替换</b>包文件（同路径、不同内容）。只用路径做
+         * 缓存键会吃到上一个包的产物 —— 那会让「换了包但画面还是旧的」，且极难排查。
+         * 带上大小与修改时间后，替换文件自然换键。
+         *
+         * <p>读文件属性失败（权限/文件被移动）→ 退化为「只有路径」，宁可多编一次也不
+         * 拿到可能过期的产物（缓存只是加速器，miss 无正确性代价）。
+         */
+        public String identity() {
+            StringBuilder text = new StringBuilder(64);
+            text.append(source).append('|').append(kind);
+            try {
+                if (java.nio.file.Files.isRegularFile(source)) {
+                    text.append('|').append(java.nio.file.Files.size(source))
+                            .append('|').append(java.nio.file.Files.getLastModifiedTime(source).toMillis());
+                } else if (java.nio.file.Files.isDirectory(source)) {
+                    //目录包：取整个目录树的最新修改时间（任一子文件变了就换键）
+                    text.append("|dir|").append(newestModifiedMillis(source));
+                } else {
+                    text.append("|missing");
+                }
+            } catch (java.io.IOException e) {
+                //读不到属性 → 只用路径（退化为必然多编一次，但绝不返回错误产物）
+                text.append("|stat-failed");
+            }
+            return text.toString();
+        }
+
+        /** 目录树里最新的修改时间（毫秒）；空目录 = 0。 */
+        private static long newestModifiedMillis(Path root) throws java.io.IOException {
+            final long[] newest = {0L};
+            try (java.util.stream.Stream<Path> walk = java.nio.file.Files.walk(root)) {
+                walk.filter(p -> !java.nio.file.Files.isDirectory(p)).forEach(p -> {
+                    try {
+                        newest[0] = Math.max(newest[0],
+                                java.nio.file.Files.getLastModifiedTime(p).toMillis());
+                    } catch (java.io.IOException ignored) {
+                        // 单个文件读不到时间不影响整体（有其它文件兜底；全失败则 newest 保持 0）
+                    }
+                });
+            }
+            return newest[0];
+        }
     }
 
     /** 一个问题条目：出问题的路径、类型、人类可读信息。 */

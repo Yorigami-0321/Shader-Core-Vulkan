@@ -258,7 +258,8 @@ public final class PackCompositeSource {
             }
             Map<String, String> overrides = diffAgainstDefaults(session.options());
 
-            ShaderPackCompiler.CompileResult compiled = ShaderPackCompiler.compile(discovered, overrides);
+            ShaderPackCompiler.CompileResult compiled =
+                    PackCompileCache.getOrCompile(discovered, overrides);
             diagnostics.addAll(compiled.diagnostics());
             Selection composite = selectProgramFragment(compiled, COMPOSITE_PROGRAM, null);
             if (composite != null) {
