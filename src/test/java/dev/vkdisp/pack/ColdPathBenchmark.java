@@ -3,6 +3,7 @@ package dev.vkdisp.pack;
 import dev.vkdisp.glsl.GlslPipeline;
 import dev.vkdisp.glsl.TranslateResult;
 import dev.vkdisp.glsl.preprocess.GlslPreprocessor;
+import dev.vkdisp.glsl.preprocess.IncludeProcessor;
 import dev.vkdisp.glsl.preprocess.IncludeResolver;
 import dev.vkdisp.glsl.translate.OfGlslTranslator;
 import dev.vkdisp.glsl.translate.ShaderStage;
@@ -137,6 +138,23 @@ public final class ColdPathBenchmark {
                 selfCheck(fixture) ? "通过（分段产物与 GlslPipeline 逐字节一致）" : "失败（基准失真，已终止）");
         if (!selfCheck(fixture)) {
             System.exit(3);
+        }
+
+        // --golden-only：只重建 golden，不跑任何计时、不动 evidence。
+        // G1 反复对齐中间产物时用它 —— 否则每次重生成 golden 都会把基准数字冲掉，
+        // 逼着人去同步文档，文档和数据的对应关系反而被工具噪声绑架。
+        if (a.goldenOnly() || a.dumpInput() != null) {
+            if (a.dumpGolden() != null) {
+                dumpGolden(a.dumpGolden(), pack, fixture);
+                System.out.println("golden 已落盘（G1 一致性测试基准）: " + a.dumpGolden());
+            }
+            if (a.dumpInput() != null) {
+                dumpInputs(a.dumpInput(), pack, fixture);
+                System.out.println("输入契约已落盘（G1 复现用）: " + a.dumpInput());
+            }
+            if (a.goldenOnly()) {
+                return;
+            }
         }
 
         // ---- 预热（≥3 次，JIT 编译前不取样）----
@@ -352,16 +370,62 @@ public final class ColdPathBenchmark {
         Files.createDirectories(out);
         StringBuilder manifest = new StringBuilder();
         for (StageInput input : fixture.inputs()) {
-            TranslateResult preprocessed = GlslPreprocessor.preprocess(input.file(), input.source(), resolver);
+            // inc = 仅 #include 展开后的文本（G1 第一段的靶子）；pre = define/const 处理后的文本；
+            // trans = 8 段转译后的文本。三个中间态都落盘，Rust 侧才能**逐段**对齐，
+            // 而不是对着最终产物一次性猜哪里错了。
+            IncludeProcessor.Result inc =
+                    IncludeProcessor.process(input.file(), input.source(), resolver);
+            TranslateResult preprocessed =
+                    GlslPreprocessor.preprocess(input.file(), input.source(), resolver);
             String pre = preprocessed.text();
             String trans = OfGlslTranslator.translate(input.stage(), preprocessed).text();
             String stem = input.file().replace('\\', '/').replace('/', '_');
-            Files.writeString(out.resolve(stem + ".pre.glsl"), pre, StandardCharsets.UTF_8);
-            Files.writeString(out.resolve(stem + ".trans.glsl"), trans, StandardCharsets.UTF_8);
-            manifest.append(sha256(pre)).append("  ").append(stem).append("  pre\n");
-            manifest.append(sha256(trans)).append("  ").append(stem).append("  trans\n");
+            write(out, stem + ".inc.glsl", inc.text(), manifest);
+            write(out, stem + ".pre.glsl", pre, manifest);
+            write(out, stem + ".trans.glsl", trans, manifest);
         }
         Files.writeString(out.resolve("sha256sums.txt"), manifest.toString(), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * 导出 G1 需要的**输入契约**（Rust 侧按此复现同一批输入，不引入任何第三方 crate 去解 zip）：
+     * <pre>
+     *   files/&lt;相对路径&gt;   挂载计划里每个文件按 readText 口径解码后的原文（UTF-8 写出）
+     *   stages.txt            待测阶段的相对路径，一行一个
+     *   sha256sums.txt        导出文件的 sha256 清单
+     * </pre>
+     * 之所以导出「解码后的文本」而不是 zip 原字节：{@code readText} 用 UTF-8 解码且对非法序列
+     * 替换为 U+FFFD，Rust 侧要复现的是**解码结果**，这样两侧看到的是同一个字符串。
+     * I/O 本来就不在被测分段里（见类注释口径纪律 ①），导出后 Rust 只做纯计算。
+     */
+    private static void dumpInputs(Path dir, ShaderPackScanner.DiscoveredPack pack, Fixture fixture)
+            throws IOException {
+        Path out = dir.resolve(pack.name().replaceAll("[^A-Za-z0-9._-]", "_"));
+        List<String> files = new ArrayList<>(fixture.plan().shaderFiles());
+        java.util.Collections.sort(files);
+        StringBuilder sums = new StringBuilder();
+        for (String relative : files) {
+            String text = ShaderPackService.readText(fixture.plan(), relative);
+            if (text == null) {
+                continue;
+            }
+            Path dest = out.resolve("files").resolve(relative);
+            Files.createDirectories(dest.getParent());
+            Files.writeString(dest, text, StandardCharsets.UTF_8);
+            sums.append(sha256(text)).append("  files/").append(relative).append('\n');
+        }
+        StringBuilder stages = new StringBuilder();
+        for (StageInput input : fixture.inputs()) {
+            stages.append(input.file()).append('\n');
+        }
+        Files.writeString(out.resolve("stages.txt"), stages.toString(), StandardCharsets.UTF_8);
+        Files.writeString(out.resolve("sha256sums.txt"), sums.toString(), StandardCharsets.UTF_8);
+    }
+
+    private static void write(Path out, String fileName, String content, StringBuilder manifest)
+            throws IOException {
+        Files.writeString(out.resolve(fileName), content, StandardCharsets.UTF_8);
+        manifest.append(sha256(content)).append("  ").append(fileName).append('\n');
     }
 
     private static void writeEvidence(Args a, ShaderPackScanner.DiscoveredPack pack, Fixture fixture,
@@ -448,7 +512,8 @@ public final class ColdPathBenchmark {
      * 主机信息交给 {@link #describeHost()} 自动采集（§7.1「场景固定」要能被复核）。
      */
     private record Args(Path inventory, String pack, int warmup, int iterations,
-                        Path out, Path dumpGolden, String label, String notes) {
+                        Path out, Path dumpGolden, Path dumpInput, String label, String notes,
+                        boolean goldenOnly) {
 
         /** 主机描述：显式 `--label` 优先，否则自动采集 CPU + OS。 */
         String describe() {
@@ -480,9 +545,19 @@ public final class ColdPathBenchmark {
             int iterations = 9;
             Path out = null;
             Path golden = null;
+            Path inputDump = null;
             String label = null;
             String notes = "unspecified";
-            for (int i = 0; i < argv.length - 1; i += 2) {
+            boolean goldenOnly = false;
+            for (int i = 0; i < argv.length; i += 2) {
+                if ("--golden-only".equals(argv[i])) {
+                    goldenOnly = true;
+                    i--; // 无值参数，吃掉本轮不成对的偏移
+                    continue;
+                }
+                if (i + 1 >= argv.length) {
+                    throw new IllegalArgumentException("参数 " + argv[i] + " 缺少取值");
+                }
                 String value = argv[i + 1];
                 switch (argv[i]) {
                     case "--inventory" -> inventory = Path.of(value);
@@ -491,6 +566,7 @@ public final class ColdPathBenchmark {
                     case "--iterations" -> iterations = Integer.parseInt(value);
                     case "--out" -> out = Path.of(value);
                     case "--golden" -> golden = Path.of(value);
+                    case "--dump-input" -> inputDump = Path.of(value);
                     case "--label" -> label = value;
                     case "--notes" -> notes = value;
                     default -> throw new IllegalArgumentException("未知参数: " + argv[i]);
@@ -502,7 +578,7 @@ public final class ColdPathBenchmark {
             if (iterations < 5) {
                 throw new IllegalArgumentException("§7.1：样本必须 ≥5 次，收到 " + iterations);
             }
-            return new Args(inventory, pack, warmup, iterations, out, golden, label, notes);
+            return new Args(inventory, pack, warmup, iterations, out, golden, inputDump, label, notes, goldenOnly);
         }
 
         /** 选包：指定名/序号优先，否则取第一个 zip（目录包只作兜底）。 */

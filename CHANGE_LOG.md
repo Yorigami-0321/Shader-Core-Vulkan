@@ -5,6 +5,51 @@
 
 ---
 
+## 2026-10-02（九）— G 线 G1 第一段：Rust `#include` 展开等价实现（182/182 逐字节一致）
+
+> **verdict = 对照实现轮 + 实测轮**。授权：`18-PARALLEL.md` §4 G 线「不许跳过 G1 等价性测试
+> 直接比性能」。前置：`§9.4.2` 交接的 G0 基线。
+
+- **前置发现**：本机**完全没有 Rust 工具链**（无 cargo/rustup）。G1 的硬前提缺失 ⇒ 先装
+  rustup（minimal profile，stable），装在 `~/.cargo`（**仓库外**，只影响用户目录）。
+  装完 `rustc 1.99.0 (b940084d7 2026-09-28)` / `cargo 1.99.0`。
+- **本次改了什么**：
+  ① **仓库外新工程 `~/Minecraft/g1-rust-bench`**（commit `2086d22`）—— Rust 等价实现与等价性检查器。
+     `Cargo.toml` 的 `[dependencies]` **故意为空**：零第三方 crate = 零许可证风险（合规第 0 步），
+     且不碰 `build.gradle`、不建 `accel/`，符合 G 线「裁决『采用』前不配 cargo/CMake」。
+  ② **Java 侧 `ColdPathBenchmark` 三处增强**：
+     - golden 从两相扩到**三相** `inc`/`pre`/`trans`（182 × 3 = **546** 条 sha256）
+       —— G1 因此能**逐相**对齐，而不是对着最终产物一次性猜错在哪；
+     - `--dump-input`：导出**输入契约**（292 个文件的解码后文本 + `stages.txt` + 清单哈希），
+       Rust 侧**不必引第三方 crate 解 zip**（I/O 本就不在被测分段里）；
+     - `--golden-only`：只重建 golden，不跑计时、不改 evidence。
+  ③ 新增 `evidence/g1-rust-include-equivalence.md`；同步 `18-PARALLEL` G 线进度、
+     `17-NATIVE.md` §7.3、`evidence/README.md`、`AGENT_CONTEXT.md` §0.1 + §9.4.3。
+- **等价性结果**：**BSL 182 个阶段 `.inc.glsl` 逐字节一致，0 不一致**，ERROR 诊断 0，
+  展开输出 17,298,868 字节；Rust 单测 **11/11**。
+- **移植时踩到的四个 Java / Rust 语义差异**（这类坑最值钱 —— 两边"看起来一样"但不等价）：
+  ① `String.strip()` 用 `Character.isWhitespace`，**不含** U+00A0 / U+2007 / U+202F，
+     而 Rust `str::trim()` **含** ⇒ 含 NBSP 前导的 `#include` 行判定会分叉 → 自建 `java_strip`；
+  ② Java 正则 `\s` 只有 ASCII 六种 `[ \t\n\x0B\f\r]`，不含 Unicode 空白；
+  ③ `normalize()` 只吃**一个**结尾换行，`split("\n", -1)` 再丢掉**一个**末尾空串，
+     两步叠加 ⇒ `"a\n\n"` 最终只剩一行 `"a"`，**不能合并这两步**；
+  ④ include 正则的 `\s*` 看似要回溯，实际由 `"include"` 起始位唯一确定、**不可能回溯成功**
+     ⇒ 手写扫描与正则等价（已写单测锁定，防后人"顺手改成 regex crate"）。
+- **自己写的 Rust 单测还抓出了两个测试自身的错**（值得记）：
+  ① 循环检测测试漏了 `a.glsl` 的内容 —— 根因是**读文件在前、循环判定在后**，
+     读不到就先报"包含文件不存在"，根本走不到循环分支；
+  ② 深度上限测试把顶层源写成空串 —— 根因是 **Java 空源直接 return**，不展开任何内容。
+  两次都是"测试前提写错"，不是实现错 —— 但正因如此才该记：改测试前先回读 Java 实现。
+- 🔴 **本轮没有证明的（不许外推）**：
+  - **性能**：Rust 单次冷跑 52.7ms，**n=1 无预热**（两次跑 54.0 / 52.7ms）；
+    且 **Java 侧还没有 inc 单独计时**（G0 的预处理段是 include+define+const 合并）
+    ⇒ 两侧连同一口径的数字都没有 ⇒ **G2 / G3 不得开始**。
+  - `SourceLineMap`（行号映射）未移植 —— 本轮只认文本等价。
+  - 诊断文案未逐条比对；只跑过 BSL，Complementary / Sildur 未覆盖。
+- **测试结果**：`./gradlew build` BUILD SUCCESSFUL；**607 单测全绿**；
+  Rust 侧 `cargo test --release` **11/11**。
+- **是否已提交**：见本条提交信息。
+
 ## 2026-10-02（八）— G 线 G0：Java 冷路径分段基准落地（G1 的前置）
 
 > **verdict = 工具轮 + 实测轮**。授权来源：`18-PARALLEL.md` §4 G 线「**必须先有 G0 的

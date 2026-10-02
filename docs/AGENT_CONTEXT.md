@@ -51,10 +51,13 @@
 
 - **G 线**：Rust vs Java 冷路径性能对比（`glsl/` 转译 + `pack/` 解析），流程 G0–G4，裁决阈值 20%。
   - ✅ **G0 已完成（2026-10-02）**：`ColdPathBenchmark`（`src/test/java/dev/vkdisp/pack/`）+ 
-    `evidence/g0-java-coldpath.md`。BSL 182 阶段的分段基线已建立，并落盘 364 条 golden sha256
-    供 G1 做输出一致性测试。**G1 的前置条件已满足**。
-  - 🔴 **G1 开跑前必读**：三趟实测跨次漂移 ≈±9%，**与 20% 裁决阈值同量级** ⇒ G3 必须两侧
-    交替测量、样本 ≥9、报 p95，禁止用单次最好值比值（`17-NATIVE.md` §7.3 末的红线）。
+    `evidence/g0-java-coldpath.md`。BSL 182 阶段的分段基线已建立。
+  - 🟡 **G1 进行中（2026-10-02 续轮）**：**inc 相已 182/182 逐字节一致**（`evidence/g1-rust-include-equivalence.md`），
+    对照工程在**仓库外** `~/Minecraft/g1-rust-bench`（零第三方 crate）。**define / 转译两相未做 ⇒
+    G2 / G3 不得开始。** golden 已是三相（`inc`/`pre`/`trans`，546 条），用 `--golden-only` 重建不动基准数字。
+  - 🔴 **G1/G3 开跑前必读**：八趟实测跨次极差 ≈±9%，**与 20% 裁决阈值同量级** ⇒ G3 必须两侧
+    交替测量、样本 ≥9、报 p95，禁止用单次最好值比值（`17-NATIVE.md` §7.3 末的红线）；
+    且 G3 前须先补 **Java 侧 inc 单独计时**，否则两侧没有同一口径的数字可比。
 - **H 线**：管线装配层 mixin（GAP-003 + GAP-004 同批），**本项目兼容目标的最大阻塞项**。
 
 ---
@@ -448,6 +451,47 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
      **逐字节**等价是硬门槛，建议先只做预处理段（占 39.8%，且边界最清楚）再攻转译段。
   ② **H 线 M-01**：管线装配层 mixin（GAP-003 多附件 + GAP-004 自定义 uniform 块**必须同批**），
      支柱①兼容的最大阻塞项 —— 但需 `runClient` 取证，且要遵守 X28（先登记 `04` §5.0）/ X29（逐个开启）。
+
+### 9.4.3 续轮（2026-10-02 四）— G 线 G1 第一段：Rust `#include` 展开等价实现
+
+- **成果**：**BSL 182/182 阶段逐字节一致，0 不一致**，Rust 单测 11/11。
+  证据：`evidence/g1-rust-include-equivalence.md`。对照工程 `~/Minecraft/g1-rust-bench`（commit `2086d22`）。
+- **本机装了 Rust 1.99.0**（rustup，minimal profile，`~/.cargo`）。此前**没有**任何 Rust 工具链，
+  这是 G1 的硬前提，装在仓库外、只影响用户目录。
+- **Java 侧本轮新增**（`ColdPathBenchmark`）：
+  - golden 从两相扩到**三相**：`inc`（仅 include 展开）/ `pre`（define+const）/ `trans`（8 段转译），
+    182 阶段 × 3 = **546 条** sha256。G1 因此可以**逐相**对齐，而不是对着最终产物猜。
+  - `--dump-input <dir>`：导出**输入契约**（292 个文件的解码后文本 + `stages.txt` + 清单哈希）。
+    Rust 侧因此**不必引第三方 crate 去解 zip** —— I/O 本就不在被测分段里（合规第 0 步零风险）。
+  - `--golden-only`：只重建 golden，**不跑计时、不改 evidence**。
+    没有它，G1 每对齐一次就要冲掉一遍基准数字、连带同步三处文档。
+- **怎么跑**（`g1-rust-bench/README.md` 有同一份）：
+  ```bash
+  export PATH="$HOME/.cargo/bin:$PATH"
+  # ① vkdisp 侧导出
+  ./gradlew compileTestJava
+  java -cp build/classes/java/test:build/classes/java/main dev.vkdisp.pack.ColdPathBenchmark \
+      --inventory run/shaderpacks --pack BSL_v10.1.8 \
+      --golden build/bench-golden --dump-input build/g1-input --golden-only
+  # ② Rust 侧门槛
+  cd ~/Minecraft/g1-rust-bench && cargo test --release
+  ./target/release/g1-inc-check --input <vkdisp>/build/g1-input/BSL_v10.1.8 \
+                               --golden <vkdisp>/build/bench-golden/BSL_v10.1.8
+  ```
+- **移植时踩到的四个 Java/Rust 语义差异**（已按 Java 语义修 + 单测锁定，详见证据文件）：
+  ① `String.strip()` 用 `Character.isWhitespace`，**不含** U+00A0/U+2007/U+202F，而 Rust
+  `trim()` **含** ⇒ 自建 `java_strip`；② Java 正则 `\s` 只有 ASCII 六种；
+  ③ `normalize()` 吃一个结尾换行 + `split(-1)` 再丢一个末尾空串，两步不能合并；
+  ④ 那个 include 正则的 `\s*` 贪婪但**不可能回溯成功** ⇒ 手写扫描等价。
+- 🔴 **本轮没有证明的**：性能（Rust 单次冷跑 52.7ms，n=1；且 **Java 侧还没有 inc 单独计时**，
+  G0 的预处理段是 include+define+const 合并）⇒ **G2 / G3 不得开始**。
+  另外 `SourceLineMap` 未移植、诊断文案未逐条比对、只跑过 BSL。
+- **下一轮入口（二选一）**：
+  ① **G1 define 相**：移植 `DefineProcessor`（宏与条件编译，28KB Java）——靶子就是 golden 的 `pre`。
+     这是当前最重的一块，可能要拆成多个小轮。
+  ② **G1 转译相**：8 段流水线，单类 20–30KB，最重。
+  ③ **补 G3 前置**：给 `ColdPathBenchmark` 加一趟「inc 单独计时」的 Pass C（不扰动既有四段口径），
+     否则 G3 两侧没有同口径数字。
 
 ### 9.5 环境与红线速查（详见持久记忆 + §6）
 
