@@ -258,7 +258,9 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
 > 用户指令：本轮修改提交 → 写交接文档 → 交接文档同样提交 → 停止任务。
 > HEAD：`399e6a3`（测试转正）← `21461ea`（留档）← `4acde09`（P4.3）；工作树干净，已推送 origin/master。
 > `./gradlew build` exit 0：**572 tests / 0 failures / 0 skipped**（47 个结果 XML）。
-> 本轮**唯一未完成项 = runClient 实测取证**（见 §9.2 第 1 步）。
+> 本轮**唯一未完成项 = runClient 实测取证**（见 §9.2 第 1 步）—— **已于 2026-10-02 续轮闭环**：
+> runClient 达标 `stages=190 ok=190 failed=0` + `registered=9 compiled=9 (aligned)`，首错遮蔽揭示的
+> Distant Horizons 兼容新类同轮修掉并登记 GAP-002；§9.4 记续轮结果。
 
 ### 9.1 本轮完成（都已提交推送）
 
@@ -295,7 +297,7 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
 - **幂等**：第二遍无 gl_ token（替换门关）+ Position 已 layout 声明（注入门关）→ 逐字节不变、零诊断。
 - **texture2DGradARB → textureGrad**（`TextureFunctionRenamer.renames()`；ARB 扩展 →
   330 core 四参同名同参重命名；自动进 `targetNames()` 冲突消解集合）。
-- 测试：`LegacyBuiltinInjectorTest` 重写 17 例；`OfGlslTranslatorTest` 端到端改内容寻址
+- 测试：`LegacyBuiltinInjectorTest` 共 19 例（DH 兼容 stub 两组 dhMaterialId + DH_BLOCK_* 为续轮新增）；`OfGlslTranslatorTest` 端到端改内容寻址
   + 新增顶点 ⑤+⑧ 合成映射 e2e；`TextureFunctionRenamerTest` +2（RENAME_CASES 行 + 四参 golden）。
   `FtransformExpander.POSITION_CANDIDATES` 改包级可见；`OfGlslTranslator` ⑤ javadoc 同步
   （**编排逻辑未变**，⑤ 仍可能插行，级间映射 / compose 语义全部沿用）。
@@ -329,7 +331,29 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
   T11 报错再扩表（X9 不猜）；
 - 属性绑定数据的**运行时正确性**（vec4 输入绑 vec2 格式沿 mc_Entity 先例，画面轮确认）。
 
-### 9.4 环境与红线速查（详见持久记忆 + §6）
+### 9.4 续轮结果（2026-10-02 · 141 矩阵修复轮闭环）
+
+- **runClient 取证达标**：`pack compile done: stages=190 ok=190 failed=0`（L2536）+
+  `pipeline count check: registered=9, compiled=9 (aligned)`（L2581）；零 `undeclared identifier` /
+  `are reserved` / `Missing uniform` / `解析失败` / `fullscreen pass failed`。日志
+  `run/logs/runclient-dhfix2.log`（547015 B，sha256 `812f5cd11e709516f2232a7bf26379d055339f7d537306f745400d820d97ae9e`）。
+- **首错遮蔽第二轮（同轮修掉、显式登记）**：141 修复落地后失败 141→6，揭示 BSL `dh_*` 引用的
+  Distant Horizons 注入符号（`dhMaterialId` / `DH_BLOCK_WATER` / `DH_BLOCK_LAVA` /
+  `DH_BLOCK_LEAVES` / `DH_BLOCK_ILLUMINATED` / `DH_OVERDRAW`）—— 本引擎不集成 DH
+  （07-CONSTRAINTS D3/D16）→ 在 `LegacyBuiltinInjector` 注册为普通全局 stub 并登记
+  `13-GAP-REGISTRY.md` **GAP-002**（INFO 显式诊断，T11 不静默）。DH 类为已知类，非未知类收轮。
+- **代码改动**：`LegacyBuiltinInjector` 扩 DH stub（6 符号）+ 裸声明正则扩 `const int` 双限定符形态
+  （幂等判据需识别 `const int DH_BLOCK_* = N;`）；`LegacyBuiltinInjectorTest` 新增 dhMaterialId +
+  DH_BLOCK_* 两组（共 19 例）；全仓 `./gradlew test` 576 用例 0 失败。
+- **文档同步（§9.2 第 3 步已全部执行）**：`evidence/p4xx-141-matrix.md`（G-01）、`08-TESTING.md` §1/§6、
+  `18-PARALLEL.md` ⑥-2（旧 `stages=190 ok=49 failed=141` 标为修复前基线）、`04-SPEC.md` §3.2、
+  `13-GAP-REGISTRY.md` GAP-002、`CHANGE_LOG.md` 2026-10-02 条目。
+- **未覆盖（登记）**：BSL 包选项 `PARAMETER` 默认值非法（STRING 型 default '1.00'）的 WARN 是包自身
+  元数据怪癖（派生 '0.00'），不影响 `failed=0`，非本轮引入；DH 几何真实渲染（DH 不集成）；切包残留
+  回归本轮未重跑（未动顶点格式链路，见 `evidence/p417-pack-switch.md`）。
+- **收尾**：commit + push（轮次纪律）待执行（续轮 §9.2 第 5 步）。
+
+### 9.5 环境与红线速查（详见持久记忆 + §6）
 
 - 一切 java/gradle 前缀 `export JAVA_TOOL_OPTIONS="-Djava.net.preferIPv4Stack=true"`（隧道 hook.so 否则 EINVAL）；
 - 禁止前台 `sleep`、禁止 `pkill -f GradleDaemon`（游戏进程 `kill <pid>` 可以）、禁止 `--rerun-tasks`、

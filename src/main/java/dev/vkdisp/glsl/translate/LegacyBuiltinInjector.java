@@ -138,20 +138,34 @@ public final class LegacyBuiltinInjector {
     private static final Map<String, Rename> RENAME_BY_NAME = index(RENAMES);
 
     /**
-     * 属性注入候选（仅 VERTEX）：旧名（使用驱动的门；{@code null} = 门是「合法名已出现」）
-     * + 注入的合法名与声明行 + 已声明识别的两种形态。
+     * 属性注入候选：旧名（使用驱动的门；{@code null} = 门是「合法名已出现」）
+     * + 注入的合法名与声明行 + 已声明识别的两种形态 + 是否仅顶点阶段注入。
      */
     private record Injection(String legacy, String name, String declaration,
-            Pattern keywordForm, Pattern bareForm) {}
+            boolean vertexOnly, Pattern keywordForm, Pattern bareForm) {}
 
     private static final List<Injection> INJECTIONS = List.of(
-            injection("gl_MultiTexCoord0", "UV0", "in vec4 UV0;"),
-            injection("gl_MultiTexCoord1", "UV2", "in vec4 UV2;"),
-            injection("gl_Color", "Color", "in vec4 Color;"),
-            injection("gl_Normal", "Normal", "in vec3 Normal;"),
+            injection("gl_MultiTexCoord0", "UV0", "in vec4 UV0;", true),
+            injection("gl_MultiTexCoord1", "UV2", "in vec4 UV2;", true),
+            injection("gl_Color", "Color", "in vec4 Color;", true),
+            injection("gl_Normal", "Normal", "in vec3 Normal;", true),
             // Position：门不是旧名而是「替换后的文本里出现了合法名 Position」——
             // ftransform 展开、gl_Vertex 替换、包内自用都会落到这里；已声明则跳过。
-            injection(null, "Position", "in vec3 Position;"));
+            injection(null, "Position", "in vec3 Position;", true),
+            // DH 兼容桩（自行补充，GAP-002）：BSL 的 dh_terrain / dh_water 引用一组 Distant Horizons
+            // 提供的块类型 / 材质宏（dhMaterialId、DH_BLOCK_WATER / LAVA / LEAVES / ILLUMINATED、
+            // DH_OVERDRAW）；这些符号由 DH 在注入渲染时 #define，本引擎不集成 DH
+            // （07-CONSTRAINTS D3/D16），故全部按普通全局常量 / 变量声明为 stub，
+            // 使 dh_* 着色器在不装 DH 时也能编译通过。任何阶段都注入（dh 含 vsh/fsh），
+            // 普通全局声明在 Vulkan GLSL 合法（对应 UniformInjector 的 TOP_LEVEL_GLOBAL 形态）；
+            // 值为占位整数（DH 几何不渲染，值不影响编译，仅求语义上可区分）。
+            injection("dhMaterialId", "dhMaterialId", "int dhMaterialId;", false),
+            injection("DH_BLOCK_WATER", "DH_BLOCK_WATER", "const int DH_BLOCK_WATER = 1;", false),
+            injection("DH_BLOCK_LAVA", "DH_BLOCK_LAVA", "const int DH_BLOCK_LAVA = 2;", false),
+            injection("DH_BLOCK_LEAVES", "DH_BLOCK_LEAVES", "const int DH_BLOCK_LEAVES = 3;", false),
+            injection("DH_BLOCK_ILLUMINATED", "DH_BLOCK_ILLUMINATED",
+                    "const int DH_BLOCK_ILLUMINATED = 4;", false),
+            injection("DH_OVERDRAW", "DH_OVERDRAW", "const int DH_OVERDRAW = 5;", false));
 
     /** 旧名的显式声明行正则（声明行保护用；声明识别见 {@link Injection}）。 */
     private static final Map<String, Pattern[]> DECL_FORMS = buildDeclForms();
@@ -202,6 +216,16 @@ public final class LegacyBuiltinInjector {
         }
         legacyUsed.put(TEXTURE_MATRIX_LEGACY,
                 isUsed(TEXTURE_MATRIX_LEGACY, codeLines, skip));
+        // DH 兼容桩（GAP-002）：BSL dh_* 着色器引用一组 Distant Horizons 提供的块类型 / 材质宏，
+        // 仅作使用驱动的门（不替换、只补声明）。这些符号由 DH 在注入渲染时 #define，本引擎不集成 DH
+        // （07-CONSTRAINTS D3/D16），故全部按普通全局常量 / 变量声明为 stub。
+        // 门从 INJECTIONS 派生（legacy 非 null 且尚未登记者 = DH 桩），新增 stub 到 INJECTIONS 即自动接线。
+        for (Injection injection : INJECTIONS) {
+            String legacy = injection.legacy();
+            if (legacy != null && !legacyUsed.containsKey(legacy)) {
+                legacyUsed.put(legacy, isUsed(legacy, codeLines, skip));
+            }
+        }
 
         // gl_Vertex 的替换操作数（与 FtransformExpander 同口径：包内声明优先）。
         String glVertexOperand = glVertexReplacement(declaredPosition(codeLines, skip));
@@ -221,18 +245,26 @@ public final class LegacyBuiltinInjector {
             subCode.add(rewritten.code());
         }
 
-        // 注入：只补「用而未声明」的属性名。
+        // 注入：只补「用而未声明」的属性名（DH 兼容桩不限顶点阶段）。
         List<String> toInject = new ArrayList<>();
-        if (vertexStage) {
-            for (Injection injection : INJECTIONS) {
-                boolean gate = injection.legacy() == null
-                        ? isUsed(injection.name(), subCode, skip)
-                        : Boolean.TRUE.equals(legacyUsed.get(injection.legacy()));
-                if (!gate || isDeclared(injection, subCode, skip)) {
-                    continue;
-                }
-                toInject.add(injection.declaration());
+        for (Injection injection : INJECTIONS) {
+            if (injection.vertexOnly() && !vertexStage) {
+                continue;
             }
+            boolean gate = injection.legacy() == null
+                    ? isUsed(injection.name(), subCode, skip)
+                    : Boolean.TRUE.equals(legacyUsed.get(injection.legacy()));
+            if (!gate || isDeclared(injection, subCode, skip)) {
+                continue;
+            }
+            toInject.add(injection.declaration());
+        }
+        if (toInject.stream().anyMatch(d -> d.startsWith("int dhMaterialId;")
+                || d.startsWith("const int DH_"))) {
+            // T11 显式：DH 未集成时的兼容 stub 声明，不静默（GAP-002）。
+            diagnostics.add(TranslateDiagnostic.info(
+                    "自行补充（GAP-002）：声明 Distant Horizons 兼容桩（dhMaterialId / DH_BLOCK_* / "
+                            + "DH_OVERDRAW 常量）—— DH 未集成，BSL dh_* 着色器按 stub 编译", null, 0));
         }
 
         String substituted = SourceLines.join(subRaw, lines.endsWithNewline());
@@ -465,9 +497,10 @@ public final class LegacyBuiltinInjector {
     }
 
     /** 构造注入候选：两种已声明形态的行级正则（在无注释无字符串视图上匹配）。 */
-    private static Injection injection(String legacy, String name, String declaration) {
+    private static Injection injection(String legacy, String name, String declaration,
+            boolean vertexOnly) {
         Pattern[] forms = declarationPatterns(name);
-        return new Injection(legacy, name, declaration, forms[0], forms[1]);
+        return new Injection(legacy, name, declaration, vertexOnly, forms[0], forms[1]);
     }
 
     /** 每个旧名的声明形态正则（声明行保护用）。 */
@@ -487,10 +520,11 @@ public final class LegacyBuiltinInjector {
         Pattern keyword = Pattern.compile(
                 "\\b(?:attribute|varying|uniform|in|out)\\s+(?:" + IDENT + "\\s+)*(?:"
                         + IDENT + ARRAY_SUFFIX + "\\s*,\\s*)*" + quoted + ARRAY_SUFFIX + "\\s*[;=,]");
-        // 裸形态：行首缩进 + 类型 + [逗号前缀名, ...] name[数组] ;|=|, —— 覆盖无实例名块成员
-        //（UniformInjector 收编后的输出）与无关键字顶层声明。
+        // 裸形态：行首缩进 + 一个或多个类型/限定符 token（const int / uniform highp / 单类型 等）
+        // + [逗号前缀名, ...] name[数组] ;|=|, —— 覆盖无关键字顶层声明（int x;、const int x = 1;）
+        // 与无实例名块成员（UniformInjector 收编后的输出）。
         Pattern bare = Pattern.compile(
-                "^\\s*" + IDENT + "\\s+(?:"
+                "^\\s*(?:" + IDENT + "\\s+)+" + "(?:"
                         + IDENT + ARRAY_SUFFIX + "\\s*,\\s*)*" + quoted + ARRAY_SUFFIX + "\\s*[;=,]");
         return new Pattern[] {keyword, bare};
     }

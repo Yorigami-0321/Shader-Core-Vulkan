@@ -25,6 +25,7 @@
 | **P4** 兼容 | 主流包 | BSL / Complementary / Sildur's 主要效果可用 | 与 Iris 对比截图 |
 | **P4** 兼容 | 切包无残留 | 切包/切 none 无顶点格式错乱 | 4 张对比截图 |
 | **P4** 兼容 | 选项 GUI | pack 声明的选项能渲染并能改 | 截图 |
+| **P4** 兼容 | 转译矩阵修复 | BSL 全 190 stage 编译 `ok=190 failed=0`（141 阶段矩阵 + DH 兼容桩均已闭合） | 日志 `pack compile done` + `evidence/p4xx-141-matrix.md` |
 
 ---
 
@@ -162,6 +163,16 @@ if (meshStride != bindStride) {
 合成之后触发会整屏覆盖 GUI，实测否决），菜单态不再绘制全屏 pass。
 取证 `evidence/p418-options-gui.md`：单会话八截图（BSL 284 项分页渲染 + set 回执 +
 fixture 改值像素比 0.8910 = 理论 0.8889 + 未开屏 WARN 拒绝正向证据）。
+
+**141 阶段矩阵修复取证（2026-10-02）**：转译层第 8 段 `LegacyBuiltinInjector`
+（GLSL 1.20 旧内建 token 级替换 + 「用而未声明」属性名声明注入）闭环了此前
+`stages=190 ok=49 failed=141` 的 141 阶段矩阵失败（gl_MultiTexCoord\* / gl_TextureMatrix /
+Position undeclared + gl_ 前缀 reserved 两波）；首错遮蔽揭示的 Distant Horizons 兼容新类
+（`dhMaterialId` / `DH_BLOCK_*` / `DH_OVERDRAW`，本引擎不集成 DH）同轮修掉并登记
+`13-GAP-REGISTRY.md` **GAP-002**。取证 `evidence/p4xx-141-matrix.md`：单跑
+`pack compile done: stages=190 ok=190 failed=0` + `pipeline count check: registered=9,
+compiled=9 (aligned)`，零 `undeclared identifier` / `are reserved` / `Missing uniform` /
+`解析失败` / `fullscreen pass failed`，首错遮蔽闭合（DH 类已知、非未知类收轮）。
 
 ---
 

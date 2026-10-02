@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 
+import dev.vkdisp.glsl.TranslateDiagnostic;
+
 import org.junit.jupiter.api.Test;
 
 /**
@@ -344,6 +346,116 @@ class LegacyBuiltinInjectorTest {
         assertEquals(source, result.text(), "layout 前缀形态必须判已声明");
         assertEquals(0, result.insertedLineCount());
         assertTrue(result.diagnostics().isEmpty());
+    }
+
+    /**
+     * DH 兼容桩（GAP-002）：BSL 的 dh_* 着色器以 {@code int blockID = dhMaterialId;} 引用 dhMaterialId，
+     * 该符号由 Distant Horizons 注入、本引擎不集成 DH。使用但未声明时，按普通全局 int 声明为 stub，
+     * 任何阶段都注入（vertexOnly = false），并产生一条 INFO 显式诊断（T11 不静默）。
+     */
+    @Test
+    void dhMaterialIdStubDeclaredWhenUsedButUndeclaredAnyStage() {
+        String vertex = """
+                #version 330 core
+                void main() {
+                    int blockID = dhMaterialId;
+                }
+                """;
+        LegacyBuiltinInjector.Result vResult =
+                LegacyBuiltinInjector.inject(ShaderStage.VERTEX, vertex);
+        assertTrue(vResult.text().contains("int dhMaterialId;"),
+                "顶点阶段：使用但未声明的 dhMaterialId 注入普通全局 int stub：" + vResult.text());
+        assertTrue(vResult.text().contains("int blockID = dhMaterialId;"),
+                "使用处保留（不改写）：" + vResult.text());
+        assertEquals(1, vResult.insertedLineCount(), "仅注入一条 stub");
+        assertTrue(vResult.diagnostics().stream()
+                        .anyMatch(d -> d.severity() == TranslateDiagnostic.Severity.INFO
+                                && d.format().contains("dhMaterialId")),
+                "GAP-002 stub 声明必须显式可见（T11 不静默）：" + vResult.diagnostics());
+
+        // 片元阶段同样注入（vertexOnly = false）。
+        LegacyBuiltinInjector.Result fResult =
+                LegacyBuiltinInjector.inject(ShaderStage.FRAGMENT, vertex);
+        assertTrue(fResult.text().contains("int dhMaterialId;"),
+                "片元阶段也注入 stub（DH 兼容不限顶点）：" + fResult.text());
+
+        // 幂等：第二遍输入含已声明的 stub → 字节不变、零插入、零诊断。
+        LegacyBuiltinInjector.Result second =
+                LegacyBuiltinInjector.inject(ShaderStage.VERTEX, vResult.text());
+        assertEquals(vResult.text(), second.text(), "第二遍逐字节不变");
+        assertEquals(0, second.insertedLineCount());
+        assertTrue(second.diagnostics().isEmpty());
+
+        // 包内已声明（普通全局 int）则零注入，不与已有声明撞名。
+        String declared = """
+                #version 330
+                int dhMaterialId;
+                void main() { int blockID = dhMaterialId; }
+                """;
+        LegacyBuiltinInjector.Result dResult =
+                LegacyBuiltinInjector.inject(ShaderStage.VERTEX, declared);
+        assertEquals(declared, dResult.text(), "已声明的 dhMaterialId 不重复注入");
+        assertEquals(0, dResult.insertedLineCount());
+    }
+
+    /**
+     * DH 兼容桩（GAP-002，扩展）：BSL 的 dh_* 着色器还引用一组 Distant Horizons 提供的块类型常量
+     * {@code DH_BLOCK_WATER / LAVA / LEAVES / ILLUMINATED / DH_OVERDRAW}，由 DH 注入 #define。
+     * 使用但未声明时按普通全局 {@code const int} 声明为 stub，任何阶段都注入，并产生一条 INFO
+     * 显式诊断（T11 不静默，诊断文本覆盖 DH_ 常量）。
+     */
+    @Test
+    void dhBlockConstantsStubbedWhenUsedButUndeclaredAnyStage() {
+        String fsh = """
+                #version 330 core
+                void main() {
+                    int id = DH_BLOCK_WATER;
+                    int l = DH_BLOCK_LAVA;
+                    int f = DH_BLOCK_LEAVES;
+                    int i = DH_BLOCK_ILLUMINATED;
+                    int o = DH_OVERDRAW;
+                }
+                """;
+        LegacyBuiltinInjector.Result result =
+                LegacyBuiltinInjector.inject(ShaderStage.FRAGMENT, fsh);
+        assertTrue(result.text().contains("const int DH_BLOCK_WATER = 1;"),
+                "DH_BLOCK_WATER 注入 const int stub：" + result.text());
+        assertTrue(result.text().contains("const int DH_BLOCK_LAVA = 2;"), "DH_BLOCK_LAVA");
+        assertTrue(result.text().contains("const int DH_BLOCK_LEAVES = 3;"), "DH_BLOCK_LEAVES");
+        assertTrue(result.text().contains("const int DH_BLOCK_ILLUMINATED = 4;"),
+                "DH_BLOCK_ILLUMINATED");
+        assertTrue(result.text().contains("const int DH_OVERDRAW = 5;"), "DH_OVERDRAW");
+        assertTrue(result.text().contains("int id = DH_BLOCK_WATER;"),
+                "使用处保留（不改写）：" + result.text());
+        assertEquals(5, result.insertedLineCount(), "五个 DH_ 常量各注入一条");
+        assertTrue(result.diagnostics().stream()
+                        .anyMatch(d -> d.severity() == TranslateDiagnostic.Severity.INFO
+                                && d.format().contains("DH_")),
+                "GAP-002 DH_ 常量 stub 声明必须显式可见（T11 不静默）：" + result.diagnostics());
+
+        // 顶点阶段同样注入（vertexOnly = false）。
+        LegacyBuiltinInjector.Result vResult =
+                LegacyBuiltinInjector.inject(ShaderStage.VERTEX, fsh);
+        assertTrue(vResult.text().contains("const int DH_BLOCK_WATER = 1;"),
+                "顶点阶段也注入 DH_ 常量 stub：" + vResult.text());
+
+        // 幂等：第二遍输入含已声明的 stub → 字节不变、零插入、零诊断。
+        LegacyBuiltinInjector.Result second =
+                LegacyBuiltinInjector.inject(ShaderStage.FRAGMENT, result.text());
+        assertEquals(result.text(), second.text(), "第二遍逐字节不变");
+        assertEquals(0, second.insertedLineCount());
+        assertTrue(second.diagnostics().isEmpty());
+
+        // 包内已声明则零注入，不与已有声明撞名。
+        String declared = """
+                #version 330
+                const int DH_BLOCK_WATER = 1;
+                void main() { int id = DH_BLOCK_WATER; }
+                """;
+        LegacyBuiltinInjector.Result dResult =
+                LegacyBuiltinInjector.inject(ShaderStage.FRAGMENT, declared);
+        assertEquals(declared, dResult.text(), "已声明的 DH_ 常量不重复注入");
+        assertEquals(0, dResult.insertedLineCount());
     }
 
     /** 任何输入都不抛异常（含未闭合注释的 ERROR 诊断路径）。 */

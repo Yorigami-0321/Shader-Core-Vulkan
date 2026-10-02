@@ -83,10 +83,30 @@ glsl/
   OfGlslTranslator.java    // OF GLSL → M GLSL 的入口
   AttributeRewriter.java   // OF 老式 attribute/varying → M 语法
   UniformInjector.java     // 注入 OF 内建 uniform 声明
+  LegacyBuiltinInjector.java // 141 阶段矩阵修复：GLSL 1.20 旧内建 token 级替换 + 「用而未声明」属性名声明注入
   IncludeProcessor.java    // 处理 #include（绝对 / 前缀与相对路径两种形式）
   DefineProcessor.java     // #define / #undef / 条件编译
   ConstEvaluator.java      // OF 的 const int X = ... 选项常量
 ```
+
+> **141 阶段矩阵修复（`LegacyBuiltinInjector`，转译第 8 段，2026-10-02 运行时闭环）**：
+> GLSL 1.20 旧内建在 Vulkan GLSL 下两类失败 —— `(a) undeclared identifier`（属性旧名
+> `gl_MultiTexCoord*` / `gl_Color` / `gl_Normal` / `gl_Vertex` 及其展开的 `Position`、
+> 矩阵旧名）与 `(b) identifiers starting with "gl_" are reserved`（gl_ 前缀被 GLSL 公开词法
+> 保留，用户声明必被驱动拒）。修复双职责（等行替换、使用驱动、幂等）：
+> - **属性旧名 → 语义等价合法名**（再注入合法名裸 `in` 行，location 由 `IoLocationAdapter` 补写，
+>   仅 VERTEX 阶段）：`gl_MultiTexCoord0→UV0` / `gl_MultiTexCoord1→UV2` / `gl_Color→Color` /
+>   `gl_Normal→Normal` / `gl_Vertex→vec4(Position,1.0)`（或包内已声明位置属性名）；
+> - **矩阵旧名 → 宿主按本表上传的 gbuffer 矩阵**（不注入声明，天然满足 Vulkan 块约束）：
+>   `gl_ProjectionMatrix→gbufferProjection` / `gl_ModelViewMatrix→gbufferModelView` /
+>   `gl_ModelViewProjectionMatrix→(gbufferProjection * gbufferModelView)` /
+>   `gl_NormalMatrix→(transpose(inverse(mat3(gbufferModelView))))`；
+>   `gl_TextureMatrix[n]→mat4(1.0)`（下标随 token 消费；本引擎无固定功能纹理变换，UV 直接按
+>   顶点属性采样，单位阵即真实语义；裸名无下标保留交驱动显式报错 T11）；
+> - **Distant Horizons 兼容桩（GAP-002，转译期 shim，非原版能力缺口）**：BSL `dh_*` 着色器引用
+>   DH 注入的 `dhMaterialId` / `DH_BLOCK_WATER` / `DH_BLOCK_LAVA` / `DH_BLOCK_LEAVES` /
+>   `DH_BLOCK_ILLUMINATED` / `DH_OVERDRAW`，本引擎不集成 DH（07-CONSTRAINTS D3/D16），按普通
+>   全局 `int` / `const int` 声明为 stub，使用驱动门 + 任何阶段注入 + 已声明跳过 + INFO 显式诊断。
 
 **OF 内建 uniform（必须提供的语义）**：
 

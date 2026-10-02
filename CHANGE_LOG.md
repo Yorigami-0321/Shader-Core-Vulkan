@@ -5,6 +5,37 @@
 
 ---
 
+## 2026-10-02 — 141 阶段矩阵修复运行时闭环（LegacyBuiltinInjector 第 8 段转译 + Distant Horizons 兼容桩 GAP-002），stages=190 ok=190 failed=0
+
+- **本次改了什么**（01-DEV-LOOP 141 阶段矩阵修复轮 / `08-TESTING.md` §1「转译矩阵修复」行 / `docs/18-PARALLEL.md` ⑥-2）：
+  1. **141 阶段矩阵修复落地取证**：转译层第 8 段 `glsl/translate/LegacyBuiltinInjector`
+     （2026-10-01 22:15/22:22 已提交 21461ea / 399e6a3，此前从未运行时验证）首次 runClient
+     取证，闭环 `stages=190 ok=49 failed=141` 的 141 失败。双职责：GLSL 1.20 旧内建
+     token 级替换（属性旧名→合法名 UV0/UV2/Color/Normal/Position；矩阵旧名→宿主按
+     `04-SPEC §3.2` 上传的 gbufferProjection/gbufferModelView 及其合成/逆；gl_TextureMatrix[n]→mat4(1.0)）
+     + 「用而未声明」属性名裸 `in` 行注入（location 由 `IoLocationAdapter` 补写）。
+  2. **首错遮蔽第二轮：Distant Horizons 兼容桩（GAP-002）**：141 修复后失败 141→6 揭示
+     BSL `dh_*` 引用的 DH 注入符号（`dhMaterialId` / `DH_BLOCK_WATER` / `DH_BLOCK_LAVA` /
+     `DH_BLOCK_LEAVES` / `DH_BLOCK_ILLUMINATED` / `DH_OVERDRAW`），本引擎不集成 DH
+     （07-CONSTRAINTS D3/D16）→ 同轮修掉，在 `LegacyBuiltinInjector#INJECTIONS` 注册为
+     普通全局 `int` / `const int` stub（使用驱动门 + 任意阶段注入 + 已声明跳过 + 幂等 +
+     INFO 显式诊断）。`docs/13-GAP-REGISTRY.md` GAP-002 扩登记覆盖全部 6 符号。
+  3. **裸声明正则扩 `const int` 双限定符形态**：`declarationPatterns` 的裸形态从单类型 token
+     扩为 `(?:IDENT\s+)+`，覆盖 `const int DH_BLOCK_* = N;` 这类多限定符顶层声明，使
+     幂等判据能识别已注入 stub（否则第二遍重复注入）。
+- **为什么改**：141 矩阵修复是 P2/P4 转译正确性的硬阻塞（gl_ 前缀 reserved 与属性未声明两类
+  驱动级失败）；首错遮蔽要求同轮修掉新揭示的 DH 类或显式登记，不许带未知类收轮。
+- **影响的文档**：`docs/04-SPEC.md` §3.2（补 LegacyBuiltinInjector 目录项 + 141 修复与
+  GAP-002 映射说明）、`docs/18-PARALLEL.md` ⑥-2（新增 141 矩阵修复轮小节，⑥ 旧
+  `stages=190 ok=49 failed=141` 标注为修复前基线）、`docs/08-TESTING.md` §1（新增「转译矩阵修复」
+  验收行）/ §6（补 141 矩阵修复取证段）、`docs/13-GAP-REGISTRY.md` GAP-002（扩覆盖 6 符号）、
+  `evidence/p4xx-141-matrix.md`（新增 G-01 证据，log sha256 812f5cd…d97ae9e）。
+- **测试结果**：`LegacyBuiltinInjectorTest` 19 用例全绿（新增 dhMaterialId + DH_BLOCK_* 两组）；
+  全仓 `./gradlew test` 576 用例 0 失败 0 错误；`./gradlew build` exit 0；
+  runClient 实证 `stages=190 ok=190 failed=0` + `registered=9 compiled=9 (aligned)`，
+  零 `undeclared identifier`/`are reserved`/`Missing uniform`/`解析失败`/`fullscreen pass failed`。
+- **是否已提交**：否（本轮文档同步后随 141 矩阵修复轮一并 commit + push）。
+
 ## 2026-10-01 — P4.3 选项 GUI：packOptionsScreen 热驱动选项屏幕 + 帧注入点 Post→AfterLevel 迁移（GUI 覆盖根因修复），八张截图单会话闭环（fixture 改值像素比 0.8910=理论 0.8889，532 单测全绿）
 
 - **本次改了什么**（01-DEV-LOOP P4.3 / `08-TESTING.md` §1「pack 声明的选项能渲染并能改 | 截图」）：

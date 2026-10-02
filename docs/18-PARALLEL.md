@@ -484,14 +484,38 @@ F1–F4 全部落地 → 放行并行
       实测三跑（`evidence/p412-driver-layer.md` 全文 + sha256 + 关键行原文）：
       run1 Missing uniform 15679 + fullscreen pass failed 15679 → run2 +C 后 0/0
       但纯黑（0.951/0.466%）→ run3 +D 后 0/0 且可见（11.901/30.69%，luma 桶 35–45
-      连续谱）；三跑 pack 矩阵逐字节一致 `stages=190 ok=49 failed=141`，
+      连续谱）；三跑 pack 矩阵逐字节一致 `stages=190 ok=49 failed=141`（**此为 141 矩阵修复前基线**；
+      2026-10-02 `LegacyBuiltinInjector` 运行时闭环后 → `stages=190 ok=190 failed=0`，见下 ⑧），
       **0 个 composite/deferred FRAGMENT 失败**（入链双 program 每轮 spvBytes=
       76576/25632 compiled OK），run3 vkdisp ERROR（排除 pack compile）= 0。
       单测 469 全绿（434→469：VersionAdapter 16 + IoLocation 15 + UniformInjector 3 +
       Builtins 1，探针取证后删除）。141 阶段失败分类学（91 VERTEX + 50 FRAGMENT：
       location×36 / gl_MultiTexCoord0×33 / gl_TextureMatrix×20 / Position×2 /
       texture 函数语法×44 / gbufferProjectionInverse 重定义×6，全在 gbuffers/dh/
-      final/shadow 系）= **P4.2 切包回归范围**，不阻 P4.1 判据。
+      final/shadow 系）= **P4.2 切包回归范围**，      不阻 P4.1 判据。
+      **⑥-2 141 阶段矩阵修复（`LegacyBuiltinInjector`，2026-10-02 runClient 闭环）**：
+      转译层补第 8 段（先于 ⑦ 落地的 ⑥ 七段之外）。根因两类：`(a) undeclared identifier`
+      （`gl_MultiTexCoord0` ×33 / `gl_TextureMatrix` ×20 / `Position` ×2，FtransformExpander
+      冻结字面名展开后用而未声明）+ `(b) identifiers starting with "gl_" are reserved` ×91
+      （补声明后驱动仍拒 gl_ 前缀 —— GLSL 公开词法保留，注入 gl_ 名非出路）。修复双职责
+      （等行 token 替换 + 使用驱动门 + 幂等）：**属性旧名 → 合法名**（`gl_MultiTexCoord0→UV0` /
+      `gl_MultiTexCoord1→UV2` / `gl_Color→Color` / `gl_Normal→Normal` / `gl_Vertex→vec4(Position,1.0)`
+      或包内已声明名，再注入裸 `in` 行、location 由 `IoLocationAdapter` 补、仅 VERTEX 阶段）+
+      **矩阵旧名 → 宿主按 04-SPEC §3.2 上传的 gbuffer 矩阵**（`gl_ProjectionMatrix→gbufferProjection`
+      / `gl_ModelViewMatrix→gbufferModelView` / `gl_ModelViewProjectionMatrix→(gbufferProjection*gbufferModelView)`
+      / `gl_NormalMatrix→(transpose(inverse(mat3(gbufferModelView))))` / `gl_TextureMatrix[n]→mat4(1.0)`
+      下标随 token 消费、裸名保留交驱动 T11；矩阵类不注入声明，天然满足 Vulkan 块约束）。
+      首错遮蔽第二轮：141 修复落地后失败 141→6，揭示 DH 兼容新类（BSL `dh_*` 引用 DH 注入的
+      `dhMaterialId` / `DH_BLOCK_WATER` / `DH_BLOCK_LAVA` / `DH_BLOCK_LEAVES` /
+      `DH_BLOCK_ILLUMINATED` / `DH_OVERDRAW`，本引擎不集成 DH = 07-CONSTRAINTS D3/D16）→
+      同轮修掉、登记 `13-GAP-REGISTRY.md` **GAP-002**（转译期 stub 声明，非 `platform/` 原版缺口），
+      INFO 显式诊断（T11 不静默）。实测单跑（`evidence/p4xx-141-matrix.md` 全文 + sha256 +
+      关键行原文）：`pack compile done: stages=190 ok=190 failed=0`（L2536）、
+      `pipeline count check: registered=9, compiled=9 (aligned)`（L2581），零 `undeclared
+      identifier` / `are reserved` / `Missing uniform` / `解析失败` / `fullscreen pass failed`，
+      首错遮蔽闭合（DH 类已知、非未知类收轮）。单测 `LegacyBuiltinInjectorTest` 19 全绿
+      （裸声明正则扩 `const int` 双限定符形态以覆盖 `const int DH_BLOCK_* = N;`）；
+      全仓 `./gradlew test` 576 用例 0 失败。
       ⑦ **P4.1.3 uniform 上传交付（2026-10-01，两跑闭环）**：
       新增 `glsl/translate/BuiltinsBlockLayout`（std140 布局解析：收编序+目录尾，
       手算 23 项偏移 0..496/512 金样）+ `render/OfUniformManager`（gather 语义 =
