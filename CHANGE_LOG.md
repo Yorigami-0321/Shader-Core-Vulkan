@@ -5,6 +5,52 @@
 
 ---
 
+## 2026-10-02（十）— G 线 G1 第二段：Rust 宏与条件编译等价实现（pre 相 182/182 逐字节一致）
+
+> **verdict = 对照实现轮 + 实测轮**。承接 §9.4.4 的交接入口①。G1 现为 **2/4 相完成**。
+
+- **本次改了什么**：
+  ① **仓库外 `~/Minecraft/g1-rust-bench` 新增 `src/define_processor.rs`** —— 对照移植
+     `DefineProcessor`（693 行 Java），并把检查器合并成 `g1-check --phase inc|pre`。
+  ② `evidence/g1-rust-include-equivalence.md` → **`g1-rust-equivalence.md`**（两相合一，
+     避免同一件事拆成两个文件互相失同步）。
+  ③ 同步 `18-PARALLEL` G 线进度、`evidence/README.md`、`AGENT_CONTEXT.md` §0.1 + §9.4.4。
+- **pre 相的移植面**：指令分发（define/undef/ifdef/ifndef/if/elif/else/endif）、
+  对象宏与函数宏、递归宏展开（`expanding` 集合防环）、以及一个完整的**递归下降 `#if`
+  表达式求值器**（`defined()`、比较、逻辑、算术、`Double.parseDouble` 口径）。
+  **行号映射不在范围** —— Java 侧 `inputLineMap` 只喂诊断，文本产物完全不依赖它。
+- **等价性结果**：**pre 相 182/182 逐字节一致**，0 不一致，0 ERROR，非 ASCII 计数 0，
+  输出 1,877,266 字节；连同 inc 相，Rust 单测 **32/32**、`cargo build` **0 告警**。
+- **本轮新增的两个语义坑**（前四个见证据文件）：
+  ⑤ `substitute` 用 `replaceAll("\\b" + Pattern.quote(p) + "\\b", arg)` —— Java 的
+     `\w`/`\b` 默认**只认 ASCII**，且替换串里 `\` 与 `$` 有转义语义（`\` 吃掉后一个字符；
+     `$` 后不是数字或 `{` 直接抛）⇒ 手写 `replace_all_word_bounded` + `expand_replacement`；
+  ⑥ `Character.isLetterOrDigit` ≠ Rust `is_alphanumeric`（后者含 Nl/No，如 `½`）⇒
+     `java_is_digit` 对非 ASCII 取**保守 false**，并把任何非 ASCII 字符记进
+     `non_ascii_ident`。**分叉不可见才是等价性最大的敌人**，所以宁可漏判也要留告警。
+- 🔴 **pre 相第一次只跑出 133/182，两个坑叠在一起**（这段是本轮最值钱的记录）：
+  ① **真 bug —— 尾切片下标空间搞混**：`take_ascii_ident` 返回的 `after` 是 `chars` 的
+     **尾切片**，起点通常不在 0；而扫描 `(`…`)` 时却按绝对下标从 1 开始 ⇒ 参数表与宏体
+     **整体错位**。它难发现是因为两点叠加：**症状伪装成「部分正确」**（多参宏里第一个
+     参数看起来没生效、第二个却是对的），且**手写的简单片段单测全绿**
+     （`#define ADD(a,b) ((a)+(b))` 这类宏，`after` 起点恰好让偏移错误"看起来正常"）。
+     只有拿真实包跑才暴露 —— BSL 的 `#define projMAD(m, v) (diagonal3(m) * (v) + ...)`
+     这种"宏体里再调另一个函数宏"的形态，49/182 个阶段触发。
+     回归测试 `func_define_with_tail_slice_offsets` 用这条真实数据锁住。
+  ② **假线索 —— 跑的是旧二进制**：修完代码没重新 `cargo build --release` 就跑检查器，
+     拿到的仍是上一版产物，于是对着一个**已经不存在的 bug** 又查了一轮。
+     教训已写进对照工程 README：**任何"跑出来不对劲"的第一反应，都该先确认产物最新**。
+  ③ 另有三处是**我自己的测试期望写错**（宏体里三个 `a` 都是独立词本就该全替、
+     Java 的 `isLetterOrDigit('_')` 本来就是 false、循环检测测试漏了被包含文件的内容）。
+- 🔴 **本轮没有证明的**：
+  - **性能**：pre 相 308.2ms / inc 相 53.3ms 均为**单次冷跑 n=1**（重复跑也不稳定）；
+    且 **Java 侧还没有 inc / pre 单独计时**（G0 的预处理段是三者合并）⇒ **G2 / G3 不得开始**。
+  - 转译相（8 段流水线）、`pack/` 解析相（**尚无 golden**）、`SourceLineMap`、诊断文案、
+    其它包（Complementary / Sildur）全部未做 ⇒ **G1 未完成**。
+- **测试结果**：`./gradlew build` BUILD SUCCESSFUL；**607 单测全绿**；
+  Rust 侧 `cargo test --release` **32/32**、`cargo build --release` **0 告警**。
+- **是否已提交**：见本条提交信息。
+
 ## 2026-10-02（九）— G 线 G1 第一段：Rust `#include` 展开等价实现（182/182 逐字节一致）
 
 > **verdict = 对照实现轮 + 实测轮**。授权：`18-PARALLEL.md` §4 G 线「不许跳过 G1 等价性测试

@@ -225,7 +225,7 @@ F1–F4 全部落地 → 放行并行
 | 关卡 | 状态 | 落点 |
 |---|---|---|
 | **G0** Java 分段基准 | ✅ 完成 | `ColdPathBenchmark` + `evidence/g0-java-coldpath.md`（BSL 182 阶段，四段 + 生产入口） |
-| **G1** 等价 Rust 实现 | 🟡 **1/3 相完成** | inc 相 **182/182 逐字节一致**（`evidence/g1-rust-include-equivalence.md`）；define / 转译未做 |
+| **G1** 等价 Rust 实现 | 🟡 **2/4 相完成** | inc 相与 pre 相**各 182/182 逐字节一致**（`evidence/g1-rust-equivalence.md`）；转译相 / `pack/` 解析相未做 |
 | **G2** FFM 打通 demo | ⛔ 未开始 | **G1 未完成不得开始**（§5.1 流程顺序） |
 | **G3** 对照报告 | ⛔ 未开始 | ⚠️ 进 G3 前须先补 **Java 侧 inc 单独计时**（G0 的预处理段是 include+define+const 合并，两侧目前没有同一口径的数字） |
 | **G4** 裁决 | ⛔ 未开始 | 按 §5.2 阈值 |

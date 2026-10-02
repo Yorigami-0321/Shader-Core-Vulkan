@@ -52,12 +52,13 @@
 - **G 线**：Rust vs Java 冷路径性能对比（`glsl/` 转译 + `pack/` 解析），流程 G0–G4，裁决阈值 20%。
   - ✅ **G0 已完成（2026-10-02）**：`ColdPathBenchmark`（`src/test/java/dev/vkdisp/pack/`）+ 
     `evidence/g0-java-coldpath.md`。BSL 182 阶段的分段基线已建立。
-  - 🟡 **G1 进行中（2026-10-02 续轮）**：**inc 相已 182/182 逐字节一致**（`evidence/g1-rust-include-equivalence.md`），
-    对照工程在**仓库外** `~/Minecraft/g1-rust-bench`（零第三方 crate）。**define / 转译两相未做 ⇒
+  - 🟡 **G1 进行中（截至 2026-10-02 三）**：**inc 相与 pre 相各 182/182 逐字节一致**
+    （`evidence/g1-rust-equivalence.md`），对照工程在**仓库外** `~/Minecraft/g1-rust-bench`
+    （零第三方 crate，Rust 单测 32/32）。**转译相与 `pack/` 解析相未做 ⇒
     G2 / G3 不得开始。** golden 已是三相（`inc`/`pre`/`trans`，546 条），用 `--golden-only` 重建不动基准数字。
   - 🔴 **G1/G3 开跑前必读**：八趟实测跨次极差 ≈±9%，**与 20% 裁决阈值同量级** ⇒ G3 必须两侧
     交替测量、样本 ≥9、报 p95，禁止用单次最好值比值（`17-NATIVE.md` §7.3 末的红线）；
-    且 G3 前须先补 **Java 侧 inc 单独计时**，否则两侧没有同一口径的数字可比。
+    且 G3 前须先补 **Java 侧 inc / pre 单独计时**，否则两侧没有同一口径的数字可比。
 - **H 线**：管线装配层 mixin（GAP-003 + GAP-004 同批），**本项目兼容目标的最大阻塞项**。
 
 ---
@@ -492,6 +493,49 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
   ② **G1 转译相**：8 段流水线，单类 20–30KB，最重。
   ③ **补 G3 前置**：给 `ColdPathBenchmark` 加一趟「inc 单独计时」的 Pass C（不扰动既有四段口径），
      否则 G3 两侧没有同口径数字。
+
+### 9.4.4 续轮（2026-10-02 五）— G 线 G1 第二段：Rust 宏与条件编译等价实现
+
+- **成果**：**pre 相 182/182 逐字节一致**（连同上一轮的 inc 相，G1 已 2/4 相）。
+  证据：`evidence/g1-rust-equivalence.md`（已由 `g1-rust-include-equivalence.md` 改名，两相合一）。
+  对照工程 `~/Minecraft/g1-rust-bench` commit `96ec088`；Rust 单测 **32/32**、`cargo build` 0 告警。
+- **怎么跑**（改过 Rust 源码后**必须先 `cargo build --release`**，否则跑的是旧产物）：
+  ```bash
+  export PATH="$HOME/.cargo/bin:$PATH"
+  cd ~/Minecraft/g1-rust-bench && cargo test --release && cargo build --release
+  for phase in inc pre; do
+    ./target/release/g1-check --phase "$phase" \
+        --input  <vkdisp>/build/g1-input/BSL_v10.1.8 \
+        --golden <vkdisp>/build/bench-golden/BSL_v10.1.8
+  done
+  ```
+- **pre 相的移植面**：`DefineProcessor`（693 行 Java）—— 指令分发、对象/函数宏、
+  递归宏展开（`expanding` 集合防环）、以及一个完整的**递归下降 `#if` 表达式求值器**
+  （`defined()`、比较、逻辑、算术、`Double.parseDouble` 口径）。
+  **行号映射不在范围**：Java 侧 `inputLineMap` 只喂诊断，文本产物完全不依赖它。
+- **本轮新增的两个语义坑**（前四个见证据文件）：
+  ⑤ `substitute` 用 `replaceAll("\\b" + Pattern.quote(p) + "\\b", arg)` —— Java 的
+     `\w`/`\b` 默认**只认 ASCII**，且替换串里 `\` 与 `$` 有转义语义 ⇒ 手写
+     `replace_all_word_bounded` + `expand_replacement` 逐条复刻；
+  ⑥ `Character.isLetterOrDigit` ≠ Rust `is_alphanumeric`（后者含 Nl/No）⇒
+     `java_is_digit` 对非 ASCII 取保守 false，并把任何非 ASCII 字符记进
+     `non_ascii_ident`（本轮 BSL 计数为 0）。
+- 🔴 **pre 相第一次只跑出 133/182，两个坑叠在一起**（详见证据与 README）：
+  ① **真 bug —— 尾切片下标空间搞混**：`take_ascii_ident` 返回的 `after` 是 `chars` 的
+     尾切片、起点不在 0，而扫描 `(`…`)` 却按绝对下标从 1 开始 ⇒ 参数表与宏体整体错位。
+     难发现是因为**症状伪装成「部分正确」**（多参宏第一个参数不生效、第二个是对的），
+     而且**手写的简单片段单测全绿** —— 只有拿真实包跑才暴露（BSL 49/182 触发）。
+     回归测试 `func_define_with_tail_slice_offsets` 用真实数据锁住。
+  ② **假线索 —— 跑的是旧二进制**：修完没重新 `cargo build --release` 就跑检查器，
+     对着一个**已经不存在的 bug** 又查了一轮。教训：**「跑出来不对劲」的第一反应
+     应该是确认产物最新，而不是先看代码。**
+- **下一轮入口（三选一）**：
+  ① **G1 转译相**（最重）：`OfGlslTranslator` 8 段流水线，单类 20–30KB，需分多轮；
+     大概率重演「片段单测全绿、真实数据才炸」，每轮都拿真实包验。
+  ② **补 `pack/` 解析相的 golden**：该相目前**没有靶子**，需先在 `ColdPathBenchmark`
+     里给 `properties/options 解析` 段补一相导出。
+  ③ **补 G3 前置**：给基准加一趟 inc / pre **单独计时**（像已有的 Pass B 那样另起一趟，
+     不扰动既有四段口径），否则 G3 两侧没有同口径数字。
 
 ### 9.5 环境与红线速查（详见持久记忆 + §6）
 
