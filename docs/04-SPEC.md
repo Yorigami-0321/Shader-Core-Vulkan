@@ -40,20 +40,22 @@ com.mojang.renderpearl.backend.vulkan.VulkanDevice  ← 原版实现，不碰
 
 > **每个组件开工前先做参考调研**（`17-NATIVE.md` §1，`07-CONSTRAINTS.md` T13）。
 > 下表「参考」列只是**去哪找**，不代表可以搬代码 —— 本项目 MIT，默认只能读思路。
-> 「热度」列决定实现语言：❄️ 冷路径一律纯 Java；🔥 热路径先 Java + 测量，超预算才考虑原生。
+> 「热度」列决定实现语言（`17-NATIVE.md` §7）：❄️ 冷路径默认 Java、**Rust 为实测候选**；
+> 🔥 热路径默认 Java，**须先测出瓶颈**才考虑原生。
 
-### 3.0 组件总览（参考 / 热度 / 语言）
+### 3.0 组件总览（参考 / 热度 / 语言，2026-10-02 重标）
 
-| 组件 | 参考（只读思路） | 热度 | 语言 |
-|---|---|---|---|
-| `pack/` 格式解析 | **Iris** `shaderpack/parsing/` | ❄️ 冷 | 纯 Java |
-| `glsl/` 预处理器（`#include`/`#define`） | **IrisShaders/glsl-preprocessor**（GPL+例外） | ❄️ 冷 | 纯 Java |
-| `glsl/` 转译（OF → M GLSL） | **IrisShaders/glsl-transformer**（自定义传染） | ❄️ 冷 | 纯 Java |
-| `pipeline/` 管线构建 | Sulkan `runtime/ShaderPipelines`（GPL） | ❄️ 冷（构建）+ 🔥 热（键查找） | 纯 Java |
-| `render/` 帧编排 | Sulkan `LevelRenderer*Mixin`（GPL） | 🔥 热 | 纯 Java（原版 API 为主） |
-| `config/` `screen/` | 原版屏幕基类 | ❄️ 冷 | 纯 Java |
-| `accel/` 加速层门面 | 见 `17-NATIVE.md` §4 | — | ⏸️ 计划预留，非纯 Java（未验证） |
-| `bridge/` 原版 API 隔离 | 本项目自定 | — | 纯 Java |
+| 组件 | 参考（只读思路） | 热度 | 影响的指标 | 语言 |
+|---|---|---|---|---|
+| `pack/` 格式解析 | **Iris** `shaderpack/parsing/` | ❄️ 冷 | **B3 / B4** | Java（Rust 实测候选 ②） |
+| `glsl/` 预处理器（`#include`/`#define`） | **IrisShaders/glsl-preprocessor**（GPL+例外） | ❄️ 冷 | **B3 / B4** | Java（Rust 实测候选 ①） |
+| `glsl/` 转译（OF → M GLSL，8 段） | **IrisShaders/glsl-transformer**（自定义传染） | ❄️ 冷 | **B3 / B4** | Java（Rust 实测候选 ①） |
+| `pipeline/` 管线构建 | Sulkan `runtime/ShaderPipelines`（GPL） | ❄️ 冷（构建）+ 🔥 热（键查找） | B4 / **B1** | Java |
+| `render/` 帧编排 | Sulkan `LevelRenderer*Mixin`（GPL） | 🔥 **热** | **B1 / B2** | Java |
+| `mixin/` 管线装配层注入 | VulkanMod（LGPL）挂载模式 | 🟡 装配期 | **支柱① 兼容** | Java（只转发） |
+| `config/` `screen/` | 原版屏幕基类 | ❄️ 冷 | 无 | Java |
+| `accel/` 加速层门面 | `17-NATIVE.md` §4 | — | B3 / B4 | ⏸️ **仅 G 系列裁决「采用」后才建** |
+| `bridge/` 原版 API 隔离 | 本项目自定 | — | — | Java |
 
 ### 3.1 着色器包解析层（`pack/`）
 
@@ -219,31 +221,45 @@ screen/
   PackOptionsScreen.java  // 动态生成 OF 包选项 UI
 ```
 
-### 3.6 加速层（`accel/`）—— ⏸️ **计划预留，当前不建**
+### 3.6 加速层（`accel/`）—— ⏸️ **仅 G 系列裁决「采用」后才建**
 
-> ⚠️ **现在不要建这个包，也不要配 CMake / cargo。**
-> C++/Rust 的可行性**尚未验证**（`17-NATIVE.md` 开头状态声明）。
-> 本节只记录「如果将来真要上原生，大概是这么个形状」。
+> **当前状态：只有 Java 实现，没有任何原生库**（`17-NATIVE.md` §6 登记表为 0 条）。
 >
-> **纪律**：先测后优，只做热路径，Java 保底必须始终可用。
-> **当前状态：只有 Java 实现，没有任何原生库**（`17-NATIVE.md` §6.1 登记为 0 条）。
+> **2026-10-02 变更**：用户要求测试 Rust vs Java 性能差异。
+> 本节从「假设性设计备忘」改为**可执行规范**，但**建包的时点由 G 系列闸门裁决决定**
+> （`17-NATIVE.md` §5.2）：
+>
+> | 裁决 | 动作 |
+> |---|---|
+> | Rust 端到端快 **≥ 20%** + 等价性测试全绿 | ✅ 采用 → 建 `accel/`，进 §5.1 构建 |
+> | 快 5%–20% | 🟡 暂缓 → 在更大包上复测；仍在此区间则不采用 |
+> | 差异 < 5% / Rust 更慢 / 等价性不通过 | ❌ 不采用 → 登记结论，`accel/` 永不创建 |
+
+**本轮实测范围（仅两项）**：① `glsl/` 预处理 + 转译；② `pack/` 解析。
+**热路径（`render/`、`pipeline/` 键查找）本轮不测。**
 
 ```java
-accel/                    // ← ⏸️ 计划预留，暂不创建
-  VecMathOps.java         // 矩阵 / 视锥运算（热）     ← 先试 Java Vector API
-  UboPacker.java          // uniform 块打包（热）       ← 先试直接 ByteBuffer
-  PipelineKeyHasher.java  // 管线缓存键计算（热）       ← 先试预计算 / 缓存
-  AccelBackend.java       // 选择器（若将来有原生才需要）
+accel/                    // ← 裁决「采用」后才创建
+  GlslPassCompiler.java   // 冷：预处理+转译整批（FFM 边界，按批不按条）
+  PackScanFinalizer.java  // 冷：properties/options 定批 + program 清单
+  AccelBackend.java       // 选择器：探测原生库 → 选实现 → 打印所选后端
   backend/java/           // ✅ 永远存在，默认
-  backend/native/         // ⚠️ 可选，可行性未验证
+  backend/native/         // ⚠️ 仅「采用」裁决后存在；缺失 → 自动降级 + WARN
 ```
 
-**若将来真要启用，硬要求**
-- 接口签名只用纯 Java 类型（不暴露 `MemorySegment` 到业务层）
-- 原生库缺失 / 平台不匹配 → **自动降级到 Java 并打 WARN**，不许崩、不许静默
+**硬要求**（细则见 `17-NATIVE.md` §4.2）
+
+- 接口签名只用纯 Java 类型（**不暴露 `MemorySegment` 到业务层**）
+- **接口按批设计，不按条**（T18：逐条调用会把 FFI 收益吃光）
+- 原生库缺失 / 平台不匹配 → **自动降级到 Java 并打 WARN**，不许崩、不许静默（N2）
 - 启动时打印所选后端：`vkdisp: accel backend = java | native(<lib>)`
-- 每个原生模块必须有 A/B 开关（`17-NATIVE.md` N4）
-- **先过 `17-NATIVE.md` §6.2 第 0 关的可行性验证**
+- 每个原生模块必须有 A/B 开关（N4）
+- 🔴 `extern "C"` 必须 `catch_unwind`；禁止 `panic = "abort"`（T17/N5/N6，崩游戏）
+
+**接线路线（Java 25，FFM 正式版）**：
+Rust `cdylib` → `cbindgen` 出 C 头 → **`jextract`（JDK 自带）** 生成 Java 绑定（构建期，不入 jar）
+→ 运行期 `System.load` + `SymbolLookup.loaderLookup()` + `linker.downcallHandle()`。
+**不用 JNI**（T19：JNI 要手写 C 胶水，是额外维护负担）。
 
 ---
 
@@ -351,23 +367,59 @@ config = "${mod_id}.mixins.json"
 
 `gradlew` / shell 脚本：**仓库内必须放 `.gitattributes`**（`* text=auto eol=lf`）+ 仓库级 `core.autocrlf=false`，并手工 `git update-index --chmod=+x gradlew`（Windows 下 git 不跟踪可执行位）。
 
-### 5.1 原生工具链（⏸️ **当前不需要，也不要配**）
+### 5.0 🔴 mixin 注入点登记表（M1 松绑后的强制登记制）
 
-> 当前项目**没有**任何原生模块，且**可行性尚未验证**（`17-NATIVE.md` 状态声明）。
-> **不要在还没有原生模块时就去配 CMake / cargo** —— 那是超前设计（`05-VERSION.md` §4.3）。
+> `07-CONSTRAINTS.md` M1 已从「全局只许 1 个注入点」松绑为「**管线装配层 + 登记制 +
+> 可关闭制 + 逐个开启**」。**不限数量，但每个注入点必须在此登记**（X28）。
+> 登记即生效；未登记的注入点一律禁止。
 >
-> 本节只是记录「万一将来要用」的形状。**真要启用时，先过 `17-NATIVE.md` §6.2 的第 0 关可行性验证。**
+> 目标类名/方法名只许引用 `bridge/MixinTargets` 常量，禁止散落字面量（M1 编码约束 ①）。
+
+| # | 目标类 | 目标方法（签名） | 注入类型 | 用途 | 兼容性判定 | 可关闭键 | 状态 |
+|---|---|---|---|---|---|---|---|
+| M-01 | `net.minecraft.client.renderer.chunk.ChunkSectionsToRender` | `renderLayers(...)`（private，7 参，末两个为 `@Nullable RenderPipeline renderPipelineOverride`） | 装配层 | 把**派生管线**（多附件 / 自定义 uniform）接到地形 draw 上 —— 零 mixin 无法达成（`02` §5.1） | 源码级已核实（`putIfAbsent` 改不了原版 location ⇒ 派生管线必须走此通道） | `vkdisp.mixin.wireTerrain` | ⏸️ 待实现（P4.4-b） |
+| M-02 | （待定） | （待定） | 装配层 | 实体 / 天空 draw 走派生管线 | 待源码核实 | `vkdisp.mixin.wireEntity` | ⏳ 未开始 |
+| M-03 | （待定） | （待定） | 装配层 | | | | |
+
+**永久禁止登记**（M1 / L11 / X23 / X24）：Sodium / caffeinemc 任何类；第三方区块渲染器；
+`RenderSystem` / `GlStateManager` / `GL11`·`GL14`·`GL15` 等底层状态类。
+
+**纪律**：
+1. **逐个开启** —— 新增注入点不许一次性全开，否则崩溃无法二分定位（X29）。
+2. **每个注入点必须能一键关闭** —— 出问题时能立刻定位到是哪一个（M1 编码约束 ⑤）。
+3. **每个注入方法体首行**打 `vkdisp: [注入点名] hit`（静默失败是本类工程头号坑，T10）。
+4. **只转发不写业务**（X25）—— 升级时只需改 `bridge/` 一处。
+
+### 5.1 原生工具链（⏸️ **仅 G 系列裁决「采用」后才配**）
+
+> 当前项目**没有**任何原生模块。**在 G 系列裁决为「采用」之前不要配 CMake / cargo**
+> —— 那是超前设计（`05-VERSION.md` §4.3）。
+>
+> **2026-10-02 变更**：用户要求测试 Rust vs Java 差异，故本节从「假设性」改为
+> 「**可执行，但时点受闸门约束**」。闸门见 `17-NATIVE.md` §5，裁决阈值见 §5.2。
 
 ```gradle
-// 仅当引入原生模块且可行性验证通过后，才考虑下面这些
+// 仅当 G 系列裁决「采用」后才启用
 tasks.register('buildNative') {
-    // cargo / cmake 调用
+    // cargo build --release
+}
+tasks.register('bindings') {
+    // cbindgen → C 头 → jextract → Java 绑定（构建期产物，不入 jar）
 }
 // 关键：原生构建失败不得让 build 失败（N1 —— Java 路径必须始终能构建）
-// 用单独 task，并在 CI 上按平台矩阵跑
+// 用单独 task，CI 上按平台矩阵跑；缺工具链时跳过而非报错
 ```
 
-打包位置与产物校验见 `17-NATIVE.md` §6.3（同样是假设性设计）。
+**接线上线顺序（照做，别跳步）**：
+
+```
+cargo → cbindgen → jextract → jar 内 /vkdisp/native/<platform>-<arch>/
+  → 运行期 System.load → SymbolLookup.loaderLookup() → linker.downcallHandle()
+  → 缺符号/缺库 → catch 住 → WARN + 回落 backend-java（N2）
+```
+
+打包位置与产物校验见 `17-NATIVE.md` §6。
+**不用 JNI**，用 FFM（`java.lang.foreign`，Java 25 正式版）+ `jextract`（T19）。
 
 ---
 
