@@ -105,4 +105,63 @@ class ConstEvaluatorTest {
         assertEquals("const-float", r.options().get(0).kind());
         assertEquals(List.of("1.0", "2.0", "4.0"), r.options().get(0).candidates());
     }
+
+    // ------------------------------------------------------------------
+    // 「先挡后正则」前缀守卫的等价性用例
+    //
+    // 守卫按 startsWith("const") / startsWith("#define") 提前跳过，与两条 pattern 的
+    // ^ 锚定逐字对应 ⇒ 可证明等价。但「可证明」不等于「不会改坏」，所以把最容易被
+    // 一时手滑改成 contains/indexOf 的边界**显式钉住**：
+    // ------------------------------------------------------------------
+
+    @Test
+    void guardOnlySkipsWhenLineDoesNotStartWithKeyword() {
+        // 行首不是 const/#define，但行内含有白名单 const —— 绝不能被识别成选项。
+        // （若守卫写成 contains("const")，这行就会被误认，正是要防的那种错。）
+        String src = "void f() { const int shadowMapResolution = 2048; } // [512 1024]\n"
+                + "int x = 1; // #define FAKE 1 [1 2]\n";
+        ConstEvaluator.Result r = ConstEvaluator.evaluate(src, mapFor(2));
+        assertTrue(r.options().isEmpty(), "行内出现关键字不等于命中 ^ 锚定");
+    }
+
+    @Test
+    void guardStillRecognizesAfterLeadingWhitespace() {
+        // 守卫作用在 strip() 之后的字符串上 ⇒ 前导空白不应影响识别。
+        String src = "    \tconst int shadowMapResolution = 2048; // [512 1024 2048]\n";
+        ConstEvaluator.Result r = ConstEvaluator.evaluate(src, mapFor(1));
+        assertEquals(1, r.options().size(), "strip 之后的前缀守卫必须仍然放行");
+        assertEquals("shadowMapResolution", r.options().get(0).name());
+    }
+
+    @Test
+    void guardRecognizesConstPrefixThatDoesNotMatchPattern() {
+        // 以 "const" 开头 ⇒ 守卫放行进正则，但 `^const\s+` 要求其后是空白，
+        // 这里接的是 "ancy" ⇒ 正则正常失配为空。
+        // 这条保证守卫没有把「放行」误写成「直接认定命中」。
+        String src = "constancy shadowDistance = 1; // [1 2]\n";
+        ConstEvaluator.Result r = ConstEvaluator.evaluate(src, mapFor(1));
+        assertTrue(r.options().isEmpty(), "前缀相符但语法不符仍应为空");
+    }
+
+    @Test
+    void emptyConstValueStillMatchesPattern() {
+        // 钉住一个**既有**的 pattern 怪癖：`^const\s+(int|float|bool|double)\s+([A-Za-z_]\w*)\s*=\s*([^;]+);`
+        // 里的 `[^;]+` 可以把 `= ` 后面的那个空格吃掉，于是值为空的 const **也会命中**
+        // （默认值为空串）。这与前缀守卫无关，但值得留痕：谁想收紧它，得单独一次改动 + 取证。
+        String src = "const float shadowDistance = ; // [1 2]\n";
+        ConstEvaluator.Result r = ConstEvaluator.evaluate(src, mapFor(1));
+        assertEquals(1, r.options().size(), "既有行为：空值 const 仍被识别");
+        assertEquals("", r.options().get(0).defaultValue());
+    }
+
+    @Test
+    void guardPassesThroughDiagnosticsForConflictingConst() {
+        // 冲突禁用 + WARN 这条路径必须照旧走到（守卫只跳过**不可能命中**的行，
+        // 命中行上的后续处理一个都不能少）。
+        String src = "const int shadowMapResolution = 2048; // [512 1024 2048]\n"
+                + "const int shadowMapResolution = 1024; // [512 1024 2048]\n";
+        ConstEvaluator.Result r = ConstEvaluator.evaluate(src, mapFor(2));
+        assertEquals(2, r.options().size());
+        assertTrue(r.diagnostics().stream().anyMatch(d -> d.message().contains("已禁用")));
+    }
 }

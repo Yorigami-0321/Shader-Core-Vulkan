@@ -228,7 +228,7 @@ F1–F4 全部落地 → 放行并行
 | **G1** 等价 Rust 实现 | 🟡 **2/4 相完成** | inc 相与 pre 相**各 182/182 逐字节一致**（`evidence/g1-rust-equivalence.md`）；转译相 / `pack/` 解析相未做 |
 | **G2** FFM 打通 demo | ⛔ 未开始 | **G1 未完成不得开始**（§5.1 流程顺序） |
 | **G3** 对照报告 | 🟡 **前置数据已就位** | 9 轮**交替**分相对照：inc Rust **快 75.1%**、def Rust **慢 55.7%**、const **未移植且占预处理段 51%**。见 `evidence/g3-preliminary-phase-comparison.md` + `17-NATIVE.md` §7.4。🔴 **裁决仍未做**（G1 未完成） |
-| **G4** 裁决 | ⛔ 未开始 | ⚠️ **先决定 const 的归属**（移植 / 不移植）—— 它在「采用 / 不采用」的分界上；另需评估更便宜的 Java 侧「先挡后正则」路径 |
+| **G4** 裁决 | ⛔ 未开始 | ⚠️ **先决定 const 的归属**（移植 / 不移植）。P1 已证「便宜路径走不通」（守卫只 4.9%）且动摇了乐观假设，见 `evidence/p1-const-prefix-guard.md` |
 
 - 对照 Rust 工程在**仓库外** `~/Minecraft/g1-rust-bench`：**零第三方 crate**，不碰 `build.gradle`、不建 `accel/`。
 - 三相 golden（`inc` / `pre` / `trans`，546 条 sha256）由 `--golden-only` 产出，**可反复重建而不动基准数字**。

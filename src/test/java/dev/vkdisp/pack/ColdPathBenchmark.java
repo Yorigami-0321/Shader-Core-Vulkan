@@ -1,6 +1,7 @@
 package dev.vkdisp.pack;
 
 import dev.vkdisp.glsl.GlslPipeline;
+import dev.vkdisp.glsl.TranslateDiagnostic;
 import dev.vkdisp.glsl.TranslateResult;
 import dev.vkdisp.glsl.preprocess.ConstEvaluator;
 import dev.vkdisp.glsl.preprocess.DefineProcessor;
@@ -163,6 +164,12 @@ public final class ColdPathBenchmark {
             }
         }
 
+        if (a.dumpConst() != null) {
+            dumpConstResults(a.dumpConst(), pack, fixture);
+            System.out.println("const 结果已落盘（A/B 等价性判据）: " + a.dumpConst());
+            return;
+        }
+
         // --phase-timing：只出 G3 对照所需的**分相**计时，不跑既有四段。
         // 为什么要单独一趟：Rust 侧的 inc / def 各自只做一件事（def 直接吃 golden 的
         // inc 产物），若 Java 侧把两者合在一起量，就没有「同一个口径」可言。
@@ -236,6 +243,47 @@ public final class ColdPathBenchmark {
             writeEvidence(a, pack, fixture, sScan, sProps, sPre, sTrans, sSum, sEntry);
             System.out.println("证据已落盘: " + a.out());
         }
+    }
+
+    /**
+     * 落盘 const 相的**全部**产物（选项常量 + 诊断），作为「先挡后正则」优化的
+     * A/B 等价性判据。
+     *
+     * <p>为什么必须落盘而不是只看耗时：性能优化如果不能证明「产出逐字节相同」，
+     * 就违反 X27（不许为性能砍 pack 特性）。const 相的产物**不含文本**，
+     * 所以只能靠这份清单来证明。
+     */
+    private static void dumpConstResults(Path dir, ShaderPackScanner.DiscoveredPack pack,
+            Fixture fixture) throws IOException {
+        Path out = dir.resolve(pack.name().replaceAll("[^A-Za-z0-9._-]", "_"));
+        Files.createDirectories(out);
+        IncludeResolver resolver = ShaderPackService.resolverFor(fixture.plan());
+        StringBuilder sb = new StringBuilder();
+        int optionTotal = 0;
+        int diagnosticTotal = 0;
+        for (StageInput input : fixture.inputs()) {
+            IncludeProcessor.Result inc =
+                    IncludeProcessor.process(input.file(), input.source(), resolver);
+            ConstEvaluator.Result result = ConstEvaluator.evaluate(inc.text(), inc.lineMap());
+            sb.append("#stage\t").append(input.file()).append('\n');
+            for (ConstEvaluator.OptionConstant oc : result.options()) {
+                optionTotal++;
+                sb.append("opt\t").append(oc.name()).append('\t').append(oc.kind()).append('\t')
+                        .append(oc.defaultValue()).append('\t')
+                        .append(String.join(" ", oc.candidates())).append('\t')
+                        .append(oc.description()).append('\t')
+                        .append(oc.sourceFile()).append('\t').append(oc.sourceLine()).append('\t')
+                        .append(oc.visible()).append('\t').append(oc.disabled()).append('\n');
+            }
+            for (TranslateDiagnostic d : result.diagnostics()) {
+                diagnosticTotal++;
+                sb.append("diag\t").append(d.severity()).append('\t').append(d.format()).append('\n');
+            }
+        }
+        sb.append("#totals\toptions=").append(optionTotal)
+                .append("\tdiagnostics=").append(diagnosticTotal).append('\n');
+        Files.writeString(out.resolve("const-results.txt"), sb.toString(), StandardCharsets.UTF_8);
+        System.out.println("     const 产物 = 选项 " + optionTotal + " 条 / 诊断 " + diagnosticTotal + " 条");
     }
 
     private static void row(String name, Stats stats, Stats total) {
@@ -642,7 +690,7 @@ public final class ColdPathBenchmark {
      */
     private record Args(Path inventory, String pack, int warmup, int iterations,
                         Path out, Path dumpGolden, Path dumpInput, String label, String notes,
-                        boolean goldenOnly, boolean phaseTiming) {
+                        boolean goldenOnly, boolean phaseTiming, Path dumpConst) {
 
         /** 主机描述：显式 `--label` 优先，否则自动采集 CPU + OS。 */
         String describe() {
@@ -679,6 +727,7 @@ public final class ColdPathBenchmark {
             String notes = "unspecified";
             boolean goldenOnly = false;
             boolean phaseTiming = false;
+            Path constDump = null;
             for (int i = 0; i < argv.length; i += 2) {
                 if ("--golden-only".equals(argv[i])) {
                     goldenOnly = true;
@@ -702,6 +751,7 @@ public final class ColdPathBenchmark {
                     case "--out" -> out = Path.of(value);
                     case "--golden" -> golden = Path.of(value);
                     case "--dump-input" -> inputDump = Path.of(value);
+                    case "--dump-const" -> constDump = Path.of(value);
                     case "--label" -> label = value;
                     case "--notes" -> notes = value;
                     default -> throw new IllegalArgumentException("未知参数: " + argv[i]);
@@ -714,7 +764,7 @@ public final class ColdPathBenchmark {
                 throw new IllegalArgumentException("§7.1：样本必须 ≥5 次，收到 " + iterations);
             }
             return new Args(inventory, pack, warmup, iterations, out, golden, inputDump, label, notes,
-                    goldenOnly, phaseTiming);
+                    goldenOnly, phaseTiming, constDump);
         }
 
         /** 选包：指定名/序号优先，否则取第一个 zip（目录包只作兜底）。 */

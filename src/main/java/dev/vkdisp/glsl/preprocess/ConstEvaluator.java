@@ -64,6 +64,32 @@ public final class ConstEvaluator {
     private ConstEvaluator() {
     }
 
+    /**
+     * 「先挡后正则」前缀守卫的开关（{@code -Dvkdisp.const.guard=false} 关闭）。
+     *
+     * <p>保留开关不是为了留后门，而是为了**能交替测量**：开与关在同一个二进制里，
+     * 才可以按 {@code 17-NATIVE.md} §7.3 的红线做交替对照（否则要靠两个不同版本的
+     * 产物去比，时间点不同 ⇒ 机器状态不同 ⇒ 比值不可信）。
+     *
+     * <p>默认开启；关闭后行为与优化前**完全一致**（两条 pattern 的锚定保证了这一点）。
+     */
+    static final boolean PREFIX_GUARD =
+            !"false".equalsIgnoreCase(System.getProperty("vkdisp.const.guard", "true"));
+
+    /**
+     * 前缀守卫：只有以 {@code const} 或 {@code #define} 开头的行才可能命中
+     * {@link #CONST_PATTERN} / {@link #DEFINE_PATTERN}（两者都有 {@code ^} 锚定）。
+     *
+     * <p>注意：这里用 {@code startsWith} 而不是「先试 {@code indexOf}」——
+     * 前者的判定与正则的锚定条件**逐字对应**，因此跳过的一定是原本就要失配的行。
+     */
+    private static boolean guardAllows(String trimmed) {
+        if (!PREFIX_GUARD) {
+            return true;
+        }
+        return trimmed.startsWith("const") || trimmed.startsWith("#define");
+    }
+
     /** 一条被识别出的选项常量的元信息。 */
     public record OptionConstant(
             String name,
@@ -103,10 +129,17 @@ public final class ConstEvaluator {
             int outputLineNo = idx + 1;
             String line = rawLines[idx];
             String trimmed = line.strip();
-            SourceLineMap.LineOrigin origin = inputLineMap.originOf(outputLineNo);
-            OptionConstant oc = tryConst(trimmed, origin);
-            if (oc == null) {
-                oc = tryDefineOption(trimmed, origin);
+            OptionConstant oc = null;
+            // 「先挡后正则」：两条 pattern 都以 ^const / ^#define 锚定（见文件末尾），
+            // 所以不满足前缀的行**不可能**命中 ⇒ 跳过是**可证明等价**的，不是有损优化。
+            // originOf 只在命中时才需要：它越界返回 UNKNOWN_LINE、永不抛（SourceLineMap 契约），
+            // 因此推迟调用不改变任何异常语义。X27：绝不以砍 pack 特性换性能。
+            if (guardAllows(trimmed)) {
+                SourceLineMap.LineOrigin origin = inputLineMap.originOf(outputLineNo);
+                oc = tryConst(trimmed, origin);
+                if (oc == null) {
+                    oc = tryDefineOption(trimmed, origin);
+                }
             }
             if (oc != null) {
                 options.add(oc);
