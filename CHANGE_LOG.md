@@ -5,6 +5,37 @@
 
 ---
 
+## 2026-10-02（七）— 依赖跟进：NeoForge 26.3.0.23-beta → 26.3.0.41-beta
+
+> **verdict = 依赖跟进轮**。用户指令：「拉取最新的推送，然后去查看一下 neoforge 有没有版本更新，
+> 如果有，就更新」。
+
+- **本次改了什么**：
+  ① `gradle.properties` 的 `neo_version` `26.3.0.23-beta` → `26.3.0.41-beta`（**唯一数据源**）；
+     `minecraft_version` / `minecraft_version_range` **不动**（仍在 26.3 线）。
+  ② 同步 7 份文档镜像：`README.md`、`docs/02-OVERVIEW.md`、`04-SPEC.md`、`05-VERSION.md`、
+     `06-MIGRATION.md`（§6 迁移日志回填一行）、`07-CONSTRAINTS.md`、`AGENT_CONTEXT.md`。
+  ③ **顺带订正一处镜像漂移**：`gradle/wrapper/gradle-wrapper.properties` 实为 **9.4.1**，
+     而 `05-VERSION.md` §2 / `04-SPEC.md` / `AGENT_CONTEXT.md` 仍写 9.2.1 —— 按「镜像与文件冲突时
+     以文件为准」的规则改正。
+- **为什么改**：官方仓库 `maven.neoforged.net` 的 `<release>` 已是 `26.3.0.41-beta`
+  （`lastUpdated=20261002104605`）。本次是**同一 MC 版本线内的 beta 跟进**，不是 §4 定义的
+  26.4 式迁移，故只走「改版本号 → 编译收集符号缺失 → 回归」三步，不触发 V1–V4 易变点复查。
+- **验证结果**：
+  - `./gradlew compileJava compileTestJava` → **BUILD SUCCESSFUL，零符号缺失 / 零 API 破坏**
+    —— 说明 23→41 之间没有改动本工程实际用到的 API 面。
+  - `./gradlew test` → **607 单测全绿**（50 个测试类，0 失败 0 错误 0 跳过）。
+  - 产物核对（`06-MIGRATION.md` R8）：`build/libs/vkdisp-0.1.0.jar` 共 **202** 个 `.class`；
+    含 `META-INF/neoforge.mods.toml`（`modId="vkdisp"`、`versionRange="[26.3.0.41-beta,)"`）
+    与 `LICENSE`；`net/minecraft`、`com/mojang`、`net/caffeinemc`、`dev/vitrail` 各 **0** 命中。
+- **⚠️ 未实测项（下一轮入口）**：回归清单 R2–R7、R9–R11 需 `runClient` 实证，本轮**只做了
+  编译 + 单测 + 产物核对** —— 画面相关项（R3 全屏 pass 可见、R4 后处理链、R5 真实 OF 包加载、
+  R10 性能预算）**尚无新版本下的取证**。
+- **刻意未改（溯源保护）**：`evidence/` 三份文件的「环境：NeoForge 26.3.0.23-beta」、
+  `CHANGE_LOG` 历史条目、以及源码里「参考对象 = 26.3.0.23-beta 官方用法」这类注释 ——
+  它们记录的是**当时实测的出处**，改写会污染溯源；当前生效版本一律以 `gradle.properties` 为准。
+- **是否已提交**：**否**，待用户确认。
+
 ## 2026-10-02（六）— 问题登记表重写（原「二阶段」文件废弃）+ 提交推送
 
 > **verdict = 文档轮 + 文件清理**。用户指令：「这个文件里面的问题是确实存在的，所以我需要你

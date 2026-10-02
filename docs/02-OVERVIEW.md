@@ -131,7 +131,7 @@ vkdisp
 | 支持范围 | Minecraft **26.3 及之后**发布的版本 |
 | 当前主线 | **26.3** |
 | 不支持 | **26.2 及之前**（那代没有 `renderpearl.backend.api`） |
-| 锁定 | MC 26.3 / NeoForge 26.3.0.23-beta / Java 25 / MDG 2.0.147 |
+| 锁定 | MC 26.3 / NeoForge 26.3.0.41-beta / Java 25 / MDG 2.0.147 |
 
 > **权威文档：`05-VERSION.md`。** 任何版本相关表述与它冲突时以它为准。
 

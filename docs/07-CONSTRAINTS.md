@@ -305,7 +305,7 @@ if (DEBUG) { LOGGER.info("cull kept={}", kept); }
 ```properties
 minecraft_version        = 26.3
 minecraft_version_range  = [26.3,)
-neo_version              = 26.3.0.23-beta
+neo_version              = 26.3.0.41-beta
 mod_id                   = vkdisp
 mod_group_id             = dev.vkdisp
 ```

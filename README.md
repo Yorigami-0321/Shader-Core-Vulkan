@@ -15,7 +15,7 @@
 | 当前主线 | **26.3** |
 | 不支持 | 26.2 及之前（那代没有原版后端 SPI `com.mojang.renderpearl.backend.api`） |
 | Java | 25 |
-| NeoForge | 26.3.0.23-beta |
+| NeoForge | 26.3.0.41-beta |
 | ModDevGradle | 2.0.147 |
 
 权威文档：`docs/05-VERSION.md`。

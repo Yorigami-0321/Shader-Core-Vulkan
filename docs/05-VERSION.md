@@ -25,10 +25,10 @@
 | 组件 | 版本 | 来源 |
 |---|---|---|
 | Minecraft | **26.3** | — |
-| NeoForge | **26.3.0.23-beta** | 取自官方 MDK（`NeoForgeMDKs/MDK-26.3-ModDevGradle`，commit `eec248c`） |
+| NeoForge | **26.3.0.41-beta** | 2026-10-02 自官方仓库升版（`projects.neoforged.net`）；初版基线取自 MDK commit `eec248c` |
 | Java | **25** | 26.3 强制 |
 | ModDevGradle | **2.0.147** | 官方 MDK 内声明 |
-| Gradle | **9.2.1**（wrapper） | 官方 MDK 自带 |
+| Gradle | **9.4.1**（wrapper） | 以 `gradle/wrapper/gradle-wrapper.properties` 为准 |
 | Mixin | 随 NeoForge | 不要 MixinGradle 插件 |
 | MixinExtras | 随 NeoForge | `@WrapOperation` / `@Local` 等 |
 
