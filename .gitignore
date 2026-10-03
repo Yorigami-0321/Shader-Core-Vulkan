@@ -114,3 +114,8 @@ local.properties
 # CHANGE_LOG.md                            变更记录
 # src/main/templates/META-INF/neoforge.mods.toml   模板（${} 占位，构建期展开）
 # src/main/resources/assets/vkdisp/lang/*.json     语言文件
+
+# JVM 崩溃残留：core dump 与 hs_err 日志。
+# 2026-10-03 补 core.* —— 起因是 FFM 回传实测时崩过一次 JVM（悬垂指针），
+# systemd-coredump 接管时不落地，但换台机器就可能落地到仓库根目录。
+core.*

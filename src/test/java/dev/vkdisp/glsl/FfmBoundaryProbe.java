@@ -111,6 +111,15 @@ public final class FfmBoundaryProbe {
     /** Arena 实验的每轮次数。 */
     private static final int ARENA_CALLS_PER_ROUND = 2_000;
 
+    /**
+     * Rust 侧回传形态 A 的变换常量（{@code dst[i] = src[i] ^ 0x5A}）。
+     *
+     * <p>🔴 必须与 {@code src/lib.rs} 的 {@code transform_into} <b>逐字对应</b>：
+     * Java 侧要独立算出同样的结果，才能校验「三形态产出的确实是同一份数据」。
+     * 这正是上一轮「有符号/无符号不一致」那类问题的防线 —— 校验和一旦对不上就停。
+     */
+    private static final int RETURN_XOR = 0x5A;
+
     /** stderr 显式 UTF-8 —— 否则异常信息里的中文自己先乱码了。 */
     private static final PrintStream ERR =
             new PrintStream(System.err, true, StandardCharsets.UTF_8);
@@ -182,6 +191,7 @@ public final class FfmBoundaryProbe {
             // 而真实批次传的是数十 KB～MB 的整份源码 ⇒ 另起一趟。
             runLargePayloadSuite(out, linker, lookup);
             runArenaSuite(out, linker, lookup);
+            runReturnPathSuite(out, linker, lookup);
 
             out.println();
             verifyPanicBoundary(out, linker, lookup);
@@ -499,6 +509,315 @@ public final class FfmBoundaryProbe {
         out.printf("  本实验未做「连续多趟后比内存」的断言 —— 那是独立的事，见「没有证明的事」。%n");
     }
 
+    /**
+     * 回传方向套件（task-10）：Rust → Java，**G2 最后一个没量过的方向**。
+     *
+     * <p>此前测的都是 Java→Rust 单向。但预处理产物**本来就是要回传的** ——
+     * Rust 处理完要把结果交回 Java，方向相反、载荷同样大。
+     *
+     * <p>三种形态（代价可能差很远）：
+     * <ol>
+     *   <li><b>A 回传指针</b>：Rust 持有静态缓冲，Java 拿地址。最省，
+     *       但🔴<b>指针只在下一次调用前有效</b>；</li>
+     *   <li><b>B 拷贝</b>：Rust {@code std::alloc} 一块、Java 拷走、再 {@code free_buffer}；</li>
+     *   <li><b>C 写进 Java 堆外缓冲</b>：Java 用 {@code Arena} 先分配好，Rust 直接写进去。
+     *       两侧都不分配，无所有权歧义。</li>
+     * </ol>
+     * 外加<b>同工纯 Java 基线</b>（同一变换，完全不跨界）。
+     *
+     * <p>🔴 四路的校验和必须一致，否则差值没有意义 —— 这是上一轮「有符号/无符号不一致」
+     * 那类静默噪声的防线。
+     */
+    private static void runReturnPathSuite(PrintStream out, Linker linker, SymbolLookup lookup) {
+        MethodHandle borrowPtr = downcall(linker, lookup, "borrow_buffer_ptr",
+                FunctionDescriptor.of(ValueLayout.ADDRESS));
+        MethodHandle produceBorrow = downcall(linker, lookup, "produce_borrow",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG,
+                        ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        MethodHandle produceAlloc = downcall(linker, lookup, "produce_alloc",
+                FunctionDescriptor.of(ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        MethodHandle freeBuffer = downcall(linker, lookup, "free_buffer",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG,
+                        ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        MethodHandle produceIntoDst = downcall(linker, lookup, "produce_into_dst",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG,
+                        ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+
+        out.printf("%n=== 回传方向套件（task-10）：Rust → Java ===%n");
+        out.printf("缓冲区池 %.0fMB，步长 %.0fMB ⇒ 每次调用都触碰冷内存%n",
+                POOL_BYTES / 1048576.0, STRIDE_BYTES / 1048576.0);
+
+        // 形态 A 的地址**只取一次并缓存** —— 每次调用都问一遍等于多一次跨界，
+        // 那属于「句柄没缓存」那类蠢错（上一轮实测它贵一个数量级）。
+        //
+        // 🔴🔴 **但必须先让 Rust 侧把缓冲分配出来，再取地址。**
+        // 本轮第一次跑就是在这里崩的：Rust 侧原本用 `Vec::new()`，而空 Vec 的
+        // `as_ptr()` 是**悬垂指针**（不指向任何已分配内存）；Java 拿到后按 16MB
+        // 去读 ⇒ JVM 崩在 `Unsafe_GetByte`（SIGABRT）。
+        // Rust 侧已改成「首次 produce 时一次性按 MAX_BORROW_BYTES 分配、此后永不重分配」，
+        // 但**调用顺序仍是调用方的责任** —— 契约是：先 produce，再取指针。
+        MemorySegment borrowSeg;
+        try (Arena warmup = Arena.ofConfined()) {
+            MemorySegment seed = warmup.allocate(8, 1);
+            fillDeterministic(seed);
+            long seeded = invoke(() -> (long) produceBorrow.invokeExact(seed, 8L));
+            if (seeded == 0L) {
+                throw new IllegalStateException("预热 produce_borrow 失败（返回 0），中止");
+            }
+            // 句柄声明为返回 ValueLayout.ADDRESS ⇒ invokeExact 已经给出 MemorySegment，
+            // **不要**再套 MemorySegment.ofAddress（那个重载收的是 long 地址，会编译失败）。
+            borrowSeg = invokeAddr(() -> (MemorySegment) borrowPtr.invokeExact())
+                    .reinterpret(BigByteLen + 8);
+            if (borrowSeg.byteSize() == 0) {
+                throw new IllegalStateException("borrow 缓冲地址无效（空），中止");
+            }
+        }
+
+        Map<Long, List<ReturnCase>> all = new java.util.LinkedHashMap<>();
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment pool = arena.allocate(POOL_BYTES, 1);
+            fillDeterministic(pool);
+            // 形态 C 的目标缓冲：一次分配、全程复用（这正是该形态的主张）。
+            MemorySegment dst = arena.allocate(BigByteLen + 8, 1);
+
+            for (int run = 0; run < BIG_RUNS; run++) {
+                for (long payload : BIG_PAYLOADS) {
+                    int calls = callsPerRound(payload);
+                    ReturnCase c = measureReturnCase(pool, dst, payload, calls,
+                            produceBorrow, produceAlloc, freeBuffer, produceIntoDst, borrowSeg);
+                    all.computeIfAbsent(payload, k -> new ArrayList<>()).add(c);
+                }
+            }
+        }
+
+        reportReturnRuns(out, all);
+    }
+
+    /** 载荷上限（C 形态目标缓冲与 A 形态重解释都要用它）。 */
+    private static final long BigByteLen = 16L << 20;
+
+    private static ReturnCase measureReturnCase(MemorySegment pool, MemorySegment dst,
+            long payloadBytes, int callsPerRound, MethodHandle produceBorrow,
+            MethodHandle produceAlloc, MethodHandle freeBuffer, MethodHandle produceIntoDst,
+            MemorySegment borrowSeg) {
+        // ---- 四路校验和必须一致（不然后面的差值全是噪声）----
+        MemorySegment sample = pool.asSlice(offsetFor(payloadBytes, 0), payloadBytes);
+        long wantJava = javaTransformSum(sample);
+        long nA = invoke(() -> (long) produceBorrow.invokeExact(sample, payloadBytes));
+        long sumA = sumSegment(borrowSeg, nA);
+        // 🔴 produce_alloc 返回的是**无界** MemorySegment，直接 get() 会越界报错；
+        // 必须用 payloadBytes 把它界定成有界区间。
+        MemorySegment bPtr = invokeAddr(() -> (MemorySegment) produceAlloc.invokeExact(
+                sample, payloadBytes)).reinterpret(payloadBytes);
+        long sumB = sumSegment(bPtr, payloadBytes);
+        invoke(() -> (long) freeBuffer.invokeExact(bPtr, payloadBytes));
+        invoke(() -> (long) produceIntoDst.invokeExact(
+                dst, dst.byteSize(), sample, payloadBytes));
+        long sumC = sumSegment(dst, payloadBytes);
+        if (wantJava != sumA || wantJava != sumB || wantJava != sumC) {
+            throw new IllegalStateException("四路校验和不一致（Java=" + wantJava
+                    + " A=" + sumA + " B=" + sumB + " C=" + sumC
+                    + "）—— 差值将没有意义，请先查 transform 是否逐字对应");
+        }
+
+        Timing a = measureScenario(() -> {
+            long sink = 0;
+            for (int i = 0; i < callsPerRound; i++) {
+                MemorySegment src = pool.asSlice(offsetFor(payloadBytes, i), payloadBytes);
+                long n = invoke(() -> (long) produceBorrow.invokeExact(src, payloadBytes));
+                // 消费结果：读首尾各一字节即可防止死代码消除，又不额外扫一遍内存。
+                sink += borrowSeg.get(ValueLayout.JAVA_BYTE, 0)
+                        + borrowSeg.get(ValueLayout.JAVA_BYTE, n - 1);
+            }
+            return sink;
+        }, callsPerRound);
+
+        Timing b = measureScenario(() -> {
+            long sink = 0;
+            for (int i = 0; i < callsPerRound; i++) {
+                MemorySegment src = pool.asSlice(offsetFor(payloadBytes, i), payloadBytes);
+                MemorySegment p = invokeAddr(() -> (MemorySegment) produceAlloc.invokeExact(
+                        src, payloadBytes)).reinterpret(payloadBytes);
+                sink += p.get(ValueLayout.JAVA_BYTE, 0) + p.get(ValueLayout.JAVA_BYTE, payloadBytes - 1);
+                invoke(() -> (long) freeBuffer.invokeExact(p, payloadBytes));
+            }
+            return sink;
+        }, callsPerRound);
+
+        Timing c = measureScenario(() -> {
+            long sink = 0;
+            for (int i = 0; i < callsPerRound; i++) {
+                MemorySegment src = pool.asSlice(offsetFor(payloadBytes, i), payloadBytes);
+                long n = invoke(() -> (long) produceIntoDst.invokeExact(
+                        dst, dst.byteSize(), src, payloadBytes));
+                sink += dst.get(ValueLayout.JAVA_BYTE, 0) + dst.get(ValueLayout.JAVA_BYTE, n - 1);
+            }
+            return sink;
+        }, callsPerRound);
+
+        Timing base = measureScenario(() -> {
+            long sink = 0;
+            for (int i = 0; i < callsPerRound; i++) {
+                MemorySegment src = pool.asSlice(offsetFor(payloadBytes, i), payloadBytes);
+                sink += javaTransformSum(src);
+            }
+            return sink;
+        }, callsPerRound);
+
+        return new ReturnCase(a, b, c, base, SAMPLE_ROUNDS);
+    }
+
+    /** Java 侧独立实现 Rust 的 {@code transform_into}，用于对拍。 */
+    private static long javaTransformSum(MemorySegment segment) {
+        long sum = 0;
+        for (long i = 0; i < segment.byteSize(); i++) {
+            // 🔴 & 0xFF 必须有：get(JAVA_BYTE) 返回**有符号** byte，
+            // 不屏蔽的话与 Rust 的「无符号」算的不是同一件事（上一轮踩过）。
+            sum += (segment.get(ValueLayout.JAVA_BYTE, i) & 0xFF) ^ RETURN_XOR;
+        }
+        return sum;
+    }
+
+    private static long sumSegment(MemorySegment segment, long len) {
+        long sum = 0;
+        for (long i = 0; i < len; i++) {
+            sum += segment.get(ValueLayout.JAVA_BYTE, i) & 0xFF;
+        }
+        return sum;
+    }
+
+    private static void reportReturnRuns(PrintStream out, Map<Long, List<ReturnCase>> all) {
+        out.printf("%n=== 回传方向：%d 趟汇总（中位数 / p95 / 跨趟极差）===%n", BIG_RUNS);
+        out.printf("%-8s %8s %11s %11s %11s %11s %11s %10s%n",
+                "载荷", "样本", "A回传指针", "B拷贝", "C写进Java", "同工Java基线", "C−基线", "跨趟极差");
+        out.println("-".repeat(100));
+
+        List<String> unreadable = new ArrayList<>();
+        Map<Long, ReturnCase> meds = new java.util.LinkedHashMap<>();
+        for (Map.Entry<Long, List<ReturnCase>> e : all.entrySet()) {
+            long payload = e.getKey();
+            List<ReturnCase> runs = e.getValue();
+            double worst = Math.max(returnSpread(runs, "a"), Math.max(
+                    returnSpread(runs, "b"), Math.max(returnSpread(runs, "c"),
+                            returnSpread(runs, "base"))));
+            boolean ok = worst <= 1.0;
+            if (!ok) {
+                unreadable.add(humanBytes(payload));
+            }
+            ReturnCase med = medianReturn(runs);
+            meds.put(payload, med);
+            // 🔴 打印逐趟值：判据是「逐次单调恶化」—— 那是**污染的指纹**，
+            // 而不是噪声。噪声来回摆，单调恶化不回摆。团队要求看到这个才能下结论。
+            StringBuilder perRun = new StringBuilder();
+            for (ReturnCase r : runs) {
+                perRun.append(String.format(" %.0f/%.0f/%.0f",
+                        r.aNs(), r.cNs(), r.baseNs()));
+            }
+            out.printf("%-8s 逐趟(A/C/基线) ns:%s%n", humanBytes(payload), perRun);
+            out.printf("G3DATA\tret\t%d\t%.1f\t%.1f\t%.1f\t%.1f\t%d%n", payload,
+                    med.aNs(), med.bNs(), med.cNs(), med.baseNs(), med.samples());
+            out.printf("%-8s %8d %11.1f %11.1f %11.1f %11.1f %11.1f %9.2f× %s%n",
+                    humanBytes(payload), med.samples(), med.aNs(), med.bNs(), med.cNs(),
+                    med.baseNs(), med.cNs() - med.baseNs(), worst, ok ? "✅可解读" : "🔴不可解读");
+        }
+        if (!unreadable.isEmpty()) {
+            out.printf("%n🔴 跨趟极差 >1.0 的档位（不可解读）：%s%n", String.join("、", unreadable));
+        }
+        printReturnVerdict(out, meds);
+    }
+
+    private static double returnSpread(List<ReturnCase> runs, String which) {
+        double[] v = new double[runs.size()];
+        for (int i = 0; i < runs.size(); i++) {
+            ReturnCase c = runs.get(i);
+            v[i] = switch (which) {
+                case "b" -> c.bNs();
+                case "c" -> c.cNs();
+                case "base" -> c.baseNs();
+                default -> c.aNs();
+            };
+        }
+        double m = median(v);
+        return m <= 0 ? Double.POSITIVE_INFINITY : (max(v) - min(v)) / m;
+    }
+
+    private static ReturnCase medianReturn(List<ReturnCase> runs) {
+        double[] a = new double[runs.size()];
+        double[] b = new double[runs.size()];
+        double[] c = new double[runs.size()];
+        double[] j = new double[runs.size()];
+        for (int i = 0; i < runs.size(); i++) {
+            a[i] = runs.get(i).aNs();
+            b[i] = runs.get(i).bNs();
+            c[i] = runs.get(i).cNs();
+            j[i] = runs.get(i).baseNs();
+        }
+        double ap95 = 0;
+        for (ReturnCase r : runs) {
+            ap95 = Math.max(ap95, r.a.p95Ns());
+        }
+        return new ReturnCase(new Timing(median(a), ap95), new Timing(median(b), 0),
+                new Timing(median(c), 0), new Timing(median(j), 0), runs.get(0).samples());
+    }
+
+    /** 结论：把回传开销加回上一轮的 35.7%。 */
+    private static void printReturnVerdict(PrintStream out, Map<Long, ReturnCase> meds) {
+        final double crossings = 550.0;
+        final double avgBatchBytes = 17_298_868.0 / 182.0;
+        final double savingMs = 325.1;
+        final double baselineMs = 895.3;
+        final double prevLargeMs = 5.917;
+
+        ReturnCase big = meds.get(16L << 20);
+        ReturnCase oneM = meds.get(1L << 20);
+        ReturnCase k64 = meds.get(64L << 10);
+        if (big == null || oneM == null || k64 == null) {
+            return;
+        }
+        out.printf("%n=== 回传换算：加上之后 35.7%% 还剩多少 ===%n");
+        out.printf("上一轮（只算 Java→Rust 传入）的整包开销 = %.3f ms%n", prevLargeMs);
+
+        // 每字节斜率：用 1MB / 16MB 两档反推（此处固定开销可忽略）。
+        double slopeC = ((big.cNs() - k64.cNs()) * (1L << 10) / ((1L << 20) - (64L << 10)))
+                / (avgBatchBytes);
+        double slopeA = ((big.aNs() - k64.aNs()) * (1L << 10) / ((1L << 20) - (64L << 10)))
+                / (avgBatchBytes);
+        double slopeB = ((big.bNs() - k64.bNs()) * (1L << 10) / ((1L << 20) - (64L << 10)))
+                / (avgBatchBytes);
+
+        for (Object[] row : new Object[][]{
+                {"A 回传指针", oneM.aNs(), slopeA},
+                {"B 拷贝", oneM.bNs(), slopeB},
+                {"C 写进 Java 缓冲", oneM.cNs(), slopeC}}) {
+            String name = (String) row[0];
+            double slope = (Double) row[2];
+            double bundle = crossings * slope * avgBatchBytes / 1e6;
+            out.printf("  %-20s 每字节斜率 %.4f ns ⇒ 整包回传开销 %6.3f ms ⇒ 端到端 %.1f%%%n",
+                    name, slope, bundle, (savingMs - prevLargeMs - bundle) / baselineMs * 100.0);
+        }
+        out.printf("%n  🔖 参照：上一步（Java→Rust 传入）整包 5.917ms，对应端到端 35.7%%%n");
+    }
+
+    /** 一档载荷的回传三形态 + 基线。 */
+    private record ReturnCase(Timing a, Timing b, Timing c, Timing base, int samples) {
+        double aNs() {
+            return a.medianNs();
+        }
+
+        double bNs() {
+            return b.medianNs();
+        }
+
+        double cNs() {
+            return c.medianNs();
+        }
+
+        double baseNs() {
+            return base.medianNs();
+        }
+    }
+
     /** 填充确定性数据，避免全零页带来的「读零页」优化偏差。 */
     private static void fillDeterministic(MemorySegment pool) {
         byte[] chunk = new byte[1 << 16];
@@ -705,6 +1024,32 @@ public final class FfmBoundaryProbe {
     @FunctionalInterface
     private interface ThrowingCall {
         long invoke() throws Throwable;
+    }
+
+    /**
+     * 返回 {@link MemorySegment} 的跨界调用包装（对应 {@code ValueLayout.ADDRESS} 返回值）。
+     *
+     * <p>🔴 <b>为什么要单独一个方法，不能复用 {@link #invoke}</b>：
+     * {@code invokeExact} 是<b>签名多态</b>的，返回类型由<b>调用点目标类型</b>决定。
+     * {@link #invoke} 声明返回 {@code long}，所以拿它去调一个返回 {@code ADDRESS}
+     * 的句柄，javac 会把调用点当成「返回 long」，而句柄实际返回 {@code MemorySegment}
+     * ⇒ 编译期就报类型不匹配（这次是<b>编译期</b>挡下来的，比上一轮那次
+     * 「异常被吞掉 → 安静地把异常开销记成跨界开销」要幸运）。
+     */
+    private static MemorySegment invokeAddr(ThrowingAddrCall call) {
+        try {
+            return call.invoke();
+        } catch (Throwable t) {
+            if (FIRST_FAULT.compareAndSet(false, true)) {
+                ERR.println("[FfmBoundaryProbe] 回传调用抛出异常（已收敛，不计入计时口径）: " + t);
+            }
+            return MemorySegment.NULL;
+        }
+    }
+
+    @FunctionalInterface
+    private interface ThrowingAddrCall {
+        MemorySegment invoke() throws Throwable;
     }
 
     /** 预热 + 多轮采样，报中位数与 p95（口径与 ColdPathBenchmark / g1-check 一致）。 */
