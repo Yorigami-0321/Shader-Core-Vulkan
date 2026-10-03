@@ -1104,12 +1104,23 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
      且 `ADVANCED_MATERIALS`/`MCBL_SS` **默认关闭** ⇒ **BSL 默认地形只写 colortex0**；
      ② ✅ **文本层翻译链已经通了**（438 行真实 FSH ⇒ **0 ERROR**，自动合成 **5 个** `layout(location=0..4) out`，
      收编 **29 条**游离 uniform）⇒ **多附件与 `gl_FragData` 改写都不是阻塞**。
-   - ⇒ 本轮真正要攻的四项（**逐条先核实再写**）：
-     ① 翻译结果能否**编译成 SPIR-V**（`sampler3D lighttex0/1`、`texture2D`、`gl_FragCoord.z`、精度限定符）；
-     ② `sampler3D lighttex0/1` 与原版**2D** lightmap 的**结构性不匹配**（`GameRenderer#lightmap()` 返回 2D 视图）；
+   - 🔴 **2026-10-04 更正（`h07`）**：**SPIR-V 编译早就验证过**（整包 `stages=190 ok=190 failed=0`，
+     BSL 地形片元三个维度目录全部成功、片元 46.7/63.7/79.9KB）⇒ 我上一轮把它记成待办是错的（立 **X41**）。
+     🔖 **且真正的缺口更靠后**：整包产物里**已有** BSL 地形片元的 SPIR-V，
+     但**地形 draw 用的仍是原版 `core/terrain`**（派生 MRT 地形管线是从 `MULTIDRAW_TERRAIN_SNIPPET`
+     建的、片段着色器是原版的）⇒ 「接入」这一步是**接线**，不是「能不能编译」。
+   - 🔖 **另一条会崩客户端的陷阱（X42）**：**「能力上限 5 槽」（未预处理切片里死分支还在）
+     ≠「生产实际 1 槽」（预处理后只剩 `gl_FragData[0]`）** —— 后者从经验上确认了 ①。
+     混用 ⇒ render pass 附件数与管线颜色目标数不一致 ⇒ `setPipeline` 抛 `IllegalStateException` **崩客户端**。
+   - ⇒ 本轮真正要攻的五项（**逐条先核实再写**）：
+     ① 把编译出的地形 SPIR-V 接到派生 MRT 地形管线的**片段着色器**（含配套顶点着色器与属性布局对齐）；
+     ② 附件数改为**跟随包的输出数**（默认配置 = **1**，不是 3）；
      ③ **44 条** OF uniform 的**取值供给**（GAP-004 那个块目前只收编了声明、还没供值）；
-     ④ `MrtPlan.SLOT_COUNT` 从 3 提到 **5**，且附件顺序**服从 DRAWBUFFERS 而非下标**（否则静默绑错槽）。
-   - 🔖 常驻回归：`TerrainProgramTranslateBaselineTest`（3 例，含「输入行数 > 300」防假绿断言）。
+     ④ `sampler3D lighttex0/1` 与原版 **2D** lightmap 的不匹配
+     （🔴 编译层面已不构成阻塞，只在**渲染期绑采样器**时暴露）；
+     ⑤ 若要支持 `ADVANCED_MATERIALS`：附件顺序须**服从 DRAWBUFFERS 而非下标**（否则静默绑错槽）。
+   - 🔖 常驻回归：`TerrainProgramTranslateBaselineTest`（3 例，**能力口径**，含「输入行数 > 300」防假绿断言）
+     + `TerrainProductionOutputCountTest`（3 例，**生产口径**，走 `ShaderPackScanner`→`ShaderPackCompiler` 全链路）。
 7. 🔖 **取证方式已换 MCP**（`minecraft` server / mcpfabric NeoForge mod，含 `vision.screenshot`、
    `control.look`、`world.setTime`）。🔴 它原先只注册在 CodeBuddy 配置里，opencode 未加载；
    本轮已 `opencode mcp add --global`（**不入库**，避免 token 进仓库）。手册见
@@ -1359,7 +1370,19 @@ DRAWBUFFERS 集合都是 `{0, 0367, 08, 08367}` ⇒ 高级材质下 `gl_FragData
 **0 个 ERROR**，`FragmentOutputAdapter` 自动合成 **5 个** `layout(location = 0..4) out vec4`，
 `UniformInjector` 收编 **29 条**游离 OF uniform
 ⇒ **「多附件」与「gl_FragData 改写」都不是阻塞**（与 GAP-003 旧判断不符，已一并更正）。
-🔖 **边界**：文本层 ≠ 能编译，**SPIR-V 编译未验证**。
+🔴 **2026-10-04 更正（`h07`）**：上面那句「边界：SPIR-V 编译未验证」**是错的** ——
+**早就验证过**。项目里本来就有「整包逐程序逐阶段跑 SPIR-V」的通路
+（`VkDispPackScan#compileAndLog` → `ShaderCompileApi` → 原版 `GlslCompiler`），
+历史日志里 BSL 地形片元**三个维度目录全部编译成功**（片元 46.7/63.7/79.9KB），
+整包 `pack compile done: stages=190 ok=190 failed=0`。⇒ 立 **X41**：断言「未验证」前先搜日志与既有通路。
+
+🔖 **同时纠正一处担忧**：`sampler3D lighttex0/1` vs 原版 2D lightmap 的不匹配，
+既然整包编译通过，就**在编译层面不构成阻塞** —— 问题只会在**渲染期绑采样器**时出现。
+
+🔴 **另挖出一条会崩客户端的陷阱**（X42）：「能力上限 5 槽」（未预处理切片里死分支还在）
+≠「生产实际 1 槽」（预处理后只剩 `gl_FragData[0]`，**从经验上确认了本节 ②**）。
+两者混用 ⇒ render pass 附件数与管线颜色目标数不一致 ⇒ `setPipeline` 抛 `IllegalStateException` **崩客户端**。
+已加无头回归 `TerrainProductionOutputCountTest`（3 例，走生产同款链路）钉住。
 
 **③ 由此的计划变更**：`MrtPlan.SLOT_COUNT = 3`（按 Iris 定的）**对 BSL 不够**（最多 5 槽），
 且**附件顺序要服从 DRAWBUFFERS 而非下标**（否则**静默绑错槽**）。
@@ -1381,4 +1404,39 @@ DRAWBUFFERS 集合都是 `{0, 0367, 08, 08367}` ⇒ 高级材质下 `gl_FragData
 `set_gamemode`/`teleport_player`/`list_players`。
 🔖 **`set_time` 治好了 §10.10 时代的老毛病**：多趟截图因昼夜漂移而不可比。
 
-- **测试**：656 单测全绿（新增 `TerrainProgramTranslateBaselineTest` 3 例，含「输入行数 > 300」防假绿断言）。
+- **测试**：659 单测全绿（`TerrainProgramTranslateBaselineTest` 3 例 = **能力口径**，
+  含「输入行数 > 300」防假绿断言；`TerrainProductionOutputCountTest` 3 例 = **生产口径**，
+  走 `ShaderPackScanner.scan` → `ShaderPackCompiler.compile` 全链路，无头）。
+
+### 10.13 🔴 SPIR-V 编译**早就验证过**（我漏看了）+「能力上限 5 槽」≠「生产实际 1 槽」（2026-10-04）
+
+> 证据：`evidence/h07-spv-already-verified-and-output-count-trap.md`。**纯核实 + 加回归，未跑客户端。**
+> 任务来源正是 §10.12 ② 给自己出的题「翻译结果能否编译成 SPIR-V」—— **答案是：早就在编译了。**
+
+**① 既有通路与实测**：`VkDispPackScan#compileAndLog` → `ShaderPackCompiler`（冷路径：include 展开 + OF 转译）
+→ `bridge/ShaderCompileApi`（驱动级：原版 `GlslCompiler` → SPIR-V），每次资源重载都跑。
+历史日志（`run/logs/` 下 6 份均可 grep）：
+
+```
+pack program compiled OK: pack=BSL_v10.1.8 program=world0/gbuffers_terrain  stage=FRAGMENT spvBytes=79896
+pack program compiled OK: pack=BSL_v10.1.8 program=world-1/gbuffers_terrain stage=FRAGMENT spvBytes=46692
+pack program compiled OK: pack=BSL_v10.1.8 program=world1/gbuffers_terrain  stage=FRAGMENT spvBytes=63724
+pack compile done: stages=190 ok=190 failed=0
+```
+
+⇒ 立 **X41**：断言「某能力未验证」之前，**先 grep 既有日志 + 读既有代码路径**。
+本项目把「整包编译 + 逐阶段 SPIR-V + 汇总计数」做得很完整，我却把答案记成待办 ——
+**而那正是我上一轮给自己出的题**。
+
+**② 一条会崩客户端的陷阱（X42）**：日志里地形片元的合成输出诊断**只有 location 0 一条**
+（全包最大 location 是 2，且来自别的程序）。原因：未预处理文本切片里死分支
+`#if defined ADVANCED_MATERIALS …` 还在 ⇒ 看得见 `gl_FragData[1..4]`（**能力上限 5**）；
+生产链路预处理后只剩 `gl_FragData[0]`（**生产实际 1**）⇒ **后者从经验上确认了 §10.12 ①**。
+🔴 混用 ⇒ render pass 附件数 ≠ 管线颜色目标数 ⇒ `setPipeline` 抛 `IllegalStateException` **崩客户端**。
+
+**③ 真正的剩余缺口比原以为的更靠后**：整包产物里**已有** BSL 地形片元的 SPIR-V，
+但**地形 draw 用的仍是原版 `core/terrain`**（派生 MRT 管线从 `MULTIDRAW_TERRAIN_SNIPPET` 建，
+片段着色器是原版的）⇒ 「接入」这一步是**接线**，不是「能不能编译」。
+
+🔖 **一处担忧要改形式**：`sampler3D lighttex0/1` 与原版 2D lightmap 的不匹配，
+既然整包 190/190 通过，就**在编译层面不构成阻塞** —— 只会在**渲染期绑采样器**时暴露。

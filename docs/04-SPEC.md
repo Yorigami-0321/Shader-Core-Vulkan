@@ -510,15 +510,16 @@ FramePass pass = frame.addPass("main");
 | 项 | 状态 |
 |---|---|
 | **让包自己的 `gbuffers_terrain` 跑起来** | ❌ 这才是真正的阻塞。🔴 **原写的「补齐 colortex1/2 的 gbuffer 语义」已被 `h06` 核实推翻** —— 那是 **_Iris_** 的语义；BSL 用 OF 式 `gl_FragData[N]` + `/* DRAWBUFFERS:… */` 映射，法线进 **colortex6**、材质进 **colortex3**，且 `ADVANCED_MATERIALS`/`MCBL_SS` **默认关闭** ⇒ **BSL 默认地形只写 colortex0** |
-| 翻译结果能否编译成 SPIR-V | ❌ **未验证**。文本层已通（438 行真实 FSH ⇒ **0 ERROR**、自动合成 **5 个** `layout(location=0..4) out`、收编 **29 条**游离 uniform，`h06`）⇒ 「多附件」与「gl_FragData 改写」**都不是阻塞** |
-| 附件槽位数与顺序 | ❌ `MrtPlan.SLOT_COUNT = 3`（按 Iris 定的）**对 BSL 不够**（最多 5 槽），且顺序要**服从 DRAWBUFFERS 而非下标**，否则**静默绑错槽** |
-| `sampler3D lighttex0/1` vs 原版 **2D** lightmap | ❌ 结构性不匹配，未处理 |
+| ~~翻译结果能否编译成 SPIR-V~~ | ✅ **已验证**（`h07` 更正）：项目既有「整包逐阶段 SPIR-V」通路，BSL 地形片元**三个维度目录全部编译成功**（片元 46.7/63.7/79.9KB），整包 `stages=190 ok=190 failed=0` |
+| **把包的地形 SPIR-V 接进派生管线** | ❌ **这才是真正的缺口**：整包产物里**已有** BSL 地形片元的 SPIR-V，但**地形 draw 用的仍是原版 `core/terrain`**（派生 MRT 管线从 `MULTIDRAW_TERRAIN_SNIPPET` 建、片段着色器是原版的）⇒ 这一步是**接线** |
+| 附件槽位数与顺序 | ❌ 🔖 **「能力上限 5 槽」≠「生产实际 1 槽」**（`h07` 实测：默认配置预处理后只剩 `gl_FragData[0]`）。接包片元时附件数必须**跟随包的输出数**，否则 `setPipeline` 抛异常**崩客户端**；开 `ADVANCED_MATERIALS` 时顺序还要**服从 DRAWBUFFERS 而非下标** |
+| `sampler3D lighttex0/1` vs 原版 **2D** lightmap | ⚠️ 整包编译 190/190 通过 ⇒ **编译层面不构成阻塞**；只会在**渲染期绑采样器**时暴露 |
 | 44 条 OF uniform 的取值供给 | ❌ GAP-004 那个块目前**只收编了声明** |
 | 半透明地形（TRANSLUCENT 组） | ❌ 未覆盖（实测该组有 249 个 draw） |
 | 画面改进 / 性能 | ❌ 无（写自己的 colortex ⇒ 地形被画两遍；代价未测） |
 
 ⇒ **方案 A 已通（生产形态）**。下一轮从「帧图内插 pass」转向
-**「让 BSL 自己的 `gbuffers_terrain` 跑起来」**（先攻：翻译结果能否编译成 SPIR-V）。
+**「把包自己的地形 SPIR-V 接进派生 MRT 管线」**（`h07` 已查明：编译早就通过，缺的是接线）。
 **这也是本轮把 GAP-003 与 GAP-004 分开做的原因**（`18-PARALLEL` H 线「顺序纪律」原本要求同批）：
 GAP-004 单独做**并非没有意义**（它的前提正是「派生管线」，没有派生管线就无处挂块），
 本轮把「通道是否真的通」「块能否挂上并每帧绑定」变成可验证事实，

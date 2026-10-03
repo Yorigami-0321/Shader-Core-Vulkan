@@ -297,6 +297,8 @@ if (DEBUG) { LOGGER.info("cull kept={}", kept); }
 | X34 | 🔴 **自建深度/颜色附件时按 Vulkan 惯例猜清屏值**（尤其深度清 `1.0`） | 本引擎是**反向 Z**（近→1.0、远→0.0），字节码级三条证据：`Projection#getMatrix` 把 `setPerspective` 的 near/far **实参对调**、`DepthStencilState.DEFAULT` = **`GREATER_THAN_OR_EQUAL`**、`MainTarget` 深度 **`D32_FLOAT`** 且 clear 传 **`0.0`**。⚠️ `isZZeroToOne()` 与反向无关（只适配 Vulkan `[0,1]` vs GL `[-1,1]`）。清 `1.0`（= 近平面）会让每个片元被深度测试掉，**零报错、零告警**，症状与「什么都没执行」像素上完全同形。⇒ 自建任何附件，**先读原版 clear pass 的清屏值**（`AGENT_CONTEXT.md` §10.10） |
 | X35 | 🔴 **拿「日志里没有 validation error」当正确性证据** | 本机**没装** validation layer，且 `getLastDebugMessages()` 返回空 ⇒ 这类错误在本机**永远不会有日志**。「管线附件数 ≠ pass 附件数」会一路静默到像素。判据应按「像素 > registered==compiled > 不抛 Missing uniform」排序（§9.4.15） |
 | X36 | 🔴 **在客户端运行期间改 `run/config`**，或用**无节区感知**的正则改配置 | ① 客户端退出时会把内存配置回写文件 ⇒ 运行期的改动被覆盖；② 无节区正则（如 `^(\s*)enabled = false$`）会连**顶层总开关**一起改掉，我曾因此关掉整个 mod 并误判成「功能不生效」。⇒ 改配置要**按 TOML 节区**定位键（本机 `tools/vulkan-local/set_cfg.py`，🔴 不入库），纪律为**先 kill → 再改 → 校验 → 再启动** |
+| X41 | 🔴 **断言「某能力未验证」之前不搜既有日志与既有代码路径** | 本项目已有「冷路径整包编译 + 逐阶段 SPIR-V + 汇总计数」的完整通路（`VkDispPackScan#compileAndLog`），日志里白纸黑字写着 `pack compile done: stages=190 ok=190 failed=0`；我却把「BSL 地形片元能否编译成 SPIR-V」记成待办 —— **而那正是我上一轮给自己出的题**。⇒ 下结论「未验证」之前先 `grep` 既有日志 + 读既有通路；**别把自己的记忆当证据** |
+| X42 | 🔴 **拿「能力上限」当「生产实际」** | 例：未预处理文本切片里 `FragmentOutputAdapter` 能合成 **5** 个输出声明（死分支还在），而生产链路预处理后 BSL 默认配置只有 **1** 个。两者都真，混用会让 render pass 附件数与管线颜色目标数不一致 ⇒ `setPipeline` 抛 `IllegalStateException` **直接崩客户端**。⇒ **能力上限写进类注释，生产实际用回归测试钉住** |
 | X39 | 🔴 **拿一个包的语义当所有包的语义**（尤其把 Iris 的 `colortex1/2` 当成 OF 的） | 实测 BSL v10.1.8 用 OF 式 `gl_FragData[N]` + `/* DRAWBUFFERS:… */` 映射，法线进 **colortex6**、材质进 **colortex3**；且 `ADVANCED_MATERIALS`/`MCBL_SS` **默认关闭** ⇒ 默认地形只写 colortex0。⇒ 不同包的 gbuffer 语义**不同**，按附件**下标**绑定会静默绑错槽；必须读该包自己的 `DRAWBUFFERS` |
 | X40 | 🔴 **探针截取源码时用「找下一个 #endif」而不是按嵌套计数** | 嵌套 `#endif` 常顶格（BSL 即如此），会只截到片段的头几行 —— 若那几行恰好不含被测特征，就得到**零诊断、success=true** 的**假绿**。⇒ 常驻测试必须**先断言输入规模**（如行数下限），再看结论 |
 | X37 | 🔴 **改了共享状态后，不重测就沿用旧的「某路径不通」结论** | h04 据**深度修复前**的观察断言「帧图内插 pass 从未成功」，而深度修复后**从未重测**该路径 ⇒ 一个 bug 的两种表现被当成了「这条路径独有的问题」，白丢一个未完成项。⇒ 改共享状态（深度清屏值、uniform 布局、管线形态）后，**所有引用了该状态的旧结论一律重测** |
@@ -414,6 +416,8 @@ mod_group_id             = dev.vkdisp
 [ ] 🔖 判据内容能区分被测属性：验坐标/朝向用**有空间结构**的内容，不是渐变/常量指纹（X38）
 [ ] 🔴 涉及包的 gbuffer 语义时，结论基于**该包自己的** `DRAWBUFFERS`，不套用别的包（X39）
 [ ] 🔖 探针截取源码后**先断言输入规模**，再看结论（X40）
+[ ] 🔖 断言「某能力未验证」前，先 grep 既有日志 + 读既有代码路径（X41）
+[ ] 🔖 引用「能力上限」时同时给出「生产实际值」，两者不混用（X42）
 [ ] 🔴 判据里没有把「日志无 validation error」当证据（本机无该层）（X35）
 [ ] 🔴 改 `run/config` 按节区定位键、且在客户端 kill 之后改（X36）
 [ ] 🔴 没有把公开基准（如 naga vs glslang）直接当本项目选型结论（X32）

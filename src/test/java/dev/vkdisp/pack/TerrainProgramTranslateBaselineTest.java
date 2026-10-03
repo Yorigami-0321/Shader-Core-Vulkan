@@ -86,6 +86,25 @@ class TerrainProgramTranslateBaselineTest {
                 "诊断措辞变了，无法从消息里读出条数：" + text);
     }
 
+    /**
+     * 未预处理文本切片里合成出的输出槽数（**能力上限**口径）。
+     *
+     * <p>🔖 <b>不是生产实际值</b>：本方法喂的是没展开 {@code #include}、没求值预处理条件的
+     * 文本切片，所以死分支（{@code #if defined ADVANCED_MATERIALS …}）仍在，
+     * {@code gl_FragData[1..4]} 都被看见。生产链路的实际值见
+     * {@link TerrainProductionOutputCountTest}（BSL 默认配置 = **1** 槽）。
+     */
+    static int rawSliceOutputCount() throws Exception {
+        String out = OfGlslTranslator.translate(ShaderStage.FRAGMENT, readStage("FSH")).text();
+        int max = -1;
+        var m = java.util.regex.Pattern
+                .compile("layout\\s*\\(\\s*location\\s*=\\s*(\\d+)\\s*\\)\\s*out\\s+vec4").matcher(out);
+        while (m.find()) {
+            max = Math.max(max, Integer.parseInt(m.group(1)));
+        }
+        return max + 1;
+    }
+
     // ------------------------------------------------------------------ 辅助
 
     private static String readStage(String macro) throws Exception {

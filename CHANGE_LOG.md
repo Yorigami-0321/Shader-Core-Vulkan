@@ -4,6 +4,41 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-04（三十一）— 🔴 SPIR-V 编译**早就验证过**（我漏看了）+「能力上限 5 槽」≠「生产实际 1 槽」
+
+> **verdict = 纯核实轮 + 加回归测试，未跑客户端。**
+> 任务来源正是上一轮给自己出的题「翻译结果能否编译成 SPIR-V」—— 答案是：**早就在编译了。**
+
+- **本次改了什么**：
+  1. 读明白既有通路 `VkDispPackScan#compileAndLog` → `ShaderPackCompiler`（冷路径）
+     → `bridge/ShaderCompileApi` → 原版 `GlslCompiler`（驱动级 SPIR-V），每次资源重载都跑；
+  2. 查历史日志（`run/logs/` 下 6 份）取证，并据此**撤回 h06 的「未验证」**；
+  3. 新增**无头**回归 `TerrainProductionOutputCountTest`（3 例），走**生产同款链路**
+     `ShaderPackScanner.scan` → `ShaderPackCompiler.compile`；
+  4. `TerrainProgramTranslateBaselineTest` 补包级 `rawSliceOutputCount()` 与类注释
+     （说明它是**能力口径**，生产口径在另一个测试）；
+  5. 文档：新增 `evidence/h07-…`；更正 `h06` §2（新增 §2.1/§2.2）、`04-SPEC` §5.0.5 未完成表、
+     `13-GAP-REGISTRY` GAP-003 状态列、`AGENT_CONTEXT` §10.12 与新增 §10.13、`evidence/README.md`。
+- **🔴 结论一：SPIR-V 编译早就验证过。** 历史日志实测：
+  `program=world0/gbuffers_terrain stage=FRAGMENT spvBytes=79896`、`world-1 … 46692`、
+  `world1 … 63724`，顶点各约 35.7KB；整包 `pack compile done: stages=190 ok=190 failed=0`。
+  ⇒ 我上一轮把「能否编译成 SPIR-V」记成待办是**错的**。
+  ⇒ 立 **X41**：断言「某能力未验证」之前，先 grep 既有日志 + 读既有代码路径 ——
+  **别把自己的记忆当证据**。本项目把整包编译做得很完整，我却在没搜日志的情况下把答案记成待办，
+  而那正是我上一轮给自己出的题。
+- **🔴 结论二：「能力上限 5 槽」≠「生产实际 1 槽」，混用会崩客户端。**
+  日志里地形片元的合成输出诊断**只有 location 0 一条**（全包最大 location 是 2，且来自别的程序）。
+  原因：未预处理文本切片里死分支 `#if defined ADVANCED_MATERIALS …` 还在 ⇒ 看得见 `gl_FragData[1..4]`；
+  生产链路预处理后只剩 `gl_FragData[0]` ⇒ **后者从经验上确认了 h06 的「BSL 默认地形只写 colortex0」**。
+  🔴 混用 ⇒ render pass 附件数 ≠ 管线颜色目标数 ⇒ `FrontendRenderPass#setPipeline` 抛
+  `IllegalStateException`（该校验 `h05` 已实测存在）**⇒ 客户端直接崩**。⇒ 立 **X42**。
+- **🔖 真正的剩余缺口比原以为的更靠后**：整包产物里**已有** BSL 地形片元的 SPIR-V（46.7–79.9KB），
+  但**地形 draw 用的仍是原版 `core/terrain`** —— 派生 MRT 地形管线是从 `MULTIDRAW_TERRAIN_SNIPPET` 建的，
+  片段着色器是原版的。⇒ 「接入」这一步是**接线**，不是「能不能编译」。
+- **🔖 同时纠正一处担忧**：`sampler3D lighttex0/1` 与原版 2D lightmap 的不匹配，
+  既然整包 190/190 通过，**在编译层面不构成阻塞** —— 只会在**渲染期绑采样器**时暴露。担忧的形式要改。
+- **测试**：659 单测全绿（新增 3 例）；`./gradlew build` exit 0；残留游戏进程数 = 0。
+
 ## 2026-10-03（三十）— 文档收敛：撤回散落的「0 validation error」、修 §10.9/10.10 顺序、补 §10.11/§10.12
 
 > **verdict = 纯文档轮。** 起因：写文档时审出**五处陈旧断言**与**一处重复行**。

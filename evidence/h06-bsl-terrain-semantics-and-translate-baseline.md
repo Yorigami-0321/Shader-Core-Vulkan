@@ -98,9 +98,57 @@ gl_FragData[0] = albedo;
 🔖 **所以「多附件」与「gl_FragData 改写」这两件事都不是阻塞** ——
 这与我 GAP-003 条目里「多附件原语与地形接入都没做」的旧判断不符，已一并更正。
 
-⚠️ **注意这条结论的边界**：文本层 ≠ 能编译。**尚未验证**翻译结果能否通过 SPIR-V 编译
-（`sampler3D lighttex0/1` vs 原版 2D lightmap、`texture2D`、`gl_FragCoord.z`、精度限定符等），
-这才是下一卡的点。
+### 2.1 🔴🔴 更正：SPIR-V 编译**早就被验证过**，是本节自己漏看了
+
+⚠️ **本节初版写的是**「文本层 ≠ 能编译，翻译结果能否编译成 SPIR-V **尚未验证**」——
+**这句是错的**。项目里**本来就有一条对整包逐程序逐阶段跑 SPIR-V 编译的通路**
+（`VkDispPackScan#compileAndLog` → `ShaderPackCompiler` 冷路径 → `bridge/ShaderCompileApi`
+→ 原版 `GlslCompiler`），每次资源重载都会跑一遍并打日志。直接查历史日志：
+
+```
+vkdisp: pack program compiled OK: pack=BSL_v10.1.8 program=world0/gbuffers_terrain  stage=FRAGMENT file=world0/gbuffers_terrain.fsh  spvBytes=79896
+vkdisp: pack program compiled OK: pack=BSL_v10.1.8 program=world0/gbuffers_terrain  stage=VERTEX   file=world0/gbuffers_terrain.vsh  spvBytes=35736
+vkdisp: pack program compiled OK: pack=BSL_v10.1.8 program=world-1/gbuffers_terrain stage=FRAGMENT file=world-1/gbuffers_terrain.fsh spvBytes=46692
+vkdisp: pack program compiled OK: pack=BSL_v10.1.8 program=world1/gbuffers_terrain  stage=FRAGMENT file=world1/gbuffers_terrain.fsh  spvBytes=63724
+vkdisp: pack program compiled OK: pack=BSL_v10.1.8 program=world1/gbuffers_terrain  stage=VERTEX   file=world1/gbuffers_terrain.vsh  spvBytes=35620
+vkdisp: pack compile done: stages=190 ok=190 failed=0
+```
+
+⇒ **BSL 的地形片元（三个维度目录）早已成功编译成 SPIR-V**，整包 **190/190 零失败**，
+而且已重复出现在此前每一趟的日志里（`run/logs/` 下多份均可 grep 到 12 条）。
+
+🔖 **教训（本轮最贵的一条）**：断言「某能力未验证」之前，**先搜既有日志与既有代码路径**。
+本项目把「冷路径整包编译 + 逐阶段 SPIR-V + 汇总计数」做得很完整，
+我却在**没有搜日志**的情况下把它记成待办 —— 而这正是 §2 想回答的问题。
+⇒ 立 **X41**。
+
+### 2.2 🔖 「能力上限 5 槽」≠「生产实际 1 槽」—— 这个差别会**崩游戏**
+
+同一批日志里，地形片元的合成输出诊断**只有一条**：
+
+```
+vkdisp: pack diagnostic: INFO: program/gbuffers_terrain.glsl:425:
+        包内未声明 location 0 的片元输出，已合成声明 layout(location = 0) out vec4 vkdispFragOut0;
+```
+
+（全包范围里出现过的最大 location 是 2，且来自别的程序。）
+
+**为什么本节 §2 量到 5、生产只有 1**：§2 喂的是**未预处理文本切片** ——
+没展开 `#include`、没求值预处理条件 ⇒ 死分支 `#if defined ADVANCED_MATERIALS …` 仍在，
+`gl_FragData[1..4]` 全被看见。生产链路先展开再求值 ⇒ 死分支消失。
+
+⇒ 🔴 **两者都是真的，但不能混用**。本节 §2 的 5 是 **`FragmentOutputAdapter` 的能力上限**；
+**生产实际值是 1**（= 只用 colortex0），这从经验上**确认了本节 ① 的结论**。
+
+🔴🔴 **而混用的后果是崩客户端**：若按「5 槽」建 pass，而管线颜色目标数是 1（或反之），
+`FrontendRenderPass#setPipeline` 会校验「render pass 颜色附件数 == 管线颜色目标数」
+并抛 `IllegalStateException`（`h05` 已实测该校验存在）⇒ **客户端直接崩**。
+
+已加两个无头回归（`TerrainProductionOutputCountTest`，3 例，走**生产同款链路**
+`ShaderPackScanner.scan` → `ShaderPackCompiler.compile`）：
+① 生产实际输出数 == 1（三个维度目录逐个断言）；
+② 「能力上限 ≠ 生产实际」这条对照本身；
+③ 守卫 `MrtPlan.slotCount()` 仍是两侧唯一来源，且 `SLOT_COUNT` 没被悄悄改成 5。
 
 ## 3. 🔴 探针本身踩的坑（值得登记，因为它**差点给出假绿**）
 
@@ -132,8 +180,9 @@ gl_FragData[0] = albedo;
 
 | 没证明 | 说明 |
 |---|---|
-| ⛔ 翻译结果能编译成 SPIR-V | 本轮只到文本层；**编译未验证** |
-| ⛔ DRAWBUFFERS 映射是否被正确实现 | `FragmentOutputAdapter` 注释说「n 由 DRAWBUFFERS 决定」，但**未用 BSL 的 `0367`/`08` 分支实测过映射结果** |
+| ~~⛔ 翻译结果能编译成 SPIR-V~~ | ✅ **已验证（本节 §2.1 更正）**：三个维度目录全部编译成功，整包 190/190 零失败 |
+| ⛔ DRAWBUFFERS 映射是否被正确实现 | `FragmentOutputAdapter` 注释说「n 由 DRAWBUFFERS 决定」，但**未用 BSL 的 `0367`/`08` 分支实测过映射结果**（默认配置下这些分支是死的，量不到） |
+| ⛔ 编译出的地形 SPIR-V **被真正用上** | 🔴 这才是真正的缺口：整包编译产物里有 BSL 地形片元的 SPIR-V，但**地形 draw 用的仍是原版 `core/terrain`** —— 派生 MRT 地形管线是从 `MULTIDRAW_TERRAIN_SNIPPET` 建的，片段着色器是原版的 |
 | ⛔ 44 条 uniform 的值从哪来 | 只收编了声明 |
 | ⛔ `sampler3D` 能否用 | 原版 lightmap 是 `GpuTextureView` 2D |
 | ⛔ 任何画面改进 | 本轮纯核实 |
