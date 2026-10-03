@@ -5,7 +5,13 @@
 >
 > **结论先行**：✅ **多附件原语在本机后端 + 驱动 + 我方管线构造上真的可用**
 > （一个 pass 绑 3 个颜色附件、一条管线声明 3 个 `ColorTargetState`、一个片元写 3 路
-> `layout(location=N) out`，三槽各自拿到**可量化区分**的内容，0 validation error）。
+> `layout(location=N) out`，三槽各自拿到**可量化区分**的内容）。
+>
+> 🔴 **2026-10-03 撤回**：原文与 §6 表格里的「0 validation error」**不构成证据** ——
+> 实测本机（lavapipe）**没有安装** `VK_LAYER_KHRONOS_validation`，也没有设 `VK_LAYER`，
+> `GpuDevice#getLastDebugMessages()` 也返回空。日志里搜不到 validation error 只说明
+> **没人会报**。本文件其余结论（像素级 meanR 指纹、`registered==compiled`）**仍然成立**，
+> 因为它们不依赖 validation layer。详见 `h04-gbuffer-terrain-pass.md` §6。
 > 🔴 **但地形没被接进来，包的自研 `gbuffers_*` 片元也没有** ⇒ **GAP-003 仍未完成**。
 
 ## 环境
@@ -154,7 +160,7 @@ mrt-off-control.png  sha256 = 3e95e5c0…
 
 | 判据 | 结果 |
 |---|---|
-| `validation error` / `VUID-` | **0** |
+| `validation error` / `VUID-` | **0** —— 🔴 **无意义**：本机无 validation layer（见文首撤回说明）。真正管用的判据是**像素级** meanR 指纹 |
 | `Missing uniform` | **0** |
 | vkdisp `ERROR` | **0**（除 §3 那次**故意**配置的越界） |
 | `stages=190 ok=190 failed=0` | ✅ 未回退 |

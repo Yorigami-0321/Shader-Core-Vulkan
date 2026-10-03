@@ -294,6 +294,10 @@ if (DEBUG) { LOGGER.info("cull kept={}", kept); }
 | X29 | 🔴 **新增注入点时一次性开启多个，导致问题无法二分定位** | 违反「稳定」支柱：M1 要求逐个开启 + 逐个可关 |
 | X30 | 🔴 **Rust `extern "C"` 未 `catch_unwind`，或 `Cargo.toml` 设 `panic = "abort"`** | panic 穿 FFI = UB = JVM abort = 游戏崩溃（T17 / N5 / N6） |
 | X31 | 🔴 **原生路径未提供 A/B 开关** | 无法判断问题是原生带来的还是别处坏的（N4） |
+| X34 | 🔴 **自建深度/颜色附件时按 Vulkan 惯例猜清屏值**（尤其深度清 `1.0`） | 本引擎是**反向 Z**：原版 clear pass 清的是 **`0.0`**（`clearColorAndDepthTextures(…, 0.0)`，`LevelRenderer:255`）。清 `1.0`（= 近平面）会让每个片元被深度测试掉，**零报错、零告警**，症状与「什么都没执行」像素上完全同形。⇒ 自建任何附件，**先读原版 clear pass 的清屏值**（`AGENT_CONTEXT.md` §10.10） |
+| X35 | 🔴 **拿「日志里没有 validation error」当正确性证据** | 本机**没装** validation layer，且 `getLastDebugMessages()` 返回空 ⇒ 这类错误在本机**永远不会有日志**。「管线附件数 ≠ pass 附件数」会一路静默到像素。判据应按「像素 > registered==compiled > 不抛 Missing uniform」排序（§9.4.15） |
+| X36 | 🔴 **在客户端运行期间改 `run/config`**，或用**无节区感知**的正则改配置 | ① 客户端退出时会把内存配置回写文件 ⇒ 运行期的改动被覆盖；② 无节区正则（如 `^(\s*)enabled = false$`）会连**顶层总开关**一起改掉，我曾因此关掉整个 mod 并误判成「功能不生效」。⇒ 改配置要**按 TOML 节区**定位键（本机 `tools/vulkan-local/set_cfg.py`，🔴 不入库），纪律为**先 kill → 再改 → 校验 → 再启动** |
+| X33 | 🔴 **用自写 `pgrep`/`ps | grep` 模式统计游戏进程数并据此断言「残留 = 0」** | 模式打不中就是**假零**，而 `pgrep -f` 还会匹配到 grep 自身造成**假二**，两个方向都不可信。必须按 `-Dfml.modFolders=vkdisp` 匹配（本机固化在 `tools/vulkan-local/game_procs.sh`，🔴 `/tools/` 不入库，换机器照此判据自行实现），因为 NeoForge devlaunch 的命令行主类是 `net.neoforged.devlaunch.Main`）。假零会让两个客户端并存抢 `session.lock`，白跑一趟（`AGENT_CONTEXT.md` §9.4.14） |
 | X32 | 🔴 **用「naga 比 glslang 快 30×」这类公开基准直接当本项目选型结论** | 该基准不含 `#include` 与 `GL_*` 扩展语义，对 OF 方言包会编译失败。公开数据只能作潜力证据，选型必须靠 G 系列自测 |
 
 ---
@@ -400,6 +404,10 @@ mod_group_id             = dev.vkdisp
 [ ] 🔴 若含原生库：每个 `extern "C"` 有 `catch_unwind`、`Cargo.toml` 未设 `panic = "abort"`（T17 / X30）
 [ ] 🔴 commit message **无任何 trailer**（`Co-Authored-By` / `Signed-off-by` 等），格式为 conventional 前缀 + 中文正文（§6.1）
 [ ] 🔴 若含原生库：FFM 按批粒度接口、有 A/B 开关、Java 路径可独立跑通（T18/T19/N4/N1）
+[ ] 🔴 报「残留游戏进程数」时贴的是按 `-Dfml.modFolders=vkdisp` 匹配后计数的输出，不是自写 `pgrep`（X33）
+[ ] 🔴 自建深度附件清屏值 = **0.0**（反向 Z），不是按惯例猜 1.0（X34）
+[ ] 🔴 判据里没有把「日志无 validation error」当证据（本机无该层）（X35）
+[ ] 🔴 改 `run/config` 按节区定位键、且在客户端 kill 之后改（X36）
 [ ] 🔴 没有把公开基准（如 naga vs glslang）直接当本项目选型结论（X32）
 [ ] 文档已同步
 ```

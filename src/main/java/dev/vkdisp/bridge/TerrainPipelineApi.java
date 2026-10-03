@@ -34,6 +34,7 @@ import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.pipeline.UniformType;
 import dev.vkdisp.VkDisp;
 import dev.vkdisp.VkDispConfig;
+import dev.vkdisp.pipeline.model.MrtPlan;
 import dev.vkdisp.pipeline.model.TerrainDerivedPlan;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -64,6 +65,19 @@ public final class TerrainPipelineApi {
 
     /** 已注册派生管线：key = {@code 层名 + "|" + multiDraw}（顺序稳定，便于日志与计数核对）。 */
     private static final Map<String, RenderPipeline> DERIVED = new LinkedHashMap<>();
+
+    /**
+     * GAP-003 方案 A：**多附件**变体（与 {@link #DERIVED} 同键空间）。
+     *
+     * <p>🔖 <b>为什么要两套</b>：同一批地形 draw 在两种 pass 里跑 ——
+     * 原版主 pass（**单**附件，颜色目标是 main）与我方 gbuffer pass（**多**附件）。
+     * Vulkan 要求管线颜色附件数与 render pass 附件数**相等** ⇒ 两条 pass 必须用两条不同的管线。
+     * 而 M-01 的注入点只知道「谁在调我」，不知道 pass ⇒ 靠 {@link MrtTerrainPass#active()} 区分。
+     */
+    private static final Map<String, RenderPipeline> DERIVED_MRT = new LinkedHashMap<>();
+
+    /** 多附件变体的「已被取用」标记（每条只打一次日志）。 */
+    private static final Map<String, Boolean> WIRED_MRT = new LinkedHashMap<>();
 
     /** 不可识别层名的一次性告警（防拼写错静默通过，07-CONSTRAINTS T11）。 */
     private static final java.util.Set<String> WARNED_UNKNOWN_LAYERS = new java.util.HashSet<>();
@@ -149,11 +163,71 @@ public final class TerrainPipelineApi {
     }
 
     /**
+     * 注册 GAP-003 方案 A 的**多附件**地形派生管线（每条 = 单附件版的同层同变体 + N 个颜色附件）。
+     *
+     * <p>🔖 <b>逐条 try/catch 是刻意的</b>（同 {@link #registerTerrainDerivedPipelines}）：
+     * 任一条构造失败时其余 5 条仍应可用；合并计数会把「一条坏」表现成「全灭」。
+     */
+    public static void registerTerrainDerivedMrtPipelines(RegisterRenderPipelinesEvent event) {
+        for (TerrainDerivedPlan.Spec spec : TerrainDerivedPlan.all()) {
+            String mrtKey = key(spec.layer(), spec.multiDraw());
+            try {
+                RenderPipeline.Builder builder = spec.multiDraw()
+                        ? RenderPipeline.builder(RenderPipelines.MULTIDRAW_TERRAIN_SNIPPET)
+                        : RenderPipeline.builder(RenderPipelines.TERRAIN_SNIPPET);
+                builder.withLocation(Identifier.fromNamespaceAndPath(
+                                TerrainDerivedPlan.NAMESPACE,
+                                spec.location().substring((TerrainDerivedPlan.NAMESPACE + ":").length()) + "_mrt"))
+                        .withBindGroupLayout(BindGroupLayout.builder()
+                                .withUniform(TERRAIN_PARAMS_UNIFORM, UniformType.UNIFORM_BUFFER)
+                                .build())
+                        // 🔖 与 MrtTerrainPass 建的多附件 pass 附件数**必须相等**（Vulkan 要求）。
+                        // 两侧都取 MrtPlan.SLOT_COUNT —— 单点真源，避免「一处改了一处没改」。
+                        .withColorTargetStates(0, MrtPlan.slotCount() - 1, () -> ColorTargetState.DEFAULT);
+                if (spec.hasAlphaCutout()) {
+                    builder.withShaderDefine("ALPHA_CUTOUT", spec.alphaCutout());
+                }
+                builder.withColorTargetState(spec.translucentBlend()
+                        ? new ColorTargetState(BlendFunction.TRANSLUCENT)
+                        : ColorTargetState.DEFAULT);
+                RenderPipeline pipeline = builder.build();
+                event.registerPipeline(pipeline);
+                // 纳入 registered==compiled 口径：MRT 变体编译不过必须显式暴露（否则地形会静默退回）。
+                PipelineApi.recordTerrainDerived(pipeline);
+                DERIVED_MRT.put(mrtKey, pipeline);
+                WIRED_MRT.put(mrtKey, Boolean.FALSE);
+            } catch (Throwable t) {
+                VkDisp.LOGGER.error(
+                        "vkdisp: [GAP-003/A] terrain MRT derived pipeline registration failed: layer={} multiDraw={}",
+                        spec.layer(), spec.multiDraw(), t);
+            }
+        }
+        VkDisp.LOGGER.info("vkdisp: [GAP-003/A] terrain MRT derived pipelines registered: {}/6 (colorTargets={})",
+                DERIVED_MRT.size(), MrtPlan.slotCount());
+    }
+
+    /**
      * M-01 注入点入口：把「原版层名 + multiDraw」解析成派生管线（**只查表，不写渲染逻辑**）。
      *
      * @return 派生管线；开关关闭 / 未注册 / 层名不可识别 → {@code null}（调用方必须继续走原版返回值）
      */
     public static RenderPipeline derivedTerrainPipeline(String layer, boolean multiDraw) {
+        // 🔖 GAP-003 方案 A：我方 MRT 地形 pass 内必须换**多附件变体** ——
+        // 原版 DrawSeparate#render 只调 layer.pipeline(false)、不透传 pass 引用，
+        // 所以「当前在哪个 pass」只能由我方置位标记告知（见 MrtTerrainPass.active）。
+        // ⚠️ 标记漏清 ⇒ 原版单附件 pass 拿到多附件管线 ⇒ 立刻 validation error
+        //（所以置位/清位都放在 finally 里）。
+        if (MrtTerrainPass.active()) {
+            RenderPipeline mrt = DERIVED_MRT.get(key(layer, multiDraw));
+            if (mrt != null) {
+                WIRED.put(key(layer, multiDraw), Boolean.TRUE);
+                if (Boolean.FALSE.equals(WIRED_MRT.put(key(layer, multiDraw), Boolean.TRUE))) {
+                    VkDisp.LOGGER.info("vkdisp: [GAP-003/A] wired (mrt variant): layer={} multiDraw={} -> {}",
+                            layer, multiDraw, mrt.getLocation());
+                }
+                return mrt;
+            }
+        }
         if (!wireTerrainEnabled()) {
             if (WIRE_OFF_LOGGED.compareAndSet(false, true)) {
                 VkDisp.LOGGER.info("vkdisp: [M-01] disabled by config (mixin.wireTerrain=false)"

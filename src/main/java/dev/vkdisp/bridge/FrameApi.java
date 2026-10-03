@@ -67,6 +67,7 @@ import java.util.OptionalDouble;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MappableRingBuffer;
 import dev.vkdisp.glsl.translate.BuiltinsBlockLayout;
+import dev.vkdisp.pipeline.model.MrtPlan;
 import dev.vkdisp.render.OfUniformManager;
 
 /**
@@ -90,6 +91,8 @@ public final class FrameApi {
     public record FrameParams(float phase, float intensity) {}
 
     /** std140 mat4 = 64 字节（列主序，列间对齐 16）。 */
+    private static boolean firstTerrainReadbackLogged;
+
     private static final int LIGHT_MATRIX_BYTES = 64;
 
     /** 每帧上传的光空间矩阵环形缓冲（与 paramsRing 同为原版 MappableRingBuffer 模式）。 */
@@ -986,8 +989,31 @@ public final class FrameApi {
         // ⚠️ 放在**整条链之后**：它会把主目标覆盖成某个 colortex 的内容，
         // 放在链中间会毁掉前面 pass 的产物（那不是诊断，是自伤）。
         if (MrtProbe.enabled()) {
-            MrtProbe.resizeIfNeeded(main);
-            MrtProbe.draw(label + " mrt");
+            if (MrtTerrainPass.enabled()) {
+                // 🔖 方案 A 的 colortex 优先回读：它才是「地形真的画进多附件」的直接证据
+                //（MrtProbe 自己的 colortex 是全屏三角形探针，与地形无关）。
+                // ⚠️ 槽数必须取 **MrtTerrainPass 的** —— 探针那套本轮没建，是 0；
+                //    上一版误取探针槽数 ⇒ 每帧抛「slot 0 out of range 0..-1」（本轮踩到，已修）。
+                if (!MrtTerrainPass.toMain() && MrtTerrainPass.actualSlots() > 0) {
+                    int slot = MrtPlan.requireViewSlot(MrtProbe.viewSlot(), MrtTerrainPass.actualSlots());
+                    GpuTextureView terrainView = MrtTerrainPass.slotView(slot);
+                    // 🔖 埋点节流：只打一次。原版把这行写成「每帧都打」，
+                    //   一次跑出上千行日志 —— 热路径日志 I/O 本身就是开销（M-01 的教训）。
+                    if (!firstTerrainReadbackLogged) {
+                        firstTerrainReadbackLogged = true;
+                        dev.vkdisp.VkDisp.LOGGER.info(
+                                "vkdisp: [GAP-003/A] colortex readback: requestedSlot={} resolvedSlot={}"
+                                        + " slots={} view={} probeView={}",
+                                MrtProbe.viewSlot(), slot, MrtTerrainPass.actualSlots(),
+                                terrainView == null ? "null" : terrainView.toString(),
+                                MrtProbe.slotView(slot) == null ? "null" : "present");
+                    }
+                    MrtProbe.drawExternalView(label + " gbuffer terrain", terrainView, slot);
+                }
+            } else {
+                MrtProbe.resizeIfNeeded(main);
+                MrtProbe.draw(label + " mrt");
+            }
         }
         return new FrameSize(width, height);
     }

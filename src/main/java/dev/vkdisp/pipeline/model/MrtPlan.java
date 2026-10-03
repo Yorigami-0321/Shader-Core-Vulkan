@@ -52,6 +52,23 @@ public final class MrtPlan {
     /** 原版 {@code ColorTargetState.MAX_COLOR_TARGETS}（8）—— 本项目自设上限的合法上界。 */
     public static final int HARD_MAX_SLOTS = 8;
 
+    /**
+     * 本次运行**实际**使用的附件数（诊断可调）。
+     *
+     * <p>🔖 <b>为什么做成可调</b>：Vulkan 动态渲染下「管线颜色附件数 ≠ render pass 附件数」
+     * 是 validation error，但**本机没有装 validation layer**（实测：无
+     * {@code VK_LAYER_KHRONOS_validation}）⇒ 这种不匹配是**静默未定义行为**，
+     * 症状就是「draw 提交了、一条片元都没出、日志全绿」。
+     * 为了把「附件数不匹配」与「其他原因」分开，必须能**同时**把两侧改成同一个数：
+     * 1 = 与原版同形的管线（若这样能出画面 ⇒ 问题就在多附件本身），3 = 出问题的配置。
+     *
+     * <p>🔖 管线与 pass **必须取同一个值**（单点真源），否则又落回不匹配。
+     */
+    public static int slotCount() {
+        int requested = dev.vkdisp.VkDispConfig.MRT_ATTACHMENTS.get();
+        return Math.max(1, Math.min(HARD_MAX_SLOTS, requested));
+    }
+
     /** 槽位的 OF 身份（仅日志/文档口径，不参与任何渲染逻辑）。 */
     public static final List<String> SLOT_ROLES = List.of("colortex0/albedo", "colortex1/normal+lightmap",
             "colortex2/material");

@@ -1,0 +1,194 @@
+package dev.vkdisp.bridge;
+/**
+ * 【参考调研】GAP-003 方案 A 接线纪律的单测 / 只读工程自身源码
+ * 0. 合规核对（第 0 步闸门）：参考对象 = 本仓库 `src/main/java/dev/vkdisp/bridge/` 与
+ *    `pipeline/model/TerrainDerivedPlan`（MIT，自有代码）+ `docs/04-SPEC.md` §5.0。
+ *    → 可并入本项目（MIT）：本文件只做源码文本断言，不引用任何外部代码。
+ * 1. 官方/主实现：无（纯文本断言）。
+ * 2. 备选：无。
+ * 3. 我们的差异点：把「方案 A 的接线纪律」变成构建期红灯 ——
+ *    其中两条是**静默失效**（不出错、只是没生效）：① 帧图 pass 被剔除；
+ *    ② M-01 的活动标记漏清 ⇒ 原版 pass 拿到多附件管线。
+ * 4. 许可证核对：本项目 MIT。
+ * 5. 性能基线：❄️ 单测。
+ */
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+/**
+ * 方案 A（地形进多附件 pass）的接线守卫。
+ *
+ * <p>🔖 这些断言守的都是**静默失效**：代码能编译、单测能过、游戏不报错，
+ * 但功能没生效 —— 本项目头号坑（T10 / X11）。
+ */
+class MrtTerrainPassWiringTest {
+
+    private static final Path BRIDGE = Path.of("src/main/java/dev/vkdisp/bridge");
+    private static final Path PASS = BRIDGE.resolve("MrtTerrainPass.java");
+    private static final Path API = BRIDGE.resolve("TerrainPipelineApi.java");
+    private static final Path CONFIG = Path.of("src/main/java/dev/vkdisp/VkDispConfig.java");
+
+    private static String readOrSkip(Path path) {
+        Assumptions.assumeTrue(Files.exists(path), "工程文件缺失: " + path);
+        try {
+            return Files.readString(path);
+        } catch (java.io.IOException e) {
+            throw new AssertionError("读取失败: " + path, e);
+        }
+    }
+
+    /** 只统计非注释行的字面量出现次数（javadoc 的【参考调研】会引用代码字样）。 */
+    private static int countCode(String text, String literal) {
+        int count = 0;
+        for (String line : text.split("\n")) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("*") || trimmed.startsWith("//") || trimmed.startsWith("/*")) {
+                continue;
+            }
+            count += line.split(java.util.regex.Pattern.quote(literal), -1).length - 1;
+        }
+        return count;
+    }
+
+    @Test
+    @DisplayName("🔖 帧图 pass 必须 disableCulling —— 否则被剔除且不报错（静默失效头号来源）")
+    void passDisablesCulling() {
+        String pass = readOrSkip(PASS);
+        assertEquals(1, countCode(pass, "pass.disableCulling()"),
+                "我方插的帧图 pass 必须显式 disableCulling："
+                        + "原版 FrameGraphBuilder#identifyPassesToKeep 会剔除「产出未被消费」的 pass，"
+                        + "被剔除时**不报错**，功能静默失效");
+    }
+
+    @Test
+    @DisplayName("🔖 活动标记的置位/清位必须在 try/finally —— 漏清会让原版 pass 拿到多附件管线")
+    void activeFlagClearedInFinally() {
+        String pass = readOrSkip(PASS);
+        assertTrue(pass.contains("inMrtPass = true;"), "必须在进入 pass 时置位");
+        assertTrue(pass.contains("} finally {"), "必须有 finally");
+        // 清位语句在 finally 块内：取 finally 之后的文本里必须出现清位。
+        int finallyAt = pass.indexOf("} finally {");
+        assertTrue(finallyAt > 0, "找不到 finally 块");
+        String after = pass.substring(finallyAt);
+        assertTrue(after.contains("inMrtPass = false;"),
+                "清位必须在 finally 里 —— 漏清时原版单附件 pass 会拿到多附件管线 ⇒ validation error");
+    }
+
+    @Test
+    @DisplayName("🔖 M-01 必须在 MRT pass 内返回多附件变体（两套管线不能混用）")
+    void m01SelectsMrtVariantInsidePass() {
+        String api = readOrSkip(API);
+        assertTrue(api.contains("MrtTerrainPass.active()"),
+                "M-01 的管线解析必须先判「是否在 MRT pass 内」");
+        assertTrue(api.contains("DERIVED_MRT.get(key(layer, multiDraw))"),
+                "MRT pass 内必须取多附件变体的表");
+    }
+
+    @Test
+    @DisplayName("🔖🔖 管线附件数与 pass 附件数必须取同一处（无 validation layer ⇒ 不匹配静默失效）")
+    void attachmentCountHasSingleSource() {
+        // 🔖 本机**没有** Vulkan validation layer ⇒ 「管线颜色附件数 ≠ pass 附件数」
+        // 是静默未定义行为：draw 照提交、一条片元都不出、日志全绿、屏幕只有清屏色。
+        // 这正是本轮卡了最久的症状 ⇒ 两侧必须同源，且不能再引用写死的 SLOT_COUNT。
+        String api = readOrSkip(API);
+        assertTrue(api.contains("withColorTargetStates(0, MrtPlan.slotCount() - 1"),
+                "MRT 管线附件数必须取 MrtPlan.slotCount()（单点真源）");
+        assertEquals(0, countCode(api, "withColorTargetStates(0, MrtPlan.SLOT_COUNT - 1"),
+                "不得用写死的 SLOT_COUNT —— 两侧会与可调的 slotCount() 脱钩");
+        String pass = readOrSkip(PASS);
+        assertTrue(pass.contains("MrtPlan.slotCount()"),
+                "pass 附件数必须取同一个 MrtPlan.slotCount()");
+        assertTrue(readOrSkip(Path.of("src/main/java/dev/vkdisp/pipeline/model/MrtPlan.java"))
+                        .contains("public static int slotCount()"),
+                "单点真源必须是可调方法（否则没法把两侧同时设成 1 做对照实验）");
+    }
+
+    @Test
+    @DisplayName("🔖 诊断开关必须默认关闭（常规帧零开销，支柱③ B1 ≤ +2%）")
+    void diagnosticIsOffByDefault() {
+        String config = readOrSkip(CONFIG);
+        assertTrue(config.contains("define(\"mrt.terrain\", false)"),
+                "mrt.terrain 必须默认 false —— 开启时地形被画两遍，是诊断路径不是产品功能");
+    }
+
+    @Test
+    @DisplayName("🔖 本轮不产出画面改进：pass 只画 OPAQUE 组、只写自己的 colortex")
+    void scopeIsExplicitlyNarrow() {
+        String pass = readOrSkip(PASS);
+        // 只画 OPAQUE：半透明地形与特性/云仍在原版 pass ⇒ 牵连面最小。
+        assertTrue(pass.contains("ChunkSectionLayerGroup.OPAQUE"),
+                "本轮只画 OPAQUE 组（固体 + cutout）；半透明地形未覆盖");
+        // 不碰主目标：attachment 全部来自我方 colortex。
+        assertTrue(countCode(pass, "mainRenderTarget().getColorTextureView()") == 0,
+                "本 pass 不得写主目标（写主目标会与原版 pass 争同一附件）");
+    }
+
+    @Test
+    @DisplayName("🔖 自建深度必须清到 1.0 —— 不清则地形全被深度测试拒绝，且零报错")
+    void ownDepthIsCleared() {
+        String pass = readOrSkip(PASS);
+        // 🔖🔖 本引擎是反向 Z：原版 clear pass 清的是 **0.0**（LevelRenderer:255）。
+        //   清成 1.0（近平面）⇒ 地形全部被深度测试拒绝 ⇒「pass 跑通、零报错、屏幕只有清屏色」。
+        //   本轮为这个 0.0/1.0 之差白跑了 6 趟客户端，必须有构建期红灯。
+        assertTrue(pass.contains("withDepthAttachment(colortexDepth.getDepthTextureView(), OptionalDouble.of(0.0))"),
+                "自建深度必须清到 0.0（反向 Z 的远平面），与原版 clear pass 一致");
+        assertEquals(0, countCode(pass, "OptionalDouble.of(1.0)"),
+                "不得把深度清成 1.0 —— 那是反向 Z 的**近**平面，会把地形全部深度测试掉");
+        assertEquals(0, countCode(pass, "withDepthAttachment(colortexDepth.getDepthTextureView(), OptionalDouble.empty())"),
+                "不得对自建深度用 empty()（= 不清）");
+    }
+
+    @Test
+    @DisplayName("🔖 回读用的槽数必须取地形 pass 的，不是探针的（本轮真踩过）")
+    void readbackSlotCountComesFromTerrainPass() {
+        // 🔖 实测踩坑：地形模式下探针那套 colortex **根本没建**（actualSlots=0），
+        // 误取探针槽数 ⇒ 每帧抛 "mrt view slot 0 out of range 0..-1"。
+        // 这类错误不崩游戏、只刷日志，很容易被当成噪声忽略 ⇒ 必须有构建期红灯。
+        String frame = readOrSkip(Path.of("src/main/java/dev/vkdisp/bridge/FrameApi.java"));
+        assertTrue(frame.contains("MrtPlan.requireViewSlot(MrtProbe.viewSlot(), MrtTerrainPass.actualSlots())"),
+                "地形模式的回读槽数上限必须取 MrtTerrainPass.actualSlots()");
+        assertTrue(frame.contains("!MrtTerrainPass.toMain()"),
+                "诊断「画到主目标」模式下不得再做 colortex 回读 —— 那会把刚画进主目标的内容"
+                        + "用 colortex 覆盖掉，把唯一证据擦掉");
+        assertEquals(0, countCode(frame, "MrtProbe.viewSlot(), MrtProbe.actualSlots()"),
+                "不得在需要地形槽数的位置取探针槽数（探针本轮未建 = 0 ⇒ 每帧抛异常）");
+        assertTrue(frame.contains("MrtTerrainPass.actualSlots() > 0"),
+                "地形目标尚未建成的帧应静默跳过（不是失败），建成后再校验槽位越界");
+    }
+
+    @Test
+    @DisplayName("🔖 依赖 M-05 的捕获：拿不到数据时静默跳过（未启用不是失败）")
+    void dependsOnM05Capture() {
+        String pass = readOrSkip(PASS);
+        assertTrue(pass.contains("TerrainDrawCapture.current()"),
+                "必须从 M-05 捕获处取地形 draw 数据");
+        assertTrue(pass.contains("if (captured == null)"),
+                "捕获为空时应静默跳过 —— 「未启用 M-05」不是失败，M-05 自己的埋点负责可见性");
+    }
+
+    @Test
+    @DisplayName("🔖🔖 捕获必须在 pass 体（执行期）读，不能在帧图装配期读")
+    void captureIsReadAtExecuteTimeNotAssemblyTime() {
+        // 🔖🔖 本轮真踩过、且症状极具欺骗性的坑：
+        //   帧图装配 = LevelRenderer#render 第 249 行（官方事件），M-05 捕获 = 第 271-275 行，
+        //   **装配早于捕获** ⇒ 装配期读到的是上一帧的 ChunkSectionsToRender，
+        //   其 DynamicGpuBuffer 切片已被本帧上传环形复用覆盖 ⇒ 几何退化 ⇒ 零片元。
+        //   表面症状：pass 正常跑、0 validation error、无异常日志，colortex 里只有清屏色。
+        String pass = readOrSkip(PASS);
+        int setupAt = pass.indexOf("static void onFrameGraphSetup(");
+        int bodyAt = pass.indexOf("private static void drawTerrain(");
+        assertTrue(setupAt > 0 && bodyAt > setupAt, "找不到装配方法或 pass 体");
+        String setup = pass.substring(setupAt, bodyAt);
+        assertEquals(0, countCode(setup, "TerrainDrawCapture.current()"),
+                "装配期不得读捕获（那时拿到的是上一帧数据）；必须在 pass 体内读");
+        String body = pass.substring(bodyAt);
+        assertTrue(body.contains("TerrainDrawCapture.current()"),
+                "pass 体（执行期）必须读捕获 —— 那才是本帧的数据");
+    }
+}

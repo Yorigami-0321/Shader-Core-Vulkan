@@ -103,6 +103,41 @@ public final class MrtProbe {
         return probed;
     }
 
+    /**
+     * 把**任意外部**视图回读到主目标（复用 MRT 回读管线）。
+     *
+     * <p>用途：让我方 MRT 地形 pass（{@link MrtTerrainPass}）自己的 colortex 也能被肉眼/像素判定 ——
+     * 否则「pass 跑完没报错」只能证明**没崩**，证明不了**画对了**（本项目反复踩的坑：
+     * 「没报错」≠「画对了」）。
+     *
+     * @param label render pass 调试标签
+     * @param view  要回读的视图（调用方保证非 null）
+     * @param slot  仅用于日志/错误信息的槽位号
+     */
+    public static void drawExternalView(String label, GpuTextureView view, int slot) {
+        RenderSystem.assertOnRenderThread();
+        var viewCompiled = RenderSystem.getCompiledPipelineNullable(PipelineApi.mrtViewPipeline());
+        if (viewCompiled == null) {
+            throw new IllegalStateException(
+                    "vkdisp: mrt view pipeline not compiled yet: " + PipelineApi.MRT_VIEW_LOCATION);
+        }
+        RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        GpuTextureView mainView = main.getColorTextureView();
+        if (mainView == null) {
+            throw new IllegalStateException("vkdisp: mrt external view main color view is null");
+        }
+        GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+        var encoder = RenderSystem.getDevice().createCommandEncoder();
+        try (RenderPass pass = encoder.createRenderPass(
+                () -> label + " external colortex slot " + slot + " -> main",
+                mainView, Optional.empty(), null, OptionalDouble.empty())) {
+            pass.setPipeline(viewCompiled);
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, view, sampler);
+            pass.draw(3, 1, 0, 0);
+        }
+    }
+
     /** 某一槽的颜色视图；越界或未建返回 {@code null}（调用方必须显式处理）。 */
     public static GpuTextureView slotView(int slot) {
         if (colortex == null || slot < 0 || slot >= colortex.length || colortex[slot] == null) {

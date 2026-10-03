@@ -36,6 +36,7 @@ package dev.vkdisp.render;
 import dev.vkdisp.VkDisp;
 import dev.vkdisp.VkDispConfig;
 import dev.vkdisp.bridge.FrameApi;
+import dev.vkdisp.bridge.MrtTerrainPass;
 import dev.vkdisp.bridge.PipelineApi;
 import dev.vkdisp.bridge.TerrainDrawCapture;
 import net.neoforged.api.distmarker.Dist;
@@ -197,6 +198,18 @@ public final class FullscreenPassHook {
         } catch (Throwable t) {
             // 失败必须打 ERROR 原文（07 X11：禁止吞异常让它看起来能跑）。
             VkDisp.LOGGER.error("vkdisp: fullscreen pass failed", t);
+        }
+
+        // 诊断 A/B：地形 MRT 绘制挪到帧图执行之后。
+        // 🔖🔖 必须放在**整条链之后**（本轮踩过）：本 mod 的 SceneCaptureApi 会把场景纹理
+        //   blit 进 main —— 画在它之前会被整块覆盖掉，表现为「pass 明明跑了，屏幕却毫无变化」。
+        //   「没报错 + 画面没变」会被误读成「没执行」，实际是被后写的 pass 盖掉了。
+        if (MrtTerrainPass.enabled() && MrtTerrainPass.afterLevel()) {
+            try {
+                MrtTerrainPass.drawAfterLevel();
+            } catch (Throwable t) {
+                VkDisp.LOGGER.error("vkdisp: gbuffer terrain pass failed", t);
+            }
         }
     }
 }

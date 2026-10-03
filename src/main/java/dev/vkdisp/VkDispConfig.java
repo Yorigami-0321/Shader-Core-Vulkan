@@ -156,6 +156,50 @@ public final class VkDispConfig {
                     + "不改变渲染行为；关闭后我方多附件地形 pass 静默不开。")
             .define("mixin.captureTerrainDraws", true);
 
+    /**
+     * 🔴 GAP-003 方案 A 的地形多附件诊断开关 —— **默认关闭**。
+     *
+     * <p>打开后我方在帧图里插一个 pass，把地形（OPAQUE 组）画进 {@code N} 个 colortex 附件。
+     * ⚠️ <b>注意代价</b>：写的是**自己的** colortex，主目标仍由原版绘制
+     * ⇒ <b>地形被画两遍</b>，且本轮**不产出任何画面改进**。
+     * 它的用途只有一个：验证「地形能进多附件 pass」。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_ENABLED = BUILDER
+            .comment("GAP-003 方案 A 诊断：地形画进多附件 pass（默认关）。开启后地形被画两遍，"
+                    + "主目标不受影响，屏幕画面不变。")
+            .define("mrt.terrain", false);
+
+    /**
+     * 🔴 诊断 A/B：把地形 MRT pass 从「帧图内」挪到「帧图执行完之后」。
+     *
+     * <p>用途：帧图 pass 的顺序由资源依赖解析，我方 pass 不声明依赖 ⇒ 可能早于原版地形
+     * 数据上传执行。本开关用来一刀切开「顺序/上传时序问题」与「绘制本身的问题」。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_AFTER_LEVEL = BUILDER
+            .comment("诊断：地形 MRT 绘制改在帧图执行完之后执行（默认关）。")
+            .define("mrt.terrainAfterLevel", false);
+
+    /** 诊断：地形 MRT 附件 0 改写**主目标**（配 terrainAfterLevel 用，屏幕即证据）。 */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_TO_MAIN = BUILDER
+            .comment("诊断：地形 MRT 附件 0 改用主目标颜色视图（默认关）。会清掉主目标画面。")
+            .define("mrt.terrainToMain", false);
+
+    /**
+     * 地形 MRT pass 与其管线**共同**使用的附件数（1..8，默认 3）。
+     *
+     * <p>🔖 两侧必须一致：Vulkan 动态渲染要求「管线颜色附件数 == render pass 附件数」，
+     * 不一致是 validation error；而本机**没有 validation layer** ⇒ 静默失效。
+     * 置 1 可得到与原版同形的管线，用来把「附件数不匹配」与「别的原因」区分开。
+     */
+    public static final ModConfigSpec.IntValue MRT_ATTACHMENTS = BUILDER
+            .comment("地形 MRT 附件数（管线与 pass 共用；本机无 validation layer，不匹配会静默失效）")
+            .defineInRange("mrt.attachments", 3, 1, 8);
+
+    /** 诊断：地形 MRT pass 里先画一个已知可用的全屏三角形（判别「pass 不工作」vs「地形不出片元」）。 */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_FULLSCREEN_PROBE = BUILDER
+            .comment("诊断：地形 MRT pass 内先画全屏三角形（默认关）。")
+            .define("mrt.terrainFullscreenProbe", false);
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     private VkDispConfig() {

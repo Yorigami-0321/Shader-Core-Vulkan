@@ -923,6 +923,8 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
   也确实抓出了「队友测 4 轮 vs §7.3 要求 n≥9」以及「我自己传中文 `--label` 的老坑」）。
 - **运行纪律**：`b4-verify` 跑客户端 —— **禁止 `pkill -f GradleDaemon`**，只 `kill <游戏 pid>`，
   且必须贴出「残留游戏进程数=0」的证明（用户明确要求主动结束游戏进程）。
+  🔖 **计数必须用 `tools/vulkan-local/game_procs.sh`**（2026-10-03 新增，见 §9.4.14）——
+  手写 `pgrep` 模式会打空并误报 0。
 
 ### 🔴 9.4.13 测量污染纪律（2026-10-03 补，因 Round 12 的一次事故）
 
@@ -956,6 +958,52 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
 🔖 **一贯噪声是 ±9%，而第三跳的幅度远超噪声带，且单调恶化** ——
 这个形状本身就是污染的指纹，**不是**随机噪声。
 ⇒ **若复跑出现「逐次单调恶化」，先查机器状态，别急着怀疑自己的代码。**
+
+### 🔴 9.4.14 「残留游戏进程数」必须用脚本数（2026-10-03，因一次假零）
+
+**事故**：方案 A 取证时我先 `kill` 了一个 pid，随后打印「残留游戏进程数 = 0」并据此继续。
+实际上**那个 pid 打空了**——真客户端还在跑。等到下一次 `runClient` 才暴露：
+`DirectoryLock$LockException: .../New World/session.lock: already locked`，
+**两个客户端并存**抢同一个世界，后启动的开不了 ⇒ 白跑一趟。
+
+**根因**：我用的模式是 `pgrep -f "net.minecraft.client.main.Main"`。
+但 **NeoForge devlaunch 起的客户端，命令行主类是 `net.neoforged.devlaunch.Main`**
+（真正的 MC 主类由它在 JVM 内反射调用，**不出现在本进程命令行里**）⇒ 模式匹配不到任何东西。
+更糟的是 `pgrep -f` 会**匹配到我自己那条 grep/ps 命令行**，于是
+`pgrep -cf` 反而数出 2 —— 一个假零、一个假二，**两个方向都不可信**。
+
+**规则（新增，X33）**：
+1. 计数必须按**可靠特征**匹配：`-Dfml.modFolders=vkdisp`（devlaunch 传给子进程的那个参数），
+   关闭时要**等退出**、必要时升级 SIGKILL。本机把它固化成
+   `tools/vulkan-local/game_procs.sh {list|count|kill}`（🔴 `/tools/` 不入库，换机器照这条判据自行实现）。
+2. 🔖 **「残留 = 0」这句话本身不构成证据，贴命令输出才算。**
+   同 §9.4.13 的铁律精神：自报的清理结论必须可复核。
+3. **开跑前也要数一次**（不是只收尾数）—— 本次事故正是「上轮没收干净」造成的。
+
+**已作废的记录**：2026-10-03 方案 A 第 2 轮里我贴的那次「残留游戏进程数=0」为**假零**，
+该轮的收尾证明作废（该轮其余证据——`badslot` 复现与修复——不受影响）。
+
+### 🔴 9.4.15 「日志里没有 validation error」在本机**不是证据**（2026-10-03）
+
+实测：prefix 与系统里**都没有** `VK_LAYER_KHRONOS_validation`，也没设 `VK_LAYER`；
+`GpuDevice#getLastDebugMessages()` 返回空（本项目 lavapipe 后端未接调试消息通道）。
+
+⇒ 「`grep validation error` = 0」在本机**既不能证明配置正确，也不能排除**
+「管线附件数 ≠ pass 附件数」「绑定缺失」这类问题 ——
+它们在本机会**完全静默**。`h04` 里「附件数不匹配」之所以能一路静默到像素层面，就是这个原因。
+
+**已撤回的表述**：`h02` / `h03` / `GAP-004` 条目里的「0 validation error」均已在原文标注撤回。
+这两份证据的**其余结论仍然成立**（像素级指纹、`registered==compiled`、ON/OFF 逐字节相同），
+因为它们不依赖 validation layer。
+
+**替代判据（按可信度排序）**：
+1. **像素**（唯一能揭穿静默失效的手段）；
+2. `registered == compiled` 计数；
+3. draw 时不抛 `Missing uniform`；
+4. ❌ 「日志里没有 validation error」——**本机无效**。
+
+🔖 **反向 Z 提醒**（同源教训）：自建深度附件清屏值必须是 **0.0**，
+别按 Vulkan 惯例猜 1.0（见 §10.10）。
 
 ## 9.5 环境与红线速查（详见持久记忆 + §6）
 
@@ -1046,7 +1094,16 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
    之后才谈第二个包复测与 G3/G4。复现命令见 `17-NATIVE.md` §7.7「复现」块
    （`JAVA_TOOL_OPTIONS` 与 `PATH` 前缀不可少）。
 4. ~~**H 线开工准备**~~ → ✅ **已完成（2026-10-03 两轮）**，见 §10.7。
-   5. 🔴 **续轮第一入口 = M-04 的取舍分析**（不是直接写代码）：
+   5. 🔴 **续轮第一入口 = GAP-003 帧图内插 pass**（`mrt.terrainAfterLevel=false` 那条从未成功）：
+   先**区分**两种可能，再动手 ——
+   (a) 帧图 pass 不声明依赖 ⇒ 可能排在原版地形数据上传**之前**（解法是 `requires`/`reads` 挂到正确 pass）；
+   (b) 与时序无关的其他原因。
+   🔖 **别拿 §10.10 那个「全屏三角形实验」当帧图内的证据** —— 它是在 AfterLevel 模式下做的。
+   ⚠️ 这是「换一条路」级别的影响面（决定 GAP-003 生产形态），**建议先向用户报备**。
+   背景：`04-SPEC.md` §5.0.5、`13-GAP-REGISTRY.md` GAP-003 状态列、`evidence/h04-…` §9。
+6. ~~**续轮第一入口 = M-04 的取舍分析**~~ → ✅ **已完成**（已裁决走方案 A，见 §10.7 + `04-SPEC.md` §5.0.4）；
+   下列原文保留作为**取舍过程**的记录：
+5. 🔴 **（历史，已裁决走 A）M-04 的取舍分析**：
       原版主 pass 把**地形/实体/特性/云/描边画在同一个 pass 同一个单附件**（源码级核实），
       ⇒ 给地形加附件会让所有原版管线不匹配。必须先在
       **A（地形单独一个多附件 pass）** 与 **B（整 pass 多附件 + 为四类 draw 各派生一份管线）** 之间选。
@@ -1148,6 +1205,39 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
 - **文档单一出处**：G 线数字 → `17-NATIVE.md` §7.7；闸门流程 → §5；预算 → §2.2；
   并行线与判据 → `18-PARALLEL.md`；证据索引 → `evidence/README.md`。
 
+### 10.10 🟡 地形画进多附件 pass 成功（**只成功 AfterLevel 形态**）—— 根因是反向 Z（2026-10-03）
+
+> 证据：`evidence/h04-gbuffer-terrain-pass.md`。**18 趟客户端**，其中 6 趟纯粹在找那个根因。
+
+**已完成**：我方自己的 pass 调 **public** 的 `ChunkSectionsToRender#renderGroup(OPAQUE, …)`，
+把地形画进 **3 个 colortex 附件**（6 条 MRT 变体管线，M-01 按活动标记二选一）。
+像素三连：`colortex0` = 真地形 / `colortex1` = **纯清屏色**（原版 `core/terrain.fsh` 只有
+`layout(location=0) out vec4 fragColor` ⇒ 槽 1/2 理应为空）/ 主目标仍是正常原版渲染。
+
+🔖 **本轮最值钱的一条技术事实**（踩坑换来的）：
+**本引擎是反向 Z —— 自建深度目标必须清 `0.0`**（原版 clear pass：
+`clearColorAndDepthTextures(…, depth, 0.0)`，`LevelRenderer:255`，0.0 = 远平面）。
+按 Vulkan 惯例清 `1.0`（= 近平面）⇒ **每个**地形片元被深度测试掉 ⇒
+「pass 跑通、零报错、画面只剩清屏色」，与「什么都没执行」**像素上完全同形**。
+⇒ **规则**：自建任何深度附件，**第一件事是去读原版 clear pass 的清屏值**，别按惯例猜。
+
+🔖 **定位手法值得复用**（逐步排除，每步都排掉一个假设）：
+高对比清屏色（分开「回读坏」vs「没画」）→ `attachments=1`（排除多附件本身）→
+反射读 `drawGroupsPerLayer`（确认 `SOLID{groups=1,draws=296}`，排除「没 draw」）→
+**在本 pass 里画一个已知可用的全屏三角形**（🔖 图集铺满全屏 ⇒ 本 pass 无恙；
+且该三角形管线**无深度状态** ⇒ 把「深度」单独暴露出来）。
+
+🔴 **未完成，不得当已完成引用**：
+① **帧图内插 pass 从未成功**（本轮成功的是 `mrt.terrainAfterLevel=true`，帧图执行**之后**绘制）；
+   原因**未区分**（帧图 pass 不声明依赖 ⇒ 可能排在地形数据上传之前？还是别的时序因素）。
+   ⚠️ §10.9 那个「全屏三角形实验」是在 AfterLevel 模式做的，**不能**用来证明帧图内也具备同样环境。
+② colortex1/2 没有 gbuffer 语义（要等包的自研 `gbuffers_terrain` 接入）；
+③ 半透明地形（TRANSLUCENT 组）未覆盖；④ 无画面改进（地形被画两遍）、无性能数据。
+
+- **可关闭键**：`mrt.terrain`（默认关）+ 5 个诊断键（`terrainAfterLevel` / `terrainToMain` /
+  `terrainFullscreenProbe` / `attachments` / `viewSlot`），全部默认关。
+- **测试**：651 单测全绿（`MrtTerrainPassWiringTest` 9 条，全守静默失效）。
+
 ### 10.9 ✅ M-05 只读捕获可行 —— 方案 A 的两个前提都成立（2026-10-03）
 
 > 证据：`evidence/h03-terrain-draw-capture.md`。**只验前提，没画地形。**
@@ -1156,7 +1246,7 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
 |---|---|
 | 地形 draw 数据**捕获得到**（非 null） | ✅ 命中 `prepareChunkRendersIndirect` |
 | **时序成立**（捕获早于帧图 pass 体执行） | ✅ AfterLevel（帧图执行之后）可见 `captures=1/2/3` |
-| **不改任何渲染行为** | ✅ ON/OFF 截图**逐字节相同**；0 validation error |
+| **不改任何渲染行为** | ✅ ON/OFF 截图**逐字节相同**（🔴 原文的「0 validation error」已撤回：本机无 validation layer，见 §9.4.15） |
 | 🔴 地形画进多附件 pass | ⛔ **未做** —— 捕获的引用目前**无消费者** |
 
 🔖 **官方事件给不了，已源码级证伪**：`fireFrameGraphSetup` 在 `LevelRenderer#render`
@@ -1167,9 +1257,8 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
 由设备能力 + 关卡设置决定）：本机实测命中 **indirect** 分支 ⇒
 只注入非 indirect 分支的话，本机**永远捕获不到**，且这个失效**是静默的**。
 
-🔖 **下一轮的第一个卡点（尚未核实）**：`renderGroup` 需要 `sampler` 与 `blockAtlas`
-（原版在 `LevelRenderer` 第 442-447 行自建 sampler、第 531 行取 atlas）——
-我方 pass 需自己准备这两个，或复用原版已建的。
+✅ ~~**下一轮的第一个卡点**~~ **已核实解除**（见 §10.10）：`renderGroup` 的 `sampler` 与 `blockAtlas`
+**都能用公开 API 拿到**，不需要 M-04。
 
 - **可关闭键**：`mixin.captureTerrainDraws`（默认开；关闭后捕获停止、引用为空、多附件 pass 静默不开）。
 - **测试**：641 单测全绿（新增 2 例，锁「两个重载都注入」+「只读：无 cancellable/setReturnValue」）。

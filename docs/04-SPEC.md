@@ -466,9 +466,48 @@ FramePass pass = frame.addPass("main");
 | 已取证的硬证据 | 捕获非 null + 时序成立（`h03`） | 无 |
 | 猜错的后果 | 无「猜」这一步 —— 附件语义只涉及地形 | 实体/云/天气/世界边界的附件语义**未核实**，猜错即**静默画面错误** |
 
-🔖 **仍有一个未核实的卡点**（下一轮第一件事）：`renderGroup` 需要 `sampler` 与 `blockAtlas`
-（原版 `LevelRenderer` 第 442-447 行自建 sampler、第 531 行取 atlas）——
-我方 pass 需自己准备这两个，或复用原版已建的（X9：先核实再写）。
+✅ **上轮的卡点已核实解除**（2026-10-03，方案 A 第 2 步的前置）：
+`renderGroup` 需要的两样东西**都能用公开 API 拿到**，不需要 M-04：
+
+| 需要的东西 | 原版怎么拿（`LevelRenderer`） | 我方怎么办 | 核实 |
+|---|---|---|---|
+| `blockAtlas`（方块图集视图） | 第 531 行 `textureManager.getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView()` | **同一条公开路径**：`Minecraft.getTextureManager()`（public，第 2692 行）→ `getTexture`（public，第 91 行）→ `getTextureView`（public，`AbstractTexture` 第 45 行）。`TextureAtlas.LOCATION_BLOCKS` 是 public static | ✅ 逐个签名核实 |
+| `sampler`（图集采样器） | 第 442-447 行**自建**（带各向异性 + `shouldResetChunkLayerSampler` 门控） | **自建同款**：`RenderSystem.getDevice().createSampler(CLAMP_TO_EDGE, CLAMP_TO_EDGE, LINEAR, LINEAR, maxAniso, OptionalDouble.empty())`（public，第 32-34 行）。🔖 **不用原版那个实例**（它是 `LevelRenderer` 的 private 字段，第 146 行） | ✅ 签名核实 |
+
+⚠️ **仍需在实现时注意**（不是阻塞，是语义）：
+① 采样器的**各向异性**取决于用户的纹理过滤设置（`optionsRenderState.textureFiltering`），
+   我方若硬编码 `maxAnisotropy = 1`，画面质量会低于原版 ⇒ **取值必须对齐用户设置**；
+② 图集采样器在原版是**按需重建**的（`shouldResetChunkLayerSampler`），我方若每帧新建会**泄漏 GPU 对象**。
+
+#### 5.0.5 🔴 方案 A 第 2 步已落地，但**只落地了 AfterLevel 形态**（2026-10-03）
+
+**已完成并有像素证据**（`evidence/h04-gbuffer-terrain-pass.md`）：
+
+- `bridge.MrtTerrainPass`（新）：我方自己的 pass，调 **public** 的
+  `ChunkSectionsToRender#renderGroup(OPAQUE, …)` 把地形画进 **3 个 colortex 附件**；
+- `TerrainPipelineApi` 新增 **MRT 变体表**（6 条，与 M-01 的 6 条单附件版同键不同表）；
+- M-01 依「活动标记」在两种 pass 里选对应变体；
+- 像素三连：`colortex0` = 真地形 / `colortex1` = 纯清屏色（原版 `core/terrain.fsh`
+  只有 `layout(location=0) out vec4 fragColor` ⇒ 槽 1/2 理应为空）/ 主目标仍是正常原版渲染。
+
+🔖 **本轮登记的最重要一条技术事实**（踩坑换来的）：
+**本引擎是反向 Z —— 自建深度目标必须清到 `0.0`**（原版 clear pass：
+`clearColorAndDepthTextures(…, depth, 0.0)`，`LevelRenderer:255`，即 0.0 = 远平面）。
+按 Vulkan 惯例清 `1.0`（= 近平面）会让**每个**地形片元被深度测试掉，
+症状是「pass 跑通、零报错、画面只剩清屏色」——与「什么都没执行」像素上完全同形。
+⚠️ **本机没有 validation layer** ⇒ 这类错误**永远不会有日志**，只有像素能揭穿它。
+
+🔴 **未完成，不得当已完成引用**：
+
+| 项 | 状态 |
+|---|---|
+| **帧图内插 pass**（方案 A 的生产形态） | ❌ **从未成功**。本轮成功的配置是 `mrt.terrainAfterLevel=true`（帧图执行**之后**绘制）。原因**未区分**：可能是帧图 pass 不声明依赖 ⇒ 排在地形数据上传之前；也可能是别的时序因素 |
+| colortex1/2 的 gbuffer 语义 | ❌ 用的是原版 `core/terrain`，只写 location 0。要等包的自研 `gbuffers_terrain` 被翻译接入 |
+| 半透明地形（TRANSLUCENT 组） | ❌ 未覆盖 |
+| 画面改进 / 性能 | ❌ 无（写自己的 colortex ⇒ 地形被画两遍；代价未测） |
+
+⇒ **方案 A 的取舍结论不变**（A 仍优于 B），但**「A 已通」这句话只对 AfterLevel 形态成立**。
+帧图内形态要拿到与其他 pass 正确的穿插顺序，是**下一步**。
 
 **这也是本轮把 GAP-003 与 GAP-004 分开做的原因**（`18-PARALLEL` H 线「顺序纪律」原本要求同批）：
 GAP-004 单独做**并非没有意义**（它的前提正是「派生管线」，没有派生管线就无处挂块），

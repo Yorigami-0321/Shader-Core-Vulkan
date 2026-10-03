@@ -136,14 +136,18 @@ public final class FullscreenPipelineRegistrar {
         // 多附件管线编译不过本身就是必须暴露的事实（T11）。
         try {
             PipelineApi.registerMrtPipeline(event);
-            VkDisp.LOGGER.info("vkdisp: pipeline registered (16/17): {} [GAP-003 mrt]",
+            VkDisp.LOGGER.info("vkdisp: pipeline registered (16/25): {} [GAP-003 mrt]",
                     PipelineApi.MRT_LOCATION);
         } catch (Throwable t) {
             VkDisp.LOGGER.error("vkdisp: [GAP-003] mrt pipeline registration failed", t);
         }
+        // H 线 GAP-003 方案 A（18/25）：6 条**多附件**地形派生管线。
+        // 与 M-01 的 6 条单附件版同键不同表，由 MrtTerrainPass.active() 决定取哪条。
+        TerrainPipelineApi.registerTerrainDerivedMrtPipelines(event);
+
         try {
             PipelineApi.registerMrtViewPipeline(event);
-            VkDisp.LOGGER.info("vkdisp: pipeline registered (17/17): {} (total={})",
+            VkDisp.LOGGER.info("vkdisp: pipeline registered (23/25): {} (total={})",
                     PipelineApi.MRT_VIEW_LOCATION, PipelineApi.registeredPipelineCount());
         } catch (Throwable t) {
             VkDisp.LOGGER.error("vkdisp: pipeline registration failed: {}",

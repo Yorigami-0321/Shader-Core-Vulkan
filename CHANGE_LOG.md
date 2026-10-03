@@ -4,6 +4,43 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-03（二十七）— GAP-003 方案 A 第 2 步：地形**真的画进了 3 附件 pass**（根因：反向 Z）
+
+> **verdict = 地形多附件渲染这条通道，端到端跑通了**（我方 pass + 我方多附件管线 + 像素判读）。
+> ⚠️ **但只跑通了「帧图执行之后」那一种形态**；**帧图内插 pass 从未成功** ⇒ GAP-003 **仍未完成**。
+> 🔴 本轮同时**撤回一条被引用过多次的旧结论**：本机没有 validation layer。
+
+- **本次改了什么**：
+  1. `bridge/MrtTerrainPass`（新）：在帧图里插一个 pass（`disableCulling`），调 **public** 的
+     `ChunkSectionsToRender#renderGroup(OPAQUE, …)` 把地形画进 **3 个 colortex 附件** +
+     自建 `D32_FLOAT` 深度（清 **0.0**）+ 自建图集采样器；
+  2. `TerrainPipelineApi` 新增 **MRT 变体表**（6 条，与 M-01 的 6 条单附件版同键不同表），
+     M-01 依 `MrtTerrainPass.active()` 在两种 pass 里选对应变体（置位/清位都在 `finally`）；
+  3. `MrtProbe#drawExternalView`（新）：回读**任意**视图，让 colortex 可肉眼/像素判定；
+  4. 配置 6 个诊断键，**全部默认关**：`mrt.terrain` / `terrainAfterLevel` / `terrainToMain` /
+     `terrainFullscreenProbe` / `attachments` / `viewSlot`；
+  5. 工具（本机脚本，🔴 `/tools/` 按 `.gitignore` 不入库）：`tools/vulkan-local/game_procs.sh`
+     （可靠地数/关客户端）、`tools/vulkan-local/set_cfg.py`（按 TOML **节区**改配置）
+     —— 落地的是 **X33 / X36 两条规则**，脚本本身不是仓库资产；
+  6. 测试 `MrtTerrainPassWiringTest`（9 条，全守**静默失效**）；
+  7. 文档：`04-SPEC` §5.0.5、`13-GAP-REGISTRY` GAP-003/GAP-004、`evidence/h04-…`（新）、
+     `evidence/README.md`、`AGENT_CONTEXT` §10.10 + §9.4.14 + §9.4.15、`07-CONSTRAINTS` X33–X36。
+- **🔖 本轮最值钱的一条技术事实**（踩坑换来的）：
+  **本引擎是反向 Z —— 自建深度目标必须清 `0.0`**（原版 clear pass：
+  `clearColorAndDepthTextures(…, depth, 0.0)`，`LevelRenderer:255`，0.0 = 远平面）。
+  按 Vulkan 惯例清 `1.0`（= 近平面）⇒ **每个**地形片元被深度测试掉 ⇒
+  「pass 跑通、零报错、画面只剩清屏色」，与「什么都没执行」**像素上完全同形**。
+  为这个 0.0/1.0 之差**白跑 6 趟客户端**（全轮 18 趟）。
+- **🔖 撤回**：`h02` / `h03` / GAP-004 里「0 validation error」的表述**不构成证据** ——
+  实测本机（lavapipe）**没装** `VK_LAYER_KHRONOS_validation`，`getLastDebugMessages()` 返回空。
+  这两份证据的**其余结论仍成立**（像素指纹、`registered==compiled`、ON/OFF 逐字节相同），
+  因为它们不依赖 validation layer。已在原文逐处标注。
+- **🔴 仍未完成（不许当已完成引用）**：
+  ① **帧图内插 pass 从未成功**（本轮成功的是 `terrainAfterLevel=true`）—— 原因**未区分**；
+  ② colortex1/2 没有 gbuffer 语义（原版 `core/terrain.fsh` 只写 location 0）；
+  ③ 半透明地形未覆盖；④ **无画面改进**（地形被画两遍）、**无性能数据**。
+- **测试**：651 单测全绿（新增 9 例）；`./gradlew build` exit 0。
+
 ## 2026-10-03（二十六）— 立规：commit message 禁止 AI 署名 trailer
 
 > **verdict = 纯文档轮，未改一行业务代码。** 用户指令：「写进规范，本次提交就这样，
@@ -66,7 +103,6 @@
 - **是否已提交**：**否**，等用户审阅。
 
 ---
-
 ## 2026-10-03（二十四）— M-05：地形 draw 数据**只读捕获**可行（方案 A 的两个前提都成立）
 
 > **verdict = 上一轮那个「请用户裁决」的取舍，现在有了实测依据**。
