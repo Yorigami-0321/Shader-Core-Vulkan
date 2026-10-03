@@ -5,6 +5,49 @@
 
 ---
 
+## 2026-10-02（十五）— 客户端取证：复用预处理在真实客户端里确认（冷路径 −22.6%）
+
+> **verdict = 取证轮 + 基建补缺轮**。上一轮 `pp-parse-profile` 明确登记
+> 「**没有 runClient 取证**，39.3% 的收益尚未在客户端验证」——本轮补上。
+
+- **本次改了什么**：
+  ① **补上启动冷路径的计时埋点**：`VkDispPackScan` 的 `ClientResourceLoadFinishedEvent`
+     入口**此前没有任何耗时打点**（只有切包路径 `VkDispConfigHotReload` 有
+     `pack precompile done in {} ms`）⇒ 离线基准测得到、客户端里测不到，两边无法对账。
+     新增一行：
+     ```
+     vkdisp: cold path timing: scan={} ms compile={} ms total={} ms (initial={}, reusePreprocess={})
+     ```
+     日志带 `reusePreprocess` **实际取值** ⇒ 以后每趟客户端日志都能自证走的是哪条路径
+     （`ShaderPackCompiler.REUSE_PREPROCESS` 因此改为 public）。
+  ② 新增 `evidence/client-verify-preprocess-reuse.md`；同步 `17-NATIVE.md` §7.5、
+     `evidence/README.md`、`AGENT_CONTEXT.md` §0.1 + §9.4.9。
+- **客户端实测**（`./gradlew runClient`，停在主菜单、`initial=true`，190 阶段）：
+
+  | 实现 | scan | compile | 冷路径合计 |
+  |---|---:|---:|---:|
+  | 原路径（预处理算两遍） | 849ms | 2633ms | **3482ms** |
+  | 复用 load 的预处理 | 721ms | **1975ms** | **2696ms** |
+
+  **冷路径 −22.6%，绝对收益 786ms。** 两段都受益：`scan` 段里也包含 `load`
+  （即那一次预处理），`compile` 段受益于复用。
+- **行为等价（客户端侧）**：`stages=190 ok=190 failed=0`、vkdisp **0 ERROR/WARN**、
+  日志行数相同（1563）、**190 条 SPIR-V 产物（包×程序×阶段×文件×字节数）逐条一致**
+  （`diff` 无差异）。后者是客户端侧最接近「下游真正看到的东西」的判据 ——
+  文本产物相同（离线已证），驱动编译出的 SPIR-V 字节数也完全相同。
+- 📌 **为什么客户端 −22.6% 而离线 −39.3%，但绝对收益更大（786 vs 573.5ms）**：
+  客户端的 `compileAndLog` 还要把每个阶段交给**原版驱动做 GLSL→SPIR-V 编译**，
+  这部分**不受本次优化影响**，被加进了两边的分母。绝对收益同量级 ⇒ **离线的 39.3% 没有虚高**。
+- 🔴 **没有证明的**：
+  - **每侧只有 1 趟（n=1）**且两趟**非交替**（OFF 跑第二趟、页缓存更热 ⇒
+    **这个偏差是压低 ON 的**，真实收益可能 ≥ 22.6%）；
+  - **切包路径（B4）未取证**；`PackCompileCache` 与复用的交互未验；
+  - **未进世界目检**：本轮只到「编译成功 + 产物一致」，画面项（§5.1 R2–R7）未做；
+  - **G0 四段口径仍未修**（`runPass` 仍把 `load` 当纯解析量）。
+- **测试结果**：`./gradlew build` BUILD SUCCESSFUL；**616 单测全绿**。
+- **下一轮入口**：① 修 G0 四段口径 ② 切包路径（B4）取证 ③ G 线在新基线上重估。
+- **是否已提交**：见本条提交信息。
+
 ## 2026-10-02（十四）— PP：发现生产路径把预处理算了两遍，修复后冷路径快 39.3%
 
 > **verdict = profile 轮 + 生产代码优化轮**。执行上一轮定下的 PP（profile parse）：

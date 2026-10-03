@@ -37,6 +37,7 @@ import dev.vkdisp.pack.PackCompileCache;
 import dev.vkdisp.pack.Program;
 import dev.vkdisp.pack.ShaderPack;
 import dev.vkdisp.pack.ShaderPackCompiler;
+import dev.vkdisp.pack.ShaderPackCompiler;
 import dev.vkdisp.pack.ShaderPackScanner;
 import dev.vkdisp.pack.ShaderPackService;
 import net.minecraft.client.Minecraft;
@@ -87,8 +88,20 @@ public final class VkDispPackScan {
             return;
         }
         try {
+            // 埋点：冷路径两段各自计时。§3.2 把 B3（冷路径墙钟）列为支柱③的硬指标，
+            // 而此前启动路径**没有任何耗时打点** —— 离线基准测得到，客户端里测不到，
+            // 两者无法对账。加这两行是为了让「客户端实测」成为可能。
+            long scanStart = System.nanoTime();
             scanAndLog(event.isInitial());
+            long scanMillis = (System.nanoTime() - scanStart) / 1_000_000L;
+            long compileStart = System.nanoTime();
             compileAndLog();
+            long compileMillis = (System.nanoTime() - compileStart) / 1_000_000L;
+            VkDisp.LOGGER.info(
+                    "vkdisp: cold path timing: scan={} ms compile={} ms total={} ms"
+                            + " (initial={}, reusePreprocess={})",
+                    scanMillis, compileMillis, scanMillis + compileMillis,
+                    event.isInitial(), ShaderPackCompiler.REUSE_PREPROCESS);
         } catch (Throwable t) {
             // 失败必须打 ERROR 原文（07-CONSTRAINTS T11：不许吞异常让它看起来能跑）。
             VkDisp.LOGGER.error("vkdisp: pack scan failed", t);

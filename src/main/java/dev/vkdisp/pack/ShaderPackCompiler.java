@@ -114,7 +114,7 @@ public final class ShaderPackCompiler {
      * <p>留开关是为了**能交替测量**（17-NATIVE §7.3 的红线：两侧必须在同一台机器上
      * 交替跑），同时在怀疑等价性时可以一条命令退回原路径。
      */
-    static final boolean REUSE_PREPROCESS =
+    public static final boolean REUSE_PREPROCESS =
             !"false".equalsIgnoreCase(System.getProperty("vkdisp.reuse.preprocess", "true"));
 
     private ShaderPackCompiler() {}
