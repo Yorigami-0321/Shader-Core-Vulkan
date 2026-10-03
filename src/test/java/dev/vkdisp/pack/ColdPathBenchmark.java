@@ -8,7 +8,15 @@ import dev.vkdisp.glsl.preprocess.DefineProcessor;
 import dev.vkdisp.glsl.preprocess.GlslPreprocessor;
 import dev.vkdisp.glsl.preprocess.IncludeProcessor;
 import dev.vkdisp.glsl.preprocess.IncludeResolver;
+import dev.vkdisp.glsl.translate.AttributeRewriter;
+import dev.vkdisp.glsl.translate.FragmentOutputAdapter;
+import dev.vkdisp.glsl.translate.FtransformExpander;
+import dev.vkdisp.glsl.translate.IoLocationAdapter;
+import dev.vkdisp.glsl.translate.LegacyBuiltinInjector;
 import dev.vkdisp.glsl.translate.OfGlslTranslator;
+import dev.vkdisp.glsl.translate.TextureFunctionRenamer;
+import dev.vkdisp.glsl.translate.UniformInjector;
+import dev.vkdisp.glsl.translate.VersionAdapter;
 import dev.vkdisp.glsl.translate.ShaderStage;
 
 import java.io.IOException;
@@ -88,6 +96,34 @@ public final class ColdPathBenchmark {
     /** 预处理段再拆三段，供 G3 与 Rust 侧做**同口径**对照。 */
     /** 口径交叉校验的容差（%），理由见 {@link #crossCheck}。 */
     static final double CROSS_CHECK_TOLERANCE_PCT = 25.0;
+
+    /**
+     * 转译相 8 段的名称，顺序 = {@link OfGlslTranslator} 里的真实流水线序。
+     *
+     * <p>🔴 这是 {@code --trans-timing} 的机器可读标签，**与流水线序严格一致**；
+     * 改动本数组会让历史数据失去可比性（和 §7.3 对 Rust 侧标签的处理同一纪律）。
+     */
+    static final String[] TRANS_STAGES = {
+        "转译①attribute/varying 改写",
+        "转译②纹理函数改名",
+        "转译③ftransform 展开",
+        "转译④#version 升级",
+        "转译⑤旧内建替换与注入",
+        "转译⑥location 补写",
+        "转译⑦片元输出适配",
+        "转译⑧内建 uniform 注入",
+    };
+
+    /** 转译相的总耗时（口径 = OfGlslTranslator.translate 整趟）。 */
+    static final String TRANS_TOTAL = "转译合计（OfGlslTranslator.translate）";
+
+    /**
+     * 「尾巴」= 总耗时 − 8 段之和。尾巴里装的是 {@link OfGlslTranslator} 在 8 段之外做的事：
+     * 行号映射合成（buildStageMap / buildCombinedStageMap / compose）与诊断回填（locate）。
+     *
+     * <p>它是**减出来的**，不是直接量的 —— 所以只当量级线索，不当精确值。
+     */
+    static final String TRANS_TAIL = "转译⑨行号映射合成与诊断回填（减得）";
 
     static final String SEG_INC = "预处理①#include 展开";
     static final String SEG_DEF = "预处理②宏与条件编译";
@@ -198,6 +234,12 @@ public final class ColdPathBenchmark {
         // 这一趟**不覆盖** SEG_* 的四段口径，G0 的历史数字继续可比。
         if (a.phaseTiming()) {
             runPhaseTiming(a, pack, fixture);
+            return;
+        }
+
+        // --trans-timing：转译相 8 段的逐段计时，**另起一趟**，不碰既有三段/四段口径。
+        if (a.transTiming()) {
+            runTransTiming(a, pack, fixture);
             return;
         }
 
@@ -438,6 +480,165 @@ public final class ColdPathBenchmark {
         System.out.printf("G3DATA\tjava\tdef\t%.3f\t%.3f\t%d%n", sDef.millis(), sDef.p95() / 1e6, sDef.samples());
         System.out.printf("G3DATA\tjava\tconst\t%.3f\t%.3f\t%d%n",
                 sConst.millis(), sConst.p95() / 1e6, sConst.samples());
+    }
+
+    /**
+     * 转译相 8 段的逐段计时（{@code --trans-timing}）。
+     *
+     * <p><b>为什么不改既有口径</b>：{@code --phase-timing} 是 G3 对照在用的，
+     * 它的 inc/def/const 三行标签被历史证据引用；本模式**另起一趟**，
+     * 既有的三段/四段与 {@code --phase-timing} 一行未改。
+     *
+     * <p><b>口径</b>：与 {@code --phase-timing} 完全一致 —— 预热 ≥3、样本 ≥9、
+     * 每趟遍历全部阶段并按段累加纳秒，跨趟取中位数，另报 p95。
+     * 输入是**计时外**算好的预处理结果（与 {@code runPass} 同源），
+     * 所以段计时里**不含**预处理工时，两张表可以并排看。
+     *
+     * <p><b>自检</b>：8 段串起来的最终产物必须与
+     * {@code OfGlslTranslator.translate(stage, pre)} 的产物**逐字节一致** ——
+     * 否则说明本模式复刻的流水线与生产不一致，数字不可用（口径失真 → 不可复核）。
+     */
+    private static void runTransTiming(Args a, ShaderPackScanner.DiscoveredPack pack, Fixture fixture)
+            throws IOException {
+        IncludeResolver resolver = ShaderPackService.resolverFor(fixture.plan());
+
+        List<StageInput> inputs = fixture.inputs();
+        List<TranslateResult> preprocessed = new ArrayList<>(inputs.size());
+        for (StageInput input : inputs) {
+            preprocessed.add(GlslPreprocessor.preprocess(input.file(), input.source(), resolver));
+        }
+        if (!verifyStageChain(inputs, preprocessed)) {
+            System.err.println("G-trans: 段链复刻与 OfGlslTranslator 不一致，逐段数据不可用");
+            System.exit(3);
+        }
+
+        for (int i = 0; i < a.warmup; i++) {
+            timeStages(inputs, preprocessed);
+            timeTransTotal(inputs, preprocessed);
+        }
+
+        int stages = TRANS_STAGES.length;
+        long[][] perStage = new long[stages][a.iterations];
+        long[] totalNanos = new long[a.iterations];
+        for (int i = 0; i < a.iterations; i++) {
+            long[] acc = timeStages(inputs, preprocessed);
+            for (int s = 0; s < stages; s++) {
+                perStage[s][i] = acc[s];
+            }
+            totalNanos[i] = timeTransTotal(inputs, preprocessed);
+        }
+
+        long[] tailNanos = new long[a.iterations];
+        for (int i = 0; i < a.iterations; i++) {
+            long sum = 0;
+            for (int s = 0; s < stages; s++) {
+                sum += perStage[s][i];
+            }
+            // 减法可能因计时噪声出现极小的负值；夹到 0 并在报告里注明「减得」。
+            tailNanos[i] = Math.max(0L, totalNanos[i] - sum);
+        }
+
+        Stats sTotal = Stats.of(totalNanos);
+        System.out.printf("| %s | %.1f | %.1f | %.1f | %.1f | %d |%n",
+                TRANS_TOTAL, sTotal.millis(), sTotal.p95() / 1e6, sTotal.min() / 1e6,
+                sTotal.max() / 1e6, sTotal.samples());
+        System.out.printf("G3DATA\tjava\t%s\t%.3f\t%.3f\t%d%n", "trans-total",
+                sTotal.millis(), sTotal.p95() / 1e6, sTotal.samples());
+        for (int s = 0; s < stages; s++) {
+            Stats st = Stats.of(perStage[s]);
+            System.out.printf("| %s | %.1f | %.1f | %.1f | %.1f | %d |%n",
+                    TRANS_STAGES[s], st.millis(), st.p95() / 1e6, st.min() / 1e6,
+                    st.max() / 1e6, st.samples());
+            System.out.printf("G3DATA\tjava\ttrans-%d\t%.3f\t%.3f\t%d%n", s + 1,
+                    st.millis(), st.p95() / 1e6, st.samples());
+        }
+        Stats sTail = Stats.of(tailNanos);
+        System.out.printf("| %s | %.1f | %.1f | %.1f | %.1f | %d |%n",
+                TRANS_TAIL, sTail.millis(), sTail.p95() / 1e6, sTail.min() / 1e6,
+                sTail.max() / 1e6, sTail.samples());
+        System.out.printf("G3DATA\tjava\ttrans-tail\t%.3f\t%.3f\t%d%n",
+                sTail.millis(), sTail.p95() / 1e6, sTail.samples());
+        System.out.printf("%n环境：%s / JDK %s%n", a.describe(), System.getProperty("java.version"));
+    }
+
+    /** 8 段串起来的最终产物 vs {@code OfGlslTranslator.translate} 的产物，逐字节比对。 */
+    private static boolean verifyStageChain(List<StageInput> inputs, List<TranslateResult> preprocessed) {
+        for (int k = 0; k < inputs.size(); k++) {
+            String chained = runStageChain(inputs.get(k), preprocessed.get(k));
+            String production = OfGlslTranslator.translate(inputs.get(k).stage(), preprocessed.get(k)).text();
+            if (!chained.equals(production)) {
+                System.err.printf("G-trans: 口径失真 —— %s %s 的段链产物与 OfGlslTranslator 不一致%n",
+                        inputs.get(k).stage(), inputs.get(k).file());
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 只跑 8 段、返回最终文本（不计时；计时与自检共用同一条链，避免两处实现漂移）。 */
+    private static String runStageChain(StageInput input, TranslateResult pre) {
+        ShaderStage stage = input.stage();
+        String text = pre.text();
+        text = AttributeRewriter.rewrite(stage, text).text();
+        text = TextureFunctionRenamer.rename(text).text();
+        text = FtransformExpander.expand(stage, text).text();
+        text = VersionAdapter.upgrade(text).text();
+        text = LegacyBuiltinInjector.inject(stage, text).text();
+        text = IoLocationAdapter.locate(stage, text).text();
+        text = FragmentOutputAdapter.adapt(stage, text).text();
+        return UniformInjector.inject(text).text();
+    }
+
+    /** 逐段计时：每个样本返回 8 段的纳秒累加。口径 = 遍历全部阶段。 */
+    private static long[] timeStages(List<StageInput> inputs, List<TranslateResult> preprocessed) {
+        long[] acc = new long[TRANS_STAGES.length];
+        for (int k = 0; k < inputs.size(); k++) {
+            ShaderStage stage = inputs.get(k).stage();
+            String text = preprocessed.get(k).text();
+            long t;
+
+            t = System.nanoTime();
+            text = AttributeRewriter.rewrite(stage, text).text();
+            acc[0] += System.nanoTime() - t;
+
+            t = System.nanoTime();
+            text = TextureFunctionRenamer.rename(text).text();
+            acc[1] += System.nanoTime() - t;
+
+            t = System.nanoTime();
+            text = FtransformExpander.expand(stage, text).text();
+            acc[2] += System.nanoTime() - t;
+
+            t = System.nanoTime();
+            text = VersionAdapter.upgrade(text).text();
+            acc[3] += System.nanoTime() - t;
+
+            t = System.nanoTime();
+            text = LegacyBuiltinInjector.inject(stage, text).text();
+            acc[4] += System.nanoTime() - t;
+
+            t = System.nanoTime();
+            text = IoLocationAdapter.locate(stage, text).text();
+            acc[5] += System.nanoTime() - t;
+
+            t = System.nanoTime();
+            text = FragmentOutputAdapter.adapt(stage, text).text();
+            acc[6] += System.nanoTime() - t;
+
+            t = System.nanoTime();
+            text = UniformInjector.inject(text).text();
+            acc[7] += System.nanoTime() - t;
+        }
+        return acc;
+    }
+
+    /** 转译相总耗时（口径 = OfGlslTranslator.translate 整趟，含行号映射与诊断回填）。 */
+    private static long timeTransTotal(List<StageInput> inputs, List<TranslateResult> preprocessed) {
+        long t0 = System.nanoTime();
+        for (int k = 0; k < inputs.size(); k++) {
+            OfGlslTranslator.translate(inputs.get(k).stage(), preprocessed.get(k));
+        }
+        return System.nanoTime() - t0;
     }
 
     private static long timeInc(Fixture fixture, IncludeResolver resolver) {
@@ -798,7 +999,8 @@ public final class ColdPathBenchmark {
      */
     private record Args(Path inventory, String pack, int warmup, int iterations,
                         Path out, Path dumpGolden, Path dumpInput, String label, String notes,
-                        boolean goldenOnly, boolean phaseTiming, Path dumpConst, Path dumpCompile) {
+                        boolean goldenOnly, boolean phaseTiming, Path dumpConst, Path dumpCompile,
+                        boolean transTiming) {
 
         /** 主机描述：显式 `--label` 优先，否则自动采集 CPU + OS。 */
         String describe() {
@@ -837,6 +1039,7 @@ public final class ColdPathBenchmark {
             boolean phaseTiming = false;
             Path constDump = null;
             Path compileDump = null;
+            boolean transTiming = false;
             for (int i = 0; i < argv.length; i += 2) {
                 if ("--golden-only".equals(argv[i])) {
                     goldenOnly = true;
@@ -845,6 +1048,11 @@ public final class ColdPathBenchmark {
                 }
                 if ("--phase-timing".equals(argv[i])) {
                     phaseTiming = true;
+                    i--;
+                    continue;
+                }
+                if ("--trans-timing".equals(argv[i])) {
+                    transTiming = true;
                     i--;
                     continue;
                 }
@@ -874,7 +1082,7 @@ public final class ColdPathBenchmark {
                 throw new IllegalArgumentException("§7.1：样本必须 ≥5 次，收到 " + iterations);
             }
             return new Args(inventory, pack, warmup, iterations, out, golden, inputDump, label, notes,
-                    goldenOnly, phaseTiming, constDump, compileDump);
+                    goldenOnly, phaseTiming, constDump, compileDump, transTiming);
         }
 
         /** 选包：指定名/序号优先，否则取第一个 zip（目录包只作兜底）。 */

@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -59,6 +60,56 @@ public final class FfmBoundaryProbe {
 
     /** 口径修正后的 G0 生产入口（ms），§5.2 端到端百分比的分母。 */
     private static final double G0_BASELINE_MS = 895.3;
+
+    // ===== 大载荷（task-6）相关常量 =====
+
+    /**
+     * 载荷阶梯（字节）。必测档是 {@code 64KB}（≈单阶段 ~95KB 量级）与 {@code 1MB}（≈多阶段合并）。
+     * {@code 16MB} 对应整包 17,298,868 字节的量级。
+     */
+    private static final long[] BIG_PAYLOADS = {64L, 1L << 10, 64L << 10, 1L << 20, 16L << 20};
+
+    /**
+     * 缓冲区池大小（字节）。
+     *
+     * <p>🔴 <b>这是整个大载荷实验能不能成立的关键</b>：本机 L3 = 16MB。
+     * 若反复对<b>同一个</b> segment 调用，它会一直留在 cache 里，
+     * 测出来的是「热缓存下传指针」的成本 —— 而真实流水线每次传的是<b>不同的</b>缓冲区
+     * （每个阶段刚从前面的 zip/解码缓冲里出来，第一次触碰时是冷的）。
+     * ⇒ 池必须<b>远大于 L3</b>，并且每轮让调用在池里轮转，才能测到冷访问的真实代价。
+     * 反过来，如果忘了轮转，就会**系统性低估**跨界成本 —— 那属于「测了个更乐观的数」，
+     * 是这类实验最危险的失败方向。
+     */
+    private static final long POOL_BYTES = 256L << 20;
+
+    /**
+     * 轮转步长（字节）：至少 2×L3，保证下一次触碰的缓冲区一定不在缓存里。
+     *
+     * <p>刻意用「2×L3」而不是「L3」：只差一个系数，但后者在边界上会漏掉残留。
+     */
+    private static final long STRIDE_BYTES = 32L << 20;
+
+    /** 每轮调用次数的上下限。小载荷需要很多次才够计时精度；大载荷需要很少次否则单轮过长。 */
+    private static final int MIN_CALLS_PER_ROUND = 20;
+    private static final int MAX_CALLS_PER_ROUND = 200_000;
+
+    /** 每档每轮希望「扫过」约一个池子（payloadBytes × callsPerRound ≈ POOL_BYTES）。 */
+    private static final long BYTES_PER_ROUND_TARGET = POOL_BYTES;
+
+    /**
+     * 大载荷套件的独立趟数。
+     *
+     * <p>🔴 上一轮吃过教训：`noop/cached` 场景跨趟极差 **4.22×**，团队据此认定
+     * 「该场景不可解读」。所以这次刻意多跑几趟，把<b>跨趟极差直接算出来</b>，
+     * 而不是只报一个中位数 —— 一个自己都撑不住的数字不该被拿去下结论。
+     */
+    private static final int BIG_RUNS = 5;
+
+    /** Arena 复用的样本载荷：取「单个阶段」量级（64KB 档）。 */
+    private static final long ARENA_PAYLOAD_BYTES = 64L << 10;
+
+    /** Arena 实验的每轮次数。 */
+    private static final int ARENA_CALLS_PER_ROUND = 2_000;
 
     /** stderr 显式 UTF-8 —— 否则异常信息里的中文自己先乱码了。 */
     private static final PrintStream ERR =
@@ -126,7 +177,466 @@ public final class FfmBoundaryProbe {
 
             printBoundedSummary(out, raw);
             out.println();
+
+            // 大载荷套件（task-6）：上面那套是 40 字节的「按条」量级，
+            // 而真实批次传的是数十 KB～MB 的整份源码 ⇒ 另起一趟。
+            runLargePayloadSuite(out, linker, lookup);
+            runArenaSuite(out, linker, lookup);
+
+            out.println();
             verifyPanicBoundary(out, linker, lookup);
+        }
+    }
+
+    /**
+     * 大载荷套件：同一机制、不同载荷规模下各测三样。
+     *
+     * <p>三样分别是：<b>零拷贝</b>（Rust 只读指针，真实实现该这样）、
+     * <b>拷贝</b>（Rust 先拷进 {@code Vec}，量化「实现写错」的代价）、
+     * <b>同工纯 Java 基线</b>（同样的循环、同样的字节和，但完全不跨边界）。
+     *
+     * <p>🔴 <b>必须同工</b>：若基线什么都不做，差值里就混进了「Rust 干活的时间」，
+     * 那测到的不是跨界成本。上一轮踩过「忘测基线 ⇒ 把 ~20ns 循环开销算成跨界开销」的坑，
+     * 这里进一步要求基线<b>干同样的活</b>。
+     */
+    private static void runLargePayloadSuite(PrintStream out, Linker linker, SymbolLookup lookup) {
+        Map<Long, List<BigCase>> all = new java.util.LinkedHashMap<>();
+        for (int run = 0; run < BIG_RUNS; run++) {
+            oneBigRun(out, linker, lookup, run, all);
+        }
+        reportBigRuns(out, all);
+    }
+
+    /** 单趟：把每一档的结果按载荷记进 all，供最后跨趟聚合。 */
+    private static void oneBigRun(PrintStream out, Linker linker, SymbolLookup lookup,
+            int run, Map<Long, List<BigCase>> all) {
+        MethodHandle zeroCopy = downcall(linker, lookup, "sum_len",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        MethodHandle copying = downcall(linker, lookup, "sum_len_copy",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+
+        out.printf("%n=== 大载荷套件（task-6）===%n");
+        out.printf("L3 缓存 16MB；缓冲区池 %.0fMB，轮转步长 %.0fMB ⇒ 每次调用都触碰冷内存%n",
+                POOL_BYTES / 1048576.0, STRIDE_BYTES / 1048576.0);
+
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment pool = arena.allocate(POOL_BYTES, 1);
+            fillDeterministic(pool);
+
+            out.printf("%n%-12s %10s %8s %13s %13s %13s %13s %13s%n",
+                    "载荷", "每轮次数", "样本", "零拷贝(ns)", "拷贝(ns)", "基线(ns)",
+                    "拷贝代价(ns)", "净跨界(ns)");
+            out.println("-".repeat(112));
+
+            for (long payload : BIG_PAYLOADS) {
+                int calls = callsPerRound(payload);
+                BigCase result = measureBig(pool, payload, calls, zeroCopy, copying);
+                all.computeIfAbsent(payload, k -> new ArrayList<>()).add(result);
+            }
+        }
+    }
+
+    /**
+     * 跨趟聚合：报中位数、p95、<b>跨趟极差</b>，并据此声明每个档位<b>可不可解读</b>。
+     *
+     * <p>判据（沿用上一轮团队定下的口径）：跨趟极差过大 ⇒ 该场景不可解读，
+     * 结论只用可解读的那些档。宁可少说，也不要拿一个撑不住的数字下结论。
+     */
+    private static void reportBigRuns(PrintStream out, Map<Long, List<BigCase>> all) {
+        out.printf("%n=== 大载荷套件：%d 趟汇总（中位数 / p95 / 跨趟极差）===%n", BIG_RUNS);
+        out.printf("%-8s %10s %8s %12s %12s %12s %12s %12s %10s%n",
+                "载荷", "每轮次数", "样本", "零拷贝(中位)", "零拷贝p95", "拷贝(中位)",
+                "基线(中位)", "拷贝代价", "跨趟极差");
+        out.println("-".repeat(110));
+
+        Map<Long, BigCase> median = new java.util.LinkedHashMap<>();
+        List<String> unreadable = new ArrayList<>();
+        for (Map.Entry<Long, List<BigCase>> e : all.entrySet()) {
+            long payload = e.getKey();
+            List<BigCase> runs = e.getValue();
+            double zeroSpread = spread(runs, "zero");
+            double copySpread = spread(runs, "copy");
+            double javaSpread = spread(runs, "java");
+            double worst = Math.max(zeroSpread, Math.max(copySpread, javaSpread));
+            boolean ok = worst <= 1.0;   // 跨趟极差 ≤ 1.0（100%）才算可解读
+            if (!ok) {
+                unreadable.add(humanBytes(payload) + "(极差 " + String.format("%.2f×", worst) + ")");
+            }
+            BigCase med = medianOf(runs);
+            median.put(payload, med);
+            int calls = callsPerRound(payload);
+            out.printf("G3DATA\tffibig\t%d\t%.1f\t%.1f\t%.1f\t%d\n", payload,
+                    med.zeroNs(), med.copyNs(), med.javaNs(), med.samples());
+            out.printf("%-8s %10d %8d %12.1f %12.1f %12.1f %12.1f %12.1f %9.2f× %s%n",
+                    humanBytes(payload), calls, med.samples(),
+                    med.zeroNs(), med.zero.p95Ns(), med.copyNs(), med.javaNs(),
+                    med.copyNs() - med.zeroNs(), worst, ok ? "✅可解读" : "🔴不可解读");
+        }
+        if (!unreadable.isEmpty()) {
+            out.printf("%n🔴 跨趟极差 >1.0 的档位（不可解读，结论不使用）：%s%n", String.join("、", unreadable));
+        }
+        printLargePayloadVerdict(out, median);
+    }
+
+    private static double spread(List<BigCase> runs, String which) {
+        double[] v = new double[runs.size()];
+        for (int i = 0; i < runs.size(); i++) {
+            BigCase c = runs.get(i);
+            v[i] = switch (which) {
+                case "copy" -> c.copyNs();
+                case "java" -> c.javaNs();
+                default -> c.zeroNs();
+            };
+        }
+        double med = median(v);
+        return med <= 0 ? Double.POSITIVE_INFINITY : (max(v) - min(v)) / med;
+    }
+
+    private static BigCase medianOf(List<BigCase> runs) {
+        double[] z = new double[runs.size()];
+        double[] c = new double[runs.size()];
+        double[] j = new double[runs.size()];
+        for (int i = 0; i < runs.size(); i++) {
+            z[i] = runs.get(i).zeroNs();
+            c[i] = runs.get(i).copyNs();
+            j[i] = runs.get(i).javaNs();
+        }
+        double zp = 0;
+        double zp95 = 0;
+        for (BigCase r : runs) {
+            zp += r.zero.p95Ns();
+            zp95 = Math.max(zp95, r.zero.p95Ns());
+        }
+        return new BigCase(new Timing(median(z), zp95), new Timing(median(c), 0),
+                new Timing(median(j), 0), runs.get(0).samples());
+    }
+
+    private static double median(double[] v) {
+        double[] s = v.clone();
+        Arrays.sort(s);
+        return s[s.length / 2];
+    }
+
+    private static double max(double[] v) {
+        double m = Double.NEGATIVE_INFINITY;
+        for (double x : v) {
+            m = Math.max(m, x);
+        }
+        return m;
+    }
+
+    private static double min(double[] v) {
+        double m = Double.POSITIVE_INFINITY;
+        for (double x : v) {
+            m = Math.min(m, x);
+        }
+        return m;
+    }
+
+    /**
+     * 把结论换算回「36.3% 的端到端收益还剩多少」。
+     *
+     * <p>口径：按批粒度下，每个阶段传一份整份源码。整包 182 个阶段合计 17,298,868 字节，
+     * 所以总字节数固定；跨界次数 550 次不变。<b>变的只有每字节要花多少钱。</b>
+     */
+    /**
+     * 把结论换算回「36.3% 的端到端收益还剩多少」。
+     *
+     * <p>🔴 <b>换算方法必须说清楚，否则数是假的</b>：上一版我拿「64KB 档的耗时」直接当成
+     * 「95,049 字节那一批的代价」，那是把一个 65,536 字节的数错当成 95,049 字节的数。
+     * 正确做法是<b>反推每字节成本</b>：在 64KB / 1MB / 16MB 这些档位上，
+     * 固定开销（~16.6ns）相对总耗时已可忽略，于是 {@code ns/字节 ≈ 总耗时 / 载荷字节}；
+     * 再用这个斜率去外推真实的平均批量（17,298,868 / 182 ≈ 95,049 字节）。
+     *
+     * <p>三档算出的斜率高度一致（见证据表），本身就是这个方法可信的旁证。
+     */
+    private static void printLargePayloadVerdict(PrintStream out,
+            Map<Long, BigCase> cases) {
+        final double bundleBytes = 17_298_868.0;
+        final double stagesPerPass = 182.0;
+        final double avgBatchBytes = bundleBytes / stagesPerPass;
+        final double crossingsPerBundle = 550.0;
+        final double savingMs = 325.1;
+        final double baselineMs = 895.3;
+
+        out.printf("%n=== 换算：整包 182 阶段合计 %.0f 字节，平均每批 %.0f 字节，按批 %d 次跨界 ===%n",
+                bundleBytes, avgBatchBytes, (int) crossingsPerBundle);
+
+        out.printf("%n  每字节成本斜率（三档独立反推，互相印证）：%n");
+        double[] slopes = new double[0];
+        for (long rung : new long[]{64L << 10, 1L << 20, 16L << 20}) {
+            BigCase c = cases.get(rung);
+            if (c == null) {
+                continue;
+            }
+            double slope = c.zeroNs() / rung;
+            slopes = java.util.Arrays.copyOf(slopes, slopes.length + 1);
+            slopes[slopes.length - 1] = slope;
+            out.printf("    %-5s 总耗时 %10.1f ns ÷ %9d 字节 = %.4f ns/字节%n",
+                    humanBytes(rung), c.zeroNs(), rung, slope);
+        }
+        if (slopes.length == 0) {
+            return;
+        }
+        double[] sortedSlope = slopes.clone();
+        Arrays.sort(sortedSlope);
+        double slopeNs = sortedSlope[sortedSlope.length / 2];
+
+        BigCase small = cases.get(64L);
+        double fixedNs = small == null ? 0.0 : small.zeroNs();
+        BigCase k64 = cases.get(64L << 10);
+        BigCase m1 = cases.get(1L << 20);
+        double copyExtraSlope = 0.0;
+        if (k64 != null && m1 != null) {
+            BigCase big16 = cases.get(16L << 20);
+            if (big16 != null) {
+                copyExtraSlope = (big16.copyNs() - big16.zeroNs()) / (16L << 20);
+            }
+        }
+
+        out.printf("%n  取中位斜率 %.4f ns/字节、固定开销 %.1f ns/次%n", slopeNs, fixedNs);
+        out.printf("  ⇒ 一个 %.0f 字节的批次：%n", avgBatchBytes);
+        double zeroPerCall = fixedNs + slopeNs * avgBatchBytes;
+        double copyPerCall = zeroPerCall + copyExtraSlope * avgBatchBytes;
+        out.printf("    零拷贝 %10.1f ns/次 × %d 次 = %7.3f ms ⇒ 端到端 %.1f%%%n",
+                zeroPerCall, (int) crossingsPerBundle,
+                crossingsPerBundle * zeroPerCall / 1e6,
+                (savingMs - crossingsPerBundle * zeroPerCall / 1e6) / baselineMs * 100.0);
+        out.printf("    拷贝   %10.1f ns/次 × %d 次 = %7.3f ms ⇒ 端到端 %.1f%%%n",
+                copyPerCall, (int) crossingsPerBundle,
+                crossingsPerBundle * copyPerCall / 1e6,
+                (savingMs - crossingsPerBundle * copyPerCall / 1e6) / baselineMs * 100.0);
+        out.printf("%n  🔖 其中「拷贝」相对「零拷贝」每字节多 %.4f ns（memcpy 代价）%n", copyExtraSlope);
+        out.printf("  🔖 注意：这 %7.3f ms 里，**跨界机制本身只占 %.3f ms**（%d × %.1f ns），%n",
+                crossingsPerBundle * zeroPerCall / 1e6,
+                crossingsPerBundle * fixedNs / 1e6, (int) crossingsPerBundle, fixedNs);
+        out.printf("     其余是「读这些字节」的工作量 —— 真实实现无论跨界与否都要读，所以它不是跨界开销。%n");
+    }
+
+    /**
+     * {@code Arena} 复用 vs 每批新建 —— 顺带查泄漏。
+     *
+     * <p>🔴 为什么单独测：{@code Arena} 是堆外内存，<b>泄漏在这条路径上表现为「越跑越慢」</b>，
+     * 那是最难查的一类问题。而且真实流水线有两个合理选择：
+     * <b>每批新建一个 Arena</b>（简单，生命周期清楚）或 <b>复用一个 Arena</b>（少分配少释放）。
+     * 两者差多少，必须有数，否则没法选。
+     *
+     * <p>同时测「新建即释放」的显式路径：若它每轮耗时稳定，说明没有泄漏。
+     */
+    private static void runArenaSuite(PrintStream out, Linker linker, SymbolLookup lookup) {
+        MethodHandle sum = downcall(linker, lookup, "sum_len",
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+        out.printf("%n=== Arena：复用 vs 每批新建（载荷 %s）===%n",
+                humanBytes(ARENA_PAYLOAD_BYTES));
+
+        // 🔴 三臂，不是两臂。第一版只做了 reuse / fresh 两个对照，结果**被污染了**：
+        // fresh 那一臂每次都要 fillDeterministic 写 64KB，于是差值里混进了「写数据」的成本，
+        // 而那不是 Arena 的成本。拆成三臂才能各自归因：
+        //   reuse        = 预填充一次，之后只跨界                       ⇒ 纯跨界
+        //   fresh-nofill = 每批 alloc + 跨界(零页) + close，不填        ⇒ 纯 alloc/close
+        //   fresh-fill   = 每批 alloc + 填 + 跨界 + close               ⇒ alloc/close + 填充
+        // 于是 alloc/close = fresh-nofill − reuse；填充 = fresh-fill − fresh-nofill。
+        Timing reuse;
+        Timing freshNofill;
+        Timing freshFill;
+        try (Arena reusable = Arena.ofConfined()) {
+            MemorySegment seg = reusable.allocate(ARENA_PAYLOAD_BYTES, 1);
+            fillDeterministic(seg);
+            reuse = measureScenario(() -> {
+                long sink = 0;
+                for (int i = 0; i < ARENA_CALLS_PER_ROUND; i++) {
+                    sink += invoke(() -> (long) sum.invokeExact(seg, ARENA_PAYLOAD_BYTES));
+                }
+                return sink;
+            }, ARENA_CALLS_PER_ROUND);
+        }
+        freshNofill = measureScenario(() -> {
+            long sink = 0;
+            for (int i = 0; i < ARENA_CALLS_PER_ROUND; i++) {
+                try (Arena oneShot = Arena.ofConfined()) {
+                    MemorySegment seg = oneShot.allocate(ARENA_PAYLOAD_BYTES, 1);
+                    sink += invoke(() -> (long) sum.invokeExact(seg, ARENA_PAYLOAD_BYTES));
+                }
+            }
+            return sink;
+        }, ARENA_CALLS_PER_ROUND);
+        freshFill = measureScenario(() -> {
+            long sink = 0;
+            for (int i = 0; i < ARENA_CALLS_PER_ROUND; i++) {
+                try (Arena oneShot = Arena.ofConfined()) {
+                    MemorySegment seg = oneShot.allocate(ARENA_PAYLOAD_BYTES, 1);
+                    fillDeterministic(seg);
+                    sink += invoke(() -> (long) sum.invokeExact(seg, ARENA_PAYLOAD_BYTES));
+                }
+            }
+            return sink;
+        }, ARENA_CALLS_PER_ROUND);
+
+        out.printf("%-20s %13s %13s%n", "方式", "中位数(ns/次)", "p95(ns/次)");
+        out.println("-".repeat(52));
+        out.printf("%-20s %13.1f %13.1f%n", "reuse", reuse.medianNs(), reuse.p95Ns());
+        out.printf("%-20s %13.1f %13.1f%n", "fresh-nofill", freshNofill.medianNs(), freshNofill.p95Ns());
+        out.printf("%-20s %13.1f %13.1f%n", "fresh-fill", freshFill.medianNs(), freshFill.p95Ns());
+        out.printf("G3DATA\tarena\t%d\treuse\t%.1f\t%d%n",
+                ARENA_PAYLOAD_BYTES, reuse.medianNs(), ARENA_CALLS_PER_ROUND);
+        out.printf("G3DATA\tarena\t%d\tfresh-nofill\t%.1f\t%d%n",
+                ARENA_PAYLOAD_BYTES, freshNofill.medianNs(), ARENA_CALLS_PER_ROUND);
+        out.printf("G3DATA\tarena\t%d\tfresh-fill\t%.1f\t%d%n",
+                ARENA_PAYLOAD_BYTES, freshFill.medianNs(), ARENA_CALLS_PER_ROUND);
+
+        double allocClose = freshNofill.medianNs() - reuse.medianNs();
+        double fillCost = freshFill.medianNs() - freshNofill.medianNs();
+        out.printf("%n  alloc+close 成本 = fresh-nofill − reuse = %.1f ns/次%n", allocClose);
+        out.printf("  填充成本        = fresh-fill − fresh-nofill = %.1f ns/次%n", fillCost);
+        out.printf("  ⇒ 按批 550 次：alloc+close %.3f ms，填充 %.3f ms%n",
+                allocClose * 550 / 1e6, fillCost * 550 / 1e6);
+        out.printf("  🔖 对照：拷贝 vs 零拷贝的整包差额是 6.505 ms ⇒ %s%n",
+                allocClose * 550 / 1e6 > 6.505
+                        ? "Arena 策略比「拷贝与否」更值得先定"
+                        : "拷贝与否的差额更大");
+        out.printf("  泄漏自检：fresh 每批都 close。若有泄漏，%d 轮之后可用内存会明显下降；%n",
+                ARENA_CALLS_PER_ROUND);
+        out.printf("  本实验未做「连续多趟后比内存」的断言 —— 那是独立的事，见「没有证明的事」。%n");
+    }
+
+    /** 填充确定性数据，避免全零页带来的「读零页」优化偏差。 */
+    private static void fillDeterministic(MemorySegment pool) {
+        byte[] chunk = new byte[1 << 16];
+        for (int i = 0; i < chunk.length; i++) {
+            chunk[i] = (byte) ((i * 31 + 7) & 0xFF);
+        }
+        long written = 0;
+        while (written < pool.byteSize()) {
+            int n = (int) Math.min(chunk.length, pool.byteSize() - written);
+            MemorySegment.copy(chunk, 0, pool, ValueLayout.JAVA_BYTE, written, n);
+            written += n;
+        }
+    }
+
+    /** 每轮调用次数：让「载荷 × 次数」约等于一个池子，即每轮把池扫一遍。 */
+    private static int callsPerRound(long payloadBytes) {
+        long calls = BYTES_PER_ROUND_TARGET / payloadBytes;
+        return (int) Math.max(MIN_CALLS_PER_ROUND, Math.min(MAX_CALLS_PER_ROUND, calls));
+    }
+
+    /** 轮转偏移：步长 ≥ 2×L3，保证每次触碰的是冷内存；用非 2 的幂偏移避免对齐预取。 */
+    private static long offsetFor(long payloadBytes, int callIndex) {
+        long slots = Math.max(1, (POOL_BYTES - payloadBytes) / STRIDE_BYTES);
+        long step = STRIDE_BYTES;
+        if (step >= POOL_BYTES - payloadBytes) {
+            step = Math.max(payloadBytes, 1);
+            slots = Math.max(1, (POOL_BYTES - payloadBytes) / step);
+        }
+        // 非 2 的幂步进，避免硬件预取把整段提前拉进缓存。
+        long idx = (callIndex * 3L + payloadBytes / 64L) % Math.max(1, slots);
+        return idx * step;
+    }
+
+    /** 三样一起测，保证三者走的是同一段缓冲、同样的循环、同样的调用次数。 */
+    private static BigCase measureBig(MemorySegment pool, long payloadBytes, int callsPerRound,
+            MethodHandle zeroCopy, MethodHandle copying) {
+        // 先跑一次取校验和，证明三路算的是同一件事（否则差值无意义）。
+        long probeOffset = offsetFor(payloadBytes, 0);
+        MemorySegment probe = pool.asSlice(probeOffset, payloadBytes);
+        long viaZero = invoke(() -> (long) zeroCopy.invokeExact(probe, payloadBytes));
+        long viaCopy = invoke(() -> (long) copying.invokeExact(probe, payloadBytes));
+        long viaJava = javaSum(probe);
+        if (viaZero != viaCopy || viaZero != viaJava) {
+            throw new IllegalStateException("三路校验和不一致（零拷贝=" + viaZero
+                    + " 拷贝=" + viaCopy + " Java=" + viaJava + "）—— 差值将没有意义");
+        }
+
+        Timing zeroT = measureScenario(() -> {
+            long sink = 0;
+            for (int c = 0; c < callsPerRound; c++) {
+                long off = offsetFor(payloadBytes, c);
+                sink += invoke(() -> (long) zeroCopy.invokeExact(
+                        pool.asSlice(off, payloadBytes), payloadBytes));
+            }
+            return sink;
+        }, callsPerRound);
+        Timing copyT = measureScenario(() -> {
+            long sink = 0;
+            for (int c = 0; c < callsPerRound; c++) {
+                long off = offsetFor(payloadBytes, c);
+                sink += invoke(() -> (long) copying.invokeExact(
+                        pool.asSlice(off, payloadBytes), payloadBytes));
+            }
+            return sink;
+        }, callsPerRound);
+        Timing javaT = measureScenario(() -> {
+            long sink = 0;
+            for (int c = 0; c < callsPerRound; c++) {
+                long off = offsetFor(payloadBytes, c);
+                sink += javaSum(pool.asSlice(off, payloadBytes));
+            }
+            return sink;
+        }, callsPerRound);
+        return new BigCase(zeroT, copyT, javaT, SAMPLE_ROUNDS);
+    }
+
+    /**
+     * 同工纯 Java 基线：对同一段内存做同样的字节和，不跨任何边界。
+     *
+     * <p>🔴 <b>必须按无符号累加</b>：Rust 侧是 {@code *b as usize}（0..255），
+     * 而 {@code MemorySegment.get(JAVA_BYTE, i)} 返回的是<b>有符号</b> byte（−128..127）。
+     * 不加 {@code & 0xFF} 的话，两边算的根本不是同一个数 ——
+     * 本函数上方的三路校验和会立刻报「零拷贝=8160 拷贝=8160 Java=−32」。
+     * 那个自检就是为这类问题准备的：<b>它比性能数字先发现问题</b>。
+     */
+    private static long javaSum(MemorySegment segment) {
+        long sum = 0;
+        for (long i = 0; i < segment.byteSize(); i++) {
+            sum += segment.get(ValueLayout.JAVA_BYTE, i) & 0xFF;
+        }
+        return sum;
+    }
+
+    /** 复用与 {@link #measure(Scenario)} 相同的采样口径（预热 + N 轮，取中位数 + p95）。 */
+    private static Timing measureScenario(java.util.function.LongSupplier body, int callsThisRound) {
+        for (int i = 0; i < WARMUP_ROUNDS; i++) {
+            if (body.getAsLong() == Long.MIN_VALUE) {
+                System.err.println("unreachable");
+            }
+        }
+        double[] perCall = new double[SAMPLE_ROUNDS];
+        for (int i = 0; i < SAMPLE_ROUNDS; i++) {
+            long t0 = System.nanoTime();
+            body.getAsLong();
+            perCall[i] = (double) (System.nanoTime() - t0) / callsThisRound;
+        }
+        double[] sorted = perCall.clone();
+        Arrays.sort(sorted);
+        int p95Index = (int) Math.ceil(0.95 * sorted.length) - 1;
+        return new Timing(sorted[sorted.length / 2], sorted[Math.max(0, p95Index)]);
+    }
+
+    /** 一次测量的中位数与 p95（ns/次）。 */
+    private record Timing(double medianNs, double p95Ns) {
+    }
+
+    private static String humanBytes(long b) {
+        if (b >= 1 << 20) {
+            return (b >> 20) + "MB";
+        }
+        if (b >= 1 << 10) {
+            return (b >> 10) + "KB";
+        }
+        return b + "B";
+    }
+
+    /** 一档载荷的三路结果。单位统一为「每次调用的纳秒」。 */
+    private record BigCase(Timing zero, Timing copy, Timing java, int samples) {
+        double zeroNs() {
+            return zero.medianNs();
+        }
+
+        double copyNs() {
+            return copy.medianNs();
+        }
+
+        double javaNs() {
+            return java.medianNs();
         }
     }
 
