@@ -1,6 +1,7 @@
 package dev.vkdisp.pack;
 
 import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.glsl.TranslateResult;
 import dev.vkdisp.glsl.preprocess.ConstEvaluator;
 import dev.vkdisp.glsl.preprocess.GlslPreprocessor;
 import dev.vkdisp.glsl.preprocess.IncludeResolver;
@@ -116,6 +117,27 @@ public final class ShaderPackService {
      * @param discovered 扫描器产出的合法包
      */
     public static LoadResult load(ShaderPackScanner.DiscoveredPack discovered) {
+        return load(discovered, null);
+    }
+
+    /**
+     * 加载单个包，并把**逐文件的预处理产物**按源文件路径回填进
+     * {@code preprocessSink}（可为 {@code null} 表示不需要）。
+     *
+     * <p>🔴 **为什么需要它**：本方法为了提取 uniform / 属性声明，会对每个 program 的
+     * 两个阶段各跑一次完整的 {@link GlslPreprocessor#analyze}；而
+     * {@link ShaderPackCompiler} 为了真正转译又对同一批文件跑一次
+     * ⇒ 生产冷路径上**同一份预处理被算了两遍**。把产物带出来即可复用，
+     * 详见 {@code evidence/pp-parse-profile.md}。
+     *
+     * <p>⚠️ **复用前提**：sink 里是**未套用选项覆盖**的预处理结果。
+     * {@link ShaderPackCompiler} 只在选项覆盖为空时才复用（有覆盖时两次预处理本就不同，
+     * 必须各算一次）。
+     *
+     * @param preprocessSink 源文件路径 → 预处理结果；可为 null
+     */
+    public static LoadResult load(ShaderPackScanner.DiscoveredPack discovered,
+            Map<String, TranslateResult> preprocessSink) {
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         if (discovered == null) {
             diagnostics.add(TranslateDiagnostic.of(
@@ -159,9 +181,9 @@ public final class ShaderPackService {
             List<VertexAttribute> attributes = new ArrayList<>();
             // 顶点阶段才收顶点属性（片元的 in 是插值输入，语义不同）。
             collectSource(plan, resolver, blueprint.vertexShader, true,
-                    discoveredOptions, uniforms, attributes, diagnostics);
+                    discoveredOptions, uniforms, attributes, diagnostics, preprocessSink);
             collectSource(plan, resolver, blueprint.fragmentShader, false,
-                    discoveredOptions, uniforms, attributes, diagnostics);
+                    discoveredOptions, uniforms, attributes, diagnostics, preprocessSink);
             programs.add(new Program(
                     blueprint.name,
                     ProgramStage.parse(blueprint.name),
@@ -444,7 +466,8 @@ public final class ShaderPackService {
             List<ConstEvaluator.OptionConstant> optionSink,
             List<UniformDecl> uniformSink,
             List<VertexAttribute> attributeSink,
-            List<TranslateDiagnostic> diagnostics) {
+            List<TranslateDiagnostic> diagnostics,
+            Map<String, TranslateResult> preprocessSink) {
         if (sourcePath == null) {
             // 程序允许只有一侧文件存在（Program 契约：缺失侧为 null，消费方显式降级，08-TESTING §4）。
             return;
@@ -470,6 +493,9 @@ public final class ShaderPackService {
         diagnostics.addAll(report.result().diagnostics());
         optionSink.addAll(report.options());
 
+        if (preprocessSink != null) {
+            preprocessSink.put(sourcePath, report.result());
+        }
         GlslDeclarationExtractor.Result declarations =
                 GlslDeclarationExtractor.extract(report.result().text(), sourcePath, vertexStage);
         uniformSink.addAll(declarations.uniforms());

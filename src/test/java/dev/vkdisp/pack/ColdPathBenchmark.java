@@ -164,6 +164,12 @@ public final class ColdPathBenchmark {
             }
         }
 
+        if (a.dumpCompile() != null) {
+            dumpCompileResults(a.dumpCompile(), pack);
+            System.out.println("编译产物已落盘（复用优化的等价性判据）: " + a.dumpCompile());
+            return;
+        }
+
         if (a.dumpConst() != null) {
             dumpConstResults(a.dumpConst(), pack, fixture);
             System.out.println("const 结果已落盘（A/B 等价性判据）: " + a.dumpConst());
@@ -243,6 +249,41 @@ public final class ColdPathBenchmark {
             writeEvidence(a, pack, fixture, sScan, sProps, sPre, sTrans, sSum, sEntry);
             System.out.println("证据已落盘: " + a.out());
         }
+    }
+
+    /**
+     * 落盘 {@link ShaderPackCompiler#compile} 的**全部**阶段产物（文本 + 诊断），
+     * 作为「复用 load 的预处理结果」这一优化的 A/B 等价性判据。
+     *
+     * <p>为什么必须全量：这一类优化改的是**每个阶段的最终产物**，只看一个阶段通过
+     * 不构成证据；而生产路径对 182 个阶段各跑一次，只有全量逐字节比对才能说明
+     * 「复用」与「不算」在下游看到的东西完全一样。
+     */
+    private static void dumpCompileResults(Path dir, ShaderPackScanner.DiscoveredPack pack)
+            throws IOException {
+        Path out = dir.resolve(pack.name().replaceAll("[^A-Za-z0-9._-]", "_"));
+        Files.createDirectories(out);
+        ShaderPackCompiler.CompileResult compiled = ShaderPackCompiler.compile(pack);
+        if (compiled.pack() == null) {
+            throw new IOException("G3: 包模型为空，无法落编译产物");
+        }
+        StringBuilder sb = new StringBuilder();
+        int ok = 0;
+        for (ShaderPackCompiler.CompiledStage stage : compiled.stages()) {
+            ok += stage.isSuccess() ? 1 : 0;
+            sb.append("#stage\t").append(stage.programName()).append('\t').append(stage.stage())
+                    .append('\t').append(stage.sourceFile()).append('\t')
+                    .append(stage.isSuccess()).append('\n');
+            sb.append(sha256(stage.result().text())).append("\t").append(stage.result().text()).append('\n');
+            for (TranslateDiagnostic d : stage.result().diagnostics()) {
+                sb.append("diag\t").append(d.severity()).append('\t').append(d.format()).append('\n');
+            }
+        }
+        sb.append("#totals\tstages=").append(compiled.stages().size()).append("\tok=").append(ok)
+                .append("\tdiagnostics=").append(compiled.diagnostics().size()).append('\n');
+        Files.writeString(out.resolve("compile-results.txt"), sb.toString(), StandardCharsets.UTF_8);
+        System.out.println("     编译产物 = 阶段 " + compiled.stages().size() + " 个 / 成功 " + ok
+                + " / 包级诊断 " + compiled.diagnostics().size() + " 条");
     }
 
     /**
@@ -690,7 +731,7 @@ public final class ColdPathBenchmark {
      */
     private record Args(Path inventory, String pack, int warmup, int iterations,
                         Path out, Path dumpGolden, Path dumpInput, String label, String notes,
-                        boolean goldenOnly, boolean phaseTiming, Path dumpConst) {
+                        boolean goldenOnly, boolean phaseTiming, Path dumpConst, Path dumpCompile) {
 
         /** 主机描述：显式 `--label` 优先，否则自动采集 CPU + OS。 */
         String describe() {
@@ -728,6 +769,7 @@ public final class ColdPathBenchmark {
             boolean goldenOnly = false;
             boolean phaseTiming = false;
             Path constDump = null;
+            Path compileDump = null;
             for (int i = 0; i < argv.length; i += 2) {
                 if ("--golden-only".equals(argv[i])) {
                     goldenOnly = true;
@@ -752,6 +794,7 @@ public final class ColdPathBenchmark {
                     case "--golden" -> golden = Path.of(value);
                     case "--dump-input" -> inputDump = Path.of(value);
                     case "--dump-const" -> constDump = Path.of(value);
+                    case "--dump-compile" -> compileDump = Path.of(value);
                     case "--label" -> label = value;
                     case "--notes" -> notes = value;
                     default -> throw new IllegalArgumentException("未知参数: " + argv[i]);
@@ -764,7 +807,7 @@ public final class ColdPathBenchmark {
                 throw new IllegalArgumentException("§7.1：样本必须 ≥5 次，收到 " + iterations);
             }
             return new Args(inventory, pack, warmup, iterations, out, golden, inputDump, label, notes,
-                    goldenOnly, phaseTiming, constDump);
+                    goldenOnly, phaseTiming, constDump, compileDump);
         }
 
         /** 选包：指定名/序号优先，否则取第一个 zip（目录包只作兜底）。 */

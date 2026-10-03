@@ -68,10 +68,15 @@
     🔖 最重要的一条教训：**「JFR 采样占比」≠「可优化空间」** —— GC 发生在别的线程上
     （按栈含 `evaluate` 过滤根本采不到），而 `split` 是短命年轻代分配、bump 极快、
     逃逸分析还能吃掉一部分。
-  - 🔴 **本轮暴露的更大空白（下一步应优先）**：G0 四段里
-    **`properties/options 解析` 占 43%（约 681ms），是整条冷路径最大的单块，
-    却从未被 profile、也没有 G1 的 golden** —— 比 const 更大、更黑。
-    下一轮建议先做 **PP（profile parse）**，再谈 G1 转译相或 const 裁决。
+  - ✅ **PP 已执行（2026-10-02 七）** —— 见 `evidence/pp-parse-profile.md` 与 `17-NATIVE.md` §7.5。
+    🔴 **① G0 四段口径有误**：「解析」段里约 **48%** 是被重复计算的预处理
+    （`ShaderPackService.load` 为提取 uniform/属性已跑过一遍完整预处理）。
+    ⇒ 上一轮据「解析占 43%」调方向建立在被高估的数字上。
+    ✅ **② 生产路径确实把预处理算了两遍，已修复**：`GlslPipeline.runPreprocessed` +
+    `load` 的预处理 sink，仅在无选项覆盖时复用。**生产入口 1458.5 → 885.0ms（快 39.3%）**，
+    产物 182/182 逐字节一致。**纯 Java，无 FFI。**
+    ⇒ **支柱③的第一优先级不是换语言，是消除重复计算**；**G 线需在新基线上重估**
+    （旧对照的分母含重复计算）。
 - **H 线**：管线装配层 mixin（GAP-003 + GAP-004 同批），**本项目兼容目标的最大阻塞项**。
 
 ---
@@ -663,6 +668,38 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
   java -Dvkdisp.const.singlepass=true|false -cp … ColdPathBenchmark \
        --inventory run/shaderpacks --pack BSL_v10.1.8 --dump-const /tmp/ab/<mode>   # 等价性
   ```
+
+### 9.4.8 续轮（2026-10-02 九）— PP：发现生产路径把预处理算两遍（修后快 39.3%）
+
+- **成果**：`evidence/pp-parse-profile.md` + `17-NATIVE.md` §7.5。
+- 🔴 **G0 四段口径有误**：JFR 采样「含 `ShaderPackService.load`」的栈，约 **48%** 其实是
+  预处理与声明提取 —— `load` 为了提取 uniform / 顶点属性，对每个 program 的两个阶段
+  各跑一次完整 `GlslPreprocessor.analyze`，与「`#include` 预处理」段量的是同一件事。
+- 🔴 **顺线索发现的真实缺陷**：`ShaderPackCompiler.compile` 里，`load` 算一遍（为提取声明）、
+  `compileStage` 又算一遍（为转译）⇒ 生产冷路径上**同一批 182 个文件预处理被算两遍**。
+  （`compile` 原有注释已承认「`load` 内部已 plan 过一次」，说明重复被知道，只是只想到
+  `MountPlan`、没往预处理上想。）
+- **修复**（三处）：
+  ① `GlslPipeline.runPreprocessed(stage, preProcessed)` 新入口，**`analyze` 的后半段改为
+     委托给它** ⇒ 两条路径共用同一段诊断合并代码，结构上杜绝逻辑分叉；
+  ② `ShaderPackService.load` 增加重载，回填「源文件路径 → 预处理产物」sink；
+  ③ `ShaderPackCompiler` 在**无选项覆盖**时建 sink、`compileStage` 命中即复用。
+     ⚠️ 有覆盖时 resolver 被改写，两次预处理本就不同，**必须各算一次** —— 这是显式判断，
+     不是隐含约定。
+  开关 `-Dvkdisp.reuse.preprocess=false`（既是 §7.3 红线要求的交替测量手段，也是回退保险）。
+- **等价性**：新增 `--dump-compile`，把 182 个阶段的**文本 + 逐条诊断 + 包级诊断**全量落盘；
+  原路径与复用路径 **sha256 相同**（`181eb949…`），374 条包级诊断一致。616 单测全绿。
+- **数据**（9 轮同二进制交替，预热 3、样本 9）：
+  原路径 **1458.5ms**（p95 1613.8）→ 复用 **885.0ms**（p95 989.6），
+  **快 573.5ms / 39.3% / 1.65×**，纯 Java 无 FFI。
+  跨轮极差 18.9%–26.4%（生产入口含 zip I/O 与整轮 GC），
+  但效应量远大于噪声。
+- 🔴 **下一轮入口（三项，按优先级）**：
+  ① **修 G0 四段口径** —— `runPass` 仍把 `load` 当「纯解析」量，必须拆开重测，
+     否则 §7.3 的表继续误导后续会话；
+  ② **runClient 取证** —— 本轮全是离线基准，生产入口 39.3% 的收益**尚未在客户端验证**，
+     这是 §5.1 R2–R7 的要求（01-DEV-LOOP 的开发循环）；
+  ③ **G 线在新基线上重估** —— §7.4 的 Rust 对照分母含重复计算，已不成立。
 
 ### 9.5 环境与红线速查（详见持久记忆 + §6）
 

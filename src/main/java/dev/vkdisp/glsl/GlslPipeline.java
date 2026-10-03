@@ -160,14 +160,40 @@ public final class GlslPipeline {
         }
 
         // 预处理成功（可能带 WARN/INFO）→ 进入转译；D 线负责 compose 端到端行号映射。
-        TranslateResult translated = OfGlslTranslator.translate(stage, pre.result());
+        return new PipelineReport(runPreprocessed(stage, pre.result()), pre.options());
+    }
 
+    /**
+     * 已持有预处理产物时的入口：直接进入转译并做与 {@link #analyze} **完全相同**的
+     * 诊断合并。
+     *
+     * <p>存在的理由：生产路径上同一个文件的预处理会被算两次 ——
+     * {@code ShaderPackService.load} 为了提取 uniform / 属性声明算一遍，
+     * {@code ShaderPackCompiler} 为了真正转译又算一遍（见
+     * {@code evidence/pp-parse-profile.md}）。本方法让后者可以**复用**前者的产物。
+     *
+     * <p>🔴 **收敛点纪律**：`analyze` 的后半段就是直接调用本方法，
+     * 所以两条路径**不可能**产生逻辑分叉 —— 复用路径与原路径共用同一段合并代码，
+     * 而不是各写一份。
+     *
+     * @param stage 着色器阶段
+     * @param preProcessed {@link GlslPreprocessor} 的产物（诊断已含预处理阶段的）
+     * @return 管线结果；永不返回 {@code null}
+     */
+    public static TranslateResult runPreprocessed(ShaderStage stage, TranslateResult preProcessed) {
+        if (preProcessed == null) {
+            throw new IllegalArgumentException("vkdisp: runPreprocessed 需要非空的预处理产物");
+        }
+        if (!preProcessed.isSuccess()) {
+            // 失败短路：预处理已含 ERROR → 不进入转译；failure() 保证结果显式失败（T11）。
+            return TranslateResult.failure(
+                    preProcessed.text(), preProcessed.lineMap(), preProcessed.diagnostics());
+        }
+        TranslateResult translated = OfGlslTranslator.translate(stage, preProcessed);
         // 诊断合并（入口级契约适配）：D 线不透传上游诊断，这里把 C 线诊断并回同一结果，
         // 否则"选项歧义 WARN"这类预处理诊断会在汇合后静默丢失（T11 违规）。
-        List<TranslateDiagnostic> merged = new ArrayList<>(pre.result().diagnostics());
+        List<TranslateDiagnostic> merged = new ArrayList<>(preProcessed.diagnostics());
         merged.addAll(translated.diagnostics());
-        return new PipelineReport(
-                TranslateResult.withDiagnostics(translated.text(), translated.lineMap(), merged),
-                pre.options());
+        return TranslateResult.withDiagnostics(translated.text(), translated.lineMap(), merged);
     }
 }

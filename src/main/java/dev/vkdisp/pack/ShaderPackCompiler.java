@@ -9,6 +9,7 @@ import dev.vkdisp.glsl.translate.ShaderStage;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -106,6 +107,16 @@ public final class ShaderPackCompiler {
         }
     }
 
+    /**
+     * 是否复用 {@code load} 已算出的预处理产物
+     * （{@code -Dvkdisp.reuse.preprocess=false} 关闭）。
+     *
+     * <p>留开关是为了**能交替测量**（17-NATIVE §7.3 的红线：两侧必须在同一台机器上
+     * 交替跑），同时在怀疑等价性时可以一条命令退回原路径。
+     */
+    static final boolean REUSE_PREPROCESS =
+            !"false".equalsIgnoreCase(System.getProperty("vkdisp.reuse.preprocess", "true"));
+
     private ShaderPackCompiler() {}
 
     /**
@@ -140,7 +151,14 @@ public final class ShaderPackCompiler {
         }
         Map<String, String> overrides = optionOverrides == null ? Map.of() : optionOverrides;
 
-        ShaderPackService.LoadResult loaded = ShaderPackService.load(discovered);
+        // 复用 load 的预处理产物（见 evidence/pp-parse-profile.md）：同一批文件若各算一次，
+        // 生产冷路径上白跑一遍完整预处理。只在**无选项覆盖**时成立 ——
+        // 有覆盖时 compileStage 用的是改写过的 resolver，两次预处理本就不同，必须各算一次。
+        Map<String, TranslateResult> preprocessSink = REUSE_PREPROCESS && overrides.isEmpty()
+                ? new LinkedHashMap<>()
+                : null;
+        ShaderPackService.LoadResult loaded =
+                ShaderPackService.load(discovered, preprocessSink);
         diagnostics.addAll(loaded.diagnostics());
         ShaderPack pack = loaded.pack();
         if (pack == null) {
@@ -172,9 +190,9 @@ public final class ShaderPackCompiler {
                     ? program.name()
                     : program.dimensionFolder() + "/" + program.name();
             compileStage(plan, resolver, qualifiedName, ShaderStage.VERTEX,
-                    program.vertexShader(), overrides, appliedNames, stages, diagnostics);
+                    program.vertexShader(), overrides, appliedNames, stages, diagnostics, preprocessSink);
             compileStage(plan, resolver, qualifiedName, ShaderStage.FRAGMENT,
-                    program.fragmentShader(), overrides, appliedNames, stages, diagnostics);
+                    program.fragmentShader(), overrides, appliedNames, stages, diagnostics, preprocessSink);
         }
         // 包级缺失（整包没有任何文件声明该选项名）→ 显式 WARN（T11）。
         for (String name : overrides.keySet()) {
@@ -238,7 +256,8 @@ public final class ShaderPackCompiler {
             Map<String, String> overrides,
             Set<String> appliedNames,
             List<CompiledStage> sink,
-            List<TranslateDiagnostic> diagnostics) {
+            List<TranslateDiagnostic> diagnostics,
+            Map<String, TranslateResult> preprocessSink) {
         if (sourcePath == null) {
             return;
         }
@@ -258,7 +277,13 @@ public final class ShaderPackCompiler {
         }
         TranslateResult result;
         try {
-            result = GlslPipeline.run(stage, sourcePath, source, resolver);
+            // 命中复用缓存 ⇒ 预处理已由 load 算过且未被改写，直接进转译。
+            // 走 GlslPipeline.runPreprocessed（而不是自己拼诊断合并），
+            // 保证与原路径**共用同一段合并代码**，不会产生逻辑分叉。
+            TranslateResult reused = preprocessSink == null ? null : preprocessSink.get(sourcePath);
+            result = reused != null
+                    ? GlslPipeline.runPreprocessed(stage, reused)
+                    : GlslPipeline.run(stage, sourcePath, source, resolver);
         } catch (RuntimeException e) {
             diagnostics.add(TranslateDiagnostic.of(
                     TranslateDiagnostic.Severity.WARN,
