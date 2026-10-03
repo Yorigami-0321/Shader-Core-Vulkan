@@ -497,17 +497,24 @@ FramePass pass = frame.addPass("main");
 症状是「pass 跑通、零报错、画面只剩清屏色」——与「什么都没执行」像素上完全同形。
 ⚠️ **本机没有 validation layer** ⇒ 这类错误**永远不会有日志**，只有像素能揭穿它。
 
-🔴 **未完成，不得当已完成引用**：
+✅ **2026-10-03 晚更正**（`evidence/h05-readback-flip-and-framegraph-works.md`）：
 
 | 项 | 状态 |
 |---|---|
-| **帧图内插 pass**（方案 A 的生产形态） | ❌ **从未成功**。本轮成功的配置是 `mrt.terrainAfterLevel=true`（帧图执行**之后**绘制）。原因**未区分**：可能是帧图 pass 不声明依赖 ⇒ 排在地形数据上传之前；也可能是别的时序因素 |
+| **帧图内插 pass**（方案 A 的生产形态） | ✅ **已通**。🔖 h04 §9 那句「从未成功」**作废** —— 那是**深度修复之前**的旧观察 + 回读 blit 的 V 翻转 bug 共同造成的误判。教训：**改了共享状态（深度清屏值）后，所有旧的「某路径不通」结论必须重测** |
+| 回读 blit 的 V 翻转 | ✅ **已修**：新增 `vkdisp:pipeline/mrtview_noflip`。`fullscreen_flipv` 补偿的是**包 composite 的 OF vUv 语义**，不是引擎取向；采样引擎渲染出的 colortex 时**不能**再翻 |
+| 我方 pass 在帧图里的位置 | 🔖 实测：**排在原版主 pass 之前**（`ORDER-MARK` 行号 1161 < 1163，不声明资源依赖所致）。**不是问题** —— 独立 colortex + 独立深度，不与主 pass 共享附件 |
+
+🔴 **仍未完成，不得当已完成引用**：
+
+| 项 | 状态 |
+|---|---|
+| colortex1/2 的 gbuffer 语义 | ❌ 用的是原版 `core/terrain`，只写 location 0。要等包的自研 `gbuffers_terrain` 被翻译接入 —— **这是下一轮真正的阻塞** |
 | colortex1/2 的 gbuffer 语义 | ❌ 用的是原版 `core/terrain`，只写 location 0。要等包的自研 `gbuffers_terrain` 被翻译接入 |
 | 半透明地形（TRANSLUCENT 组） | ❌ 未覆盖 |
 | 画面改进 / 性能 | ❌ 无（写自己的 colortex ⇒ 地形被画两遍；代价未测） |
 
-⇒ **方案 A 的取舍结论不变**（A 仍优于 B），但**「A 已通」这句话只对 AfterLevel 形态成立**。
-帧图内形态要拿到与其他 pass 正确的穿插顺序，是**下一步**。
+⇒ **方案 A 已通（生产形态）**。下一轮从「帧图内插 pass」转向 **colortex1/2 的 gbuffer 语义**。
 
 **这也是本轮把 GAP-003 与 GAP-004 分开做的原因**（`18-PARALLEL` H 线「顺序纪律」原本要求同批）：
 GAP-004 单独做**并非没有意义**（它的前提正是「派生管线」，没有派生管线就无处挂块），

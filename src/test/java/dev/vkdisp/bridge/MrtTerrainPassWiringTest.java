@@ -130,7 +130,39 @@ class MrtTerrainPassWiringTest {
     }
 
     @Test
-    @DisplayName("🔖 自建深度必须清到 1.0 —— 不清则地形全被深度测试拒绝，且零报错")
+    @DisplayName("🔖🔖 回读必须用**不翻转**管线 —— 翻转版会把画面上下颠倒（h05 实测）")
+    void readbackMustUseNoFlipPipeline() {
+        // 🔖🔖 本轮真实 bug：回读采样的是**引擎自己渲染出的** colortex（与主目标同取向），
+        //   却用了 `fullscreen_flipv`。那次翻转补偿的是「包 composite 的 OF 原始 vUv 语义」，
+        //   不是引擎取向 ⇒ 画面被上下颠倒。
+        // 🔖 为什么 h02/h04 都没抓到：那两轮回读的是常量指纹与平滑渐变，
+        //   **对采样坐标错误完全不敏感** ⇒ 判据内容必须能区分被测属性。
+        String probe = readOrSkip(Path.of("src/main/java/dev/vkdisp/bridge/MrtProbe.java"));
+        assertEquals(0, countCode(probe, "PipelineApi.mrtViewPipeline()"),
+                "回读不得再用翻转版 mrtViewPipeline（它是为包 composite 的 OF vUv 语义准备的）");
+        assertTrue(probe.contains("PipelineApi.mrtViewNoFlipPipeline()"),
+                "回读必须用不翻转版（采样引擎渲染目标时不需要 V 翻转）");
+        String api = readOrSkip(Path.of("src/main/java/dev/vkdisp/bridge/PipelineApi.java"));
+        assertTrue(api.contains("MRT_VIEW_NOFLIP_LOCATION"), "必须注册一条不翻转版回读管线");
+        assertTrue(api.contains("withVertexShader(Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, \"fullscreen\"))"),
+                "不翻转版的顶点着色器必须是 fullscreen（原始 vUv），不是 fullscreen_flipv");
+        assertTrue(countCode(readOrSkip(Path.of(
+                "src/main/java/dev/vkdisp/render/FullscreenPipelineRegistrar.java")),
+                "registerMrtViewPipeline(event)") >= 1,
+                "翻转版管线必须保留：合成链的 OF vUv 语义补偿仍依赖它（不能为修一个 bug 删另一个能力）");
+    }
+
+    @Test
+    @DisplayName("🔖 两条模式（帧图内 / AfterLevel）共用同一条回读路径，不再分叉")
+    void bothModesShareOneReadbackPath() {
+        // h05 已证实帧图内插 pass 同样是通的 ⇒ terrainAfterLevel 只是 A/B 诊断开关。
+        String frame = readOrSkip(Path.of("src/main/java/dev/vkdisp/bridge/FrameApi.java"));
+        assertTrue(frame.contains("drawExternalView("),
+                "回读必须走 drawExternalView（两条模式共用），不得按模式分叉出两套回读");
+    }
+
+    @Test
+    @DisplayName("🔖 自建深度必须清到 0.0（反向 Z）—— 清成 1.0 会把地形全深度测试掉且零报错")
     void ownDepthIsCleared() {
         String pass = readOrSkip(PASS);
         // 🔖🔖 本引擎是反向 Z：原版 clear pass 清的是 **0.0**（LevelRenderer:255）。

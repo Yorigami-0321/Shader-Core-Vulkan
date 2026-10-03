@@ -202,6 +202,26 @@ public final class PipelineApi {
     private static final Identifier MRT_VIEW_SHADER_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "mrtview");
 
+    /**
+     * 🔖 **不翻转**的回读管线 location。
+     *
+     * <p>🔖🔖 **为什么需要它（2026-10-03 实测得出，与既有注释相反）**：
+     * 既有 P-1f 约定说「中间目标 → 主目标必须 1-v 翻转」，本项目的合成链照此实现。
+     * 但那次翻转**补偿的是「包 composite 片元的 OF 原始 vUv 语义」**，不是引擎本身的取向。
+     * 本管线采样的是**引擎自己渲染出来的 colortex**（与主目标同一取向）
+     * ⇒ 再翻一次就等于**把画面上下颠倒**。
+     *
+     * <p>实测证据：同一相机（y=90、pitch=0 地平线、正午）下
+     * ① 用翻转版回读 ⇒ 地面跑到上半屏（上下颠倒）；
+     * ② 让我方 pass 直接写主目标（不经回读）⇒ 地面正确在下半屏。
+     * ⇒ 回读路径必须用**不翻转**顶点着色器。
+     *
+     * <p>⚠️ 这个 bug 之所以躲过 h02：那一轮回读的是**平滑渐变/常量指纹**，
+     * 上下翻转在数据上**看不出来**（R 通道指纹与 V 无关）。是地形这种有明确上下关系的
+     * 内容才把它暴露出来 —— 教训：**判据内容必须能区分被测的那���性**。
+     */
+    public static final String MRT_VIEW_NOFLIP_LOCATION = "vkdisp:pipeline/mrtview_noflip";
+
     /** MRT 管线 id。 */
     private static final Identifier MRT_PIPELINE_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/mrt");
@@ -387,6 +407,9 @@ public final class PipelineApi {
 
     /** 注册成功后暂存的 MRT 回读管线实例；未注册时为 null。 */
     private static RenderPipeline mrtViewPipeline;
+
+    /** 不翻转版回读管线（字段）：采样引擎渲染出的离屏目标时必须用它。 */
+    private static RenderPipeline mrtViewNoFlipPipeline;
 
     /**
      * 几何顶点格式：Position(vec3f) + Color(vec4f)，stride = 28 字节。
@@ -756,6 +779,36 @@ public final class PipelineApi {
         event.registerPipeline(pipeline);
         mrtViewPipeline = pipeline;
         REGISTERED_PIPELINES.add(pipeline);
+    }
+
+    /**
+     * 构建并注册**不翻转**版回读管线（{@link #MRT_VIEW_NOFLIP_LOCATION}）。
+     *
+     * <p>与 {@link #registerMrtViewPipeline} 只差顶点着色器（{@code fullscreen} 而非
+     * {@code fullscreen_flipv}）。用途单一但不能合并：合成链那条翻转管线**必须保留**，
+     * 它补偿的是包 composite 的 OF vUv 语义。
+     */
+    public static void registerMrtViewNoFlipPipeline(RegisterRenderPipelinesEvent event) {
+        RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                .withLocation(Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/mrtview_noflip"))
+                .withVertexShader(Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "fullscreen"))
+                .withFragmentShader(MRT_VIEW_SHADER_ID)
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
+                        .build())
+                .withColorTargetState(ColorTargetState.DEFAULT)
+                .build();
+        event.registerPipeline(pipeline);
+        mrtViewNoFlipPipeline = pipeline;
+        REGISTERED_PIPELINES.add(pipeline);
+    }
+
+    /** 已注册管线：不翻转版回读（bridge 内部）。采样引擎渲染目标时用它，别用翻转版。 */
+    static RenderPipeline mrtViewNoFlipPipeline() {
+        if (mrtViewNoFlipPipeline == null) {
+            throw new IllegalStateException("vkdisp: mrt view (noflip) pipeline not registered yet");
+        }
+        return mrtViewNoFlipPipeline;
     }
 
     /** 已注册管线：MRT 多附件写入（bridge 内部）。 */

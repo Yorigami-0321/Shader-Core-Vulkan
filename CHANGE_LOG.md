@@ -4,6 +4,48 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-03（二十八）— 回读 blit 的 V 翻转修正；**帧图内插 pass 本来就是通的**（取证改用 MCP）
+
+> **verdict = 用户报的「上下颠倒」定位并修掉了；顺带撤回我上一轮一个错误结论
+> —— GAP-003 的生产形态（帧图内插 pass）一直是通的，h04 §9「从未成功」作废。**
+> 🔖 本轮起**取证改用 MCP 操控游戏**（用户要求）。
+
+- **本次改了什么**：
+  1. **新增不翻转版回读管线** `vkdisp:pipeline/mrtview_noflip`（与原 `mrtview` 只差顶点着色器
+     `fullscreen` vs `fullscreen_flipv`）；`MrtProbe` 两处回读改用它；**原翻转管线保留**
+     （合成链的 OF vUv 语义补偿仍需要它）；
+  2. 帧图执行顺序探针：`MrtTerrainPass` 打 `ORDER-MARK my-pass`，
+     新增 `RenderLevelStageEvent.AfterOpaqueBlocks` 订阅打 `ORDER-MARK vanilla-main-pass`
+     （该事件在 `executeSolid` 内触发）⇒ **两行行号即可读出帧图执行序**；
+  3. 全屏探针改用 3 目标的 `vkdisp:mrt`（原先误用单目标管线 ⇒ 崩游戏）；
+  4. 文档：`evidence/h05-…`（新）、`h04` §6/§8/§9 三处更正、`04-SPEC` §5.0.5、
+     `13-GAP-REGISTRY` GAP-003、`AGENT_CONTEXT` §10.10 + §10.4、`07-CONSTRAINTS` X37/X38。
+- **🔖 根因**：项目注释里的 P-1f 约定「中间目标 → 主目标必须 V 翻转」被我**误推了一层** ——
+  那次翻转补偿的是**包 composite 片元的 OF 原始 vUv 语义**，不是引擎取向。
+  我方回读采样的是**引擎自己渲染出的 colortex**（与主目标**同取向**）⇒ 再翻一次就上下颠倒。
+  实测切开：`terrainToMain`（不经回读）朝向正确 / 经回读则颠倒。
+- **🔖 为什么 h02 与 h04 连续两轮都没抓到**：那两轮回读的是**常量指纹与平滑渐变**，
+  这类内容**对采样坐标错误完全不敏感**。⇒ 立 **X38**：判据内容必须能区分被测的那个属性。
+- **🔴 撤回我自己的错误结论**：h04 §9「帧图内插 pass 从未成功」**作废**。
+  两个原因：① 它建立在**深度修复之前**的观察上，修完**没重测**（⇒ 立 **X37**）；
+  ② 被上面这个显示 bug 掩盖 —— 帧图模式其实画出了地形，只是颠倒着，我读成了「没画」。
+- **✅ 帧图内插 pass 重测通过**，附带测到两条以前不知道的事实：
+  我方 pass **排在原版主 pass 之前**（`ORDER-MARK` 1161 < 1163，不声明资源依赖所致；
+  **不是问题** —— 独立 colortex + 独立深度，不共享附件）；
+  draw 数据三层齐全（`SOLID{groups=1,draws=580} CUTOUT{414} TRANSLUCENT{249}`）。
+- **🔖 MCP 接线**：server 本体与桥接模组（`mcpfabric` NeoForge，`26.3-neoforge` 节点）都已就位，
+  🔴 但只注册在 **CodeBuddy** 配置里、**opencode 未加载** ⇒ `opencode mcp add --global`
+  （写进 `~/.config/opencode/opencode.json`，**不入库**，避免 token 进仓库）。
+  工具 75 个，本轮实际用到 `get_status` / `get_self` / `screenshot` / `look` / `set_time` /
+  `set_weather` / `set_gamemode` / `teleport_player` / `list_players`。
+  🔖 **`set_time` 治好了 h04 的一个老毛病**：多趟截图因昼夜漂移而不可比（曾误判过信号）。
+- **⚠️ 另一条口径修正**：`FrontendRenderPass#setPipeline` **确实**校验
+  「render pass 颜色附件数 == 管线颜色目标数」并抛 `IllegalStateException`
+  ⇒ **「附件数不匹配」是响亮失败，不是静默失效**；**真正静默的只有深度清屏值**。
+- **测试**：653 单测全绿（新增 2 条：回读必须用不翻转管线 / 翻转版必须保留）；`./gradlew build` exit 0。
+- **⚠️ 世界存档被 MCP 改了**（`time set 6000`、`weather clear`、`gamemode creative`、
+  `teleport Dev 17.5 90 399.5`、`look(yaw=90,pitch=0)`）—— 刻意固定以保证可复现，**未还原**。
+
 ## 2026-10-03（二十七）— GAP-003 方案 A 第 2 步：地形**真的画进了 3 附件 pass**（根因：反向 Z）
 
 > **verdict = 地形多附件渲染这条通道，端到端跑通了**（我方 pass + 我方多附件管线 + 像素判读）。

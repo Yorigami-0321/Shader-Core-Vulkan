@@ -1094,16 +1094,21 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
    之后才谈第二个包复测与 G3/G4。复现命令见 `17-NATIVE.md` §7.7「复现」块
    （`JAVA_TOOL_OPTIONS` 与 `PATH` 前缀不可少）。
 4. ~~**H 线开工准备**~~ → ✅ **已完成（2026-10-03 两轮）**，见 §10.7。
-   5. 🔴 **续轮第一入口 = GAP-003 帧图内插 pass**（`mrt.terrainAfterLevel=false` 那条从未成功）：
-   先**区分**两种可能，再动手 ——
-   (a) 帧图 pass 不声明依赖 ⇒ 可能排在原版地形数据上传**之前**（解法是 `requires`/`reads` 挂到正确 pass）；
-   (b) 与时序无关的其他原因。
-   🔖 **别拿 §10.10 那个「全屏三角形实验」当帧图内的证据** —— 它是在 AfterLevel 模式下做的。
-   ⚠️ 这是「换一条路」级别的影响面（决定 GAP-003 生产形态），**建议先向用户报备**。
-   背景：`04-SPEC.md` §5.0.5、`13-GAP-REGISTRY.md` GAP-003 状态列、`evidence/h04-…` §9。
-6. ~~**续轮第一入口 = M-04 的取舍分析**~~ → ✅ **已完成**（已裁决走方案 A，见 §10.7 + `04-SPEC.md` §5.0.4）；
+   5. ✅ ~~**续轮第一入口 = GAP-003 帧图内插 pass**~~ → **已解决**（`h05`）：帧图内插 pass 本来就是通的，
+   h04 §9 的「从未成功」是深度修复前的旧观察 + 回读 V 翻转 bug 的合并误判。已一并修掉翻转。
+6. 🔴 **续轮第一入口 = colortex1/2 的 gbuffer 语义**（GAP-003 唯一剩余的主要阻塞）：
+   原版 `core/terrain.fsh` 只有 `layout(location = 0) out vec4 fragColor` ⇒ 槽 1/2 拿不到内容。
+   要让槽 1/2 有 OF 语义（colortex1 = 法线+lightmap、colortex2 = 材质/matID），
+   必须把**包的自研 `gbuffers_terrain`** 翻译接入 —— 先核实它在 BSL 包里的存在性与形态（X9：先核实再写）。
+   ⚠️ 这一步会首次真正消费 GAP-004 那个自定义 uniform 块（`gbufferModelViewInverse` 等）。
+7. 🔖 **取证方式已换 MCP**（`minecraft` server / mcpfabric NeoForge mod，含 `vision.screenshot`、
+   `control.look`、`world.setTime`）。🔴 它原先只注册在 CodeBuddy 配置里，opencode 未加载；
+   本轮已 `opencode mcp add --global`（**不入库**，避免 token 进仓库）。手册见
+   `/home/yorigami/Minecraft/mcpfabric-src/VKDISP-接入手册.md`。
+   🔖 **`world.setTime` 治好了 h04 的一个老毛病**：多趟截图因昼夜漂移而不可比。
+8. ~~**续轮第一入口 = M-04 的取舍分析**~~ → **已完成**（已裁决走方案 A，见 §10.7 + `04-SPEC.md` §5.0.4）；
    下列原文保留作为**取舍过程**的记录：
-5. 🔴 **（历史，已裁决走 A）M-04 的取舍分析**：
+   - （历史记录）🔴 **M-04 的取舍分析**：
       原版主 pass 把**地形/实体/特性/云/描边画在同一个 pass 同一个单附件**（源码级核实），
       ⇒ 给地形加附件会让所有原版管线不匹配。必须先在
       **A（地形单独一个多附件 pass）** 与 **B（整 pass 多附件 + 为四类 draw 各派生一份管线）** 之间选。
@@ -1231,12 +1236,25 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
 **在本 pass 里画一个已知可用的全屏三角形**（🔖 图集铺满全屏 ⇒ 本 pass 无恙；
 且该三角形管线**无深度状态** ⇒ 把「深度」单独暴露出来）。
 
-🔴 **未完成，不得当已完成引用**：
-① **帧图内插 pass 从未成功**（本轮成功的是 `mrt.terrainAfterLevel=true`，帧图执行**之后**绘制）；
-   原因**未区分**（帧图 pass 不声明依赖 ⇒ 可能排在地形数据上传之前？还是别的时序因素）。
-   ⚠️ §10.9 那个「全屏三角形实验」是在 AfterLevel 模式做的，**不能**用来证明帧图内也具备同样环境。
-② colortex1/2 没有 gbuffer 语义（要等包的自研 `gbuffers_terrain` 接入）；
-③ 半透明地形（TRANSLUCENT 组）未覆盖；④ 无画面改进（地形被画两遍）、无性能数据。
+✅ **2026-10-03 晚更正并推进**（证据 `h05`，MCP 操控）：
+① **帧图内插 pass 本来就是通的** —— h04 上面那句「从未成功」**作废**。
+   🔖 **教训（铁律级）**：h04 那个结论建立在**深度修复之前**的观察上，修完**没重测**
+   ⇒ 把「同一个 bug 的另一种表现」当成了「这条路径独有」。**改了共享状态后，
+   所有旧的「某路径不通」结论必须重测，不能默认继承。**
+② 🔴 **回读路径此前把画面上下颠倒**（`fullscreen_flipv` 被用在中间目标→中间目标上；
+   那次翻转补偿的是**包 composite 的 OF vUv 语义**，不是引擎取向）。
+   已新增 `vkdisp:pipeline/mrtview_noflip`。🔖 **为什么 h02/h04 都没抓到**：
+   那两轮回读的是**常量指纹与平滑渐变**，对采样坐标错误**完全不敏感**
+   ⇒ 立规：**判据内容必须能区分被测的那个属性**（验坐标就得用有明确空间结构的内容）。
+③ colortex1/2 仍无 gbuffer 语义（要等包的自研 `gbuffers_terrain`）—— **这是下一轮真正的阻塞**；
+④ 半透明地形（TRANSLUCENT 组）未覆盖；⑤ 无画面改进（地形被画两遍）、无性能数据。
+
+🔖 **帧图内插 pass 的两条附带事实**（以前不知道）：
+我方 pass **排在原版主 pass 之前**（`ORDER-MARK` 日志行号 1161 < 1163；不声明资源依赖所致。
+**不是问题** —— 我方用独立 colortex + 独立深度，不与主 pass 共享附件）；
+draw 数据三层齐全（`SOLID{groups=1,draws=580} CUTOUT{414} TRANSLUCENT{249}`）。
+🔖 另：`FrontendRenderPass#setPipeline` **确实**校验「附件数 == 颜色目标数」并抛异常
+⇒ **附件数不匹配是响亮失败**；**真正静默的只有深度清屏值**。
 
 - **可关闭键**：`mrt.terrain`（默认关）+ 5 个诊断键（`terrainAfterLevel` / `terrainToMain` /
   `terrainFullscreenProbe` / `attachments` / `viewSlot`），全部默认关。

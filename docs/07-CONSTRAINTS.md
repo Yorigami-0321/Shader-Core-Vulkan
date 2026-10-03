@@ -297,6 +297,8 @@ if (DEBUG) { LOGGER.info("cull kept={}", kept); }
 | X34 | 🔴 **自建深度/颜色附件时按 Vulkan 惯例猜清屏值**（尤其深度清 `1.0`） | 本引擎是**反向 Z**（近→1.0、远→0.0），字节码级三条证据：`Projection#getMatrix` 把 `setPerspective` 的 near/far **实参对调**、`DepthStencilState.DEFAULT` = **`GREATER_THAN_OR_EQUAL`**、`MainTarget` 深度 **`D32_FLOAT`** 且 clear 传 **`0.0`**。⚠️ `isZZeroToOne()` 与反向无关（只适配 Vulkan `[0,1]` vs GL `[-1,1]`）。清 `1.0`（= 近平面）会让每个片元被深度测试掉，**零报错、零告警**，症状与「什么都没执行」像素上完全同形。⇒ 自建任何附件，**先读原版 clear pass 的清屏值**（`AGENT_CONTEXT.md` §10.10） |
 | X35 | 🔴 **拿「日志里没有 validation error」当正确性证据** | 本机**没装** validation layer，且 `getLastDebugMessages()` 返回空 ⇒ 这类错误在本机**永远不会有日志**。「管线附件数 ≠ pass 附件数」会一路静默到像素。判据应按「像素 > registered==compiled > 不抛 Missing uniform」排序（§9.4.15） |
 | X36 | 🔴 **在客户端运行期间改 `run/config`**，或用**无节区感知**的正则改配置 | ① 客户端退出时会把内存配置回写文件 ⇒ 运行期的改动被覆盖；② 无节区正则（如 `^(\s*)enabled = false$`）会连**顶层总开关**一起改掉，我曾因此关掉整个 mod 并误判成「功能不生效」。⇒ 改配置要**按 TOML 节区**定位键（本机 `tools/vulkan-local/set_cfg.py`，🔴 不入库），纪律为**先 kill → 再改 → 校验 → 再启动** |
+| X37 | 🔴 **改了共享状态后，不重测就沿用旧的「某路径不通」结论** | h04 据**深度修复前**的观察断言「帧图内插 pass 从未成功」，而深度修复后**从未重测**该路径 ⇒ 一个 bug 的两种表现被当成了「这条路径独有的问题」，白丢一个未完成项。⇒ 改共享状态（深度清屏值、uniform 布局、管线形态）后，**所有引用了该状态的旧结论一律重测** |
+| X38 | 🔴 **用「平滑渐变 / 常量指纹」当采样坐标或朝向是否正确的判据** | 这类内容**对坐标错误完全不敏感**（指纹与 V 无关、水平渐变上下翻转看不出）⇒ h02 与 h04 连续两轮都因此漏掉了回读 blit 的 V 翻转。⇒ **判据内容必须能区分被测的那个属性**：验坐标/朝向就用**有明确空间结构**的内容（地形最合适） |
 | X33 | 🔴 **用自写 `pgrep`/`ps | grep` 模式统计游戏进程数并据此断言「残留 = 0」** | 模式打不中就是**假零**，而 `pgrep -f` 还会匹配到 grep 自身造成**假二**，两个方向都不可信。必须按 `-Dfml.modFolders=vkdisp` 匹配（本机固化在 `tools/vulkan-local/game_procs.sh`，🔴 `/tools/` 不入库，换机器照此判据自行实现），因为 NeoForge devlaunch 的命令行主类是 `net.neoforged.devlaunch.Main`）。假零会让两个客户端并存抢 `session.lock`，白跑一趟（`AGENT_CONTEXT.md` §9.4.14） |
 | X32 | 🔴 **用「naga 比 glslang 快 30×」这类公开基准直接当本项目选型结论** | 该基准不含 `#include` 与 `GL_*` 扩展语义，对 OF 方言包会编译失败。公开数据只能作潜力证据，选型必须靠 G 系列自测 |
 
@@ -406,6 +408,8 @@ mod_group_id             = dev.vkdisp
 [ ] 🔴 若含原生库：FFM 按批粒度接口、有 A/B 开关、Java 路径可独立跑通（T18/T19/N4/N1）
 [ ] 🔴 报「残留游戏进程数」时贴的是按 `-Dfml.modFolders=vkdisp` 匹配后计数的输出，不是自写 `pgrep`（X33）
 [ ] 🔴 自建深度附件清屏值 = **0.0**（反向 Z），不是按惯例猜 1.0（X34）
+[ ] 🔴 改了共享状态后，引用过该状态的旧结论都已**重测**（X37）
+[ ] 🔖 判据内容能区分被测属性：验坐标/朝向用**有空间结构**的内容，不是渐变/常量指纹（X38）
 [ ] 🔴 判据里没有把「日志无 validation error」当证据（本机无该层）（X35）
 [ ] 🔴 改 `run/config` 按节区定位键、且在客户端 kill 之后改（X36）
 [ ] 🔴 没有把公开基准（如 naga vs glslang）直接当本项目选型结论（X32）

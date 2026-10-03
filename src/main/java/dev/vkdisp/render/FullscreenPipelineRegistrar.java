@@ -147,6 +147,9 @@ public final class FullscreenPipelineRegistrar {
 
         try {
             PipelineApi.registerMrtViewPipeline(event);
+            // 🔖 不翻转版回读（2026-10-03）：采样**引擎渲染出的**离屏目标时用它。
+            //    翻转版补偿的是包 composite 的 OF vUv 语义，用在这里会把画面上下颠倒。
+            PipelineApi.registerMrtViewNoFlipPipeline(event);
             VkDisp.LOGGER.info("vkdisp: pipeline registered (23/25): {} (total={})",
                     PipelineApi.MRT_VIEW_LOCATION, PipelineApi.registeredPipelineCount());
         } catch (Throwable t) {

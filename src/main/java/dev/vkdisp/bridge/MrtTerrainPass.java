@@ -210,15 +210,24 @@ public final class MrtTerrainPass {
         return VkDispConfig.MRT_TERRAIN_FULLSCREEN_PROBE.get();
     }
 
-    private static void drawFullscreenProbe(RenderPass renderPass, GpuTextureView atlas) {
-        var compiled = RenderSystem.getCompiledPipelineNullable(PipelineApi.mrtViewPipeline());
+    private static void drawFullscreenProbe(RenderPass renderPass) {
+        // 🔖🔖 探针**必须**用与本 pass 附件数**相同**的颜色目标数，否则必崩：
+        //   `FrontendRenderPass#setPipeline` 会校验
+        //   「render pass 颜色附件数 == 管线颜色目标数」，不等就抛
+        //   IllegalStateException（本轮实测踩到：曾用单目标的 mrtView 管线 ⇒ 直接崩游戏）。
+        //   ⇒ 只能用 `PipelineApi.mrtPipeline()`（h02 那条 3 目标全屏管线）。
+        //
+        // 🔖 顺带一条**重要澄清**：RenderPearl 的 frontend **确实**校验附件/目标数并抛异常 ——
+        //   所以「附件数不匹配」这一类是**响亮失败**，不是静默失效。
+        //   h04 里真正静默的是**深度清屏值**（没有任何一层会检查它）。
+        var compiled = RenderSystem.getCompiledPipelineNullable(PipelineApi.mrtPipeline());
         if (compiled == null) {
-            VkDisp.LOGGER.warn("vkdisp: [GAP-003/A] fullscreen probe skipped: mrt view pipeline not compiled");
+            VkDisp.LOGGER.warn("vkdisp: [GAP-003/A] fullscreen probe skipped: vkdisp:mrt pipeline not compiled");
             return;
         }
+        // ⚠️ 与 MrtProbe#draw 完全一致：只 bindDefaultUniforms，**不**额外 setUniform ——
+        //   `vkdisp:mrt` 管线的 bind group 里没有 Sampler0，多绑会被 validateDraw 拦下。
         renderPass.setPipeline(compiled);
-        renderPass.setUniform(PipelineApi.SAMPLER_UNIFORM, atlas,
-                RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
         renderPass.draw(3, 1, 0, 0);
     }
 
@@ -233,6 +242,30 @@ public final class MrtTerrainPass {
             throw new IllegalStateException("vkdisp: main color view is null");
         }
         return v;
+    }
+
+    /** 顺序标记是否已打过（每轮只打一次，避免日志 I/O 进热路径）。 */
+    private static boolean orderMarkerLogged;
+
+    /** 原版主 pass 的顺序标记是否已打过。 */
+    private static boolean vanillaMarkerLogged;
+
+    /**
+     * 🔖 **帧图执行顺序标记**：本事件在原版 {@code executeSolid} 内部触发
+     * （{@code LevelRenderer:536}），也就是**原版主 pass 正在执行中**。
+     * 与「我方 pass 执行」那条日志比对行号，就能**直接读出**我方 pass 排在哪一步 ——
+     * 这是本轮要区分的核心未知（「帧图内插 pass 从未成功」到底是不是顺序问题）。
+     *
+     * <p>为什么值得专门做：帧图的执行顺序由 {@code resolvePassOrder} 按资源依赖解析，
+     * 我方 pass 不声明任何依赖 ⇒ 只能实测，不能靠读 API 猜。
+     */
+    @SubscribeEvent
+    static void onAfterOpaqueBlocks(net.neoforged.neoforge.client.event.RenderLevelStageEvent.AfterOpaqueBlocks event) {
+        if (!enabled() || vanillaMarkerLogged) {
+            return;
+        }
+        vanillaMarkerLogged = true;
+        VkDisp.LOGGER.info("vkdisp: [GAP-003/A] ORDER-MARK vanilla-main-pass executing");
     }
 
     /** A/B 模式开关：把绘制从帧图内挪到帧图执行之后。 */
@@ -313,7 +346,7 @@ public final class MrtTerrainPass {
             }
             GpuTextureView atlas = blockAtlas();
             if (fullscreenProbe()) {
-                drawFullscreenProbe(renderPass, atlas);
+                drawFullscreenProbe(renderPass);
             }
             draws.renderGroup(ChunkSectionLayerGroup.OPAQUE, renderPass, atlasSampler, atlas, false);
             drainDeviceDebugMessages();
@@ -323,6 +356,10 @@ public final class MrtTerrainPass {
         }
 
         framesDrawn++;
+        if (!orderMarkerLogged) {
+            orderMarkerLogged = true;
+            VkDisp.LOGGER.info("vkdisp: [GAP-003/A] ORDER-MARK my-pass executing ({} mode)", afterLevel() ? "afterLevel" : "frameGraph");
+        }
         // 🔖 探针**不能**在首帧跑：首帧区块还没网格化，drawGroups 必然是空的
         //（本轮踩过：首帧打出 groups=0，一度被误读成「捕获到的数据是空的」）。
         if (framesDrawn == 300L || framesDrawn == 1200L) {

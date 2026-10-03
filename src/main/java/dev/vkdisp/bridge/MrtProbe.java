@@ -116,10 +116,13 @@ public final class MrtProbe {
      */
     public static void drawExternalView(String label, GpuTextureView view, int slot) {
         RenderSystem.assertOnRenderThread();
-        var viewCompiled = RenderSystem.getCompiledPipelineNullable(PipelineApi.mrtViewPipeline());
+        // 🔖 用**不翻转**版：采样源是引擎自己渲染出来的 colortex（与主目标同取向）。
+        //    翻转版是为「包 composite 的 OF 原始 vUv 语义」准备的，用在这里会上下颠倒
+        //    （2026-10-03 实测：地形回读曾整体上下颠倒，地面跑到上半屏）。
+        var viewCompiled = RenderSystem.getCompiledPipelineNullable(PipelineApi.mrtViewNoFlipPipeline());
         if (viewCompiled == null) {
             throw new IllegalStateException(
-                    "vkdisp: mrt view pipeline not compiled yet: " + PipelineApi.MRT_VIEW_LOCATION);
+                    "vkdisp: mrt view (noflip) pipeline not compiled yet: " + PipelineApi.MRT_VIEW_NOFLIP_LOCATION);
         }
         RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         GpuTextureView mainView = main.getColorTextureView();
@@ -165,10 +168,13 @@ public final class MrtProbe {
             throw new IllegalStateException(
                     "vkdisp: mrt pipeline not compiled yet: " + PipelineApi.MRT_LOCATION);
         }
-        var viewCompiled = RenderSystem.getCompiledPipelineNullable(PipelineApi.mrtViewPipeline());
+        // 🔖 用**不翻转**版：采样源是引擎自己渲染出来的 colortex（与主目标同取向）。
+        //    翻转版是为「包 composite 的 OF 原始 vUv 语义」准备的，用在这里会上下颠倒
+        //    （2026-10-03 实测：地形回读曾整体上下颠倒，地面跑到上半屏）。
+        var viewCompiled = RenderSystem.getCompiledPipelineNullable(PipelineApi.mrtViewNoFlipPipeline());
         if (viewCompiled == null) {
             throw new IllegalStateException(
-                    "vkdisp: mrt view pipeline not compiled yet: " + PipelineApi.MRT_VIEW_LOCATION);
+                    "vkdisp: mrt view (noflip) pipeline not compiled yet: " + PipelineApi.MRT_VIEW_NOFLIP_LOCATION);
         }
 
         var encoder = RenderSystem.getDevice().createCommandEncoder();
