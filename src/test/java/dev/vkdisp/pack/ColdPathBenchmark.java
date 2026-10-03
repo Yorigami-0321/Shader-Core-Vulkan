@@ -18,7 +18,9 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 【参考调研】G0 · Java 冷路径分段基准（G 系列第 0 关）
@@ -43,15 +45,22 @@ import java.util.List;
  * 4. 许可证核对结论：**无任何代码复制**，纯 JDK API；本文件不并入任何 GPL / LGPL / ARR 实现。
  * 5. 性能基线：本轮首次产出，见 {@code evidence/g0-java-coldpath.md}（2026-10-02 实测）。
  *
- * <p><b>分段口径（冻结，G1 必须复用）</b>：
+ * <p><b>分段口径（2026-10-02 修正，G1 必须复用修正后的版本）</b>：
  * <pre>
- *   包扫描             = ShaderPackScanner.scan(inventoryDir)
- *   properties 解析    = ShaderPackService.load(discovered)      → pack(选项 + program 清单)
- *   #include 预处理    = Σ GlslPreprocessor.preprocess(file, src, resolver)
- *   转译（8 段流水线） = Σ OfGlslTranslator.translate(stage, preResult)
- *   合计(分段四段)     = 以上四段之和
- *   合计(生产入口)     = ShaderPackCompiler.compile(discovered)  ← 另起一趟测量，含 zip I/O 与挂载规划
+ *   包扫描           = ShaderPackScanner.scan(inventoryDir)
+ *   加载与预处理     = ShaderPackService.load(discovered, sink)   → pack + **逐阶段预处理产物**
+ *   转译（8 段流水线） = Σ OfGlslTranslator.translate(stage, sink 里的预处理产物)
+ *   合计(分段三段)   = 以上三段之和
+ *   合计(生产入口)   = ShaderPackCompiler.compile(discovered)  ← 另起一趟测量，含 zip I/O 与挂载规划
  * </pre>
+ *
+ * <p>🔖 <b>为什么从四段改成三段</b>：旧口径里 `load` 单列为「properties/options 解析」，
+ * 又另有一行「`#include` 预处理」把 Σ {@code GlslPreprocessor.preprocess} 加进去 ——
+ * 但 {@code load} 为了提取 uniform / 属性声明**本来就已经对每个阶段跑过一遍完整预处理**，
+ * 于是分段合计把预处理**算了两遍**，而「解析」这个名字也掩盖了这一点。
+ * 实测该行占「解析」段约 48%（见 {@code evidence/pp-parse-profile.md}）。
+ * 现在预处理不再单列，转译段的输入直接取自 {@code load} 交出的产物，
+ * **既不重复计算，也保证转译吃到的输入与生产路径完全同源**。
  *
  * <p><b>两条口径纪律</b>：
  * <ol>
@@ -67,12 +76,19 @@ public final class ColdPathBenchmark {
 
     /** 分段名（与 {@code 17-NATIVE.md} §5.3 表格行序一致，报告与 G1 共用）。 */
     static final String SEG_SCAN = "包扫描";
-    static final String SEG_PROPS = "properties/options 解析";
-    static final String SEG_PRE = "#include 预处理";
+    /**
+     * 加载段。🔴 名称**刻意不含「properties 解析」**：load 除了读 properties 与组装选项，
+     * 还要为提取 uniform / 属性声明对每个阶段跑一次**完整的预处理**。
+     * 旧名字让它看起来像纯解析，从而掩盖了「分段合计把预处理算了两遍」这件事。
+     */
+    static final String SEG_LOAD = "加载与预处理";
     static final String SEG_TRANS = "转译（8 段流水线）";
-    static final String SEG_SUM = "合计（分段四段）";
+    static final String SEG_SUM = "合计（分段三段）";
     static final String SEG_ENTRY = "合计（生产入口）";
     /** 预处理段再拆三段，供 G3 与 Rust 侧做**同口径**对照。 */
+    /** 口径交叉校验的容差（%），理由见 {@link #crossCheck}。 */
+    static final double CROSS_CHECK_TOLERANCE_PCT = 25.0;
+
     static final String SEG_INC = "预处理①#include 展开";
     static final String SEG_DEF = "预处理②宏与条件编译";
     static final String SEG_CONST = "预处理③选项常量扫描";
@@ -89,10 +105,10 @@ public final class ColdPathBenchmark {
     }
 
     /** 一趟分段测量的结果（纳秒）。 */
-    record Pass(long scanNanos, long propsNanos, long preNanos, long transNanos, int stageCount) {
-        /** 分段四段合计（纳秒）。 */
+    record Pass(long scanNanos, long loadNanos, long transNanos, int reusedStages, int stageCount) {
+        /** 分段三段合计（纳秒）。预处理已含在 {@code loadNanos} 里，**不可再加一次**。 */
         long sumNanos() {
-            return scanNanos + propsNanos + preNanos + transNanos;
+            return scanNanos + loadNanos + transNanos;
         }
     }
 
@@ -193,17 +209,27 @@ public final class ColdPathBenchmark {
 
         // ---- 测量趟 A：分段四段（只计计算，不含 zip I/O）----
         long[] scanNanos = new long[a.iterations];
-        long[] propsNanos = new long[a.iterations];
-        long[] preNanos = new long[a.iterations];
+        long[] loadNanos = new long[a.iterations];
         long[] transNanos = new long[a.iterations];
         long[] sumNanos = new long[a.iterations];
+        int reusedStages = -1;
+        int stageCount = 0;
         for (int i = 0; i < a.iterations; i++) {
             Pass pass = runPass(fixture);
             scanNanos[i] = pass.scanNanos();
-            propsNanos[i] = pass.propsNanos();
-            preNanos[i] = pass.preNanos();
+            loadNanos[i] = pass.loadNanos();
             transNanos[i] = pass.transNanos();
             sumNanos[i] = pass.sumNanos();
+            reusedStages = pass.reusedStages();
+        }
+        // 口径自检：转译段应当**全部**命中 load 交出的预处理产物。
+        // ⚠️ 分母必须用 fixture 的**阶段**数，不是 pack.programs().size()（那是**程序**数，
+        // 一个程序有 VERTEX/FRAGMENT 两个阶段）—— 写错分母会让自检永远报警或永远不报警。
+        // 这个 bug 就是在自检生效后被当场抓出来的（第一次跑报了「182/91」）。
+        stageCount = fixture.inputs().size();
+        if (reusedStages != stageCount) {
+            System.err.printf("G0: 口径告警 —— 转译段复用 %d/%d 个阶段的预处理产物，"
+                    + "其余走了兜底重算%n", reusedStages, stageCount);
         }
 
         // ---- 测量趟 B：生产入口（另起一趟，避免与趟 A 争 JIT / 文件缓存）----
@@ -219,8 +245,7 @@ public final class ColdPathBenchmark {
         }
 
         Stats sScan = Stats.of(scanNanos);
-        Stats sProps = Stats.of(propsNanos);
-        Stats sPre = Stats.of(preNanos);
+        Stats sLoad = Stats.of(loadNanos);
         Stats sTrans = Stats.of(transNanos);
         Stats sSum = Stats.of(sumNanos);
         Stats sEntry = Stats.of(entryNanos);
@@ -229,13 +254,14 @@ public final class ColdPathBenchmark {
         System.out.printf("| 环节 | 中位数(ms) | p95(ms) | 最小(ms) | 最大(ms) | 样本 | 占合计 |%n");
         System.out.printf("|---|---:|---:|---:|---:|---:|---:|%n");
         row(SEG_SCAN, sScan, sSum);
-        row(SEG_PROPS, sProps, sSum);
-        row(SEG_PRE, sPre, sSum);
+        row(SEG_LOAD, sLoad, sSum);
         row(SEG_TRANS, sTrans, sSum);
         row(SEG_SUM, sSum, sSum);
         System.out.printf("| %s | %.1f | %.1f | %.1f | %.1f | %d | —（含 zip I/O 与挂载规划） |%n",
                 SEG_ENTRY, sEntry.millis(), sEntry.p95() / 1e6, sEntry.min() / 1e6,
                 sEntry.max() / 1e6, sEntry.samples());
+
+        crossCheck(line2 -> System.out.printf("%s", line2), sSum, sEntry);
 
         System.out.printf("%n环境：%s / JDK %s%n", a.describe(), System.getProperty("java.version"));
         System.out.printf("备注：%s%n", a.notes());
@@ -246,7 +272,7 @@ public final class ColdPathBenchmark {
             System.out.println("golden 已落盘（G1 一致性测试基准）: " + a.dumpGolden());
         }
         if (a.out() != null) {
-            writeEvidence(a, pack, fixture, sScan, sProps, sPre, sTrans, sSum, sEntry);
+            writeEvidence(a, pack, fixture, sScan, sLoad, sTrans, sSum, sEntry);
             System.out.println("证据已落盘: " + a.out());
         }
     }
@@ -325,6 +351,29 @@ public final class ColdPathBenchmark {
                 .append("\tdiagnostics=").append(diagnosticTotal).append('\n');
         Files.writeString(out.resolve("const-results.txt"), sb.toString(), StandardCharsets.UTF_8);
         System.out.println("     const 产物 = 选项 " + optionTotal + " 条 / 诊断 " + diagnosticTotal + " 条");
+    }
+
+    /**
+     * 口径交叉校验：分段三段之和 vs 生产入口。
+     *
+     * <p>为什么要这道自检：旧口径的失败模式正是「四段都测了、每个都合理，
+     * 但合起来比生产入口大很多」——因为预处理被算了两遍。**光看每一段都发现不了。**
+     * 有了这道交叉校验，口径一旦漂移，报告自己就会喊出来，而不是等人看百分比才发现。
+     */
+    private static void crossCheck(java.util.function.Consumer<String> out,
+            Stats segments, Stats entry) {
+        double seg = segments.millis();
+        double ent = entry.millis();
+        double delta = ent - seg;
+        double pct = seg <= 0 ? 0.0 : delta / seg * 100.0;
+        // 阈值取 25%：太低会被噪声误报（实测同机同构建的这段差值在 −3.8% ~ +12.1% 间摆），
+        // 太高又抓不住要防的那类错误 —— 「预处理被算两遍」会表现为 +48% 左右（463/1460）。
+        // 25% 落在「噪声之上、粗口径漂移之下」，正是这道自检该覆盖的区间。
+        String verdict = Math.abs(pct) <= CROSS_CHECK_TOLERANCE_PCT
+                ? "✅ 口径自洽"
+                : "🔴 分段与生产入口差距过大，口径可能又漂了";
+        out.accept("> **口径交叉校验**：分段三段合计 %.1fms vs 生产入口 %.1fms，差 %+.1fms（%+.1f%%）—— %s%n"
+                .formatted(seg, ent, delta, pct, verdict));
     }
 
     private static void row(String name, Stats stats, Stats total) {
@@ -493,22 +542,32 @@ public final class ColdPathBenchmark {
         ShaderPackScanner.ScanResult scan = ShaderPackScanner.scan(fixture.inventory());
         long t1 = System.nanoTime();
 
-        ShaderPack pack = ShaderPackService.load(discovered).pack();
+        // 🔴 口径修正（2026-10-02）：load 会为提取 uniform / 属性声明，对每个阶段跑一次
+        // **完整的 GlslPreprocessor**。旧口径在这里又单独跑一遍同样的预处理并把两段相加
+        // ⇒ 分段合计把预处理**算了两遍**，而「properties 解析」其实并不是纯解析。
+        // 现在改为：向 load 索取它已经算好的预处理产物，转译直接用它，
+        // **既不重复计算、也保证转译段吃到的输入与生产路径完全同源**。
+        Map<String, TranslateResult> preprocessed = new LinkedHashMap<>();
+        ShaderPack pack = ShaderPackService.load(discovered, preprocessed).pack();
         long t2 = System.nanoTime();
 
         IncludeResolver resolver = ShaderPackService.resolverFor(fixture.plan());
-        long pre = 0;
         long trans = 0;
+        int reused = 0;
         for (StageInput input : fixture.inputs()) {
-            long a = System.nanoTime();
-            TranslateResult preprocessed = GlslPreprocessor.preprocess(input.file(), input.source(), resolver);
+            TranslateResult pre = preprocessed.get(input.file());
+            if (pre != null) {
+                reused++;
+            } else {
+                // 兜底：load 因源文件不可读而跳过该阶段时 Program 契约允许降级，
+                // 这里退回到自己算，保证转译段覆盖的阶段数不随环境漂移。
+                pre = GlslPreprocessor.preprocess(input.file(), input.source(), resolver);
+            }
             long b = System.nanoTime();
-            OfGlslTranslator.translate(input.stage(), preprocessed);
-            long c = System.nanoTime();
-            pre += b - a;
-            trans += c - b;
+            OfGlslTranslator.translate(input.stage(), pre);
+            trans += System.nanoTime() - b;
         }
-        return new Pass(t1 - t0, t2 - t1, pre, trans, pack == null ? 0 : pack.programs().size());
+        return new Pass(t1 - t0, t2 - t1, trans, reused, pack == null ? 0 : pack.programs().size());
     }
 
     /**
@@ -647,7 +706,7 @@ public final class ColdPathBenchmark {
     }
 
     private static void writeEvidence(Args a, ShaderPackScanner.DiscoveredPack pack, Fixture fixture,
-            Stats sScan, Stats sProps, Stats sPre, Stats sTrans, Stats sSum, Stats sEntry)
+            Stats sScan, Stats sLoad, Stats sTrans, Stats sSum, Stats sEntry)
             throws IOException {
         StringBuilder md = new StringBuilder();
         md.append("# G0 · Java 冷路径分段基准（%s）\n\n".formatted(pack.name()));
@@ -678,18 +737,26 @@ public final class ColdPathBenchmark {
             }
         }
         md.append("\n## 一行复现\n\n```bash\n%s\n```\n\n".formatted(a.reproCommand()));
+        crossCheck(md::append, sSum, sEntry);
         md.append("## 分段数据\n\n");
         md.append("| 环节 | 中位数(ms) | p95(ms) | 最小(ms) | 最大(ms) | 样本 | 占合计 |\n");
         md.append("|---|---:|---:|---:|---:|---:|---:|\n");
         line(md, SEG_SCAN, sScan, sSum);
-        line(md, SEG_PROPS, sProps, sSum);
-        line(md, SEG_PRE, sPre, sSum);
+        line(md, SEG_LOAD, sLoad, sSum);
         line(md, SEG_TRANS, sTrans, sSum);
         line(md, SEG_SUM, sSum, sSum);
         md.append("| %s | %.1f | %.1f | %.1f | %.1f | %d | — |\n\n".formatted(
                 SEG_ENTRY, sEntry.millis(), sEntry.p95() / 1e6, sEntry.min() / 1e6,
                 sEntry.max() / 1e6, sEntry.samples()));
-        md.append("> 生产入口含 zip I/O 与挂载规划，**与分段四段不可相加**。\n");
+        md.append("> 🔴 **口径（2026-10-02 修正）**：「加载与预处理」**已包含完整的 "
+                + "`GlslPreprocessor`（`#include` 展开 + 宏与条件编译 + 选项常量扫描）** —— "
+                + "旧表另有一行「`#include` 预处理」把同一件事**又加了一遍**，"
+                + "并把加载段错叫成「properties/options 解析」，掩盖了重复计算。"
+                + "现在预处理不再单列，转译段的输入直接取自 `load` 交出的预处理产物。\n");
+        md.append("> 预处理内部分解（①#include 展开 / ②宏与条件编译 / ③选项常量扫描）"
+                + "见 `--phase-timing`；它们是**「加载与预处理」的子集，不可与上表相加**。\n");
+        md.append("> 生产入口含 zip I/O 与挂载规划，与分段三段的差值应接近这些额外开销；"
+                + "若差值很大，说明分段口径又漂了，应当复核。\n");
         md.append("> p95 取排序后下标 `ceil(0.95×N)−1`；样本 %d 偏小时它就等于最大值，"
                 .formatted(a.iterations));
         md.append("读作「尾延迟上界」而非稳定估计。\n");

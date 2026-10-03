@@ -4,19 +4,19 @@
 
 ## 环境
 
-- 机器/标签：AMD Ryzen 7 8745H  w/ Radeon 780M Graphics / Linux amd64
+- 机器/标签：G0-r9-���������������
 - JDK：25.0.4.1
 - OS：Linux amd64
-- 备注：pure-CPU compute, no GPU involved; laptop, power mode/freq not pinned (thermal noise possible); zip in OS page cache (warm I/O)
-- 预热 3 次，样本 9 次（§7.1：预热 ≥3、样本 ≥5，取中位数而非最好一次）
+- 备注：������������������������������������������������������������������������������������
+- 预热 3 次，样本 21 次（§7.1：预热 ≥3、样本 ≥5，取中位数而非最好一次）
 
 ## 输入（固定）
 
-- 包：`BSL_v10.1.8`，kind=ZIP，源 `run/shaderpacks/BSL_v10.1.8.zip`
+- 包：`BSL_v10.1.8`，kind=ZIP，源 `/home/yorigami/Minecraft/Shader-Core-Vulkan/run/shaderpacks/BSL_v10.1.8.zip`
 - sha256：36b0a50ff7918bf10e9422c401d93779f9d0088a26acea975b435243f96930b5
 - program 数：91；待测阶段数：182
 - ⚠️ 本表是**单包**口径。runClient 日志里的 `pack compile done: stages=N` 统计的是**整个库存目录**下的所有包，两者不可直接相减。
-- golden 清单：`build/bench-golden/BSL_v10.1.8/sha256sums.txt`，共 546 条，自身 sha256 `d34c5d02122cf9285c6028315f00d8b7d3ea2b69bee0cf588c386ecc4b45cb62`
+- golden 清单：`/home/yorigami/Minecraft/Shader-Core-Vulkan/build/bench-golden/BSL_v10.1.8/sha256sums.txt`，共 546 条，自身 sha256 `d34c5d02122cf9285c6028315f00d8b7d3ea2b69bee0cf588c386ecc4b45cb62`
 
 ## 一行复现
 
@@ -24,25 +24,28 @@
 ./gradlew compileTestJava
 java -cp build/classes/java/test:build/classes/java/main \
     dev.vkdisp.pack.ColdPathBenchmark \
-    --inventory run/shaderpacks --pack BSL_v10.1.8 --warmup 3 --iterations 9 \
-    --out evidence/g0-java-coldpath.md \
-    --golden build/bench-golden \
-    --notes "pure-CPU compute, no GPU involved; laptop, power mode/freq not pinned (thermal noise possible); zip in OS page cache (warm I/O)"
+    --inventory /home/yorigami/Minecraft/Shader-Core-Vulkan/run/shaderpacks --pack BSL_v10.1.8 --warmup 3 --iterations 21 \
+    --out /home/yorigami/Minecraft/Shader-Core-Vulkan/evidence/g0-java-coldpath.md \
+    --golden /home/yorigami/Minecraft/Shader-Core-Vulkan/build/bench-golden \
+    --label G0-r9-��������������� \
+    --notes "������������������������������������������������������������������������������������"
 ```
 
+> **口径交叉校验**：分段三段合计 872.1ms vs 生产入口 895.3ms，差 +23.2ms（+2.7%）—— ✅ 口径自洽
 ## 分段数据
 
 | 环节 | 中位数(ms) | p95(ms) | 最小(ms) | 最大(ms) | 样本 | 占合计 |
 |---|---:|---:|---:|---:|---:|---:|
-| 包扫描 | 0.4 | 0.6 | 0.3 | 0.6 | 9 | 0.0% |
-| properties/options 解析 | 681.3 | 843.1 | 582.7 | 843.1 | 9 | 43.2% |
-| #include 预处理 | 549.7 | 664.0 | 509.8 | 664.0 | 9 | 34.9% |
-| 转译（8 段流水线） | 236.8 | 275.0 | 224.9 | 275.0 | 9 | 15.0% |
-| 合计（分段四段） | 1576.0 | 1604.5 | 1320.0 | 1604.5 | 9 | 100.0% |
-| 合计（生产入口） | 1494.9 | 1646.3 | 1374.2 | 1646.3 | 9 | — |
+| 包扫描 | 0.5 | 0.8 | 0.4 | 2.8 | 21 | 0.1% |
+| 加载与预处理 | 635.1 | 708.0 | 562.7 | 753.0 | 21 | 72.8% |
+| 转译（8 段流水线） | 226.5 | 339.8 | 216.2 | 395.1 | 21 | 26.0% |
+| 合计（分段三段） | 872.1 | 1051.8 | 784.8 | 1055.9 | 21 | 100.0% |
+| 合计（生产入口） | 895.3 | 997.9 | 796.0 | 1080.8 | 21 | — |
 
-> 生产入口含 zip I/O 与挂载规划，**与分段四段不可相加**。
-> p95 取排序后下标 `ceil(0.95×N)−1`；样本 9 偏小时它就等于最大值，读作「尾延迟上界」而非稳定估计。
+> 🔴 **口径（2026-10-02 修正）**：「加载与预处理」**已包含完整的 `GlslPreprocessor`（`#include` 展开 + 宏与条件编译 + 选项常量扫描）** —— 旧表另有一行「`#include` 预处理」把同一件事**又加了一遍**，并把加载段错叫成「properties/options 解析」，掩盖了重复计算。现在预处理不再单列，转译段的输入直接取自 `load` 交出的预处理产物。
+> 预处理内部分解（①#include 展开 / ②宏与条件编译 / ③选项常量扫描）见 `--phase-timing`；它们是**「加载与预处理」的子集，不可与上表相加**。
+> 生产入口含 zip I/O 与挂载规划，与分段三段的差值应接近这些额外开销；若差值很大，说明分段口径又漂了，应当复核。
+> p95 取排序后下标 `ceil(0.95×N)−1`；样本 21 偏小时它就等于最大值，读作「尾延迟上界」而非稳定估计。
 > 分段与生产路径的语义等价性已自检：逐阶段 `预处理→转译` 的产物与 `GlslPipeline.analyze` **逐字节相等**（不等则基准失真并终止）。
 
 ## 口径与判读（固定说明，随每次运行重写）
