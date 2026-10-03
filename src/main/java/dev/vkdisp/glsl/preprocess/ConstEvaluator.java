@@ -77,6 +77,16 @@ public final class ConstEvaluator {
             !"false".equalsIgnoreCase(System.getProperty("vkdisp.const.guard", "true"));
 
     /**
+     * 单遍实现（不物化行数组、不为每行分配 strip 结果）的开关
+     * （{@code -Dvkdisp.const.singlepass=false} 关闭）。
+     *
+     * <p>与 {@link #PREFIX_GUARD} 同理：留开关是为了**能交替测量**（§7.3 的红线），
+     * 而不是留后门。关闭后走 {@link #evaluateSplit}（原实现），两者产物必须逐字节一致。
+     */
+    static final boolean SINGLE_PASS =
+            !"false".equalsIgnoreCase(System.getProperty("vkdisp.const.singlepass", "true"));
+
+    /**
      * 前缀守卫：只有以 {@code const} 或 {@code #define} 开头的行才可能命中
      * {@link #CONST_PATTERN} / {@link #DEFINE_PATTERN}（两者都有 {@code ^} 锚定）。
      *
@@ -115,6 +125,18 @@ public final class ConstEvaluator {
      * @param inputLineMap  include 阶段的行号映射，用于把选项指回原文件行
      */
     public static Result evaluate(String text, SourceLineMap inputLineMap) {
+        return SINGLE_PASS
+                ? evaluateSinglePass(text, inputLineMap)
+                : evaluateSplit(text, inputLineMap);
+    }
+
+    /**
+     * 原实现：{@code split("\n", -1)} 物化整份行数组 + 每行 {@code strip()}。
+     *
+     * <p>保留它是为了 A/B 交替测量（{@code -Dvkdisp.const.singlepass=false} 走这里），
+     * 以及在单遍实现出问题时有一个可逐字节对照的参照。
+     */
+    private static Result evaluateSplit(String text, SourceLineMap inputLineMap) {
         List<OptionConstant> options = new ArrayList<>();
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         Map<String, List<Integer>> byName = new HashMap<>();
@@ -146,6 +168,103 @@ public final class ConstEvaluator {
                 byName.computeIfAbsent(oc.name(), k -> new ArrayList<>()).add(options.size() - 1);
             }
         }
+        return finish(text, options, byName, diagnostics);
+    }
+
+    /**
+     * 单遍实现（P3）：**不物化行数组，也不为每行分配 strip 结果**。
+     *
+     * <p>动机来自 JFR（见 {@code evidence/p1-const-prefix-guard.md}）：const 相里
+     * {@code split} 17.2% + {@code strip} 18.0% ≈ **35%** 花在字符串分配上，
+     * 而真正的正则只占一小部分、且守卫已经把它挡到 65k 行以内。
+     * 也就是说：**剩下的成本主要是「把 17MB 文本切成几十万个临时 String」**。
+     *
+     * <p>做法：
+     * <ol>
+     *   <li>按 {@code indexOf('\n')} 在原文上滚动行区间，<b>不</b>为每行生成子串；</li>
+     *   <li>先用下标扫出首个/末个非空白位（复刻 {@code String.strip()} 的
+     *       {@code Character.isWhitespace} 语义），<b>不</b>分配；</li>
+     *   <li>只有前缀检查通过的行才 {@code substring} 一次、把真串交给正则。</li>
+     * </ol>
+     *
+     * <p>行数口径与 {@code split("\n", -1)} 后「丢掉一个末尾空串」**逐字一致**：
+     * 文本以 {@code '\n'} 结尾时，{@code split} 产生的最后一个空串被丢掉 ⇒ 单遍实现
+     * 直接把最后一个换行符排除在扫描区间外。空文本两者的行数都是 0。
+     */
+    private static Result evaluateSinglePass(String text, SourceLineMap inputLineMap) {
+        List<OptionConstant> options = new ArrayList<>();
+        List<TranslateDiagnostic> diagnostics = new ArrayList<>();
+        Map<String, List<Integer>> byName = new HashMap<>();
+
+        final int len = text.length();
+        // split 对空串产出 [""]，再被「丢一个末尾空串」抹掉 ⇒ 0 行。
+        if (len == 0) {
+            return finish(text, options, byName, diagnostics);
+        }
+        // 文本以 '\n' 结尾 ⇒ 末段是「纯换行终止符产物」，与 split 后被丢掉的那个空串对应。
+        final int limit = text.charAt(len - 1) == '\n' ? len - 1 : len;
+
+        int start = 0;
+        int outputLineNo = 0;
+        while (start <= limit) {
+            int nl = text.indexOf('\n', start);
+            int end = (nl < 0 || nl > limit) ? limit : nl;
+
+            // 不分配地求出 strip() 的等价区间
+            int ws = start;
+            while (ws < end && Character.isWhitespace(text.charAt(ws))) {
+                ws++;
+            }
+            int we = end;
+            while (we > ws && Character.isWhitespace(text.charAt(we - 1))) {
+                we--;
+            }
+            outputLineNo++;
+            if (ws < we && prefixAllows(text, ws, we)) {
+                String trimmed = text.substring(ws, we);
+                SourceLineMap.LineOrigin origin = inputLineMap.originOf(outputLineNo);
+                OptionConstant oc = tryConst(trimmed, origin);
+                if (oc == null) {
+                    oc = tryDefineOption(trimmed, origin);
+                }
+                if (oc != null) {
+                    options.add(oc);
+                    byName.computeIfAbsent(oc.name(), k -> new ArrayList<>()).add(options.size() - 1);
+                }
+            }
+
+            if (nl < 0 || nl > limit) {
+                break;
+            }
+            start = nl + 1;
+        }
+        return finish(text, options, byName, diagnostics);
+    }
+
+    /**
+     * 前缀检查的**无分配**版本：与 {@link #guardAllows(String)} 判的是同一件事，
+     * 只是改成在给定区间上比对字符，避免为了判断而先造出子串。
+     */
+    private static boolean prefixAllows(String text, int from, int to) {
+        return startsWithAt(text, from, to, "const") || startsWithAt(text, from, to, "#define");
+    }
+
+    private static boolean startsWithAt(String text, int from, int to, String prefix) {
+        int n = prefix.length();
+        if (to - from < n) {
+            return false;
+        }
+        for (int k = 0; k < n; k++) {
+            if (text.charAt(from + k) != prefix.charAt(k)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 同名默认值不一致 → 歧义禁用 + WARN（两条实现共用，保证口径一致）。 */
+    private static Result finish(String text, List<OptionConstant> options,
+            Map<String, List<Integer>> byName, List<TranslateDiagnostic> diagnostics) {
 
         // 同名默认值不一致 → 歧义禁用 + WARN
         // 注意：byName 里存的是 options 的"另一份引用"，而 options 最终会被 copyOf 冻结，

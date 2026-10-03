@@ -164,4 +164,51 @@ class ConstEvaluatorTest {
         assertEquals(2, r.options().size());
         assertTrue(r.diagnostics().stream().anyMatch(d -> d.message().contains("已禁用")));
     }
+
+    // ------------------------------------------------------------------
+    // 单遍实现（默认开启，`-Dvkdisp.const.singlepass=false` 走原实现）的口径用例
+    //
+    // 单遍实现最容易错的不是正则，而是**行边界**：它不物化行数组，靠
+    // 「文本以 \n 结尾 ⇒ 末段是被丢掉的那个空串」来复刻 split("\n", -1) 的行为。
+    // 下面几条把这个口径钉死。
+    // ------------------------------------------------------------------
+
+    @Test
+    void singlePassLineCountMatchesSplitSemantics() {
+        // split("\n",-1) + 丢一个末尾空串 的行数口径：
+        //   "a"    → 1 行； "a\n"  → 1 行； "a\n\n" → 2 行； ""  → 0 行
+        assertEquals(1, ConstEvaluator.evaluate("const int shadowDistance = 1; // [1]\n",
+                mapFor(1)).options().size(), "结尾换行不应多出一行");
+        assertEquals(2, ConstEvaluator.evaluate(
+                        "const int shadowDistance = 1; // [1]\n\nconst int shadowSteps = 1; // [1]\n",
+                        mapFor(2)).options().size(),
+                "中间的空行要占一行号，两条 const 都要被认出");
+        assertEquals(0, ConstEvaluator.evaluate("", mapFor(1)).options().size(), "空文本 0 行");
+    }
+
+    @Test
+    void singlePassLineNumberSurvivesBlankAndWhitespaceLines() {
+        // 空行 / 全空白行必须**占号**，否则后面所有选项的 sourceLine 都会错位
+        String src = "\n\n   \n#define SHADOW_DARKNESS 0.10 // d [0.05 0.10]\n";
+        ConstEvaluator.Result r = ConstEvaluator.evaluate(src, mapFor(4));
+        assertEquals(1, r.options().size());
+        assertEquals(4, r.options().get(0).sourceLine(), "空白行也必须计入行号");
+    }
+
+    @Test
+    void singlePassHandlesCrLfLikeWhitespace() {
+        // 行内 \r 属于 Character.isWhitespace ⇒ strip() 会裁掉它，前缀检查必须照样放行
+        String src = "\tconst int shadowMapResolution = 2048; // [512 1024]\r";
+        ConstEvaluator.Result r = ConstEvaluator.evaluate(src, mapFor(1));
+        assertEquals(1, r.options().size(), "尾部 \\r 应被当作空白裁掉");
+    }
+
+    @Test
+    void singlePassRejectsConstInsideCodeLine() {
+        // 行内含白名单 const 但行首不是 ⇒ 不认。单遍实现用区间比对，
+        // 这条保证它没有把「区间内包含关键字」当成「行首是关键字」。
+        String src = "float x = 1.0; // const int shadowMapResolution = 2048; [512]\n";
+        ConstEvaluator.Result r = ConstEvaluator.evaluate(src, mapFor(1));
+        assertTrue(r.options().isEmpty());
+    }
 }

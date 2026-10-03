@@ -62,10 +62,16 @@
   - 🔴 **P1 已执行（2026-10-02 五）**：Java 侧「先挡后正则」前缀守卫**只省 4.9%**（246.1→234.1ms），
     **「const 是正则瓶颈」的假设被证伪** —— 真实热区是 split/strip 的字符串分配（≈35%）。
     见 `evidence/p1-const-prefix-guard.md`。这同时动摇了「const 按 inc 的 4× 移植」的乐观假设。
-  - 🔴 **下一步不要直接去移植 4190 行的转译相**，先做这两件之一：
-    **P2** 决定 const 移植与否（它是分界线，且天平已偏向「不值得为它上 Rust」）；
-    或 **P3** 对 const 做**结构性改写**（单遍扫描、只对可能命中的行 strip）并单独取证 ——
-    这才是真正的大头，但它是 Java 侧改动，不进 G 线的 FFI 账。
+  - 🔴 **P3 已执行（2026-10-02 六）**：const **单遍实现**（不物化行数组、不为每行分配
+    strip 结果）A/B 产物一致，只再省 **3.0%**；**P1 + P3 累计 7.5%**，
+    **Java 侧微优化 const 的路线到此为止**。见 `evidence/p3-const-single-pass.md`。
+    🔖 最重要的一条教训：**「JFR 采样占比」≠「可优化空间」** —— GC 发生在别的线程上
+    （按栈含 `evaluate` 过滤根本采不到），而 `split` 是短命年轻代分配、bump 极快、
+    逃逸分析还能吃掉一部分。
+  - 🔴 **本轮暴露的更大空白（下一步应优先）**：G0 四段里
+    **`properties/options 解析` 占 43%（约 681ms），是整条冷路径最大的单块，
+    却从未被 profile、也没有 G1 的 golden** —— 比 const 更大、更黑。
+    下一轮建议先做 **PP（profile parse）**，再谈 G1 转译相或 const 裁决。
 - **H 线**：管线装配层 mixin（GAP-003 + GAP-004 同批），**本项目兼容目标的最大阻塞项**。
 
 ---
@@ -623,6 +629,40 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
   - **P3**（工程用）：对 const 做**结构性改写**（单遍扫描、只对可能命中的行 strip）并单独取证；
     注意它是 **Java 侧改动，不进 G 线的 FFI 账**，别和 G 线的裁决混在一起；
   - 才是 G1 转译相（Java 4190 行）—— 建议等 P2 有结论。
+
+### 9.4.7 续轮（2026-10-02 八）— P3：const 单遍实现（再省 3.0%）+ 一条方法论教训
+
+- **成果**：`evidence/p3-const-single-pass.md`。`ConstEvaluator` 拆成两条实现
+  （`-Dvkdisp.const.singlepass` 选择）：原实现 `split` + 逐行 `strip`；
+  **单遍实现**不物化行数组、按 `indexOf('\n')` 滚动区间、只用下标求 strip 等价区间、
+  **只有前缀通过的行才 `substring`**。冲突消解抽成共用 `finish(...)` 保证后半段口径一致。
+- **等价性**：`--dump-const` 清单 **51,336 条选项 + 0 诊断，两条实现与 P1 基线三方同哈希**。
+  新增 4 条**行边界**单测（单遍最容易错的不是正则，是行数/行号）：
+  `split` 的「丢一个末尾空串」口径、空文本 0 行、**空白行必须占行号**、
+  尾部 `\r` 按空白裁掉、行内含关键字但行首不是。**612 → 616 单测**。
+- **数据**：234.7 → **227.6ms（3.0%）**；P1 + P3 累计 **246.1 → 227.6ms = 7.5%**，
+  仍远低于 §5.2 的 20% 阈值 ⇒ **Java 侧微优化 const 的路线到此为止**。
+- 🔖 **本轮最值钱的是那条教训（不是那 3.0%）**：
+  **「JFR 采样占比」≠「可优化空间」**。P1 的 JFR 指认 `split`+`strip` ≈ 35%，
+  真做掉只省 3%，原因：**GC 发生在别的线程上**（按栈含 `ConstEvaluator.evaluate` 过滤
+  根本采不到 GC 线程），而 `split` 产生的是短命年轻代对象、bump 分配极快、
+  JIT 逃逸分析还能吃掉一部分。
+  ⇒ **以后看到「某方法占 X%」，先问「有多少是可消除的」，再决定要不要动手。**
+- 🔴 **顺带暴露的更大空白（下一轮应优先）**：G0 四段里
+  **`properties/options 解析` 占 43%（约 681ms），是整条冷路径最大的单块，
+  却从未被 profile、也没有 G1 的 golden** —— 比 const 更大、更黑。
+  建议下轮做 **PP（profile parse）**：先用 JFR + `parse/` 源码定位它的时间去向，
+  再决定是「Java 侧可优化」还是「值得进 G1 移植」。
+- **测试结果**：`./gradlew build` BUILD SUCCESSFUL；**616 单测全绿**；
+  `--phase-timing` 另起一趟，G0 四段口径未动。
+- **怎么 A/B 测**：
+  ```bash
+  java -Dvkdisp.const.singlepass=true|false -cp build/classes/java/test:build/classes/java/main \
+       dev.vkdisp.pack.ColdPathBenchmark --inventory run/shaderpacks --pack BSL_v10.1.8 \
+       --warmup 3 --iterations 9 --golden build/bench-golden --phase-timing | grep G3DATA
+  java -Dvkdisp.const.singlepass=true|false -cp … ColdPathBenchmark \
+       --inventory run/shaderpacks --pack BSL_v10.1.8 --dump-const /tmp/ab/<mode>   # 等价性
+  ```
 
 ### 9.5 环境与红线速查（详见持久记忆 + §6）
 
