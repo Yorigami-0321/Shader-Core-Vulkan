@@ -1215,8 +1215,12 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
 `layout(location=0) out vec4 fragColor` ⇒ 槽 1/2 理应为空）/ 主目标仍是正常原版渲染。
 
 🔖 **本轮最值钱的一条技术事实**（踩坑换来的）：
-**本引擎是反向 Z —— 自建深度目标必须清 `0.0`**（原版 clear pass：
-`clearColorAndDepthTextures(…, depth, 0.0)`，`LevelRenderer:255`，0.0 = 远平面）。
+**本引擎是反向 Z —— 自建深度目标必须清 `0.0`**（近平面 → 1.0、远平面 → 0.0）。
+🔖 **已字节码级核实三条（缺一不成立）**：① `Projection#getMatrix` 把 `setPerspective` 的
+**near/far 实参对调**（`setPerspective(fov, aspect, zFar, zNear, zZeroToOne)`）；
+② `DepthStencilState.DEFAULT` = **`GREATER_THAN_OR_EQUAL`**（不是 `LESS`）；
+③ `MainTarget` 深度格式 **`D32_FLOAT`** + clear 传 **`0.0`**（`LevelRenderer:255`）。
+⚠️ `DeviceInfo.isZZeroToOne()` **与反向无关**（只适配 Vulkan `[0,1]` vs GL `[-1,1]`），别认错。
 按 Vulkan 惯例清 `1.0`（= 近平面）⇒ **每个**地形片元被深度测试掉 ⇒
 「pass 跑通、零报错、画面只剩清屏色」，与「什么都没执行」**像素上完全同形**。
 ⇒ **规则**：自建任何深度附件，**第一件事是去读原版 clear pass 的清屏值**，别按惯例猜。

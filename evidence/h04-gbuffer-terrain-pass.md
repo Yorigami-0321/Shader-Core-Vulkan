@@ -95,10 +95,26 @@ vkdisp: pipeline count check: registered=23, compiled=23 (aligned)
 **症状**：pass 正常执行、M-01 确实切了多附件管线、无任何异常日志，
 但**一个片元都出不来** —— colortex / 主目标里只剩清屏色。
 
-**根因**：本引擎是**反向 Z**。原版的 clear pass 就写着
-`clearColorAndDepthTextures(..., mainRenderTarget.getDepthTexture(), 0.0)`（`LevelRenderer:255`），
-即 **0.0 = 远平面、1.0 = 近平面**。我按「Vulkan 惯例」把自建深度清到 **1.0**（= 近平面），
+**根因**：本引擎是**反向 Z**（近平面 → 深度 1.0，远平面 → 深度 0.0）。
+我按「Vulkan 惯例」把自建深度清到 **1.0**（= 近平面），
 于是**每一个**地形片元都过不了 `GREATER` 系的深度测试。
+
+#### 根因的三级直接证据（字节码级，非推断）
+
+⚠️ 初版这里只写了「从清屏值反推」。2026-10-03 复核后升级为直接证据 ——
+三条**必须同时成立**才自洽，缺一条就不可能是反向 Z：
+
+| # | 事实 | 出处（字节码核实） |
+|---|---|---|
+| ① | 投影矩阵把 `setPerspective` 的 **near / far 实参对调** | `net.minecraft.client.renderer.Projection#getMatrix`：`fstore_2 = zFar`、`fstore_3 = zNear`，随后压栈顺序为 `fload_2`(far) → `fload_3`(near)，即 `setPerspective(fov, aspect, zFar, zNear, zZeroToOne)`。JOML 形参是 `(fovy, aspect, zNear, zFar, zZeroToOne)` ⇒ **对调** ⇒ 近→1.0、远→0.0 |
+| ② | 深度比较是 **`GREATER_THAN_OR_EQUAL`**，不是 `LESS` | `DepthStencilState` 的 `static {}`：`new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, true)` |
+| ③ | 主目标深度格式 **`D32_FLOAT`**，clear 传 **`0.0`** | `com.mojang.blaze3d.pipeline.MainTarget` 构造：`RenderTarget(label, GpuFormat.RGBA8_UNORM, GpuFormat.D32_FLOAT)`；`LevelRenderer:255` `clearColorAndDepthTextures(..., depth, 0.0)` |
+
+🔖 **一个容易误认的无关项**：`Projection#getMatrix` 里还有个
+`DeviceInfo.isZZeroToOne()`，它只用来适配 **Vulkan 的 NDC `[0,1]` 与 OpenGL 的 `[-1,1]`**，
+**与「反向」无关**。别把它当成反向 Z 的开关。
+
+⇒ 三条合起来唯一自洽的解：**近平面 1.0 / 远平面 0.0 / 清 0.0（=远）/ 比较用 `>=`**。
 
 **为什么这个坑这么难查**（这是本轮真正要登记的经验）：
 
