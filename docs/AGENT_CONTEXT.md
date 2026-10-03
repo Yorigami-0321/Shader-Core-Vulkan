@@ -1096,11 +1096,20 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
 4. ~~**H 线开工准备**~~ → ✅ **已完成（2026-10-03 两轮）**，见 §10.7。
    5. ✅ ~~**续轮第一入口 = GAP-003 帧图内插 pass**~~ → **已解决**（`h05`）：帧图内插 pass 本来就是通的，
    h04 §9 的「从未成功」是深度修复前的旧观察 + 回读 V 翻转 bug 的合并误判。已一并修掉翻转。
-6. 🔴 **续轮第一入口 = colortex1/2 的 gbuffer 语义**（GAP-003 唯一剩余的主要阻塞）：
-   原版 `core/terrain.fsh` 只有 `layout(location = 0) out vec4 fragColor` ⇒ 槽 1/2 拿不到内容。
-   要让槽 1/2 有 OF 语义（colortex1 = 法线+lightmap、colortex2 = 材质/matID），
-   必须把**包的自研 `gbuffers_terrain`** 翻译接入 —— 先核实它在 BSL 包里的存在性与形态（X9：先核实再写）。
-   ⚠️ 这一步会首次真正消费 GAP-004 那个自定义 uniform 块（`gbufferModelViewInverse` 等）。
+6. 🔴 **续轮第一入口 = 让 BSL 自己的 `gbuffers_terrain` 跑起来**
+   （🔴 **描述已按 `h06` 更正** —— 不再是「补齐 colortex1/2 的法线/材质」）：
+   - 🔴 **`h06` 核实推翻了两条既有登记**：
+     ① 「colortex1=法线、colortex2=材质」是 **_Iris_** 的语义；**BSL 用 OF 式 `gl_FragData[N]` +
+     `/* DRAWBUFFERS */` 映射**，高级材质下法线进 **colortex6**、材质进 **colortex3**，
+     且 `ADVANCED_MATERIALS`/`MCBL_SS` **默认关闭** ⇒ **BSL 默认地形只写 colortex0**；
+     ② ✅ **文本层翻译链已经通了**（438 行真实 FSH ⇒ **0 ERROR**，自动合成 **5 个** `layout(location=0..4) out`，
+     收编 **29 条**游离 uniform）⇒ **多附件与 `gl_FragData` 改写都不是阻塞**。
+   - ⇒ 本轮真正要攻的四项（**逐条先核实再写**）：
+     ① 翻译结果能否**编译成 SPIR-V**（`sampler3D lighttex0/1`、`texture2D`、`gl_FragCoord.z`、精度限定符）；
+     ② `sampler3D lighttex0/1` 与原版**2D** lightmap 的**结构性不匹配**（`GameRenderer#lightmap()` 返回 2D 视图）；
+     ③ **44 条** OF uniform 的**取值供给**（GAP-004 那个块目前只收编了声明、还没供值）；
+     ④ `MrtPlan.SLOT_COUNT` 从 3 提到 **5**，且附件顺序**服从 DRAWBUFFERS 而非下标**（否则静默绑错槽）。
+   - 🔖 常驻回归：`TerrainProgramTranslateBaselineTest`（3 例，含「输入行数 > 300」防假绿断言）。
 7. 🔖 **取证方式已换 MCP**（`minecraft` server / mcpfabric NeoForge mod，含 `vision.screenshot`、
    `control.look`、`world.setTime`）。🔴 它原先只注册在 CodeBuddy 配置里，opencode 未加载；
    本轮已 `opencode mcp add --global`（**不入库**，避免 token 进仓库）。手册见

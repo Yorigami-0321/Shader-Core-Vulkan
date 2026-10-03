@@ -4,6 +4,44 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-03（二十九）— 🔴 核实推翻 GAP-003 前提：BSL ≠ Iris 语义，且文本层翻译链**已经通了**
+
+> **verdict = 纯核实轮，但推翻了我自己登记的核心前提，并把剩余阻塞从「多附件」
+> 改述为「让包自己的地形片元跑起来」。** 本轮**未开客户端**。
+
+- **本次改了什么**：
+  1. 用真实包源码核实 BSL 的地形片元形态（`run/shaderpacks/BSL_v10.1.8.zip` 的
+     `shaders/program/gbuffers_terrain.glsl`，623 行 / FSH 段 438 行 / 27 个直接 include / 44 条 uniform）；
+  2. 新增**常驻回归测试** `TerrainProgramTranslateBaselineTest`（3 例），把「BSL 真实 FSH 段
+     零 ERROR 通过翻译链 + 合成 5 个输出声明 + 29 条游离 uniform 收编」钉成基线；
+  3. 文档：更正 `13-GAP-REGISTRY` GAP-003 整条（含状态列）、`evidence/h06-…`（新）、`evidence/README.md`、
+     `AGENT_CONTEXT.md` §10.4 第 6 条。
+- **🔴 核实结论一：「colortex1=法线+lightmap、colortex2=材质」是 _Iris_ 的语义，不是 BSL 的。**
+  BSL 用 OF 式 **`gl_FragData[N]`** + **`/* DRAWBUFFERS:… */`** 映射；实测其**全部** gbuffer 程序的
+  DRAWBUFFERS 集合都是 `{0, 0367, 08, 08367}` ⇒ 启用高级材质时 `gl_FragData[1]`→**colortex3**（材质）、
+  `[2]`→**colortex6**（法线）、`[3]`→colortex7，**不是 colortex1/2**。
+  且 `lib/settings.glsl` 里 `ADVANCED_MATERIALS` 与 `MCBL_SS` **默认是注释掉的**
+  ⇒ **BSL 默认配置地形只写 colortex0**（`newNormal` 算完被丢弃，`EncodeNormal` 只在被 `#if` 包住的分支里）。
+  ⚠️ 但 `composite.glsl` 的 `DRAWBUFFERS:01` 说明帧里**至少要有 2 个 colortex**。
+- **🔴 核实结论二：文本层翻译链「已经通了」。** 实测把 BSL 真实 FSH 段喂进 `OfGlslTranslator`：
+  **0 个 ERROR**，`FragmentOutputAdapter` 自动合成 **5 个** `layout(location = 0..4) out vec4`，
+  `UniformInjector` 把 **29 条**游离 OF uniform 收编进 `VkDispBuiltins` 块。
+  ⇒ **「多附件」与「gl_FragData 改写」都不是阻塞** —— 与 GAP-003 旧判断（「多附件原语与地形接入都没做」）不符，已一并更正。
+- **🔴 由此推出的计划变更**：`MrtPlan.SLOT_COUNT = 3`（按 Iris 语义定的）**对 BSL 不够**（最多 5 槽），
+  且**附件顺序要服从 DRAWBUFFERS 映射而非下标**（否则在启用那些选项的包上**静默绑错槽**）。
+  剩余阻塞改述为「**让 BSL 自己的 gbuffers_terrain 跑起来**」，四项待攻：
+  ① 翻译结果能否编译成 SPIR-V；② `sampler3D lighttex0/1` vs 原版 **2D** lightmap 的结构性不匹配；
+  ③ 44 条 OF uniform 的取值供给（GAP-004 那个块目前只收编了声明）；④ 槽位数与附件顺序。
+- **🔖 探针差点给出假绿（已记为 X38 的实例）**：第一版用 `indexOf("#ifdef FSH")…indexOf("
+#endif")`
+  只截到 **20 行**（真实 438），而那 20 行里**恰好没有一句 `gl_FragData`** ⇒ 输出
+  「0 诊断 / success=true / 残留=false」的漂亮假绿。真因两条：该文件 **CRLF**、**嵌套 `#endif` 也顶格**
+  ⇒ 必须按**嵌套计数**配对。常驻测试里已**额外断言输入行数 > 300**，让截取退化立刻变红
+  （判据纪律：**先断言输入规模，再看结论**）。
+- **测试**：653 + 3 = **656** 单测全绿；`./gradlew build` exit 0。
+- **⚠️ 本轮未验证**：翻译结果能否编译成 SPIR-V（文本层 ≠ 能编译）；
+  `FragmentOutputAdapter` 的 DRAWBUFFERS 映射是否真按注释所述实现（未用 `0367`/`08` 分支实测）。
+
 ## 2026-10-03（二十八）— 回读 blit 的 V 翻转修正；**帧图内插 pass 本来就是通的**（取证改用 MCP）
 
 > **verdict = 用户报的「上下颠倒」定位并修掉了；顺带撤回我上一轮一个错误结论
