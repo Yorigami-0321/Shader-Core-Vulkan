@@ -58,6 +58,18 @@ public final class PackCompileCache {
     /** 键 → 编译产物。无锁并发容器。 */
     private static final Map<Key, ShaderPackCompiler.CompileResult> CACHE = new ConcurrentHashMap<>();
 
+    /**
+     * 累计淘汰条数（诊断用）。
+     *
+     * <p>🔴 为什么是计数器而不是本类自己打日志：本类是**纯数据结构**，
+     * 不引用 {@code VkDisp}（引用它会把整个 FML 配置体系拖进单测类路径 ——
+     * 实测会让 {@code PackCompileCacheTest} 抛 {@code NoClassDefFoundError: IConfigSpec}）。
+     * 这与既有的 {@link #hitCount()} / {@link #missCount()} 同一套路：
+     * **本类只计数，由调用方 {@code VkDispConfigHotReload} 在已有的那行缓存日志里读出去。**
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger EVICTIONS =
+            new java.util.concurrent.atomic.AtomicInteger();
+
     /** 命中/未命中计数（诊断用：验证缓存真的在起作用，而不是猜测）。 */
     private static volatile long hits;
     private static volatile long misses;
@@ -98,13 +110,40 @@ public final class PackCompileCache {
         if (key == null || result == null) {
             return;
         }
-        // 淘汰最旧：ConcurrentHashMap 无序，取任一 oldest-by-insertion 不便；
-        // 容量极小（8），用「超限时清空」是最简且行为可预测的做法（缓存只是加速器，
-        // 清空最坏只是多编一次，不影响正确性 —— 绝不因为缓存问题导致功能不可用）。
-        if (CACHE.size() >= MAX_ENTRIES && !CACHE.containsKey(key)) {
-            CACHE.clear();
+        // 淘汰策略：**逐条淘汰到限额以下**，不再「超限就清空整表」。
+        //
+        // 🔴 为什么改：原来超限时 `CACHE.clear()`，理由写的是「容量极小（8），最简且可预测」。
+        // 但实测（evidence/b4-pack-switch.md，6 趟 runClient × 144 样本）证明这是个**悬崖**：
+        // 本机只有 3 个包，却因为「启动路径用空 overrides 存一份、切包路径用非空 overrides
+        // 再存一份」，**6 趟全部撞顶并清空整表** ⇒ 清空之后下一次切包必然整包重编，
+        // 而整包重编正是 B4 那 2.9 秒的直接来源。也就是说，这个「最简」策略
+        // **自己在制造它本该缓解的那个问题**。
+        //
+        // 改成逐条淘汰后：命中的条目仍然命中，最坏情况只是少留几条，
+        // 而「缓存只是加速器、不影响正确性」这条不变（绝不因为缓存问题导致功能不可用）。
+        if (!CACHE.containsKey(key)) {
+            EVICTIONS.addAndGet(evictDownToCapacity());
         }
         CACHE.put(key, result);
+    }
+
+    /**
+     * 超限时逐条淘汰，直到低于 {@link #MAX_ENTRIES}。返回实际淘汰条数。
+     *
+     * <p>逐条而非清空整表的理由见 {@code put(...)} 里的注释（实测数据指向那个悬崖）。
+     * 这里用「任取一条」而不是精确 LRU：{@link ConcurrentHashMap} 不保序，而为了一个
+     * 容量 8 的加速器引入访问序结构不划算；**少留几条的代价是下次多编一次，
+     * 而清空整表的代价是「必然多编全部」** —— 前者严格更优，且都不影响正确性。
+     */
+    private static int evictDownToCapacity() {
+        int evicted = 0;
+        var it = CACHE.keySet().iterator();
+        while (CACHE.size() >= MAX_ENTRIES && it.hasNext()) {
+            it.next();
+            it.remove();
+            evicted++;
+        }
+        return evicted;
     }
 
     /** 取缓存，未命中则编译并写回。**编译在调用线程执行**（谁调用谁承担耗时）。 */
@@ -128,6 +167,11 @@ public final class PackCompileCache {
     }
 
     /** 当前缓存条目数。 */
+    /** 累计淘汰条数（诊断用；由调用方读出并记日志，见类注释）。 */
+    public static int evictionCount() {
+        return EVICTIONS.get();
+    }
+
     public static int size() {
         return CACHE.size();
     }

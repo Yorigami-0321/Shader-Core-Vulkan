@@ -134,6 +134,47 @@ class PackCompileCacheTest {
     }
 
     @Test
+    void overflowEvictsPartiallyRatherThanClearingEverything() {
+        // 🔴 这条锁的是 2026-10-03 的行为修正：超限时**逐条淘汰**，不再 `CACHE.clear()`。
+        //
+        // 依据：evidence/b4-pack-switch.md 实测 6 趟全部撞顶并清空整表
+        // （本机只有 3 个包，但「启动用空 overrides 存一份 + 切包用非空 overrides 再存一份」
+        // 就把键撑到 8）。清空之后下一次切包必然整包重编 —— 而整包重编正是 B4 那 2.9 秒的
+        // 直接来源。也就是说，原来的「最简」策略**自己在制造它本该缓解的那个问题**。
+        PackCompileCache.invalidate();
+        int max = PackCompileCache.MAX_ENTRIES;
+        for (int i = 0; i < max; i++) {
+            PackCompileCache.put(new PackCompileCache.Key("pack-" + i, Map.of()), fakeResult());
+        }
+        int survivorsBefore = 0;
+        for (int i = 0; i < max; i++) {
+            if (PackCompileCache.get(new PackCompileCache.Key("pack-" + i, Map.of())) != null) {
+                survivorsBefore++;
+            }
+        }
+        assertEquals(max, survivorsBefore, "前置条件：先填满容量");
+
+        // 再塞一条 ⇒ 触发淘汰
+        PackCompileCache.put(new PackCompileCache.Key("overflow", Map.of()), fakeResult());
+
+        assertTrue(PackCompileCache.size() <= PackCompileCache.MAX_ENTRIES,
+                "缓存不得超过容量上限，实际=" + PackCompileCache.size());
+        assertNotNull(PackCompileCache.get(new PackCompileCache.Key("overflow", Map.of())),
+                "新条目必须已写入");
+
+        int survivorsAfter = 0;
+        for (int i = 0; i < max; i++) {
+            if (PackCompileCache.get(new PackCompileCache.Key("pack-" + i, Map.of())) != null) {
+                survivorsAfter++;
+            }
+        }
+        // 逐条淘汰 ⇒ 至少留下一部分旧条目；「清空整表」会让这里等于 0。
+        assertTrue(survivorsAfter >= max - 2,
+                "超限应逐条淘汰而非清空整表：旧条目应基本留存，实际存活 " + survivorsAfter
+                        + " / " + max + "（若为 0 说明退回了 clear-all 行为）");
+    }
+
+    @Test
     void invalidateClearsCounters() {
         PackCompileCache.invalidate();
         PackCompileCache.put(new PackCompileCache.Key("k", Map.of()), fakeResult());

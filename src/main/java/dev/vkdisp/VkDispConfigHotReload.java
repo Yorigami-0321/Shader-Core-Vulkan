@@ -44,6 +44,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.config.ModConfigEvent;
+import net.neoforged.neoforge.client.event.ClientResourceLoadFinishedEvent;
 
 /**
  * 配置热加载 → 分流执行（P4.2 切包重载 / P4.3 选项屏幕驱动）。
@@ -96,6 +97,17 @@ public final class VkDispConfigHotReload {
      * 再编一次并给出完整诊断（T11：绝不因为加速器坏了就假装加载成功）。
      */
     private static volatile PackPrecompileScheduler scheduler;
+
+    /**
+     * 待测的「用户可见等待」起点（纳秒），0 表示当前没有在等的切包。
+     *
+     * <p>🔴 为什么要这个字段：既有的 {@code pack precompile done in {} ms} 在
+     * {@code reloadResourcePacks()} **之前**就停表，而资源重载本身还要占用户 2.1–4.2 秒
+     * （见 {@code evidence/b4-pack-switch.md}）⇒ 那个数**不是**用户等的时间，
+     * 却是 B4 唯一被记录的数字 ⇒ 长期会把 B4 看成达标。必须把两段分开记。
+     */
+    private static final java.util.concurrent.atomic.AtomicLong PENDING_RELOAD_START_NANOS =
+            new java.util.concurrent.atomic.AtomicLong();
 
     private VkDispConfigHotReload() {
     }
@@ -231,6 +243,8 @@ public final class VkDispConfigHotReload {
                 current.shaderPack(), current.packProfile(), java.util.Map.of());
 
         long started = System.nanoTime();
+        // 记下「用户视角的等待起点」：从这一刻起，用户看到的是旧画面，直到资源重载完成。
+        PENDING_RELOAD_START_NANOS.set(started);
         active.request(target);
         // T11：预编译的起止都留痕，可 grep 复核「慢的是预编译还是同步兜底」
         VkDisp.LOGGER.info(
@@ -239,12 +253,41 @@ public final class VkDispConfigHotReload {
 
         active.switchWhenReady(() -> {
             long millis = (System.nanoTime() - started) / 1_000_000L;
+            // ⚠️ 措辞已改：这是**预编译**耗时，**不含**紧接着的资源重载。
+            // 原措辞「done in {} ms -> resource reload」会被读成「切包总共这么久」，是错的。
             VkDisp.LOGGER.info(
-                    "vkdisp: pack precompile done in {} ms -> resource reload (cache entries={}, hits={}, misses={})",
+                    "vkdisp: pack precompile done in {} ms (precompile only, resource reload follows)"
+                            + " (cache entries={}, hits={}, misses={}, evictions={})",
                     millis, PackCompileCache.size(),
-                    PackCompileCache.hitCount(), PackCompileCache.missCount());
+                    PackCompileCache.hitCount(), PackCompileCache.missCount(),
+                    // T11：淘汰也留痕。原来淘汰是「超限清空整表」且完全静默，
+                    // 实测（evidence/b4-pack-switch.md）正是它让每次切包都整包重编。
+                    PackCompileCache.evictionCount());
             minecraft.reloadResourcePacks();
         });
+    }
+
+    /**
+     * 资源重载**完成**之后记账：补上 B4 真正该盯的那个数 —— 用户从切包到看见新画面的墙钟。
+     *
+     * <p>🔴 为什么必须有这一条：预编译只占其中一段，资源重载还要再花 2.1–4.2 秒。
+     * 只记前者 ⇒ B4 看起来达标，端到端实际是预算的 2.6–3.6 倍（见
+     * {@code evidence/b4-pack-switch.md}）。§5 把 B4 定义为「切包等待墙钟」，
+     * 那就得记墙钟，不是记其中一段。
+     *
+     * <p>用 0 做哨兵：初次进游戏也会触发本事件，但那时没有在等的切包 ⇒ 不记账。
+     */
+    @SubscribeEvent
+    static void onResourceReloadFinished(ClientResourceLoadFinishedEvent event) {
+        long started = PENDING_RELOAD_START_NANOS.getAndSet(0L);
+        if (started == 0L) {
+            return;
+        }
+        long totalMillis = (System.nanoTime() - started) / 1_000_000L;
+        VkDisp.LOGGER.info(
+                "vkdisp: B4 pack switch end-to-end: {} ms (scheduled -> resource reload finished;"
+                        + " precompile is a prefix of this, see the 'precompile done' line)",
+                totalMillis);
     }
 
     /** 当前配置快照。 */
