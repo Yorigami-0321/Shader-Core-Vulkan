@@ -1137,7 +1137,10 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
 - **B4 的原版资源重载 1743ms 未细拆**；lavapipe 失真倍数**未量化**（本机无真实 GPU，不编数）；
 - ~~**H 线一行代码都没写**，兼容支柱①的「完整」二字当前**没有实现支撑**~~
   → **2026-10-03 已过时**：M-01/M-01b 已落地并取证（§10.7）。
-  **但 GAP-003 多附件仍未做** ⇒ 「完整」二字**依然没有实现支撑**，只是阻塞点更精确了（M-04）。
+- **GAP-003 多附件**：✅ 地形已真的画进我方 3 附件 pass、**含帧图内插 pass 的生产形态**（§10.10/§10.11）。
+  ⛔ 但**兼容支柱①的「完整」二字依然没有实现支撑** —— 缺口已改述为
+  「**让包自己的 `gbuffers_terrain` 跑起来**」（§10.12 ②：🔴 原先「补 colortex1/2」的说法
+  已被核实推翻，那是 Iris 语义）；且**文本层翻译已通、SPIR-V 编译未验证**。
 - 「**用 Rust 重写整个渲染引擎**」这一诉求**尚未裁决**（`review/2026-10-02-阻塞项与开放问题登记.md` §3.1）；
 - **B1 / B6 本轮无数据**；B3 的离线与客户端两条口径**未统一**。
 
@@ -1148,8 +1151,21 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
 - 🔖 **判据本身要先验证**（2026-10-03 新增，见 §10.7）：**截图有差异 ≠ 你的改动造成的差异**。
   先做**同状态连拍**证明画面稳定，再用差异归因。本轮差点把一次区块加载期抖动
   写成「关掉 mixin 画面变暗」—— 那是一条方向恰好对改动不利的错误结论。
+- 🔴 **判据内容必须能区分被测的那个属性**（X38，§10.11）：用**平滑渐变 / 常量指纹**验「采样坐标或朝向
+  是否正确」是**无效判据** —— 它对坐标错误完全不敏感。验坐标/朝向就用**有明确空间结构**的内容。
+- 🔖 **先断言输入规模，再看结论**（X40，§10.12）：探针截取源码时若因 CRLF / 嵌套 `#endif`
+  只截到片段头几行，而那几行恰好不含被测特征，就会得到**零诊断、success=true 的假绿**。
+  常驻测试要带**规模下限断言**。
+- 🔖 **改了共享状态，旧的「某路径不通」结论一律重测**（X37，§10.11）：
+  深度清屏值那种共享状态一改，所有引用过它的路径都要重跑。
+- 🔖 **不同包的 gbuffer 语义不同，不可套用**（X39，§10.12）：必须读该包自己的 `DRAWBUFFERS`，
+  按附件**下标**绑定会静默绑错槽。
+- 🔖 **无 validation layer 时，「日志里没有 validation error」不是证据**（§9.4.15）：
+  判据按「像素 > registered==compiled > 不抛 Missing uniform」排序。
 - **环境**：`§9.5` —— `JAVA_TOOL_OPTIONS` 前缀、禁前台 `sleep` / `pkill -f GradleDaemon` /
-  `--rerun-tasks`、证据 sha256 在游戏退出后取。
+  `--rerun-tasks`、证据 sha256 在游戏退出后取；**数游戏进程用 `tools/vulkan-local/game_procs.sh`**（X33）；
+  **改 `run/config` 按节区定位键且在 kill 之后改**（X36）；
+  🔖 **取证优先用 MCP**（§10.12 ④：`look` 确定性视角、`set_time` 消除昼夜漂移、`screenshot` 直抓渲染目标）。
 
 ### 10.7 ✅ H 线 M-01/M-01b 已落地（2026-10-03，支柱①开工）
 
@@ -1159,7 +1175,7 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
 | 项 | 状态 |
 |---|---|
 | **M-01** `ChunkSectionLayer#pipeline` | ✅ 6/6 派生管线被地形 draw 取用（日志逐条打出**我方 location**） |
-| **M-01b** `ChunkSectionsToRender#renderLayers` | ✅ 自定义块每帧绑定，0 `Missing uniform` / 0 validation error |
+| **M-01b** `ChunkSectionsToRender#renderLayers` | ✅ 自定义块每帧绑定，**0 `Missing uniform`**、画面正确（🔴 原文的「0 validation error」已撤回：本机无 validation layer，§9.4.15） |
 | **M-04** `LevelRenderer#addMainPass`（方案 B） | ⏸️ 已登记（`04-SPEC` §5.0），**未实现** |
 | **M-05** `LevelRenderer#prepareChunkRenders*`（方案 A 入口） | ✅ **已实现并取证**（`evidence/h03-…`）：捕获命中 **indirect** 分支、非 null、**时序成立**；**不改任何渲染行为**（ON/OFF 截图逐字节相同） |
 | GAP-003 多附件 | ⛔ **未做** |
@@ -1196,7 +1212,7 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
 |---|---|
 | 3 附件 pass（`RenderPassDescriptor` + 3 × `withColorAttachment`） | ✅ 可用 |
 | 3 目标管线（`withColorTargetStates(0, 2, …)`，本项目第一条多附件管线） | ✅ 可用，`registered=17 compiled=17` |
-| 片元 3 路输出（`layout(location=0/1/2) out`） | ✅ 可用，0 validation error |
+| 片元 3 路输出（`layout(location=0/1/2) out`） | ✅ 可用，**逐槽 R 指纹量化判读通过**（🔴 原文「0 validation error」已撤回，§9.4.15） |
 | 「三槽拿到可区分内容」 | ✅ 逐槽 R 指纹，中心区 meanR **8.61 / 89.33 / 170.04**（理论 0 / 85.0 / 170.0） |
 | 越界槽位 | ✅ **显式抛错**（实测 ERROR 原文 `mrt view slot 3 out of range 0..2`），不静默夹取 |
 | 关闭后画面 | ✅ 与上一轮控制组**逐字节相同**（零影响） |
@@ -1219,7 +1235,32 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
 - **文档单一出处**：G 线数字 → `17-NATIVE.md` §7.7；闸门流程 → §5；预算 → §2.2；
   并行线与判据 → `18-PARALLEL.md`；证据索引 → `evidence/README.md`。
 
-### 10.10 🟡 地形画进多附件 pass 成功（**只成功 AfterLevel 形态**）—— 根因是反向 Z（2026-10-03）
+### 10.9 ✅ M-05 只读捕获可行 —— 方案 A 的两个前提都成立（2026-10-03）
+
+> 证据：`evidence/h03-terrain-draw-capture.md`。**只验前提，没画地形。**
+
+| 前提 | 状态 |
+|---|---|
+| 地形 draw 数据**捕获得到**（非 null） | ✅ 命中 `prepareChunkRendersIndirect` |
+| **时序成立**（捕获早于帧图 pass 体执行） | ✅ AfterLevel（帧图执行之后）可见 `captures=1/2/3` |
+| **不改任何渲染行为** | ✅ ON/OFF 截图**逐字节相同**（🔴 原文的「0 validation error」已撤回：本机无 validation layer，见 §9.4.15） |
+| 🔴 地形画进多附件 pass | ⛔ **未做** —— 捕获的引用目前**无消费者** |
+
+🔖 **官方事件给不了，已源码级证伪**：`fireFrameGraphSetup` 在 `LevelRenderer#render`
+第 249 行，而 `prepareChunkRenders*` 在第 271-275 行才创建 ⇒ 事件触发时对象尚不存在。
+但 pass 体在第 286 行 `frame.execute()` 才执行 ⇒ **只读捕获引用**时序天然成立。
+
+🔖 **两个重载都必须注入**（`prepareChunkRenders` 与 `prepareChunkRendersIndirect` 二选一，
+由设备能力 + 关卡设置决定）：本机实测命中 **indirect** 分支 ⇒
+只注入非 indirect 分支的话，本机**永远捕获不到**，且这个失效**是静默的**。
+
+✅ ~~**下一轮的第一个卡点**~~ **已核实解除**（见 §10.10）：`renderGroup` 的 `sampler` 与 `blockAtlas`
+**都能用公开 API 拿到**，不需要 M-04。
+
+- **可关闭键**：`mixin.captureTerrainDraws`（默认开；关闭后捕获停止、引用为空、多附件 pass 静默不开）。
+- **测试**：641 单测全绿（新增 2 例，锁「两个重载都注入」+「只读：无 cancellable/setReturnValue」）。
+
+### 10.10 ✅ 地形画进多附件 pass 成功 —— 根因是反向 Z 的 0.0/1.0（2026-10-03）
 
 > 证据：`evidence/h04-gbuffer-terrain-pass.md`。**18 趟客户端**，其中 6 趟纯粹在找那个根因。
 
@@ -1267,29 +1308,77 @@ draw 数据三层齐全（`SOLID{groups=1,draws=580} CUTOUT{414} TRANSLUCENT{249
 
 - **可关闭键**：`mrt.terrain`（默认关）+ 5 个诊断键（`terrainAfterLevel` / `terrainToMain` /
   `terrainFullscreenProbe` / `attachments` / `viewSlot`），全部默认关。
-- **测试**：651 单测全绿（`MrtTerrainPassWiringTest` 9 条，全守静默失效）。
+- **测试**：653 单测全绿（`MrtTerrainPassWiringTest` 11 条，全守静默失效）。
 
-### 10.9 ✅ M-05 只读捕获可行 —— 方案 A 的两个前提都成立（2026-10-03）
+### 10.11 ✅ 回读 blit 的 V 翻转修正；**帧图内插 pass 本来就是通的**（2026-10-03 晚，**取证改用 MCP**）
 
-> 证据：`evidence/h03-terrain-draw-capture.md`。**只验前提，没画地形。**
+> 证据：`evidence/h05-readback-flip-and-framegraph-works.md`。触发：用户报「上下颠倒」。
 
-| 前提 | 状态 |
-|---|---|
-| 地形 draw 数据**捕获得到**（非 null） | ✅ 命中 `prepareChunkRendersIndirect` |
-| **时序成立**（捕获早于帧图 pass 体执行） | ✅ AfterLevel（帧图执行之后）可见 `captures=1/2/3` |
-| **不改任何渲染行为** | ✅ ON/OFF 截图**逐字节相同**（🔴 原文的「0 validation error」已撤回：本机无 validation layer，见 §9.4.15） |
-| 🔴 地形画进多附件 pass | ⛔ **未做** —— 捕获的引用目前**无消费者** |
+**① 回读路径此前把画面上下颠倒。** 决定性 A/B（同一机位）：
 
-🔖 **官方事件给不了，已源码级证伪**：`fireFrameGraphSetup` 在 `LevelRenderer#render`
-第 249 行，而 `prepareChunkRenders*` 在第 271-275 行才创建 ⇒ 事件触发时对象尚不存在。
-但 pass 体在第 286 行 `frame.execute()` 才执行 ⇒ **只读捕获引用**时序天然成立。
+| 配置 | 路径 | 结果 |
+|---|---|---|
+| `terrainToMain=true`、`mrt.enabled=false` | 我方 pass **直写主目标**（不经回读） | ✅ 朝向正确 |
+| `terrainToMain=false`、`mrt.enabled=true` | 写 colortex → **回读 blit** → 主目标 | 🔴 上下颠倒 |
 
-🔖 **两个重载都必须注入**（`prepareChunkRenders` 与 `prepareChunkRendersIndirect` 二选一，
-由设备能力 + 关卡设置决定）：本机实测命中 **indirect** 分支 ⇒
-只注入非 indirect 分支的话，本机**永远捕获不到**，且这个失效**是静默的**。
+**根因**：项目注释里 P-1f 那条「中间目标 → 主目标必须 V 翻转」被我**误推了一层** ——
+那次翻转补偿的是**包 composite 片元的 OF 原始 vUv 语义**，不是引擎取向；
+我方回读采样的是**引擎自己渲染出的 colortex**（与主目标**同取向**）⇒ 再翻一次就颠倒。
+修法：新增 `vkdisp:pipeline/mrtview_noflip`；**原翻转管线保留**（合成链仍需要它）。
 
-✅ ~~**下一轮的第一个卡点**~~ **已核实解除**（见 §10.10）：`renderGroup` 的 `sampler` 与 `blockAtlas`
-**都能用公开 API 拿到**，不需要 M-04。
+🔖 **为什么 h02 与 h04 连续两轮都没抓到**：那两轮回读的是**常量指纹与平滑渐变**，
+这类内容**对采样坐标错误完全不敏感** ⇒ 立 **X38**：判据内容必须能区分被测的那个属性。
 
-- **可关闭键**：`mixin.captureTerrainDraws`（默认开；关闭后捕获停止、引用为空、多附件 pass 静默不开）。
-- **测试**：641 单测全绿（新增 2 例，锁「两个重载都注入」+「只读：无 cancellable/setReturnValue」）。
+**② 撤回我自己的错误结论。** §10.10 上面那句「帧图内插 pass 从未成功」**作废**：
+① 它建立在**深度修复之前**的观察上，修完**没重测**（立 **X37**）；
+② 被上面这个显示 bug 掩盖 —— 帧图模式其实画出了地形，只是颠倒着，我读成了「没画」。
+
+🔖 **帧图内插 pass 的两条附带事实**（以前不知道）：
+我方 pass **排在原版主 pass 之前**（`ORDER-MARK` 行号 1161 < 1163；不声明资源依赖所致。
+**不是问题** —— 独立 colortex + 独立深度，不共享附件）；
+draw 数据三层齐全（`SOLID{groups=1,draws=580} CUTOUT{414} TRANSLUCENT{249}`）。
+
+🔖 **口径再修正**：`FrontendRenderPass#setPipeline` **确实**校验
+「render pass 颜色附件数 == 管线颜色目标数」并抛 `IllegalStateException`
+⇒ **「附件数不匹配」是响亮失败，不是静默失效**；**真正静默的只有深度清屏值**。
+
+### 10.12 🔴 核实**推翻 GAP-003 的前提**：BSL ≠ Iris 语义，且文本层翻译链**已经通了**（2026-10-03）
+
+> 证据：`evidence/h06-bsl-terrain-semantics-and-translate-baseline.md`。**纯核实轮，未开客户端。**
+> 任务是「补齐 colortex1/2 的 gbuffer 语义」，按 X9 先核实 ⇒ **两条既有登记都错了**。
+
+**① 「colortex1=法线+lightmap、colortex2=材质」是 _Iris_ 的语义，不是 BSL 的。**
+BSL 用 OF 式 **`gl_FragData[N]`** + **`/* DRAWBUFFERS:… */`** 映射；实测其**全部** gbuffer 程序的
+DRAWBUFFERS 集合都是 `{0, 0367, 08, 08367}` ⇒ 高级材质下 `gl_FragData[1]`→**colortex3**（材质）、
+`[2]`→**colortex6**（法线）、`[3]`→colortex7，**不是 colortex1/2**。
+且 `settings.glsl` 里 `ADVANCED_MATERIALS` 与 `MCBL_SS` **默认是注释掉的**
+⇒ **BSL 默认配置地形只写 colortex0**（`newNormal` 算完被丢弃）。
+⚠️ 但 `composite.glsl` 是 `DRAWBUFFERS:01` ⇒ 帧里**至少要有 2 个 colortex**。
+
+**② 文本层翻译链已经通了。** 实测把 BSL 真实 FSH 段（**438 行**）喂进 `OfGlslTranslator`：
+**0 个 ERROR**，`FragmentOutputAdapter` 自动合成 **5 个** `layout(location = 0..4) out vec4`，
+`UniformInjector` 收编 **29 条**游离 OF uniform
+⇒ **「多附件」与「gl_FragData 改写」都不是阻塞**（与 GAP-003 旧判断不符，已一并更正）。
+🔖 **边界**：文本层 ≠ 能编译，**SPIR-V 编译未验证**。
+
+**③ 由此的计划变更**：`MrtPlan.SLOT_COUNT = 3`（按 Iris 定的）**对 BSL 不够**（最多 5 槽），
+且**附件顺序要服从 DRAWBUFFERS 而非下标**（否则**静默绑错槽**）。
+剩余阻塞改述为「**让 BSL 自己的 `gbuffers_terrain` 跑起来**」，四项待攻：
+① 翻译结果能否编译成 SPIR-V；② `sampler3D lighttex0/1` vs 原版 **2D** lightmap 的结构性不匹配；
+③ 44 条 OF uniform 的**取值供给**（GAP-004 那个块目前只收编了声明）；④ 槽位数与附件顺序。
+
+🔖 **探针差点给出假绿**：第一版用 `indexOf("#ifdef FSH")…indexOf("
+#endif")` 只截到 **20 行**，
+而那 20 行里**恰好没有一句 `gl_FragData`** ⇒ 输出「0 诊断 / success=true / 残留=false」。
+真因两条：该文件 **CRLF**、**嵌套 `#endif` 也顶格** ⇒ 必须按**嵌套计数**配对。
+已写成常驻测试并**额外断言输入行数 > 300**（立 **X40**：先断言输入规模，再看结论；
+另立 **X39**：不同包的 gbuffer 语义不同，不可套用）。
+
+**④ MCP 接线**（用户要求「用 MCP 操作游戏验证」）：server 本体与桥接模组
+（`mcpfabric` NeoForge，`26.3-neoforge` 节点）本就装好，🔴 但只注册在 **CodeBuddy** 配置里、
+**opencode 未加载** ⇒ 已 `opencode mcp add --global`（**不入库**，避免 token 进仓库）。
+本轮实际用到 `get_status`/`get_self`/`screenshot`/`look`/`set_time`/`set_weather`/
+`set_gamemode`/`teleport_player`/`list_players`。
+🔖 **`set_time` 治好了 §10.10 时代的老毛病**：多趟截图因昼夜漂移而不可比。
+
+- **测试**：656 单测全绿（新增 `TerrainProgramTranslateBaselineTest` 3 例，含「输入行数 > 300」防假绿断言）。

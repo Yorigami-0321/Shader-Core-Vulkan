@@ -432,7 +432,7 @@ validation error。**先在我方自己的 pass 里跑通原语**，才知道卡
 - **pass 侧**：🔴 原版地形 pass 只有**一个**颜色附件（同 jar 第 455-463 行的 `createRenderPass` 实参）。
   管线声明 N 个附件而 pass 只绑 1 个 ⇒ 驱动层必然报附件不匹配。
 - **多附件能力本身**：✅ **已验**（`evidence/h02-mrt-primitive.md`）—— 3 附件 pass + 3 目标管线
-  + 3 路片元输出，逐槽 R 指纹量化判读通过，**0 validation error**。
+  + 3 路片元输出，逐槽 R 指纹量化判读通过。（🔴 原文「0 validation error」已撤回：本机无 validation layer，见 `AGENT_CONTEXT.md` §9.4.15）
 - ⇒ 多附件的瓶颈**不在能力、也不在管线，在 pass 所有权**。必须先拿 pass 的所有权 ⇒ **M-04**。
 
 #### 5.0.4 🔴 M-04 的难点被具体化了：原版主 pass 里混着四类 draw
@@ -479,7 +479,7 @@ FramePass pass = frame.addPass("main");
    我方若硬编码 `maxAnisotropy = 1`，画面质量会低于原版 ⇒ **取值必须对齐用户设置**；
 ② 图集采样器在原版是**按需重建**的（`shouldResetChunkLayerSampler`），我方若每帧新建会**泄漏 GPU 对象**。
 
-#### 5.0.5 🔴 方案 A 第 2 步已落地，但**只落地了 AfterLevel 形态**（2026-10-03）
+#### 5.0.5 ✅ 方案 A 第 2 步已落地（2026-10-03；**帧图内插 pass 的生产形态亦已通**，见 `h05`）
 
 **已完成并有像素证据**（`evidence/h04-gbuffer-terrain-pass.md`）：
 
@@ -509,13 +509,16 @@ FramePass pass = frame.addPass("main");
 
 | 项 | 状态 |
 |---|---|
-| colortex1/2 的 gbuffer 语义 | ❌ 用的是原版 `core/terrain`，只写 location 0。要等包的自研 `gbuffers_terrain` 被翻译接入 —— **这是下一轮真正的阻塞** |
-| colortex1/2 的 gbuffer 语义 | ❌ 用的是原版 `core/terrain`，只写 location 0。要等包的自研 `gbuffers_terrain` 被翻译接入 |
-| 半透明地形（TRANSLUCENT 组） | ❌ 未覆盖 |
+| **让包自己的 `gbuffers_terrain` 跑起来** | ❌ 这才是真正的阻塞。🔴 **原写的「补齐 colortex1/2 的 gbuffer 语义」已被 `h06` 核实推翻** —— 那是 **_Iris_** 的语义；BSL 用 OF 式 `gl_FragData[N]` + `/* DRAWBUFFERS:… */` 映射，法线进 **colortex6**、材质进 **colortex3**，且 `ADVANCED_MATERIALS`/`MCBL_SS` **默认关闭** ⇒ **BSL 默认地形只写 colortex0** |
+| 翻译结果能否编译成 SPIR-V | ❌ **未验证**。文本层已通（438 行真实 FSH ⇒ **0 ERROR**、自动合成 **5 个** `layout(location=0..4) out`、收编 **29 条**游离 uniform，`h06`）⇒ 「多附件」与「gl_FragData 改写」**都不是阻塞** |
+| 附件槽位数与顺序 | ❌ `MrtPlan.SLOT_COUNT = 3`（按 Iris 定的）**对 BSL 不够**（最多 5 槽），且顺序要**服从 DRAWBUFFERS 而非下标**，否则**静默绑错槽** |
+| `sampler3D lighttex0/1` vs 原版 **2D** lightmap | ❌ 结构性不匹配，未处理 |
+| 44 条 OF uniform 的取值供给 | ❌ GAP-004 那个块目前**只收编了声明** |
+| 半透明地形（TRANSLUCENT 组） | ❌ 未覆盖（实测该组有 249 个 draw） |
 | 画面改进 / 性能 | ❌ 无（写自己的 colortex ⇒ 地形被画两遍；代价未测） |
 
-⇒ **方案 A 已通（生产形态）**。下一轮从「帧图内插 pass」转向 **colortex1/2 的 gbuffer 语义**。
-
+⇒ **方案 A 已通（生产形态）**。下一轮从「帧图内插 pass」转向
+**「让 BSL 自己的 `gbuffers_terrain` 跑起来」**（先攻：翻译结果能否编译成 SPIR-V）。
 **这也是本轮把 GAP-003 与 GAP-004 分开做的原因**（`18-PARALLEL` H 线「顺序纪律」原本要求同批）：
 GAP-004 单独做**并非没有意义**（它的前提正是「派生管线」，没有派生管线就无处挂块），
 本轮把「通道是否真的通」「块能否挂上并每帧绑定」变成可验证事实，

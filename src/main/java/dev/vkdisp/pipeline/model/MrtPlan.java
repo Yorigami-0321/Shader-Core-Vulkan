@@ -46,7 +46,23 @@ import java.util.List;
  */
 public final class MrtPlan {
 
-    /** GAP-003 语义核心槽位数（albedo / normal+lightmap / material）。 */
+    /**
+     * GAP-003 语义核心槽位数（albedo / normal+lightmap / material）。
+     *
+     * <p>🔴🔖 <b>这个 3 是按 _Iris_ 的 gbuffer 语义定的，对 BSL 不够</b>
+     * （2026-10-03 核实，`evidence/h06-bsl-terrain-semantics-and-translate-baseline.md`）：
+     * BSL 用 OF 式 {@code gl_FragData[N]} + {@code /* DRAWBUFFERS:… *}{@code /} 映射，
+     * 实测其全部 gbuffer 程序的 DRAWBUFFERS 集合都是 {@code {0, 0367, 08, 08367}}
+     * ⇒ 最多写 <b>5</b> 个槽，且 {@code gl_FragData[1]}→<b>colortex3</b>、
+     * {@code [2]}→<b>colortex6</b>（法线）、{@code [3]}→colortex7 —— <b>不是下标</b>。
+     * ⚠️ 且 {@code ADVANCED_MATERIALS}/{@code MCBL_SS} 在 BSL 里<b>默认注释掉</b>
+     * ⇒ 默认配置下地形只写 colortex0。
+     *
+     * <p>⚠️ <b>按附件下标绑定会静默绑错槽</b>。真要把 BSL 的多槽路径跑起来，
+     * 槽位数与<b>顺序</b>都必须由该包自己的 DRAWBUFFERS 决定。
+     * 本常量暂留 3（Iris 口径，且是当前诊断路径的实测值），上调前先改这一处与
+     * {@link #slotCount()}。
+     */
     public static final int SLOT_COUNT = 3;
 
     /** 原版 {@code ColorTargetState.MAX_COLOR_TARGETS}（8）—— 本项目自设上限的合法上界。 */
