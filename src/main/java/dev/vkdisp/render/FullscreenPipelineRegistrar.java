@@ -128,5 +128,26 @@ public final class FullscreenPipelineRegistrar {
                 "vkdisp: M-01 terrain derived pipelines registered: {}/6 (total registered={})",
                 TerrainPipelineApi.terrainDerivedPipelineCount(),
                 PipelineApi.registeredPipelineCount());
+
+        // GAP-003 多附件能力验证件（16/17）：本项目**第一条多附件管线**。
+        // ⚠️ 这两条管线**无条件注册**（required）—— 它们是纯能力验证，不参与常规帧绘制
+        //（绘制由 MrtProbe 按配置开关驱动，默认关闭 ⇒ 常规帧零开销）。
+        // 无条件注册是为了让 registered==compiled 计数断言把它们也纳入核对：
+        // 多附件管线编译不过本身就是必须暴露的事实（T11）。
+        try {
+            PipelineApi.registerMrtPipeline(event);
+            VkDisp.LOGGER.info("vkdisp: pipeline registered (16/17): {} [GAP-003 mrt]",
+                    PipelineApi.MRT_LOCATION);
+        } catch (Throwable t) {
+            VkDisp.LOGGER.error("vkdisp: [GAP-003] mrt pipeline registration failed", t);
+        }
+        try {
+            PipelineApi.registerMrtViewPipeline(event);
+            VkDisp.LOGGER.info("vkdisp: pipeline registered (17/17): {} (total={})",
+                    PipelineApi.MRT_VIEW_LOCATION, PipelineApi.registeredPipelineCount());
+        } catch (Throwable t) {
+            VkDisp.LOGGER.error("vkdisp: pipeline registration failed: {}",
+                    PipelineApi.MRT_VIEW_LOCATION, t);
+        }
     }
 }

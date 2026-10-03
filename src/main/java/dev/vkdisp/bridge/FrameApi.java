@@ -981,6 +981,14 @@ public final class FrameApi {
         }
         // 原版 PostPass 同款：绘制后再 rotate，保证本帧写入的槽在 GPU 用完前不被复用。
         ring.rotate();
+
+        // GAP-003 多附件能力验证（诊断视图，默认关闭 ⇒ 常规帧到这里零开销）。
+        // ⚠️ 放在**整条链之后**：它会把主目标覆盖成某个 colortex 的内容，
+        // 放在链中间会毁掉前面 pass 的产物（那不是诊断，是自伤）。
+        if (MrtProbe.enabled()) {
+            MrtProbe.resizeIfNeeded(main);
+            MrtProbe.draw(label + " mrt");
+        }
         return new FrameSize(width, height);
     }
 }

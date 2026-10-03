@@ -383,6 +383,29 @@ config = "${mod_id}.mixins.json"
 | M-03 | （待定） | （待定） | 装配层 | | | | ⏳ 未开始 |
 | M-04 | `net.minecraft.client.renderer.LevelRenderer` | `addMainPass(FrameGraphBuilder, FeatureRenderDispatcher$PreparedFrame, GpuBufferSlice, ChunkSectionsToRender, boolean)`（private，5 参） | 装配层 | **GAP-003 多附件的前置**：拿到地形 render pass 的所有权，让 pass 本身带 N 个颜色附件 | 源码级核实（同 jar 第 396-404、455-463 行）：原版地形 pass 由 `createRenderPass(name, mainTarget.getColorTextureView(), Optional.empty(), depthView, OptionalDouble.empty())` 建出，**颜色附件恰好 1 个** ⇒ 只在管线侧加附件必然与 pass 不匹配 | `mixin.ownTerrainPass` | ⏸️ **已登记，未实现**（GAP-003 的入口；M-01/M-01b 都无法替代它） |
 
+#### 5.0.3 ✅ 多附件**原语**已验证（2026-10-03，MRT 能力验证件）
+
+> 证据：`evidence/h02-mrt-primitive.md`。**这一节只证明原语可用，不等于 GAP-003 完成。**
+
+| 项 | 状态 |
+|---|---|
+| 多附件 render pass（`RenderPassDescriptor` + N × `withColorAttachment`） | ✅ 可用 |
+| 多附件管线（`withColorTargetStates(0, N-1, …)`，本项目**第一条**多附件管线） | ✅ 可用 |
+| 片元多路输出（`layout(location=0/1/2) out`） | ✅ 可用 |
+| 「三槽拿到可区分内容」 | ✅ 逐槽 R 指纹（0 / ⅓ / ⅔）可量化判读 |
+| 设备能力收敛（`maxColorAttachments`） | ✅ 降档 + 显式 WARN |
+| 🔴 地形接入多附件 pass | ⛔ **未做** = M-04 |
+| 🔴 包的自研 `gbuffers_*` 片元 | ⛔ **未做** |
+
+🔖 **为什么先验原语再谈 M-04**（先测后优，`17-NATIVE` §2–§3）：
+源码级核实表明原版主 pass 把**地形、实体、特性、云、描边画在同一个 pass、同一个单附件里**
+⇒ 直接把那个 pass 改成多附件，会让所有**原版管线**（都声明 1 个附件）与 pass 不匹配而全部
+validation error。**先在我方自己的 pass 里跑通原语**，才知道卡点是真在「后端不支持多附件」
+还是在「pass 所有权」—— 这两者的下一步完全不同。
+
+**可关闭**：`mrt.enabled`（默认**关** ⇒ 常规帧零开销，支柱③ B1 ≤ +2%）+
+`mrt.viewSlot`（0..2，越界**显式报错**不静默夹取）。
+
 #### 5.0.1 🔴 为什么 M-01 的目标类从 `renderLayers` 改成了 `ChunkSectionLayer#pipeline`
 
 上一版登记表把注入点写成 `ChunkSectionsToRender#renderLayers`。**源码级核实后改判**（2026-10-03）：
@@ -403,10 +426,38 @@ config = "${mod_id}.mixins.json"
 
 #### 5.0.2 🔴 GAP-003（多附件）为什么不能在 M-01 上做
 
-- **管线侧**：`withColorTargetStates(0, N-1, …)` 加附件是原版公开 API，派生管线做得到。
+- **管线侧**：✅ **已验**（2026-10-03）—— `withColorTargetStates(0, N-1, …)` 是原版公开 API，
+  本项目第一条多附件管线 `vkdisp:pipeline/mrt` 已注册并编译成功。
 - **pass 侧**：🔴 原版地形 pass 只有**一个**颜色附件（同 jar 第 455-463 行的 `createRenderPass` 实参）。
   管线声明 N 个附件而 pass 只绑 1 个 ⇒ 驱动层必然报附件不匹配。
-- ⇒ 多附件的瓶颈**不在管线，在 pass**。必须先拿 pass 的所有权 ⇒ 这就是 **M-04** 的登记理由。
+- **多附件能力本身**：✅ **已验**（`evidence/h02-mrt-primitive.md`）—— 3 附件 pass + 3 目标管线
+  + 3 路片元输出，逐槽 R 指纹量化判读通过，**0 validation error**。
+- ⇒ 多附件的瓶颈**不在能力、也不在管线，在 pass 所有权**。必须先拿 pass 的所有权 ⇒ **M-04**。
+
+#### 5.0.4 🔴 M-04 的难点被具体化了：原版主 pass 里混着四类 draw
+
+⚠️ 读到这里时容易以为「给地形 pass 加两个附件」就完事了。**不是**（源码级核实，
+`LevelRenderer.addMainPass`，同 jar 第 396-404 行起）：
+
+```
+FramePass pass = frame.addPass("main");
+  → executeSolid(...)        地形 OPAQUE + CUTOUT
+  → executeClassicTransparency / executeOit   半透明地形
+  → executeOutline(...)      实体描边
+  → executeSeeThrough(...)   穿透特性
+  → executeAlwaysOnTop(...)  常驻顶层 gizmo
+```
+
+⇒ 把这个 pass 改成 N 附件，**所有原版管线**（各自声明 1 个 `ColorTargetState`）都会与 pass 不匹配。
+所以 M-04 落地前必须先做**取舍分析**（未做）：
+
+| 方案 | 做法 | 代价 |
+|---|---|---|
+| **A. 地形单独一个 pass** | 我方在帧图里另建一个多附件 pass 只画地形，原版主 pass 保持单附件 | 地形 pass 的深度/可见性/顺序语义要自己处理；地形与实体之间没有共享附件 |
+| **B. 整 pass 多附件** | 主 pass 加附件，所有走它的原版管线也得跟着派生 | 要为实体/特性/云/描边各派生一份 N 附件管线，改动面与回归面都大得多 |
+
+⚠️ **本项目尚无取舍结论**，且这属于「换一条路」级别的影响面
+（`AGENT_CONTEXT` §5 的四个阻塞项之一），**下一轮应先出取舍分析再动手**。
 
 **这也是本轮把 GAP-003 与 GAP-004 分开做的原因**（`18-PARALLEL` H 线「顺序纪律」原本要求同批）：
 GAP-004 单独做**并非没有意义**（它的前提正是「派生管线」，没有派生管线就无处挂块），

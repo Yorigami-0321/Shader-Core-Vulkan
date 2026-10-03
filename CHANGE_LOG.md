@@ -2,7 +2,46 @@
 
 > 格式与流程依据：`docs/15-ITERATION.md`「变更记录模板」。最新条目在最上方。
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
+---
 
+## 2026-10-03（二十三）— GAP-003 多附件**原语**验通（能力已证，地形未接）
+
+> **verdict = 支柱①的关键前置能力打通**。本项目此前 17 条管线全是单附件，
+> 多附件通道**从未被使用过** —— 现在有了第一条多附件管线且实测可用。
+> ⚠️ **但地形没接进来** ⇒ GAP-003 **仍未完成**。
+
+- **本次改了什么**：
+  1. `pipeline/model/MrtPlan`（纯数据规格表）+ `bridge/MrtProbe`（能力验证件）+
+     `assets/vkdisp/shaders/{mrt.fsh, mrtview.fsh}`；
+  2. `PipelineApi.registerMrtPipeline` —— 本项目**第一条多附件管线**
+     （`withColorTargetStates(0, 2, …)`），与回读管线一并**纳入 registered==compiled 计数口径**；
+  3. 配置 `mrt.enabled`（默认**关** ⇒ 常规帧零开销）+ `mrt.viewSlot`（越界显式抛错）；
+  4. 文档：`04-SPEC.md` §5.0.3（能力已验）/ §5.0.4（🔴 M-04 的真实难点）、
+     `13-GAP-REGISTRY.md` GAP-003 加第 ⑤⑥ 条核实、`evidence/h02-mrt-primitive.md`、
+     `evidence/README.md` 索引、`AGENT_CONTEXT.md` §10.8。
+- **为什么先验原语而不是直接做 M-04**（先测后优，`17-NATIVE` §2–§3）：
+  源码级核实发现原版主 pass 把**地形、实体、特性、云、描边画在同一个 pass、同一个单附件里**
+  ⇒ 直接改附件数会让**所有原版管线**全部 validation error。那种失败**区分不了**
+  「后端不支持多附件」与「后端支持、只是 pass 所有权没拿到」，而两者下一步完全不同。
+  先在**我方自己的 pass** 里跑通原语，才把这两者分开。
+- **🔖 本轮最要紧的设计**：「三个附件都被写了」**不能靠截图证明** ——
+  三个附件可能都是同一个全屏渐变，肉眼与 luma 都区分不出来。
+  做法：**逐槽写不同的 R 指纹**（槽0→0、槽1→1/3、槽2→2/3），G/B 放 `vUv` 渐变，
+  且**每槽清屏色也用同一指纹** ⇒ 「没被写」（露清屏色）与「写了」（渐变+指纹）在图上必然不同。
+- **实测（1 趟 runClient + 配置热加载切换）**：
+  - ✅ `registered=17 compiled=17 (aligned)`（9 + 6 派生 + 2 MRT）；
+  - ✅ 中心区 meanR 实测 **8.61 / 89.33 / 170.04**（理论 0 / 85.0 / 170.0）⇒ 三槽是三个不同存储；
+  - ✅ **0** validation error / `VUID-` / `Missing uniform` / vkdisp ERROR；
+  - ✅ 越界槽位**显式抛错**（`mrt view slot 3 out of range 0..2`），不静默夹取；
+  - ✅ 关闭后画面与上一轮控制组**逐字节相同** ⇒ 默认零影响；
+  - 639 单测全绿（新增 7 例 `MrtPlanTest`）。
+- **🔴 本轮没有证明的**：地形接入多附件（= M-04）；包的自研 `gbuffers_*` 片元；
+  `colortex1` 用 `RGBA16_FLOAT` 存法线的格式兼容性；真机（非 lavapipe）；MRT 开启后的帧时间。
+- **🔴 本轮暴露的下一个决策点**：M-04 **不能只给地形加附件**（原版主 pass 混着六类 draw）。
+  需先在 **A（地形单独一个多附件 pass）** 与
+  **B（整 pass 多附件 + 为实体/特性/云/描边各派生一份 N 附件管线）** 之间取舍 ——
+  属「换一条路」级别的影响面，**建议由用户裁决**（表见 `04-SPEC.md` §5.0.4）。
+- **是否已提交**：见文末 commit 记录（本条目随本轮提交一并推送）。
 ---
 
 ## 2026-10-03（二十二）— H 线 M-01/M-01b：派生地形管线真的接上了地形 draw（GAP-003 通道 + GAP-004 块）
@@ -61,7 +100,6 @@
      两者都不下结论，改做同状态连拍 ⇒ 判定 run 2 的差异是**取帧落在区块加载期**的假信号。
      差点写成一条方向恰好对改动不利的错误结论。
 - **是否已提交**：见文末 commit 记录（本条目随本轮提交一并推送）。
-
 ---
 
 ## 2026-10-03（二十一）— 交接文档：`AGENT_CONTEXT.md` §10（任务停止前存档）
@@ -91,7 +129,6 @@
   **617 单测全绿**、Rust `g2-ffi-demo` 17/17、残留游戏进程 = 0。
   ⚠️ 已在 §10 头部与第 1 步明确写入：**续轮开工先跑一遍 `./gradlew build` 确认**。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`。
-
 ---
 
 ## 2026-10-03（二十）— G2 三个方向全部量完 ⇒ 35.5%；查清 B4 重载成分；接口形态定为 C
@@ -1118,7 +1155,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   与 P3.2 自清屏全黑同量级风险。
 - **影响的文档**：本条目；`.workbuddy/memory/2026-10-02.md`（不入库，工作记忆）。
 - **是否已提交**：是，`master` 分支 3 个 commit（`da269e5` → `0bf76b6`），**尚未推送**。
-
 ---
 
 ## 2026-10-02（二）— P4.1 BSL 视觉正确性基线（141 矩阵修复后渲染连贯性确认）
@@ -1238,7 +1274,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   选项屏幕打开时切包；菜单态 drive；STRING 选项编辑；run1 时段旧截图（三张同哈希）作废；
   外部点完成/关窗干扰 ×3（每轮隔离日志重开受控复跑绕开）。
 - **是否已提交**：随本轮 commit 提交并推送 origin/master。
-
 ---
 
 ## 2026-10-01 — P4.2 切包回归：shaderPack 三态选择 + FML 配置热加载驱动会话内切包，四张截图单会话闭环（S1↔S4 静态地面带 identity=+1.0000，505 单测全绿）
@@ -1291,7 +1326,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   **141 阶段矩阵**修复（本轮仅证 ×4 稳定复现零新增，登记缺口不变）；`builtins uploaded`
   重载后不重打（一次性埋点 —— 重载期 uniform 正确性以 S2 像素比值代证）；菜单态热切换。
 - **是否已提交**：随本轮 commit 提交并推送 origin/master。
-
 ---
 
 ## 2026-10-01 — P4.1.6 画面方向矫正：强制位姿三跑钉死 P3.3 链 composite 顶点根因，「顶点翻转跟随彩色采样源」三处落地，地平线 204（翻转）→ 392（正立）镜像闭合（501 单测全绿）
@@ -1345,7 +1379,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   同位姿逐像素精确镜像（云带两次截图间飘移，静态地面带才精确比对 0.9450）；
   deferred depth 配对修正的直接像素证据（无强阴影对照物，留 P4.2）。
 - **是否已提交**：随本轮 commit 提交并推送 origin/master。
-
 ---
 
 ## 2026-10-01 — P4.1.5 properties 条件编译：#elif 链 + 数值比较 + 续行/CRLF 归一，两跑取证解析失败归零、profiles 五档枚举可见（501 单测全绿）
@@ -1388,7 +1421,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   「已定义=1/未定义=0」两态求值（X9 登记，`#if MC_VERSION >= 11800` 恒走 #else）；
   profiles 的应用语义（切档改写 `#define`）沿 P2.4 链路，本轮只证枚举可见。
 - **是否已提交**：随本轮 commit 提交并推送 origin/master。
-
 ---
 
 ## 2026-10-01 — P4.1.4 final 步接线：9 管线三布局三环 + attachment 恒等拷贝顶点推导 + 上传日志门缺陷修复，两跑取证 registered=9 对齐、written=24 归零（492 单测全绿）
@@ -1448,7 +1480,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   本轮 single-composite 是最小近似）；包 final.vsh VERTEX 失败（管线顶点用
   fullscreen，恒不触发）；profiles `#if >` 解析、141 阶段失败（= P4.2 范围）照旧。
 - **是否已提交**：随本轮 commit 提交并推送 origin/master。
-
 ---
 
 ## 2026-10-01 — P4.1.3 内建 uniform 上传闭环：std140 布局解析 + OfUniformManager 双槽双环，两跑取证 26/24 成员落字节、雨量取值源缺陷修复归零（487 单测全绿）
@@ -1502,7 +1533,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   timeBrightness/eyeBrightness 精确语义、wetness OF 平滑、sunPathRotation 包天空、
   final/tonemap、profiles `#if >`、141 阶段失败（= P4.2 范围）—— 照旧登记。
 - **是否已提交**：随本轮 commit 提交并推送 origin/master。
-
 ---
 
 ## 2026-10-01 — P4.1.2 驱动层四修：转译七段补齐（VersionAdapter + IoLocationAdapter）+ 18 采样器布局超集 + draw 侧全量绑定 + OF 语义视图映射，三跑闭环 15679→0→可见（0.951→11.901）
@@ -1582,7 +1612,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   - G-05 配置文件名 `vkdisp-common.toml`→`vkdisp-client.toml` 待切（config type 已改 CLIENT）；
   - OpenAL/authlib 日志 = 环境噪音。
 - **是否已提交**：随本轮两个 commit（batch-0 审查修复 + P4.1.2）提交并推送 origin/master。
-
 ---
 
 ## 2026-09-30 — P4.1.1 转译层接管 BSL：函数宏组号修复 + 游离 uniform 收编 + 维度偏好选中，182/182 阶段转译全绿，驱动层 6 类错误原文取证
@@ -1654,7 +1683,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
     （OfUniformManager 缺口）不在本轮范围；
   - 探针输出 /tmp/bsl_probe.txt 不入库（临时文件已删除）。
 - **是否已提交**：随本轮 commit 提交并推送 origin/master。
-
 ---
 
 ## 2026-09-30 — P3.3 deferred 链完整交付：每步输入=上一步输出（双跑日志链），同材质色调 A/B 0.688≈0.700，方向代数+边缘取证闭环
@@ -1722,7 +1750,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   - ⑤ 方向条的顶视网格角度复测不可复现（位姿变了）；天空不进捕获、OIT 旁路、HUD/手部覆盖、
     太阳/月亮光空间、多级联 CSM、PCF 仍为既有登记缺口，非本轮回归。
 - **是否已提交**：随本轮 commit 提交并推送 origin/master。
-
 ---
 
 ## 2026-09-30 — P3.2 地形接管第一阶段：FrameGraphSetupEvent 换目标 + 双管线定向，三跑实测黑屏/镜像两坑闭环
@@ -1776,7 +1803,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   非本轮回归）；场景 resize 中途行为仅代码路径覆盖未实测换窗口；角度取证为手工取点（±2°），
   以像素级镜像关系为主证；太阳/月亮光空间方向、多级联 CSM、PCF 仍为 P3.1 登记缺口。
 - **是否已提交**：随本轮 commit 提交并推送 origin/master。
-
 ---
 
 ## 2026-09-30 — P3.1 光空间列表完整交付：自建级联列表非空（size=1），明暗双峰像素取证，uLight 数值等价
@@ -1834,7 +1860,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   ⑥ 运行时 `--rerun-tasks` 触发 `:createMinecraftArtifacts` 联网校验失败属环境网络问题
   （常规任务图不受影响，build/test 均绿）。
 - **是否已提交**：随本条目一并 commit 并推送至 `origin/master`。
-
 ---
 
 ## 2026-09-30 — P2.4 composite 生效：选项 profile 真实改变画面，A/B 整帧亮度比 0.8870 命中理论 0.8889
@@ -1858,7 +1883,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
     - 两轮共有链路证据：`virtual pack finder registered: id=vkdisp_pack required=true position=TOP`、`composite pipeline wired to pack shader: fragment=vkdisp_pack:composite vertex=vkdisp:fullscreen_flipv builtins+sampler same group`、`pipeline count check: registered=6, compiled=6 (aligned)`、`fullscreen pass enabled`；**两轮 vkdisp ERROR = 0**（仅存 ERROR 为原版 authlib/narrator/OpenAL 环境噪音）。
 - **未覆盖 / 存疑**：① 维度目录 composite（`world0/composite`）不参与 Pass 3 选择（代码 javadoc 已登记，P3.x 接维度时再定）；② `VkDispBuiltins` 仍零填充 —— fixture 片元不读内建成员，OfUniformManager 上传链是后续缺口；③ F3+T 资源重载触发的二次源生成未实测（本轮只测冷启动两轮）；④ 库存 zip+dir 两包同构，选中的是 zip（scanner 顺序），dir 包未单独切换验证；⑤ profile 值未进任何声明行时有包级 WARN 但无逐项提示 —— A/B 截图是最终裁判；⑥ 首轮启动出现 ConfigTracker `vkdisp-common.toml is not correct. Correcting`（NeoForge 首建配置的规范化动作，非本模组代码路径，第二轮消失）；⑦ `#version 150/120` 包与包自带非透明 uniform 的真实包留给 P4.1。
 - **是否已提交**：随本条目一并 commit 并推送至 `origin/master`。
-
 ---
 
 ## 2026-09-30 — P2.3 #include 编译接主线：驱动级 GLSL→SPIR-V 通路打通，4/4 阶段编译通过
@@ -1888,7 +1912,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
     P2.3 验收达成：`composite.fsh` 源内含 `#include "/lib/common.glsl"`（zip + dir 两包均 OK）；同轮 `pack scan done: packs=2 programs=2 options=8 problems=0 diagnostics=0`；`VulkanBackend` 启动启用；**vkdisp ERROR=0 / WARN=0，全 log 零 ERROR 行**。
 - **未覆盖 / 存疑**：包**自带**非透明 uniform（真实 OF 包常见）仍是独立行形态 → 同一条 Vulkan 规则会在 P4.1 撞上（已在任务板登记为后续缺口，本轮不动 §7.6 边界）；`#version 150/120` 包与 `attribute/varying` 全套方言的真实包未测；`VkDispBuiltins` 块的 SPIR-V 反射与 uniform 上传（OfUniformManager）留 P2.4 —— 具名块恰好给了反射稳定块名；F3+T 资源重载触发的二次编译未实测；两次失败轮的完整日志原文未入库（仅摘录进本条目与 18-PARALLEL）。
 - **是否已提交**：随本条目一并 commit 并推送至 `origin/master`。
-
 ---
 
 ## 2026-09-30 — P2.1/P2.2 主线接入：启动期扫包钩子上线，zip+目录包与选项枚举日志实测可见
@@ -1916,7 +1939,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
     P2.1 = `kind=zip` 与 `kind=dir` 两行都在；P2.2 = 8 条选项行带全字段。同轮链路完好：`backend=Vulkan, device=llvmpipe`、阴影链 854x480 持续绘制、**vkdisp ERROR/WARN = 0**（仅存的 2 条 ERROR 是原版 narrator/sound 环境噪音，既有）。
 - **未覆盖 / 存疑**：F3+T 资源重载时的二次扫描仅设计上会重跑（本轮只实测首启 `initial=true`）；损坏 zip / 空目录 / 无 shaders/ 三种扫描问题分级在 JUnit 有覆盖但本轮日志实测 problems=0（fixture 全合法）；未验证真实第三方包（§7.6 禁入库）；选项值此轮只做枚举展示，未接 PackOptions/OptionBinding 生效链（那是 P4.3）。
 - **是否已提交**：随本条目一并 commit 并推送至 `origin/master`。
-
 ---
 
 ## 2026-09-29 — 并行线汇合：A+B / C+D / E+F 三组交付入主线（纯冷路径，零 GPU 改动）
@@ -1934,7 +1956,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   - ✅ **【参考调研】**：全部新文件含注释块且第 0 条为合规结论（Iris glsl-preprocessor「GPL-3.0+例外」与 glsl-transformer 按**禁止**处理；OptiFine 无 LICENSE=ARR 不可用；VulkanMod/Sulkan/Beryl 零接触；JUnit 仅测试期 EPL-2.0）。
 - **未覆盖 / 存疑**：真实第三方包语料（§7.6 禁入库）；宏展开后重新生成预处理指令的病态输入；`#include` 位于被跳过分支时仍先展开（C 线 Include→Define 固定顺序语义，入口不改）；P-1e 默认风格仍 LITERAL 待 P4.2/P4.3 真实包定稿（X9）；P-1d stride=47 待 P1.2 实测对齐。
 - **是否已提交**：随本条目一并 commit 并推送至 `origin/master`。
-
 ---
 
 ## 2026-09-29 — P3.2 接原版 GameRenderer 相机（世界内真实位姿驱动视图；菜单显式回退）
@@ -1965,7 +1986,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   3. PCF/比较采样器、原版 LevelRenderer 光空间列表/CSM 集成仍缺（18-PARALLEL §5 保持 ⏳）；
   4. `x11_input.py` 的 motion/button 注入未在真实聚焦窗口上端到端验证。
 - **是否已提交**：随本条目一并 commit 并推送至 `origin/master`。
-
 ---
 
 ## 2026-09-29 — 真实透视相机矩阵（替换占位 NDC 视图，P3.2/P3.3 视图主体）
@@ -1994,7 +2014,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   3. 未验证相机矩阵**动态更新**（每帧重建当前为同一参数）与焦距/近远裁剪边界；
   4. PCF/比较采样器、原版 LevelRenderer 光空间列表集成仍缺。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
-
 ---
 
 ## 2026-09-29 — P3.3 阴影采样（世界视图渲染 + 阴影贴图深度比较 → 明暗可判定）
@@ -2026,7 +2045,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   3. 硬阴影无 PCF/比较采样器；bias 固定 0.003（未做自适应）；
   4. 单级联、单光源、2 个四边形遮挡物；未与原版 LevelRenderer 光空间列表/CSM 集成。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
-
 ---
 
 ## 2026-09-29 — P3.1 影子 pass（自建光空间矩阵 + 阴影贴图渲染 + 可视化链）
@@ -2050,7 +2068,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   3. 阴影贴图目前**只可视化**，未做世界坐标阴影采样比对（P3.3）；
   4. 软阴影/比较采样器未做 —— 若需要属 13-GAP-REGISTRY 待判定项。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
-
 ---
 
 ## 2026-09-29 — 光空间矩阵上传链路（P3.1 影子 pass 前置）
@@ -2080,7 +2097,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   3. 未验证多矩阵 uniform（`shadowModelView`/`shadowProjection` 双矩阵是 04-SPEC §3.2 要求的正式形态）；
   4. `depthviz` / `composite` 管线仍不在本帧链（前两轮各自验证过）。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
-
 ---
 
 ## 2026-09-29 — 真实几何 + 深度剔除（P3 前置第二段；本轮抓出 5 个真实缺陷）
@@ -2109,7 +2125,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   3. `depthviz` / `composite` 管线本轮不在本帧链（上两轮各自验证过）；
   4. 未验证 `D24_UNORM_S8_UINT`（stencil）与深度比较采样器。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
-
 ---
 
 ## 2026-09-29 — 深度附件 + 深度写入 + 深度采样（P3 前置）
@@ -2132,7 +2147,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   3. 采样器仍固定 ClampToEdge+NEAREST；深度比较采样器（shadow 用）未做（属 13-GAP-REGISTRY 待判定项）；
   4. 本帧最终可见产物**暂时是深度可视化图**（能力验证态），P2.4 起由真实合成链替换。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
-
 ---
 
 ## 2026-09-29 — E 线二期：多绑定槽（binding>0）与绑定布局语义
@@ -2153,7 +2167,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
 - **未覆盖 / 存疑**：① 多槽路径的 F1 适配仍无单测（F4 的 test 源集 classpath 不含 Minecraft 类型，与一期同缺口）；② 未做 mesh 侧多槽 stride 双侧比对（要等主线 P1.2 拿到原版 binding）；③ 无真实 pack 多流样本；④ `MAX_BINDING_SLOTS=16` 取公开规范下界，未接设备实际上限查询（属 `bridge/DeviceApi` 范围）；⑤ 冷路径零性能优化。
 - **P-1d 未定稿项**：`mc_Entity` 底层元素类型是否影响 stride 47 —— 本线一律不动，槽 0 数值逐位沿用一期，等 §3.2 由 env-1 定稿（07 X9）。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
-
 ---
 
 ## 2026-09-29 — 多目标三 pass 链（离屏 ping-pong 轮换）+ 采样翻转规则标定
@@ -2181,7 +2194,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   3. `composite.fsh` 的 R/B 交换是**验证效应**，P2.4 起会被真实包程序替换；
   4. 未接 pack 链（仍需 A/B/C 线汇合）。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
-
 ---
 
 ## 2026-09-29 — 双 pass 渲染链（离屏目标 ping-pong 骨架）+ 方向约定重新标定
@@ -2206,7 +2218,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   3. 未接 pack 链（P2.4 需要 A/B/C 线汇合后才会真正消费这条链路）；
   4. 橙色带是**验证用参考物**，P2.4 起随正式图案一起评估是否保留。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
-
 ---
 
 ## 2026-09-29 — D 线二期：gl_ 内建差异转换（真实 OF 包编译的前置）
@@ -2228,7 +2239,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
 - **未覆盖 / 存疑**（该线自报，不掩饰）：① 不代包声明位置属性（属顶点格式绑定职责），未声明时只 WARN；② 跨行调用显式降级（`ftransform(` 换行 → 只 WARN 不展开）；③ 未点名的旧名未动（X12，如 `texture2DRect` / `gl_FragDepth` 常量下标不折常量）；④ `out` 接口块不参与槽位解析；⑤ `#include` 展开后的行号归 C 线；⑥ 冷路径零性能优化。
   - **合规**：IrisShaders/glsl-transformer 与 glsl-preprocessor（GPL-3.0 + 例外条款）全程**零接触、未读其代码**，样本与期望值全部自造（07 L12 §1.3 陷阱 2）。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
-
 ---
 
 ## 2026-09-29 — 纹理采样链路打通（composite/deferred 的共同前置）
@@ -2253,7 +2263,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   2. 未验证 sRGB/格式特例（当前 RGBA8_UNORM ↔ 主目标同格式）与 mipmap 采样；
   3. 采样器目前固定 ClampToEdge+NEAREST，真实包需要 per-sampler 配置（归 P2.4）。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
-
 ---
 
 ## 2026-09-29 — P1.1 uniform 传递 + P1.2 管线计数对齐
@@ -2278,7 +2287,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   2. `intensity` 分量已写入 UBO 但 shader 暂未使用（预留），避免把未验证语义写死；
   3. 仅验证单管线（registered=1/compiled=1），多管线场景（P3 起）需要同一断言随管线数增长继续成立。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行）。
-
 ---
 
 ## 2026-09-29 — P0.3 首个可见产物（全屏图案上屏）+ 闸门 F1/F2/F3/F4 落地
@@ -2321,7 +2329,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   5. **F 线开放点**（该线自报，需实证后定稿）：`OptionBinding` 的布尔 `#define` 风格默认取 `LITERAL`（`#define X true/false`），备选 OF 兼容风格 `IFDEF_TRUE`（真→空替换 `#define X`、假→`#undef X`）已实现且有快照单测——**哪种是真实包（`#ifdef` vs `#if`）所需，缺真实包 + GPU 证据，按 X9 未猜死**，建议 P4.2/P4.3 用真实包定稿（换默认为一行改动）；自由文本 STRING 选项如何进 GLSL 未定（非标识符文本执行「跳过 + WARN DEFINE_SKIPPED_UNSAFE_VALUE」）；选项名大小写折叠未实现。
   6. **D 线已知限制**（该线自报）：幂等以文本为准（插入行时行号映射按 F3 语义必然变化，未断言）；`gl_FragColor`/`texture2D`/`ftransform` 等 gl_ 内建差异**未实现**（不在本任务完成标准内，若要归 P2.3 另开任务）；多行声明 / 同行多名 uniform / UBO 块内同名 / `#if 0` 头部为未覆盖边界。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行，成员不自行 commit）。
-
 ---
 
 ## 2026-09-29 — 新增并行开发路线（18-PARALLEL）+ 索引同步 + .gitignore 完善
@@ -2339,7 +2346,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   - ✅ **闸门现状核实（对应 `83a704d`）**：**F1 = 🟡 部分落地** —— `bridge/DeviceApi.java` 已就位且范式正确（内层 import `renderpearl`、对外仅暴露纯 Java `record DeviceInfoView`，`grep -rl` 全仓库仅此 1 个文件命中）；**F2 / F3 / F4 = ❌ 未开始**（`src/` 仅 4 个 java 文件、无 `src/test/`、`build.gradle` 无 JUnit）。结论已写入 18 §3.0「现状快照」。
   - 本轮为**纯文档 + 忽略规则**改动，不涉及运行时代码；`08-TESTING.md` 阶段验收与 `17-NATIVE.md` §2 性能预算均不适用。
 - **是否已提交**：是，随本条目一并 commit 并推送至 `origin/master`。
-
 ---
 
 ## 2026-09-29 — P0.2 确认跑在 Vulkan 后端（backend/device 断言）+ bridge 隔离落地
@@ -2363,7 +2369,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   - **GAP 登记**：调研结论为**不需要登记**（官方 `renderpearl.backend.api` 机制完整，无自补特性）。
   - 本轮无性能改动，`17-NATIVE.md` §2 性能预算不适用。
 - **是否已提交**：是：随本条目一并 commit 并推送至 `origin/master`（Team Lead 统一执行，成员不自行 commit）。
-
 ---
 
 ## 2026-09-29 — P0.1 构建与产物核验 + runClient 运行验证
@@ -2386,7 +2391,6 @@ Rust `cargo test --release` **83/83**、三相等价性各 **182/182**、0 warni
   - ✅ 静态自检（§七 不需运行证据的项）：结果见文末附录 —— 原 1 项不通过（【参考调研】缺第 0 条）已修复，现全过/不适用。
   - 本轮无性能改动，`17-NATIVE.md` §2 性能预算不适用。
 - **是否已提交**：是：随本条目一并 commit 并推送至 `origin/master`。
-
 ---
 
 ## 附录：docs/07-CONSTRAINTS.md §七 提交前自检清单 —— 静态项预跑（2026-09-29，执行人 docs-upkeep）

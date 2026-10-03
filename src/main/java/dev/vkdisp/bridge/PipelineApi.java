@@ -182,6 +182,34 @@ public final class PipelineApi {
     /** 深度可视化管线 location（P3 前置：采样深度纹理 → 灰度输出，用于验证深度附件链路）。 */
     public static final String DEPTHVIS_LOCATION = "vkdisp:pipeline/depthviz";
 
+    /**
+     * GAP-003 多附件写入管线 location（能力验证件）。
+     *
+     * <p>与其它管线的关键差别：**唯一一条声明多个 {@code ColorTargetState} 的管线**
+     * （{@code withColorTargetStates(0, N-1, …)}）。项目此前 15 条全是单附件，
+     * 多附件通道从未被用过 —— 见 {@code MrtProbe} 的类注释。
+     */
+    public static final String MRT_LOCATION = "vkdisp:pipeline/mrt";
+
+    /** GAP-003 多附件回读管线 location（把某个 colortex 显示到主目标）。 */
+    public static final String MRT_VIEW_LOCATION = "vkdisp:pipeline/mrtview";
+
+    /** MRT 着色器资源 id：vkdisp:mrt → assets/vkdisp/shaders/mrt.fsh（三路 layout(location=N) out）。 */
+    private static final Identifier MRT_SHADER_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "mrt");
+
+    /** MRT 回读着色器资源 id：vkdisp:mrtview → assets/vkdisp/shaders/mrtview.fsh。 */
+    private static final Identifier MRT_VIEW_SHADER_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "mrtview");
+
+    /** MRT 管线 id。 */
+    private static final Identifier MRT_PIPELINE_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/mrt");
+
+    /** MRT 回读管线 id。 */
+    private static final Identifier MRT_VIEW_PIPELINE_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/mrtview");
+
     /** 几何管线 location（P3 前置：真实顶点缓冲 + 深度剔除验证；本管线渲染阴影贴图）。 */
     public static final String GEOMETRY_LOCATION = "vkdisp:pipeline/geometry";
 
@@ -353,6 +381,12 @@ public final class PipelineApi {
 
     /** 注册成功后暂存的阴影采样管线实例；未注册时为 null。 */
     private static RenderPipeline shadowedPipeline;
+
+    /** 注册成功后暂存的 MRT 多附件写入管线实例；未注册时为 null。 */
+    private static RenderPipeline mrtPipeline;
+
+    /** 注册成功后暂存的 MRT 回读管线实例；未注册时为 null。 */
+    private static RenderPipeline mrtViewPipeline;
 
     /**
      * 几何顶点格式：Position(vec3f) + Color(vec4f)，stride = 28 字节。
@@ -676,6 +710,68 @@ public final class PipelineApi {
     /** 阴影采样管线是否已注册完成（纯布尔视图）。 */
     public static boolean isShadowedPipelineRegistered() {
         return shadowedPipeline != null;
+    }
+
+    /**
+     * 构建并注册 GAP-003 多附件写入管线（{@link #MRT_LOCATION}）。
+     *
+     * <p>🔖 <b>本项目第一条多附件管线</b>：{@code withColorTargetStates(0, N-1, …)} 声明
+     * N 个附件，与 {@link MrtProbe} 建的多附件 pass 附件数**必须相等** ——
+     * Vulkan 要求管线颜色附件数与 render pass 附件数一致，否则 validation error。
+     * 片元 {@code mrt.fsh} 对应写 {@code layout(location=0/1/2) out}。
+     */
+    public static void registerMrtPipeline(RegisterRenderPipelinesEvent event) {
+        RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                .withLocation(MRT_PIPELINE_ID)
+                .withVertexShader(FULLSCREEN_FLIPV_SHADER_ID)
+                .withFragmentShader(MRT_SHADER_ID)
+                .withColorTargetStates(0, dev.vkdisp.pipeline.model.MrtPlan.SLOT_COUNT - 1,
+                        () -> ColorTargetState.DEFAULT)
+                .build();
+        event.registerPipeline(pipeline);
+        mrtPipeline = pipeline;
+        REGISTERED_PIPELINES.add(pipeline);
+        VkDisp.LOGGER.info(
+                "vkdisp: [GAP-003] mrt pipeline registered: {} colorTargets={} (first multi-attachment pipeline"
+                        + " in this project; vertex={} fragment={})",
+                MRT_LOCATION, dev.vkdisp.pipeline.model.MrtPlan.SLOT_COUNT, FULLSCREEN_FLIPV_SHADER_ID, MRT_SHADER_ID);
+    }
+
+    /**
+     * 构建并注册 GAP-003 多附件回读管线（{@link #MRT_VIEW_LOCATION}）。
+     *
+     * <p>单附件（回读是「一个纹理显示到屏幕」，本质就是 blit）；顶点用翻转版
+     * （采样源是我方离屏 colortex ⇒ 按 P-1f 实测约定需要 1-v 翻转）。
+     */
+    public static void registerMrtViewPipeline(RegisterRenderPipelinesEvent event) {
+        RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                .withLocation(MRT_VIEW_PIPELINE_ID)
+                .withVertexShader(FULLSCREEN_FLIPV_SHADER_ID)
+                .withFragmentShader(MRT_VIEW_SHADER_ID)
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
+                        .build())
+                .withColorTargetState(ColorTargetState.DEFAULT)
+                .build();
+        event.registerPipeline(pipeline);
+        mrtViewPipeline = pipeline;
+        REGISTERED_PIPELINES.add(pipeline);
+    }
+
+    /** 已注册管线：MRT 多附件写入（bridge 内部）。 */
+    static RenderPipeline mrtPipeline() {
+        if (mrtPipeline == null) {
+            throw new IllegalStateException("vkdisp: mrt pipeline not registered yet");
+        }
+        return mrtPipeline;
+    }
+
+    /** 已注册管线：MRT 回读（bridge 内部）。 */
+    static RenderPipeline mrtViewPipeline() {
+        if (mrtViewPipeline == null) {
+            throw new IllegalStateException("vkdisp: mrt view pipeline not registered yet");
+        }
+        return mrtViewPipeline;
     }
 
     /** 已注册管线：阴影采样管线（bridge 包内部使用）。 */

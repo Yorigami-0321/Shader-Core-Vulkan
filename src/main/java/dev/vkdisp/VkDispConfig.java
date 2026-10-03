@@ -118,6 +118,31 @@ public final class VkDispConfig {
                     + "仅在 mixin.wireTerrain 生效时需要（默认开）。")
             .define("mixin.bindTerrainParams", true);
 
+    /**
+     * 🔴 GAP-003 多附件（MRT）能力验证开关 —— **默认关闭**。
+     *
+     * <p>打开后每帧会在 vkdisp 自己的 pass 里写 N 个 colortex 附件，并把选定槽显示到主目标
+     * （画面被该槽内容覆盖）。这是**诊断视图**、不是用户功能，因此默认关：常规帧零开销
+     * （支柱③ B1 ≤ +2%）。
+     *
+     * <p>⚠️ 本项<b>不等于</b> GAP-003 已完成：它验证的是「多附件原语在
+     * 后端 + 驱动 + 我方管线构造上可用」，地形接入仍需 M-04（拿地形 pass 的所有权），
+     * 见 {@code docs/04-SPEC.md} §5.0 的 M-04 行。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_ENABLED = BUILDER
+            .comment("GAP-003 多附件能力验证（诊断视图，默认关）。打开后画面被 colortex<viewSlot> 覆盖。")
+            .define("mrt.enabled", false);
+
+    /**
+     * MRT 调试视图显示哪一个槽（0=colortex0/albedo、1=colortex1/normal+lightmap、2=colortex2/material）。
+     *
+     * <p>越界时 {@code MrtProbe} **显式抛异常**而不是静默夹取 —— 静默夹取会让
+     * 「我配了 5 号槽」看起来生效、实际看的是 2 号槽（07-CONSTRAINTS X9 不猜）。
+     */
+    public static final ModConfigSpec.ConfigValue<Integer> MRT_VIEW_SLOT = BUILDER
+            .comment("MRT 调试视图显示的槽位（0..2）。越界会显式报错而非静默夹取。")
+            .defineInRange("mrt.viewSlot", 0, 0, 7);
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     private VkDispConfig() {
