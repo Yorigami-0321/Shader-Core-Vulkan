@@ -5,6 +5,65 @@
 
 ---
 
+## 2026-10-03（二十二）— H 线 M-01/M-01b：派生地形管线真的接上了地形 draw（GAP-003 通道 + GAP-004 块）
+
+> **verdict = 支柱①最大阻塞项开工并拿到第一份硬证据**（本项目此前 `mixin/` 目录不存在、零注入点）。
+> ⚠️ **但 GAP-003（多附件）没做** —— 且本轮把它的真瓶颈定位出来了：**在 render pass，不在管线**。
+
+- **本次改了什么**：
+  1. **登记表改判 + 新增**（`docs/04-SPEC.md` §5.0，X28 先登记再写代码）：
+     M-01 目标类由 `ChunkSectionsToRender#renderLayers` 改为 `ChunkSectionLayer#pipeline(boolean)`；
+     新增 **M-01b**（`renderLayers`，绑自定义 uniform 块）与 **M-04**（`LevelRenderer#addMainPass`，
+     GAP-003 的入口，⏸️ 已登记未实现）。附 §5.0.1（为什么改判）/ §5.0.2（为什么 GAP-003 不能在 M-01 上做）。
+  2. **mixin 基建从零落地**：`src/main/resources/vkdisp.mixins.json`（`compatibilityLevel=JAVA_25`）、
+     `neoforge.mods.toml` 取消 `[[mixins]]` 注释（X26）、两个 mixin 类
+     （`mixin/ChunkSectionLayerPipelineMixin`、`mixin/ChunkSectionsToRenderMixin`，均只转发不写业务 X25）、
+     `bridge/MixinTargets` 补常量并把过时的「M1 只许 1 个注入点」注释改掉、
+     `bridge/TerrainPipelineApi`（注册 + 查表 + 绑块）、
+     `pipeline/model/TerrainDerivedPlan`（6 条派生管线规格的纯数据表，可单测）。
+  3. **两个可关闭键**（M1 编码约束 ⑤）：`mixin.wireTerrain` / `mixin.bindTerrainParams`，
+     FML 配置热加载生效、免重启。
+  4. **管线计数口径从 9 扩到 15**（`PipelineApi.recordTerrainDerived`）——
+     否则 6 条派生管线编译失败会静默地让地形退回原版管线。
+  5. 文档：`13-GAP-REGISTRY.md`（GAP-003 加第 4 条核实 + 状态改 🟡；GAP-004 状态改 🟡 并写明「块尚无消费者」）、
+     `18-PARALLEL.md`（H 线交付物与顺序纪律修订）、`evidence/README.md` 索引、
+     新证据 `evidence/h01-terrain-pipeline-wire.md`。
+- **为什么改**：`AGENT_CONTEXT` §10.1 把支柱①判为「⛔ 最大阻塞项在 H 线，尚未开工」，
+  `src/main/java/dev/vkdisp/mixin/` **不存在**、全仓库无 `mixins.json`
+  ⇒ 「兼容完整」二字当时没有任何实现支撑。本轮先把**通道**打通并测掉，
+  因为 GAP-003/GAP-004 的其余部分都依赖「派生管线能被地形 draw 用上」这个前提。
+- **本轮最实用的两条结论**：
+  1. 🔖 **`renderLayers` 是错的注入点**（源码级）：它的两个 override 形参**整组共用**，
+     而 `ChunkSectionLayerGroup.OPAQUE = {SOLID, CUTOUT}` 一次送两层进同一调用
+     ⇒ 在那里设 override 会让 CUTOUT 套用 SOLID 的状态（丢掉 `ALPHA_CUTOUT` define +
+     混合模式），**且不抛任何异常**。按层解析的唯一收口点是 `ChunkSectionLayer#pipeline`。
+  2. 🔖 **「换管线」和「绑块」必须分成两个注入点**：原版 `renderLayers` 只绑
+     `TerrainUniform`/`Sampler0`/`Sampler2`，而驱动层 STRICT_VALIDATION **按布局逐条**要求
+     `setUniform` ⇒ 派生管线多出的条目没人绑就 `Missing uniform`。`pipeline()` 拿不到 RenderPass，
+     所以这件事只能另开一个注入点。
+- **实测（3 趟 runClient，`shaderPack="none"` 隔离变量）**：
+  - ✅ 6/6 派生管线注册且**逐条打出我方 location**（`SOLID→vkdisp:pipeline/terrain_solid` …），
+     含多重绘制变体 ⇒ 通道真的通了，不是「注册成功」间接推断；
+  - ✅ `registered=15, compiled=15 (aligned)`、`stages=190 ok=190 failed=0`、
+     **0 `Missing uniform` / 0 validation error / 0 Mixin apply failed / 0 vkdisp ERROR**；
+  - ✅ 一键关闭实测生效（`disabled by config` 日志，且措辞如实写明「派生管线仍注册仍编译」）；
+  - ✅ 视觉：静止画面下开关 ON/OFF **四张连拍逐字节同哈希**；
+  - 632 单测全绿（新增 15 例：`TerrainDerivedPlanTest` 8 + `MixinWiringTest` 7）。
+- **🔴 本轮没有证明的**（详见证据 §7）：
+  GAP-003 多附件**完全未做**；GAP-004 的块**无消费者**（地形片元仍是原版 `core/terrain`）；
+  BSL 下共存未验；B1 帧时间未测；动态画面下的视觉等价未测；仅本机 lavapipe。
+- **🔖 两条方法论教训（已写进代码注释与证据）**：
+  1. **埋点节流把自己变成了热路径**：`pipeline()` 在**建网格**时被大量调用（实测约 1300 次/秒，
+     `SectionRenderDispatcher:76` / `LevelRenderer:796` 取顶点格式）⇒ 首版按 600 节流时
+     单趟日志 221 行埋点、每 0.45 秒往渲染线程写一行。改成 25 万次后降到 1 行。
+     ⇒ **注入点的调用频次必须实测，不能按「每帧几次」拍**。
+  2. **两趟截图互相矛盾时，先做控制实验**：run 1 说「无差异」、run 2 说「OFF 更暗」。
+     两者都不下结论，改做同状态连拍 ⇒ 判定 run 2 的差异是**取帧落在区块加载期**的假信号。
+     差点写成一条方向恰好对改动不利的错误结论。
+- **是否已提交**：见文末 commit 记录（本条目随本轮提交一并推送）。
+
+---
+
 ## 2026-10-03（二十一）— 交接文档：`AGENT_CONTEXT.md` §10（任务停止前存档）
 
 > **verdict = 交接轮（纯文档，零代码改动）**。

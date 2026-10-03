@@ -253,15 +253,22 @@ F1–F4 全部落地 → 放行并行
 | 项 | 内容 |
 |---|---|
 | **独占路径** | `src/main/java/dev/vkdisp/mixin/` + `src/main/resources/vkdisp.mixins.json` |
-| **交付物** | M-01（地形管线装配：`ChunkSectionsToRender#renderLayers`）；后续 M-02（实体/天空）按需 |
+| **交付物** | ① **M-01 + M-01b（2026-10-03 已完成）**：`ChunkSectionLayer#pipeline(boolean)` 换派生管线 + `ChunkSectionsToRender#renderLayers` 绑自定义块；② M-04 `LevelRenderer#addMainPass`（拿 pass 所有权 = **GAP-003 多附件的前置**）；后续 M-02（实体/天空）按需 |
 | **完成标准** | 派生管线（多附件 `ColorTargetState` + 自定义 uniform 块）**真的被地形 draw 用上**；每个注入点首行 `hit` 日志；**能一键关闭**；关闭后画面回到原版直连 |
 | **证据** | 注入点 hit 日志 + 开关两态对比截图 + `colortex*` 调试视图（证明附件分槽生效） |
+| **本轮进度（2026-10-03）** | ✅ M-01 + M-01b 落地：6 条派生管线注册并编译（`registered=15 compiled=15`）、通道实测通（每层打出我方 location）、GAP-004 块每帧绑定且 0 validation error、开关两态画面**逐字节一致**。<br>⛔ **未做**：GAP-003 多附件 —— 源码级核实「原版地形 pass 只有 1 个颜色附件」⇒ 瓶颈在 pass 不在管线，须先做 M-04。详见 `04-SPEC.md` §5.0.1 / §5.0.2 与 `evidence/h01-terrain-pipeline-wire.md` |
 | **参考** | VulkanMod（LGPL）挂载模式**只读思路**；GAP-003/004 的源码级核实结论 |
 | **支撑主线** | **支柱①兼容（最大阻塞项）** |
 | **不许做** | ❌ 不许注入 Sodium / 底层 GL 状态类 / 第三方区块渲染器（M1 永久禁止）；❌ 不许写业务逻辑（只转发，X25）；❌ 不许一次性开多个注入点（X29）；❌ 不许注入未在 `04-SPEC` §5.0 登记的点（X28）；❌ 不许把「用了 mixin」当成「兼容已完成」 |
 
-**顺序纪律**：`GAP-004`（自定义 uniform 块）必须与 `GAP-003`（多附件）**同批**做 ——
+**顺序纪律（2026-10-03 修订）**：`GAP-004`（自定义 uniform 块）必须与 `GAP-003`（多附件）**同批**收口 ——
 单独做前者没有意义（原版 `Globals` 仅 9 字段，只有派生管线才能加块）。
+
+> **本轮为什么先只做了 GAP-004**：源码级核实发现 **GAP-003 的瓶颈在 render pass、不在管线** ——
+> 原版地形 pass 只有 1 个颜色附件（`LevelRenderer.addMainPass` 的 `createRenderPass` 实参），
+> 光在管线侧加附件必然与 pass 不匹配 ⇒ GAP-003 必须连带 M-04（拿 pass 所有权）+ 自研 gbuffer 片元一起做。
+> GAP-004 单独做**并非无意义**（它的前提正是派生管线），且能把「M-01 通道是否真通」「块能否挂上并每帧绑定」
+> 变成可验证事实。**未完成项照旧登记，不许当已完成引用。**
 
 ---
 

@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "minVersion": "0.8.5",
+  "package": "dev.vkdisp.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [],
+  "client": [
+    "ChunkSectionLayerPipelineMixin",
+    "ChunkSectionsToRenderMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

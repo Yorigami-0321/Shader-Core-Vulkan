@@ -91,6 +91,33 @@ public final class VkDispConfig {
                     + "且不单独触发资源重载（done 除外）。")
             .define("packOptionsScreen", "");
 
+    /**
+     * 🔴 H 线 M-01 开关：把**派生地形管线**接到地形 draw 上（GAP-003/GAP-004 的通道）。
+     *
+     * <p><b>每个注入点一个键</b>是 07-CONSTRAINTS M1 编码约束 ⑤ 的硬要求（出问题时能立刻
+     * 二分定位是哪一个注入点）。本键只管 {@code ChunkSectionLayer#pipeline} 这一个注入点；
+     * 绑 uniform 的那一个是 {@link #MIXIN_BIND_TERRAIN_PARAMS}。
+     *
+     * <p>关掉后本注入点立即回到原版行为（画面与纯原版逐像素一致），
+     * **不需要重启**：配置热加载事件刷新后下一帧生效。
+     */
+    public static final ModConfigSpec.BooleanValue MIXIN_WIRE_TERRAIN = BUILDER
+            .comment("H 线 M-01：地形 draw 使用 vkdisp 派生地形管线（GAP-003/004 的通道）。"
+                    + "关闭 = 该注入点完全不生效，画面回到原版直连（默认开）。")
+            .define("mixin.wireTerrain", true);
+
+    /**
+     * 🔴 H 线 M-01b 开关：把派生管线新增的自定义 uniform 块绑到地形 RenderPass（GAP-004）。
+     *
+     * <p>与 {@link #MIXIN_WIRE_TERRAIN} 分开的原因：两者是**不同的注入点**，必须能各自单独关闭。
+     * 只关本键而留着 M-01 会让派生管线的块无人绑定 → 驱动层按布局校验时抛
+     * {@code Missing uniform}（可见失败，不是静默）；只关 M-01 而留着本键则是无害的多余绑定。
+     */
+    public static final ModConfigSpec.BooleanValue MIXIN_BIND_TERRAIN_PARAMS = BUILDER
+            .comment("H 线 M-01b：把 VkDispTerrainParams 块绑到地形 draw 的 render pass（GAP-004）。"
+                    + "仅在 mixin.wireTerrain 生效时需要（默认开）。")
+            .define("mixin.bindTerrainParams", true);
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     private VkDispConfig() {

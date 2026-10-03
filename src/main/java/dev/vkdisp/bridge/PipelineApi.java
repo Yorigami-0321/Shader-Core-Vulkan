@@ -411,6 +411,19 @@ public final class PipelineApi {
     }
 
     /**
+     * H 线 M-01：把派生地形管线纳入「注册数 == 编译成功数」的计数口径。
+     *
+     * <p>为什么必须纳入（01-DEV-LOOP §5.1「计数对得上」）：M-01 的 6 条派生管线若编译失败，
+     * 而它们不在计数里，断言就看不出问题 ⇒ 地形 draw 会安静地退回原版管线，
+     * 变成**静默失败**（本项目头号坑）。纳入后「派生管线编译不过」会立刻打 ERROR。
+     *
+     * <p>包私有：只有同包的 {@link TerrainPipelineApi} 能调（T5 的 bridge 红线）。
+     */
+    static void recordTerrainDerived(RenderPipeline pipeline) {
+        REGISTERED_PIPELINES.add(pipeline);
+    }
+
+    /**
      * 已注册管线列表（bridge 内部用，供 FrameApi 统计编译成功数）。
      * 用不可变快照返回，业务包拿不到原版类型。
      */

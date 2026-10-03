@@ -19,6 +19,7 @@ package dev.vkdisp.render;
  */
 import dev.vkdisp.VkDisp;
 import dev.vkdisp.bridge.PipelineApi;
+import dev.vkdisp.bridge.TerrainPipelineApi;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -117,5 +118,15 @@ public final class FullscreenPipelineRegistrar {
             VkDisp.LOGGER.error(
                     "vkdisp: pipeline registration failed: {}", PipelineApi.BLIT_LOCATION, t);
         }
+
+        // H 线 M-01（10–15）：6 条派生地形管线（GAP-003 通道 + GAP-004 自定义块）。
+        // 🔴 逐条 try/catch 在 TerrainPipelineApi 内部 —— 一条坏不能把另外 5 条一起吞掉（T11）。
+        // 计数口径随之从 9 变 15：registered==compiled 是**相对**断言且两边同源 ⇒ 仍然成立，
+        // 且现在**把 6 条派生管线也纳入编译成功数的核对**（编译不过会立刻暴露）。
+        TerrainPipelineApi.registerTerrainDerivedPipelines(event);
+        VkDisp.LOGGER.info(
+                "vkdisp: M-01 terrain derived pipelines registered: {}/6 (total registered={})",
+                TerrainPipelineApi.terrainDerivedPipelineCount(),
+                PipelineApi.registeredPipelineCount());
     }
 }

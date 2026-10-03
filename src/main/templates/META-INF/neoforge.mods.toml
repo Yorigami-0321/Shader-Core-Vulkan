@@ -44,9 +44,12 @@ description='''
 独立实现，不与任何第三方渲染优化模组或着色器加载器做集成，也不依赖或替代其中任何一个。
 '''
 
+# H 线 M-01：mixin 配置已启用（docs/04-SPEC.md §5.0 登记表 / 07-CONSTRAINTS M1）。
+# 🔴 X26：建了 vkdisp.mixins.json 就必须取消这里的注释 —— 否则 mixin 静默不加载（不报错）。
+# 🔴 M1：每个注入点必须登记在 04-SPEC §5.0，且能一键关闭（vkdisp.mixin.wireTerrain / mixin.bindTerrainParams）。
 # 本模组是纯客户端渲染模组
-#[[mixins]]
-#config="${mod_id}.mixins.json"
+[[mixins]]
+config="${mod_id}.mixins.json"
 
 # The [[accessTransformers]] block allows you to declare where your AT file is.
 # If this block is omitted, a fallback attempt will be made to load an AT from META-INF/accesstransformer.cfg

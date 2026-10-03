@@ -377,9 +377,41 @@ config = "${mod_id}.mixins.json"
 
 | # | 目标类 | 目标方法（签名） | 注入类型 | 用途 | 兼容性判定 | 可关闭键 | 状态 |
 |---|---|---|---|---|---|---|---|
-| M-01 | `net.minecraft.client.renderer.chunk.ChunkSectionsToRender` | `renderLayers(...)`（private，7 参，末两个为 `@Nullable RenderPipeline renderPipelineOverride`） | 装配层 | 把**派生管线**（多附件 / 自定义 uniform）接到地形 draw 上 —— 零 mixin 无法达成（`02` §5.1） | 源码级已核实（`putIfAbsent` 改不了原版 location ⇒ 派生管线必须走此通道） | `vkdisp.mixin.wireTerrain` | ⏸️ 待实现（P4.4-b） |
-| M-02 | （待定） | （待定） | 装配层 | 实体 / 天空 draw 走派生管线 | 待源码核实 | `vkdisp.mixin.wireEntity` | ⏳ 未开始 |
-| M-03 | （待定） | （待定） | 装配层 | | | | |
+| M-01 | `net.minecraft.client.renderer.chunk.ChunkSectionLayer` | `pipeline(boolean)`（public，1 参 `multiDraw`） | 装配层 | 把**派生管线**（多附件 / 自定义 uniform）按**层**接到地形 draw 上 —— 零 mixin 无法达成（`02` §5.1） | 源码级核实（26.3.0.41-beta sources jar 第 39-41 行 + `ChunkSectionsToRender` 第 121/176 行）：`layer.pipeline(multiDraw)` 是派生管线被地形 draw 用上的**唯一必经点**，且按层解析 | `mixin.wireTerrain` | 🟡 **已实现（2026-10-03）**：通道已通 + GAP-004 块已挂上并每帧绑定；GAP-003 多附件 ⛔ 未做（见 §5.0.1） |
+| M-01b | `net.minecraft.client.renderer.chunk.ChunkSectionsToRender` | `renderLayers(ChunkSectionLayer[], GpuSampler, RenderPass, GpuTextureView, GpuTextureView, @Nullable RenderPipeline, @Nullable RenderPipeline)`（private，7 参，末两个是 override） | 装配层 | 把 M-01 派生管线新增的**自定义 uniform 块**绑到地形 draw 的 RenderPass（GAP-004） | 源码级核实：原版 `renderLayers` 只绑 `TerrainUniform` / `Sampler0` / `Sampler2`；驱动层 STRICT_VALIDATION 按**布局**逐条校验，布局多出的条目无人绑即抛 `Missing uniform` | `mixin.bindTerrainParams` | 🟡 **已实现（2026-10-03）**：块能挂上并每帧绑定；**但本轮片元仍是原版 `core/terrain`，它不读这个块 ⇒ 被绑定但未被消费** |
+| M-02 | （待定） | （待定） | 装配层 | 实体 / 天空 draw 走派生管线 | 待源码核实 | `mixin.wireEntity` | ⏳ 未开始 |
+| M-03 | （待定） | （待定） | 装配层 | | | | ⏳ 未开始 |
+| M-04 | `net.minecraft.client.renderer.LevelRenderer` | `addMainPass(FrameGraphBuilder, FeatureRenderDispatcher$PreparedFrame, GpuBufferSlice, ChunkSectionsToRender, boolean)`（private，5 参） | 装配层 | **GAP-003 多附件的前置**：拿到地形 render pass 的所有权，让 pass 本身带 N 个颜色附件 | 源码级核实（同 jar 第 396-404、455-463 行）：原版地形 pass 由 `createRenderPass(name, mainTarget.getColorTextureView(), Optional.empty(), depthView, OptionalDouble.empty())` 建出，**颜色附件恰好 1 个** ⇒ 只在管线侧加附件必然与 pass 不匹配 | `mixin.ownTerrainPass` | ⏸️ **已登记，未实现**（GAP-003 的入口；M-01/M-01b 都无法替代它） |
+
+#### 5.0.1 🔴 为什么 M-01 的目标类从 `renderLayers` 改成了 `ChunkSectionLayer#pipeline`
+
+上一版登记表把注入点写成 `ChunkSectionsToRender#renderLayers`。**源码级核实后改判**（2026-10-03）：
+
+| 事实（26.3.0.41-beta sources jar） | 后果 |
+|---|---|
+| `renderLayers` 的两个 override 形参是**整组共用**的单个值 | 在那里设 override ⇒ 该组**所有层**用同一条管线 |
+| `ChunkSectionLayerGroup.OPAQUE = {SOLID, CUTOUT}`（第 9 行），一次 `renderGroup` 就把两层送进同一个 `renderLayers` | CUTOUT 会套用 SOLID 的管线状态 |
+| `SOLID_TERRAIN` 无 `ALPHA_CUTOUT` define；`CUTOUT_TERRAIN` = 0.5F；`TRANSLUCENT_TERRAIN` = 0.1F + `BlendFunction.TRANSLUCENT`（`RenderPipelines` 第 349/379/393 行） | 套错的直接后果 = **cutout 树叶/草方块失去 alpha 剔除**，且**半透明地形变成不透明** —— 且不抛任何异常 |
+
+⇒ 按层解析管线的唯一收口点是 `ChunkSectionLayer#pipeline(boolean)`
+（`DrawSeparate` 第 176 行、`DrawIndirect` 第 121 行都走它）。M-01 因此落在那里，
+`renderLayers` 保留为 M-01b（它的价值不在换管线，而在**往 pass 上绑 uniform** —— 那是 `pipeline()` 拿不到的能力）。
+
+⚠️ **连带核实（容易漏）**：`pipeline(false)` **不只在 draw 时被调**，建网格时也被调
+（`SectionRenderDispatcher` 第 76 行、`LevelRenderer` 第 796 行取 `getVertexFormatBinding(0)`）。
+派生管线沿用同一 snippet ⇒ 顶点绑定逐项相同 ⇒ 该处行为不变（已随 `evidence/h01-…` 实测）。
+
+#### 5.0.2 🔴 GAP-003（多附件）为什么不能在 M-01 上做
+
+- **管线侧**：`withColorTargetStates(0, N-1, …)` 加附件是原版公开 API，派生管线做得到。
+- **pass 侧**：🔴 原版地形 pass 只有**一个**颜色附件（同 jar 第 455-463 行的 `createRenderPass` 实参）。
+  管线声明 N 个附件而 pass 只绑 1 个 ⇒ 驱动层必然报附件不匹配。
+- ⇒ 多附件的瓶颈**不在管线，在 pass**。必须先拿 pass 的所有权 ⇒ 这就是 **M-04** 的登记理由。
+
+**这也是本轮把 GAP-003 与 GAP-004 分开做的原因**（`18-PARALLEL` H 线「顺序纪律」原本要求同批）：
+GAP-004 单独做**并非没有意义**（它的前提正是「派生管线」，没有派生管线就无处挂块），
+本轮把「通道是否真的通」「块能否挂上并每帧绑定」变成可验证事实，
+而 GAP-003 需要连同 M-04 + 自研 gbuffer 片元一起做，放到下一轮。**未完成项照旧登记，不许当已完成引用。**
 
 **永久禁止登记**（M1 / L11 / X23 / X24）：Sodium / caffeinemc 任何类；第三方区块渲染器；
 `RenderSystem` / `GlStateManager` / `GL11`·`GL14`·`GL15` 等底层状态类。
