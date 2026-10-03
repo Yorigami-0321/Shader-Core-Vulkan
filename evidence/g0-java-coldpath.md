@@ -4,10 +4,10 @@
 
 ## 环境
 
-- 机器/标签：G0-r9-���������������
+- 机器/标签：G0-r9-caliber-fixed
 - JDK：25.0.4.1
 - OS：Linux amd64
-- 备注：������������������������������������������������������������������������������������
+- 备注：three-segment caliber: preprocessing folded into load segment; cross-check added
 - 预热 3 次，样本 21 次（§7.1：预热 ≥3、样本 ≥5，取中位数而非最好一次）
 
 ## 输入（固定）
@@ -27,20 +27,20 @@ java -cp build/classes/java/test:build/classes/java/main \
     --inventory /home/yorigami/Minecraft/Shader-Core-Vulkan/run/shaderpacks --pack BSL_v10.1.8 --warmup 3 --iterations 21 \
     --out /home/yorigami/Minecraft/Shader-Core-Vulkan/evidence/g0-java-coldpath.md \
     --golden /home/yorigami/Minecraft/Shader-Core-Vulkan/build/bench-golden \
-    --label G0-r9-��������������� \
-    --notes "������������������������������������������������������������������������������������"
+    --label G0-r9-caliber-fixed \
+    --notes "three-segment caliber: preprocessing folded into load segment; cross-check added"
 ```
 
-> **口径交叉校验**：分段三段合计 872.1ms vs 生产入口 895.3ms，差 +23.2ms（+2.7%）—— ✅ 口径自洽
+> **口径交叉校验**：分段三段合计 927.5ms vs 生产入口 932.2ms，差 +4.7ms（+0.5%）—— ✅ 口径自洽
 ## 分段数据
 
 | 环节 | 中位数(ms) | p95(ms) | 最小(ms) | 最大(ms) | 样本 | 占合计 |
 |---|---:|---:|---:|---:|---:|---:|
-| 包扫描 | 0.5 | 0.8 | 0.4 | 2.8 | 21 | 0.1% |
-| 加载与预处理 | 635.1 | 708.0 | 562.7 | 753.0 | 21 | 72.8% |
-| 转译（8 段流水线） | 226.5 | 339.8 | 216.2 | 395.1 | 21 | 26.0% |
-| 合计（分段三段） | 872.1 | 1051.8 | 784.8 | 1055.9 | 21 | 100.0% |
-| 合计（生产入口） | 895.3 | 997.9 | 796.0 | 1080.8 | 21 | — |
+| 包扫描 | 0.6 | 0.8 | 0.4 | 0.9 | 21 | 0.1% |
+| 加载与预处理 | 650.3 | 776.6 | 586.8 | 803.8 | 21 | 70.1% |
+| 转译（8 段流水线） | 251.4 | 377.5 | 222.7 | 394.3 | 21 | 27.1% |
+| 合计（分段三段） | 927.5 | 1032.5 | 818.9 | 1075.4 | 21 | 100.0% |
+| 合计（生产入口） | 932.2 | 1097.7 | 837.0 | 1164.1 | 21 | — |
 
 > 🔴 **口径（2026-10-02 修正）**：「加载与预处理」**已包含完整的 `GlslPreprocessor`（`#include` 展开 + 宏与条件编译 + 选项常量扫描）** —— 旧表另有一行「`#include` 预处理」把同一件事**又加了一遍**，并把加载段错叫成「properties/options 解析」，掩盖了重复计算。现在预处理不再单列，转译段的输入直接取自 `load` 交出的预处理产物。
 > 预处理内部分解（①#include 展开 / ②宏与条件编译 / ③选项常量扫描）见 `--phase-timing`；它们是**「加载与预处理」的子集，不可与上表相加**。

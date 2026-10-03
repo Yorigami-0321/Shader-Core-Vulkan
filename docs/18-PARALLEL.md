@@ -220,23 +220,26 @@ F1–F4 全部落地 → 放行并行
 | 它有**明确裁决门** | 20% 阈值 + 等价性前置 ⇒ 结果要么「采用」要么「不采用并登记」，不会悬着 |
 | 它**阻塞未来决策** | 若 Rust 明显更快，后续 `accel/` 架构、构建链、四平台产物都要提前规划；反之则永久关闭这条路 |
 
-**进度（2026-10-02）**
+**进度（2026-10-02 · Round 10 重估后）**
 
 | 关卡 | 状态 | 落点 |
 |---|---|---|
-| **G0** Java 分段基准 | ✅ 完成 | `ColdPathBenchmark` + `evidence/g0-java-coldpath.md`（BSL 182 阶段，四段 + 生产入口） |
-| **G1** 等价 Rust 实现 | 🟡 **2/4 相完成** | inc 相与 pre 相**各 182/182 逐字节一致**（`evidence/g1-rust-equivalence.md`）；转译相 / `pack/` 解析相未做 |
+| **G0** Java 分段基准 | ✅ 完成（**口径已修正**） | `ColdPathBenchmark` + `evidence/g0-java-coldpath.md` + `evidence/g0-caliber-fix.md`（四段→**三段**；修正后 n=21：加载与预处理 635.1ms / 转译 226.5ms / 生产入口 **895.3ms**） |
+| **G1** 等价 Rust 实现 | 🟡 **2/4 相完成** · **裁决悬在 const** | inc 相与 pre 相**各 182/182 逐字节一致**、Rust 单测 32/32（`evidence/g1-rust-equivalence.md`，**Round 10 重跑再次确认**）；**`const` 相未移植且占预处理 49%（228.1ms）**；**转译相 / `pack/` 解析相未做 ⇒ G1 未完成** |
 | **G2** FFM 打通 demo | ⛔ 未开始 | **G1 未完成不得开始**（§5.1 流程顺序） |
-| **G3** 对照报告 | 🟡 **前置数据已就位** | 9 轮**交替**分相对照：inc Rust **快 75.1%**、def Rust **慢 55.7%**、const **未移植且占预处理段 51%**。见 `evidence/g3-preliminary-phase-comparison.md` + `17-NATIVE.md` §7.4。🔴 **裁决仍未做**（G1 未完成） |
-| **G4** 裁决 | ⛔ 未开始 | ⚠️ **先决定 const 的归属**（移植 / 不移植）。P1 已证「便宜路径走不通」（守卫只 4.9%）且动摇了乐观假设，见 `evidence/p1-const-prefix-guard.md` |
+| **G3** 对照报告 | 🟡 **前置数据已就位并已按新基准重估** | 9 轮**交替**分相对照：inc Rust **快 75.1%**、def Rust **慢 54.6%**、const **未移植**。见 `evidence/g3-preliminary-phase-comparison.md` + `17-NATIVE.md` §7.4；Round 10 重估见 `evidence/g4-recheck.md` + `17-NATIVE.md` §7.6。🔴 **裁决仍未做**（G1 未完成） |
+| **G4** 裁决 | ⛔ 未开始 · **分界线已量化** | 🔴 Round 10 已把「const 的归属」从悬念量化成四个数字（§5.2 **端到端口径**，基准 895.3ms）：S1 当前范围 **+8.8% 🟡 暂缓** / S2 乐观 **+27.9% ✅** / S3 保守 **−5.2% ❌** / S4 下界 **0% ❌**。⇒ **裁决悬在 const 一段上**。⚠️ S2/S3 的 const 速度是**假设非实测**，不许据此规划 |
 
 - 对照 Rust 工程在**仓库外** `~/Minecraft/g1-rust-bench`：**零第三方 crate**，不碰 `build.gradle`、不建 `accel/`。
 - 三相 golden（`inc` / `pre` / `trans`，546 条 sha256）由 `--golden-only` 产出，**可反复重建而不动基准数字**。
 - 分相计时由 `--phase-timing`（Java）与 `--mode bench`（Rust）产出，两侧都吐 `G3DATA` 机器可读行，
   交替编排脚本靠它抓数。口径对称性：Rust 的 def 直接读 golden 的 inc 产物，
   Java 的 def 也必须用**计时外缓存**的 `IncludeProcessor.Result`（否则会混进 include 的工时）。
+  ⚠️ 抓数时注意：Rust 侧 `--phase` 的取值是 **`inc` / `pre`**，但它吐的标签是 **`def`**。
 - 🔴 **G1 尚未完成 ⇒ 不得对性能下最终结论**；且即便 G1 完成，**const 相的归属未定**之前，
-  裁决仍无解（见 `17-NATIVE.md` §7.4 的三种假设表）。
+  裁决仍无解。⇒ Round 10 已把这个「无解」量化成四个数字（见上表 G4 行与 `17-NATIVE.md` §7.6）：
+  在 §5.2 的**端到端口径**下，当前范围 **+8.8% 落在 🟡 暂缓档**，
+  而 **const 移植与否会让结论在 ✅ 与 ❌ 之间摆动** ⇒ **先测 const，再谈 G2**。
 
 ---
 
