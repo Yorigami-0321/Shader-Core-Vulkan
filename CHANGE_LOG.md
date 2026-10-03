@@ -4,6 +4,41 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-03（二十五）— NeoForge 依赖下限解耦：`versionRange` 不再锁 beta 序号
+
+> **verdict = 依赖声明修法，未改一行业务源码。** 版本升级本身由另一开发端完成
+> （`e3d6099`），本轮只修升级**暴露出来的既有设计缺陷**。
+
+- **本次改了什么**：
+  ① `gradle.properties` **新增** `neo_version_range=[26.3.0,)`，与既有 `neo_version`
+     并存，语义拆开：前者管**运行时声明**，后者管**编译期依赖**。
+  ② `src/main/templates/META-INF/neoforge.mods.toml`：`neoforge` 依赖的
+     `versionRange` 由 `[${neo_version},)` 改为 `${neo_version_range}`。
+  ③ `build.gradle` 的 `generateModMetadata` 属性注入表补 `neo_version_range`
+     —— 模板引用了它，缺一个属性 `expand` 直接报错，这一步是**硬依赖**。
+  ④ `docs/05-VERSION.md` 新增 **§2.1**（拆分表 + 两条理由 + 边界声明）；
+     `docs/07-CONSTRAINTS.md` §五「依赖版本锁定」补同样的表与规则。
+- **为什么改**：原写法把 `versionRange` 锁成 `[26.3.0.41-beta,)`，有两个实际风险：
+  ① **拒载旧 beta 用户** —— 26.3 仍在 beta 期、官方几乎每周发新版，锁死序号
+  意味着用 41 之前任一 beta 的用户装这个 jar 被**直接拒绝加载**；
+  ② **转正后误判** —— 26.3 正式版号是 `26.3.0`（**无 `-beta` 后缀**），
+  Maven 版本序里 `26.3.0-beta < 26.3.0` 但字符串不等，不同加载器对
+  带/不带后缀的混合比较实现不一致，存在「明明装了却被判不满足」的风险。
+  修法是下限只锁到 `26.3.0`，把 26.3 整条线放行。
+- **边界（不夸大）**：下限放宽到 `26.3.0` **不等于**承诺 26.3 线早期 beta 可用 ——
+  那是 NeoForge 自身的向后兼容承诺，不是本项目验证过的。本项目当前**没有发布到
+  任何仓库**，这条约束是前瞻性的。
+- **测试结果**：`generateModMetadata` BUILD SUCCESSFUL，产物核对
+  `versionRange="[26.3.0,)"`、无残留 `${` 占位符；`compileJava` +
+  `compileTestJava` + `test` BUILD SUCCESSFUL，**641 单测全绿**
+  （53 个测试类，0 失败 0 错误 0 跳过）。
+- **未实测**：R2–R7 / R9–R11 需 `runClient` 实证（画面 / validation layer），
+  本轮**未跑**。`versionRange` 改动只影响**模组加载前的依赖判定**，
+  不改变任何渲染行为，但加载期判定仍需 runClient 确认 FML 不报「版本不符」。
+- **是否已提交**：**否**，等用户审阅。
+
+---
+
 ## 2026-10-03（二十四）— M-05：地形 draw 数据**只读捕获**可行（方案 A 的两个前提都成立）
 
 > **verdict = 上一轮那个「请用户裁决」的取舍，现在有了实测依据**。

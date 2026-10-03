@@ -162,6 +162,7 @@ JAVAP="/c/Program Files/Java/jdk-25.0.4.1/bin/javap.exe"
 |---|---|---|---|---|
 | 26.3 | 2026-09-29 | —（基线） | 基线建立；工程已换成官方 MDK（NeoForge 26.3.0.23-beta） | — |
 | 26.3 | 2026-10-02 | `gradle.properties` + 7 份文档镜像 | **同 MC 线跟进**：NeoForge 23→41（beta），MC 仍为 26.3，故 §4 迁移流程的「符号缺失」步骤为空 —— 编译零错。`mods.toml` 的 `versionRange` 随模板 `${neo_version}` 自动抬到 `[26.3.0.41-beta,)`，**装包侧也需 ≥ .41** | 20min（首次为新版重反编译 + 重编译 7301 个 MC 源文件；缓存命中后 7s） |
+| 26.3 | 2026-10-03 | `gradle.properties` + `neoforge.mods.toml` + `build.gradle` + 2 份文档 | **上一行那个坑的修法**：模板里 `versionRange` 引用 `${neo_version}` 会把 beta 序号一起锁死。拆出 `neo_version_range=[26.3.0,)` 专管运行时声明，`neo_version` 只管编译期。**坑点**：`build.gradle` 的 `replaceProperties` 必须同步加键 —— 模板引用了未注入的属性，`expand` 会直接失败。这是 Gradle 模板方案的固有陷阱 | 15min（`generateModMetadata` 45s + 编译测试 19s） |
 
 > 回填格式：一行一个版本，坑要写"现象 + 根因 + 修法"，便于下次查阅。
 

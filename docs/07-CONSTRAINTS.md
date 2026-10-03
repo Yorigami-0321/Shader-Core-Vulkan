@@ -306,11 +306,28 @@ if (DEBUG) { LOGGER.info("cull kept={}", kept); }
 minecraft_version        = 26.3
 minecraft_version_range  = [26.3,)
 neo_version              = 26.3.0.41-beta
+neo_version_range        = [26.3.0,)
 mod_id                   = vkdisp
 mod_group_id             = dev.vkdisp
 ```
 
 **规则**：所有版本号只在这一处定义，其他地方引用变量。**禁止散落硬编码。**
+
+**`neo_version` 与 `neo_version_range` 不可合并**（2026-10-03 确立）：
+
+| 用途 | 用哪个 | 语义 |
+|---|---|---|
+| 编译期依赖（`build.gradle` → `neoForge.version`） | `neo_version` | 精确锁 `26.3.0.41-beta` |
+| 运行时依赖声明（`neoforge.mods.toml` → `versionRange`） | `neo_version_range` | 只锁下限 `[26.3.0,)` |
+
+理由：26.3 仍在 beta 期，官方每周发新版且版本号带 `-beta` 后缀。若把
+`versionRange` 写成 `[26.3.0.41-beta,)`，用 41 之前任一 beta 的用户会被
+**直接拒载**；等 26.3 转正，版号变成无后缀的 `26.3.0`，字符串不等，
+不同加载器的版本序处理不一致，存在「明明装了却被判不满足」的风险。
+
+> 本项目当前**没有发布到任何仓库**，这条约束是前瞻性的；但它同时是
+> `build.gradle` 属性注入表里 `neo_version_range` 必须存在的原因 ——
+> 模板里引用了它，少一个属性 `expand` 就会报错。
 
 ---
 

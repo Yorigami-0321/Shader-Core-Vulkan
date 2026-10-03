@@ -67,7 +67,10 @@ config="${mod_id}.mixins.json"
     # Optional field describing why the dependency is required or why it is incompatible
     # reason="..."
     # The version range of the dependency
-    versionRange="[${neo_version},)" #mandatory
+    # 🔴 用 neo_version_range（[26.3.0,)）而不是 neo_version：后者带 -beta 序号，
+    # 会把用旧 beta 的用户直接拒载，且 26.3 转正后版号无后缀会误判。
+    # 编译期依赖仍由 build.gradle 的 neo_version 精确锁定。详见 docs/05-VERSION.md §2。
+    versionRange="${neo_version_range}" #mandatory
     # An ordering relationship for the dependency.
     # BEFORE - This mod is loaded BEFORE the dependency
     # AFTER - This mod is loaded AFTER the dependency

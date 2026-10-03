@@ -26,6 +26,7 @@
 |---|---|---|
 | Minecraft | **26.3** | — |
 | NeoForge | **26.3.0.41-beta** | 2026-10-02 自官方仓库升版（`projects.neoforged.net`）；初版基线取自 MDK commit `eec248c` |
+| NeoForge 运行时依赖范围 | **[26.3.0,)** | 只锁版本线起点，**不锁 beta 序号** —— 见下方 §2.1 |
 | Java | **25** | 26.3 强制 |
 | ModDevGradle | **2.0.147** | 官方 MDK 内声明 |
 | Gradle | **9.4.1**（wrapper） | 以 `gradle/wrapper/gradle-wrapper.properties` 为准 |
@@ -35,6 +36,28 @@
 **唯一数据源是仓库根的 `gradle.properties`**，本表只作镜像，冲突时以文件为准。
 
 **禁止**：不要为了"顺便支持 26.2"而引入版本判断分支；不要用 `@Pseudo` 去兼容不存在的类。
+
+### 2.1 `neo_version` 与 `neo_version_range` 必须分开（2026-10-03 确立）
+
+`gradle.properties` 有两个 NeoForge 相关键，**用途不同、不可合并**：
+
+| 键 | 值 | 用途 |
+|---|---|---|
+| `neo_version` | `26.3.0.41-beta` | **编译期**依赖（`build.gradle` → `neoForge.version`），精确锁死 |
+| `neo_version_range` | `[26.3.0,)` | **运行时**依赖声明（`neoforge.mods.toml` → `versionRange`），只锁下限 |
+
+**为什么不能把 `versionRange` 写成 `[${neo_version},)`**：
+
+1. **拒载旧 beta 用户**。26.3 仍在 beta 期，官方几乎每周发新版。锁成
+   `[26.3.0.41-beta,)` 意味着任何用 41 之前 beta 的用户装这个 jar 会被直接拒绝。
+2. **转正后有误判风险**。26.3 正式发布时版号是 `26.3.0`（**无 `-beta` 后缀**）。
+   Maven 版本序里 `26.3.0-beta < 26.3.0`，但字符串不等；不同加载器对
+   带/不带后缀的混合比较实现不一致，存在「明明装了却被判不满足」的风险。
+
+**边界**：下限取 `26.3.0` 而非 `26.3.0.41-beta`，意味着**不保证** 26.3 线早期
+beta 上可用 —— 但项目铁律已定「不支持 26.2 及之前」，26.3 线内的向后兼容由
+NeoForge 自身保证（同一 MC 版本的 beta 之间不应有破坏性变更），且
+`05-VERSION.md` §4 已规定不做前瞻兼容设计。
 
 ---
 
