@@ -111,8 +111,57 @@ class MixinWiringTest {
         String config = readOrSkip(CONFIG);
         assertTrue(config.contains("mixin.wireTerrain"), "M-01 缺少可关闭键 mixin.wireTerrain");
         assertTrue(config.contains("mixin.bindTerrainParams"), "M-01b 缺少可关闭键 mixin.bindTerrainParams");
+        assertTrue(config.contains("mixin.captureTerrainDraws"), "M-05 缺少可关闭键 mixin.captureTerrainDraws");
         assertTrue(config.contains("define(\"mixin.wireTerrain\", true)"), "M-01 默认应为开");
         assertTrue(config.contains("define(\"mixin.bindTerrainParams\", true)"), "M-01b 默认应为开");
+        assertTrue(config.contains("define(\"mixin.captureTerrainDraws\", true)"), "M-05 默认应为开");
+    }
+
+    @Test
+    @DisplayName("M-05：只读捕获必须同时注入两个 prepareChunkRenders* 重载（漏一个就捕获不到）")
+    void m05CapturesBothOverloads() {
+        // 原版二选一（LevelRenderer#render 第 269-275 行，由 usingMultiDrawIndirectForTerrain 决定），
+        // 本机 lavapipe 走 indirect 分支 ⇒ 两个都必须注入。
+        assertTrue(readOrSkip(MIXIN_DIR.resolve("LevelRendererChunkCaptureMixin.java"))
+                .contains("@Inject(method = \"prepareChunkRenders\""));
+        assertTrue(readOrSkip(MIXIN_DIR.resolve("LevelRendererChunkCaptureMixin.java"))
+                .contains("@Inject(method = \"prepareChunkRendersIndirect\""));
+    }
+
+    @Test
+    @DisplayName("M-05：捕获必须是非空的 RETURN 注入（不得 cancellable，否则能改掉原版返回值）")
+    void m05IsReadOnlyReturnInjection() {
+        String mixin = readOrSkip(MIXIN_DIR.resolve("LevelRendererChunkCaptureMixin.java"));
+        assertEquals(2, countCodeOccurrences(mixin, "@Inject("),
+                "M-05 应恰好两个注入（两个重载各一个；注释里的字面量不计）");
+        // 只读的两条硬证据：@At("RETURN") 且不出现 cancellable。
+        // ⚠️ 只查代码行：类 javadoc 里正好解释了「cancellable 为何刻意为 false」，
+        // 全文匹配会被这段说明自己判为违规。
+        assertEquals(0, countCodeOccurrences(mixin, "cancellable"),
+                "M-05 是只读捕获，代码里出现 cancellable 就意味着能改掉原版返回值");
+        assertEquals(2, countCodeOccurrences(mixin, "@At(\"RETURN\")"),
+                "两个注入都必须是 RETURN 位置");
+        assertEquals(0, countCodeOccurrences(mixin, "setReturnValue("),
+                "M-05 不得调 setReturnValue —— 那是改原版行为，不是只读捕获");
+    }
+
+    /**
+     * 统计**非注释行**里某字面量的出现次数。
+     *
+     * <p>为什么必须跳过注释：类 javadoc 的【参考调研】块会引用注解与 API 的字面量
+     * （例如 {@code @Inject(method = "prepareChunkRenders")}），
+     * 直接 split 全文会把文档里的例子算成代码 —— 本测试自己就踩过这个坑。
+     */
+    private static int countCodeOccurrences(String text, String literal) {
+        int count = 0;
+        for (String line : text.split("\n")) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("*") || trimmed.startsWith("//") || trimmed.startsWith("/*")) {
+                continue;
+            }
+            count += (line.split(java.util.regex.Pattern.quote(literal), -1).length - 1);
+        }
+        return count;
     }
 
     @Test
@@ -154,7 +203,10 @@ class MixinWiringTest {
                     firstStatement = line;
                     break;
                 }
-                assertTrue(firstStatement != null && firstStatement.contains("TerrainPipelineApi.on"),
+                // 🔖 不写死类名：M-01/M-01b 转发到 TerrainPipelineApi.on*，
+                // M-05 转发到 TerrainDrawCapture.onCaptured —— 判据是「首行是 bridge 侧埋点转发」。
+                assertTrue(firstStatement != null
+                                && firstStatement.matches(".*\\w+\\.on\\w*\\(.*"),
                         p.getFileName() + " 的注入方法体首行必须是埋点转发（实测 "
                                 + firstStatement + "）");
             }
@@ -170,6 +222,9 @@ class MixinWiringTest {
         assertEquals("net.minecraft.client.renderer.chunk.ChunkSectionsToRender",
                 MixinTargets.CHUNK_SECTIONS_TO_RENDER);
         assertEquals("renderLayers", MixinTargets.CHUNK_SECTIONS_RENDER_LAYERS);
+        assertEquals("net.minecraft.client.renderer.LevelRenderer", MixinTargets.LEVEL_RENDERER);
+        assertEquals("prepareChunkRenders", MixinTargets.LEVEL_RENDERER_PREPARE_CHUNK_RENDERS);
+        assertEquals("prepareChunkRendersIndirect", MixinTargets.LEVEL_RENDERER_PREPARE_CHUNK_RENDERS_INDIRECT);
         assertEquals(1, MixinTargets.MIXIN_CONFIG_COUNT,
                 "MIXIN_CONFIG_COUNT 必须与 neoforge.mods.toml 里启用的 [[mixins]] 数一致");
     }

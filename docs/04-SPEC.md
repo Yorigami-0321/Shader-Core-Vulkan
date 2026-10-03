@@ -381,7 +381,8 @@ config = "${mod_id}.mixins.json"
 | M-01b | `net.minecraft.client.renderer.chunk.ChunkSectionsToRender` | `renderLayers(ChunkSectionLayer[], GpuSampler, RenderPass, GpuTextureView, GpuTextureView, @Nullable RenderPipeline, @Nullable RenderPipeline)`（private，7 参，末两个是 override） | 装配层 | 把 M-01 派生管线新增的**自定义 uniform 块**绑到地形 draw 的 RenderPass（GAP-004） | 源码级核实：原版 `renderLayers` 只绑 `TerrainUniform` / `Sampler0` / `Sampler2`；驱动层 STRICT_VALIDATION 按**布局**逐条校验，布局多出的条目无人绑即抛 `Missing uniform` | `mixin.bindTerrainParams` | 🟡 **已实现（2026-10-03）**：块能挂上并每帧绑定；**但本轮片元仍是原版 `core/terrain`，它不读这个块 ⇒ 被绑定但未被消费** |
 | M-02 | （待定） | （待定） | 装配层 | 实体 / 天空 draw 走派生管线 | 待源码核实 | `mixin.wireEntity` | ⏳ 未开始 |
 | M-03 | （待定） | （待定） | 装配层 | | | | ⏳ 未开始 |
-| M-04 | `net.minecraft.client.renderer.LevelRenderer` | `addMainPass(FrameGraphBuilder, FeatureRenderDispatcher$PreparedFrame, GpuBufferSlice, ChunkSectionsToRender, boolean)`（private，5 参） | 装配层 | **GAP-003 多附件的前置**：拿到地形 render pass 的所有权，让 pass 本身带 N 个颜色附件 | 源码级核实（同 jar 第 396-404、455-463 行）：原版地形 pass 由 `createRenderPass(name, mainTarget.getColorTextureView(), Optional.empty(), depthView, OptionalDouble.empty())` 建出，**颜色附件恰好 1 个** ⇒ 只在管线侧加附件必然与 pass 不匹配 | `mixin.ownTerrainPass` | ⏸️ **已登记，未实现**（GAP-003 的入口；M-01/M-01b 都无法替代它） |
+| M-04 | `net.minecraft.client.renderer.LevelRenderer` | `addMainPass(FrameGraphBuilder, FeatureRenderDispatcher$PreparedFrame, GpuBufferSlice, ChunkSectionsToRender, boolean)`（private，5 参） | 装配层 | **GAP-003 多附件的方案 B**：拿到地形 render pass 的所有权，把**整个**主 pass 改成多附件 | 源码级核实（同 jar 第 396-404、455-463 行）：原版地形 pass 由 `createRenderPass(name, mainTarget.getColorTextureView(), Optional.empty(), depthView, OptionalDouble.empty())` 建出，**颜色附件恰好 1 个** | `mixin.ownTerrainPass` | ⏸️ **已登记，未实现**（方案 B；§5.0.4 取舍表） |
+| **M-05** | `net.minecraft.client.renderer.LevelRenderer` | `prepareChunkRenders(Matrix4fc, boolean)` 与 `prepareChunkRendersIndirect(Matrix4fc, boolean)`（**均 public**，各返回 `ChunkSectionsToRender`） | **只读捕获** | **GAP-003 方案 A 的入口**：拿到地形 draw 数据对象的引用，使我方能在**自己的**多附件 pass 里画地形 —— **不改原版任何渲染行为** | 源码级核实（同 jar 第 849、937 行签名；第 249 行 `fireFrameGraphSetup` **早于**第 271-275 行的 `prepareChunkRenders*` ⇒ 官方事件里**拿不到**该对象，但 pass 体在第 286 行 `frame.execute()` 执行，**晚于**捕获点 ⇒ 时序可行） | `mixin.captureTerrainDraws` | 🟡 **已登记，2026-10-03 实现并取证**（`evidence/h03-…`）：捕获可用 + 时序成立 |
 
 #### 5.0.3 ✅ 多附件**原语**已验证（2026-10-03，MRT 能力验证件）
 
@@ -451,13 +452,23 @@ FramePass pass = frame.addPass("main");
 ⇒ 把这个 pass 改成 N 附件，**所有原版管线**（各自声明 1 个 `ColorTargetState`）都会与 pass 不匹配。
 所以 M-04 落地前必须先做**取舍分析**（未做）：
 
-| 方案 | 做法 | 代价 |
-|---|---|---|
-| **A. 地形单独一个 pass** | 我方在帧图里另建一个多附件 pass 只画地形，原版主 pass 保持单附件 | 地形 pass 的深度/可见性/顺序语义要自己处理；地形与实体之间没有共享附件 |
-| **B. 整 pass 多附件** | 主 pass 加附件，所有走它的原版管线也得跟着派生 | 要为实体/特性/云/描边各派生一份 N 附件管线，改动面与回归面都大得多 |
+| 方案 | 做法 | 代价 | 入口状态（2026-10-03 实测） |
+|---|---|---|---|
+| **A. 地形单独一个 pass** | 我方在帧图里另建一个多附件 pass 只画地形，原版主 pass 保持单附件 | 地形 pass 的深度/可见性/顺序语义要自己处理；地形与实体之间没有共享附件 | ✅ **入口已通**：M-05 只读捕获（`evidence/h03-…`）。不改任何渲染行为，ON/OFF 截图逐字节相同 |
+| **B. 整 pass 多附件** | 主 pass 加附件，所有走它的原版管线也得跟着派生 | 要为实体/特性/云/描边各派生一份 N 附件管线，改动面与回归面都大得多 | ⏸️ M-04 未开工 |
 
-⚠️ **本项目尚无取舍结论**，且这属于「换一条路」级别的影响面
-（`AGENT_CONTEXT` §5 的四个阻塞项之一），**下一轮应先出取舍分析再动手**。
+✅ **取舍结论（2026-10-03）：走 A。** 依据不是偏好，是两条入口的**实测风险差**：
+
+| | 方案 A（M-05） | 方案 B（M-04） |
+|---|---|---|
+| 需要改原版渲染行为吗 | **否**（只读捕获引用） | **是**（改 pass 的附件语义） |
+| 可一键关闭且零视觉影响 | ✅ 实测截图逐字节相同 | 未验 |
+| 已取证的硬证据 | 捕获非 null + 时序成立（`h03`） | 无 |
+| 猜错的后果 | 无「猜」这一步 —— 附件语义只涉及地形 | 实体/云/天气/世界边界的附件语义**未核实**，猜错即**静默画面错误** |
+
+🔖 **仍有一个未核实的卡点**（下一轮第一件事）：`renderGroup` 需要 `sampler` 与 `blockAtlas`
+（原版 `LevelRenderer` 第 442-447 行自建 sampler、第 531 行取 atlas）——
+我方 pass 需自己准备这两个，或复用原版已建的（X9：先核实再写）。
 
 **这也是本轮把 GAP-003 与 GAP-004 分开做的原因**（`18-PARALLEL` H 线「顺序纪律」原本要求同批）：
 GAP-004 单独做**并非没有意义**（它的前提正是「派生管线」，没有派生管线就无处挂块），

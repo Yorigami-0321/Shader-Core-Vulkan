@@ -37,6 +37,7 @@ import dev.vkdisp.VkDisp;
 import dev.vkdisp.VkDispConfig;
 import dev.vkdisp.bridge.FrameApi;
 import dev.vkdisp.bridge.PipelineApi;
+import dev.vkdisp.bridge.TerrainDrawCapture;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -82,6 +83,12 @@ public final class FullscreenPassHook {
 
     /** 每帧计数（用于按间隔打印 uniform 取值证据）。 */
     private static int frameCounter;
+
+    /** M-05：上次见到的捕获计数（用于节流埋点）。 */
+    private static long lastCapturedCount;
+
+    /** M-05：节流埋点最多打几次（3 次足够判定时序，不必刷屏）。 */
+    private static int m05ProbeLogs;
 
     /** uniform 取值证据最多打印 5 次（限频，避免刷屏）。 */
     private static int paramLogs;
@@ -155,6 +162,24 @@ public final class FullscreenPassHook {
         double seconds = (System.nanoTime() - START_NANOS) / 1_000_000_000.0;
         float phase = (float) (seconds % PHASE_PERIOD_SECONDS);
         FrameApi.FrameParams params = new FrameApi.FrameParams(phase, 1.0F);
+
+        // H 线 M-05 埋点（节流）：本行的作用是**时序验证** ——
+        // AfterLevel 在帧图执行之后触发，若此处已能看到捕获计数增长，
+        // 说明捕获（LevelRenderer#render 第 271-275 行）确实早于 pass 体执行（第 286 行）
+        // ⇒ GAP-003 方案 A 的时序前提成立。
+        // 只打前 3 次（照 M-01 的教训：埋点过密会把热路径变成 I/O 瓶颈）。
+        long capturedNow = TerrainDrawCapture.captureCount();
+        if (capturedNow != lastCapturedCount) {
+            lastCapturedCount = capturedNow;
+            if (m05ProbeLogs < 3) {
+                m05ProbeLogs++;
+                VkDisp.LOGGER.info(
+                        "vkdisp: [M-05] capture visible at AfterLevel (render thread, after frame graph executed):"
+                                + " captures={} from={} nonNull={}",
+                        lastCapturedCount, TerrainDrawCapture.capturedFrom(),
+                        TerrainDrawCapture.hasCaptured());
+            }
+        }
 
         try {
             FrameApi.FrameSize size = FrameApi.drawFullscreen(PASS_LABEL, params);

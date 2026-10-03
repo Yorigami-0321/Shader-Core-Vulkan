@@ -4,6 +4,56 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-03（二十四）— M-05：地形 draw 数据**只读捕获**可行（方案 A 的两个前提都成立）
+
+> **verdict = 上一轮那个「请用户裁决」的取舍，现在有了实测依据**。
+> 本轮**没有画地形**，只验证方案 A 成立所需的两个前提。
+> ⚠️ **地形仍未接进多附件 pass** ⇒ GAP-003 **仍未完成**。
+
+- **本次改了什么**：
+  1. **登记表新增 M-05**（`04-SPEC.md` §5.0，X28 先登记再写代码）：
+     `LevelRenderer#prepareChunkRenders` + `#prepareChunkRendersIndirect`（均 public）的
+     `RETURN` 位置**只读捕获**；
+  2. `mixin/LevelRendererChunkCaptureMixin` + `bridge/TerrainDrawCapture`（持有引用，刻意用
+     `Object` 以免原版类型泄进业务层）+ `FullscreenPassHook` 的时序埋点；
+  3. 配置 `mixin.captureTerrainDraws`（默认开）；
+  4. 文档：`04-SPEC` §5.0 的 M-04/M-05 两行 + §5.0.4 取舍表标注实测结论、
+     `13-GAP-REGISTRY` GAP-003 加第 ⑦⑧ 条、`evidence/h03-terrain-draw-capture.md`、
+     `evidence/README.md` 索引、`AGENT_CONTEXT.md` §10.9。
+- **为什么做这个**（先裁后动）：上一轮提出 A/B 两条路线并建议由用户裁决。
+  但**在裁决之前可以先把「A 的前提是否成立」测掉** —— 若 A 连前提都不成立，
+  那就是 B 唯一可选，裁决自动收敛；若成立，则是「两条都可行、按风险分级」。
+  ⇒ 本轮选了**不需用户介入**的那一半：只验前提。
+- **🔖 本轮最要紧的两条源码级事实**：
+  ① **官方 `FrameGraphSetupEvent` 给不了地形 draw 数据** ——
+     `fireFrameGraphSetup` 在 `LevelRenderer#render` **第 249 行**，
+     而 `prepareChunkRenders*` 在**第 271-275 行**才创建 ⇒ 事件触发时对象尚不存在。
+     这不是「还没试」，是读源码得出的事实（X9）。
+     但 pass 体在**第 286 行** `frame.execute()` 才执行 ⇒ **只读捕获引用**时序天然成立。
+  ② **两个重载都必须注入**（由 `usingMultiDrawIndirectForTerrain` 二选一）——
+     本机实测命中 **`prepareChunkRendersIndirect`**，⇒ 只注入非 indirect 分支的话，
+     本机会**永远捕获不到**，且这个失效**是静默的**。
+- **实测（1 趟 runClient + 配置热加载切开关）**：
+  - ✅ `terrain draws captured from prepareChunkRendersIndirect (capture#1, non-null=true)`；
+  - ✅ **时序成立**：`capture visible at AfterLevel … captures=1 / 2 / 3`
+    （AfterLevel 在帧图执行**之后**仍能看到本帧捕获 ⇒ 捕获早于 pass 体执行）；
+  - ✅ **只读性有证据**：`@At("RETURN")`、代码里零 `cancellable` / `setReturnValue`（单测守着）、
+    开关 ON/OFF 截图**逐字节相同**（`3e95e5c0…`）、**0** validation error、
+    `stages=190 ok=190 failed=0`、`registered=17 compiled=17 (aligned)`；
+  - 641 单测全绿（新增 2 例）。
+- **🔴 本轮没有证明的**：地形仍未画进多附件 pass（捕获的引用**无消费者**）；
+  捕获对象的**运行期类型**未核实（本类刻意持 `Object`，运行期只知「非 null」）；
+  非 lavapipe 硬件；每帧 1 次 volatile 写的帧时间代价未测。
+- **🔖 下一轮的第一个卡点（尚未核实）**：`renderGroup` 需要 `sampler` 与 `blockAtlas`
+  （原版在 `LevelRenderer` 第 442-447 行自建 sampler、第 531 行取 atlas）——
+  我方 pass 需自己准备这两个，或复用原版已建的。
+- **对上一轮取舍结论的影响**：**A 更稳定**未被推翻，反而被**实测加强** ——
+  A 的入口是「不改行为的只读捕获」（已证可行、已有关闭开关、零视觉影响），
+  B 是「改原版主 pass 的附件语义」（M-04，未开工，风险高一档）。
+- **是否已提交**：见文末 commit 记录（本条目随本轮提交一并推送）。
+
+---
+
 ## 2026-10-03（二十三）— GAP-003 多附件**原语**验通（能力已证，地形未接）
 
 > **verdict = 支柱①的关键前置能力打通**。本项目此前 17 条管线全是单附件，

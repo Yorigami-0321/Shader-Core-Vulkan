@@ -143,6 +143,19 @@ public final class VkDispConfig {
             .comment("MRT 调试视图显示的槽位（0..2）。越界会显式报错而非静默夹取。")
             .defineInRange("mrt.viewSlot", 0, 0, 7);
 
+    /**
+     * 🔴 H 线 M-05 开关：**只读捕获**地形 draw 数据（默认开）。
+     *
+     * <p>捕获本身**不改变任何渲染行为** —— 关闭它，地形照原版渲染。它的作用是让
+     * GAP-003 方案 A（我方自己的多附件 pass 画地形）能拿到 {@code ChunkSectionsToRender}：
+     * 官方 {@code FrameGraphSetupEvent} 触发时该对象**尚未创建**（源码级核实：事件在
+     * {@code LevelRenderer#render} 第 249 行，创建在第 271-275 行），所以只能在创建点捕获引用。
+     */
+    public static final ModConfigSpec.BooleanValue MIXIN_CAPTURE_TERRAIN_DRAWS = BUILDER
+            .comment("H 线 M-05：只读捕获地形 draw 数据引用（GAP-003 方案 A 的前置）。"
+                    + "不改变渲染行为；关闭后我方多附件地形 pass 静默不开。")
+            .define("mixin.captureTerrainDraws", true);
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     private VkDispConfig() {

@@ -6,7 +6,8 @@
   "mixins": [],
   "client": [
     "ChunkSectionLayerPipelineMixin",
-    "ChunkSectionsToRenderMixin"
+    "ChunkSectionsToRenderMixin",
+    "LevelRendererChunkCaptureMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -1089,7 +1089,8 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
 |---|---|
 | **M-01** `ChunkSectionLayer#pipeline` | ✅ 6/6 派生管线被地形 draw 取用（日志逐条打出**我方 location**） |
 | **M-01b** `ChunkSectionsToRender#renderLayers` | ✅ 自定义块每帧绑定，0 `Missing uniform` / 0 validation error |
-| **M-04** `LevelRenderer#addMainPass` | ⏸️ 已登记（`04-SPEC` §5.0），**未实现** = GAP-003 的入口 |
+| **M-04** `LevelRenderer#addMainPass`（方案 B） | ⏸️ 已登记（`04-SPEC` §5.0），**未实现** |
+| **M-05** `LevelRenderer#prepareChunkRenders*`（方案 A 入口） | ✅ **已实现并取证**（`evidence/h03-…`）：捕获命中 **indirect** 分支、非 null、**时序成立**；**不改任何渲染行为**（ON/OFF 截图逐字节相同） |
 | GAP-003 多附件 | ⛔ **未做** |
 | GAP-004 块被消费 | ⛔ **未做**（地形片元仍是原版 `core/terrain`，不读我们的块） |
 | 登记点改判 | ✅ `renderLayers` → `ChunkSectionLayer#pipeline`（理由见 `04-SPEC` §5.0.1） |
@@ -1097,7 +1098,14 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
 🔖 **GAP-003 的真瓶颈已定位：render pass，不在管线**（源码级核实）——
 原版地形 pass 由 `LevelRenderer.addMainPass` 的
 `createRenderPass(name, colorView, Optional.empty(), depthView, …)` 建出，**颜色附件恰好 1 个**
-⇒ 管线侧加附件必然与 pass 不匹配。⇒ **必须先做 M-04。**
+⇒ 管线侧加附件必然与 pass 不匹配。
+
+🔖 **两条路线的风险等级已实测拉开**（2026-10-03，见 §10.9）：
+**方案 A（地形单独一个多附件 pass）的入口 M-05 已通** —— 只需**只读捕获**地形 draw 数据，
+不改任何原版渲染行为，ON/OFF 截图逐字节相同；
+**方案 B（M-04 改原版主 pass 的附件语义）** 未开工，风险高一档。
+⚠️ 官方 `FrameGraphSetupEvent` **给不了**该数据（已源码级证伪：事件在 `render` 第 249 行，
+对象在第 271-275 行才创建）⇒ 必须注入捕获。
 
 🔖 **两条可复用结论**：
 1. **「换管线」与「绑块」必须分成两个注入点** —— 驱动层 STRICT_VALIDATION **按布局逐条**要求
@@ -1139,3 +1147,29 @@ panic 边界防御 / ABI 维护这些**持续成本一分没扣，且都还没�
   X9 不猜值、A8 先登记 GAP 再实现。
 - **文档单一出处**：G 线数字 → `17-NATIVE.md` §7.7；闸门流程 → §5；预算 → §2.2；
   并行线与判据 → `18-PARALLEL.md`；证据索引 → `evidence/README.md`。
+
+### 10.9 ✅ M-05 只读捕获可行 —— 方案 A 的两个前提都成立（2026-10-03）
+
+> 证据：`evidence/h03-terrain-draw-capture.md`。**只验前提，没画地形。**
+
+| 前提 | 状态 |
+|---|---|
+| 地形 draw 数据**捕获得到**（非 null） | ✅ 命中 `prepareChunkRendersIndirect` |
+| **时序成立**（捕获早于帧图 pass 体执行） | ✅ AfterLevel（帧图执行之后）可见 `captures=1/2/3` |
+| **不改任何渲染行为** | ✅ ON/OFF 截图**逐字节相同**；0 validation error |
+| 🔴 地形画进多附件 pass | ⛔ **未做** —— 捕获的引用目前**无消费者** |
+
+🔖 **官方事件给不了，已源码级证伪**：`fireFrameGraphSetup` 在 `LevelRenderer#render`
+第 249 行，而 `prepareChunkRenders*` 在第 271-275 行才创建 ⇒ 事件触发时对象尚不存在。
+但 pass 体在第 286 行 `frame.execute()` 才执行 ⇒ **只读捕获引用**时序天然成立。
+
+🔖 **两个重载都必须注入**（`prepareChunkRenders` 与 `prepareChunkRendersIndirect` 二选一，
+由设备能力 + 关卡设置决定）：本机实测命中 **indirect** 分支 ⇒
+只注入非 indirect 分支的话，本机**永远捕获不到**，且这个失效**是静默的**。
+
+🔖 **下一轮的第一个卡点（尚未核实）**：`renderGroup` 需要 `sampler` 与 `blockAtlas`
+（原版在 `LevelRenderer` 第 442-447 行自建 sampler、第 531 行取 atlas）——
+我方 pass 需自己准备这两个，或复用原版已建的。
+
+- **可关闭键**：`mixin.captureTerrainDraws`（默认开；关闭后捕获停止、引用为空、多附件 pass 静默不开）。
+- **测试**：641 单测全绿（新增 2 例，锁「两个重载都注入」+「只读：无 cancellable/setReturnValue」）。
