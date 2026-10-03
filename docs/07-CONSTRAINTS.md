@@ -341,6 +341,30 @@ mod_group_id             = dev.vkdisp
 | 提交粒度 | 一个功能一个 commit |
 | 分支 | `main` 保持可用；开发用 `dev` |
 | 提交前 | 必须跑 `08-TESTING.md` §9 的回归清单 |
+| **提交信息格式** | conventional 前缀（`feat`/`fix`/`docs`/`perf`/`test`/`build`/`chore`/`refactor`）**+ 中文正文** |
+| **禁止 trailer** | 🔴 **不得携带 `Co-Authored-By` / `Signed-off-by` / `Generated-with` 等任何 trailer**（2026-10-03 用户指令） |
+
+### 6.1 禁止 AI 署名 trailer（2026-10-03 确立）
+
+**规则**：本仓库的 commit message **不含任何 trailer**，尤其禁止
+`Co-Authored-By: Claude ...`。
+
+**为什么**：
+
+1. **不是项目约定**。本节原本只规定了 `.gitattributes` / `core.autocrlf` /
+   `gradlew` 可执行位 / 提交粒度 / 分支 / 提交前回归清单，**从未要求 trailer**。
+   AI 工具按通用习惯自行添加，属于**没做上下文核实就动手**。
+2. **版本号是编的**。`Claude Opus 4.5` 这类具体版本号，AI 并不该在 commit 里断言。
+3. **仓库已有独立的署名习惯**。历史上带 trailer 的提交是**用户在 WSL 用 Claude
+   开发时自己写的**，不是仓库规范要求的产物。AI 不得模仿或延续。
+
+**边界**：本条只约束 **AI 代为执行的提交**。用户自己写的提交不受此约束，
+用户想加什么都行。
+
+**踩坑记录**：`691c75b fix(deps): versionRange 与 neo_version 解耦` 误带了
+`Co-Authored-By: Claude Opus 4.5`。用户裁决「本次提交就这样，但之后不要再出现」
+⇒ **不重写历史**（避免 force push 破坏已拉取的引用），仅立此规范。
+
 
 > ⚠️ **实测坑**：clone 时若系统级 `core.autocrlf=true`，**工作区文件本身会落盘成 CRLF**，
 > 光设 `.gitattributes` 不够 —— 必须实际 `sed -i 's/\r$//'` 重写一遍。
@@ -374,6 +398,7 @@ mod_group_id             = dev.vkdisp
 [ ] 性能相关改动附实测数据，且对照的是 `17-NATIVE.md` §2.2 的 B1–B7（T14）
 [ ] 🔴 本轮若涉及原生：G 系列闸门结论已落 `evidence/`，裁决按 §5.2 阈值（T16 / X17）
 [ ] 🔴 若含原生库：每个 `extern "C"` 有 `catch_unwind`、`Cargo.toml` 未设 `panic = "abort"`（T17 / X30）
+[ ] 🔴 commit message **无任何 trailer**（`Co-Authored-By` / `Signed-off-by` 等），格式为 conventional 前缀 + 中文正文（§6.1）
 [ ] 🔴 若含原生库：FFM 按批粒度接口、有 A/B 开关、Java 路径可独立跑通（T18/T19/N4/N1）
 [ ] 🔴 没有把公开基准（如 naga vs glslang）直接当本项目选型结论（X32）
 [ ] 文档已同步
