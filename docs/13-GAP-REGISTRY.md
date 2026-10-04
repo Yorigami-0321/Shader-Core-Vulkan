@@ -38,7 +38,7 @@
 ⚠️ **禁止**先猜一个「看起来对」的绑定再截图 —— 那正是本项目反复消灭的失败形态 |
 `pipeline/model`（契约）+ `glsl/translate/PackVertexAdapterGenerator`（常量项表）+ 采样器绑定 |
 `mrt.packTerrainShader`（已存在） | 默认配置路径画面正确 ⇒ 随时可退回 |
-🟡 **范围已缩到一个算子，尚未验证**（`h12`）：候选 1/2（`ao`/`metalness`）、候选 3（`lmCoord`）、候选 5（视差分支）均已**实验证伪**（开关均自报已生效，非「判读不可信」）；候选 4（首行 `texture()*color`）被**结构性排除**（工作路径同一表达式算出可见画面）。🔍 剩下唯一一个「坏路径有、工作路径没有」的 `albedo` 算子：**`albedo = textureGrad(texture_0, newCoord, dFdx(texCoord), dFdy(texCoord))`**（坏路径 7 次 / 工作路径 **0** 次）。🟡 待查：方块图集 mip 链可用性 / 反向 Z 下 `dFdx` 是否退化 |
+🟡 **已有正面证据：只有 `albedo` 为 0**（`h13`）：切到 **colortex3**（高级材质路径确实写的槽）→ 画面是**亮绿地形剪影**（`vec4(smoothness, skyOcclusion, 0, 1)` 的 `.g` 满值）⇒ **片元着色器完整跑完**，同一片元里光照/天光/法线/菲尼尔全部正常，**只有 `albedo` 是 0**。🔍 候选 6 子项①（图集 mip 链）**已排除**：`blockAtlas()` 返回的是**原版** `TextureAtlas.LOCATION_BLOCKS` 视图，mip 由原版生成填充。🔍 另外**画面独立验证了 DRAWBUFFERS 槽位路由**：槽 1 整幅纯清屏色（99.89%）、没有地形，正因为高级材质路径写的是槽 **0/3/6/7**。🟡 剩余疑独：`dFdx(texCoord)` 是否在反向 Z / MRT pass 下退化（**未验证**）|
 | GAP-010 | 生成式地形顶点适配层**资源登记晚于管线注册**：首轮资源重载时 `PipelineBuilder`
   报 12 条 `Couldn't find source for VERTEX shader (vkdisp_pack:terrain_pack_adapter)`；
 第二轮重载成功 ⇒ **不致命**，但会在日志里留 12 条 ERROR（实测 `h11`）|
