@@ -64,6 +64,32 @@ neoForge {
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
 
+        // 🔬 取证隔离车道（2026-10-04 新增，h27）：gameDirectory = run/h27
+        //
+        // 🔴 为什么必须有它（不是洁癖，是实测踩到的两个坑）：
+        //   ① **配置回写竞态**（`AGENT_CONTEXT.md` §10.32②）：上一个客户端 SIGTERM 后的
+        //      关服配置回写会与「kill 后立刻改配置」竞态 ⇒ 改好的值被内存旧值覆盖，
+        //      表现为「日志打的是旧值」。h27 又踩了一次：sed 改完读回确认是 false，
+        //      启动后日志仍是 true（文件在 17:37:50 被重写回 true）。
+        //   ② **并行会话互相覆盖**（h27 实测）：同一仓库若有第二个会话在跑 runClient，
+        //      双方共享 run/{config,logs,saves} ⇒ 端口抢占 + 配置互写 + 日志互盖，
+        //      两边的取证都不可信（本次 Group B 的客户端就是被另一个会话顶掉的）。
+        //   ⇒ 取证必须**独占** game directory。放在 run/ 下 ⇒ 已被 .gitignore 覆盖（第 68 行）。
+        //
+        // 用法（与主车道完全平行，只是换目录）：
+        //   ./gradlew runClientIso -PquickPlay
+        //   MCP 驱动需指向本车道的桥配置（端口不同，避免与主车道抢占）：
+        //     VKDISP_MCP_CONFIG=run/h27/config/mcpfabric.config.json python3 tools/mcp-drive.py ...
+        clientIso {
+            client()
+            programArguments.addAll '--graphicsBackend', 'VULKAN'
+            if (project.hasProperty('quickPlay')) {
+                programArguments.addAll '--quickPlaySingleplayer', project.property('quickPlay').toString()
+            }
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            gameDirectory = project.file('run/h27')
+        }
+
         server {
             server()
             programArgument '--nogui'
