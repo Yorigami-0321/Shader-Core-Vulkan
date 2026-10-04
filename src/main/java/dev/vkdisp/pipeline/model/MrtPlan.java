@@ -81,8 +81,35 @@ public final class MrtPlan {
      * <p>🔖 管线与 pass **必须取同一个值**（单点真源），否则又落回不匹配。
      */
     public static int slotCount() {
+        int pack = packOutputCount();
+        if (pack > 0) {
+            return Math.max(1, Math.min(HARD_MAX_SLOTS, pack));
+        }
         int requested = dev.vkdisp.VkDispConfig.MRT_ATTACHMENTS.get();
         return Math.max(1, Math.min(HARD_MAX_SLOTS, requested));
+    }
+
+    /**
+     * 包地形片元的输出数，<b>0 = 不接包片元</b>（此时附件数回到配置值）。
+     *
+     * <p>🔖 <b>冻结而不是现算的原因</b>（X42 的最后一环）：管线注册与 pass 每帧取附件数，
+     * 若这个值随「包源是否已生成」变化，就会出现
+     * 「注册时读到 3、画的时候读到 1」⇒ render pass 附件数与管线颜色目标数不等
+     * ⇒ {@code setPipeline} 抛 IllegalStateException <b>崩客户端</b>。
+     * ⇒ 只有 {@link #freezePackOutputCount}（由管线注册那一刻调用）能写它，两侧此后读同一个数。
+     *
+     * <p>volatile：注册在资源加载线程写、渲染线程每帧读。
+     */
+    private static volatile int frozenPackOutputCount;
+
+    /** 注册期冻结包片元输出数；{@code 0} 表示「本次不接包片元」。只由管线注册调用。 */
+    public static void freezePackOutputCount(int outputs) {
+        frozenPackOutputCount = outputs <= 0 ? 0 : Math.min(HARD_MAX_SLOTS, outputs);
+    }
+
+    /** 冻结后的包片元输出数（0 = 不接包片元，附件数用 {@code mrt.attachments}）。 */
+    public static int packOutputCount() {
+        return frozenPackOutputCount;
     }
 
     /** 槽位的 OF 身份（仅日志/文档口径，不参与任何渲染逻辑）。 */

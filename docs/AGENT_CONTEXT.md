@@ -1440,3 +1440,56 @@ pack compile done: stages=190 ok=190 failed=0
 
 🔖 **一处担忧要改形式**：`sampler3D lighttex0/1` 与原版 2D lightmap 的不匹配，
 既然整包 190/190 通过，就**在编译层面不构成阻塞** —— 只会在**渲染期绑采样器**时暴露。
+
+
+### 10.14 ✅ 包自己的 `gbuffers_terrain` 已真正接上派生 MRT 地形管线（2026-10-04，MCP 取证）
+
+> 证据：`evidence/h08-pack-terrain-fragment-wiring.md` + `evidence/h08-images/*.png`。
+> 任务来源 = §10.4 第 6 条的 ①②③。**本轮完成了 GAP-003 剩余阻塞的「接线」那一步。**
+
+**① 一句话**：派生 MRT 地形管线的片元从原版 `core/terrain` 换成 **BSL 自己的 `gbuffers_terrain`**，
+在真实客户端里编译、链接、绑定并渲染出可见差异。**附件数改为跟随包的输出数**（配置 `mrt.attachments=3`
+故意不改 → 实测管线与 pass 两侧都是 **1**）。
+
+**② 🔴 时序铁律（本轮唯一「换一条路级别」的发现）**：`RegisterRenderPipelinesEvent` **启动期只触发一次**，
+且**早于**虚拟包 `openResources` 生成包源约 **4.5 秒**（实测 08:31:49.704 vs 08:31:54.212）。
+切包触发的资源重载**不会**让它再触发（`RenderPipelines` 类只初始化一次，实测切包后无新注册行）。
+⇒ **「等包源好了再注册管线」这条路在原版上不存在**，只能**提前**算契约
+（`VkDispVirtualPack#ensureTerrainProgram`，按 `profile|selection` 记忆，实测耗时 3620ms）。
+🔖 若不知道这条，会得到「开关打开但什么都没发生、且不报错」的静默失效。
+
+**③ 新增两件真源**（原先散在多处、必然漂移）：
+- `pipeline/model/PackTerrainProgram` —— 包地形片元的**契约**（输出数 / 自由 sampler 名 / 输入 varying 签名），
+  一次解析、一次冻结；附件数、绑定组条目、适配层签名**三处各读同一个对象**。
+- `assets/vkdisp/shaders/terrain_pack_adapter.vsh` —— 顶点适配层（包的 VS 要 7 个属性，
+  原版 `DefaultVertexFormat.BLOCK` 只有 4 个 ⇒ 不能直接用包的 VS）。
+
+**④ 实测数字**：契约 = `world0/gbuffers_terrain` / outputs=1 / samplers=5 / varyings=9 / 42 个块成员 / 608 字节块。
+绑定摘要：`texture_0=图集真值; noisetex/shadowcolor0=占位; shadowtex0/1=本 pass 深度`。
+截图判据（同一存档/时刻 6000/机位 yaw=35,pitch=-12）：地形像素**平均绝对差 48.22**、**39.03%** 像素变化，
+HUD/准星一致；噪声基线（上一轮同包复现差 1.91）只到 1/25。
+稳定：0 条 vkdisp ERROR、0 崩、残留进程 0；⚠️ 仍**不能**声称「0 validation error」（本机无 layer）。
+
+**⑤ 🔴 立 X43**：契约解析器首版按**行首**锚定，而 BSL 转译终稿里声明是**两两并排写在同一行**的
+⇒ location 0 被错配成 `recolor`、location 2 被错配成 `lmCoord`，**静默少认 4 条 varying**。
+**「一行里可能有多个声明」必须逐个 findAll**；已写成断言（`PackTerrainProgramTest`）。
+
+**⑥ 新登记 GAP-007**：地形顶点侧缺**方块 id**（mat/recolor）与**法线**（normal）——
+原版 `DefaultVertexFormat.BLOCK` 只有 Position/Color/UV0/UV2，两项都没有 ⇒ 适配层按常量供值。
+影响「哪些方块被认成树叶/自发光」「法线朝向」这类**光照细节**，不影响「包的片元真的在跑」这一结论。
+
+**⑦ 测试**：`./gradlew build` BUILD SUCCESSFUL；新例 `PackTerrainProgramTest` 7 例 +
+`PackTerrainSourceTest` 4 例（含**适配层签名 vs 包片元签名逐位置对账**）= 659 → **670** 例全绿。
+
+**⑧ ⛔ 仍未证明 / 未完成（不许当已完成引用）**：
+① 地形只画进**我方 pass**，主目标仍由原版绘制 ⇒ **本轮不产出用户可见画面改进**（M-04 方案 B 未做）；
+② `mat`/`recolor`/`normal` 常量供值（GAP-007）；③ `shadowtex0/1` 是占位 ⇒ **包阴影结果不成立**；
+④ 只覆盖 OPAQUE 组；⑤ 只覆盖 BSL 默认配置（开 `ADVANCED_MATERIALS` 为 5 槽，顺序须服从 `DRAWBUFFERS`）；
+⑥ 提前生成 3620ms 对 B3/B4 的账**未补**；⑦ 只验了一个包（X39）。
+
+**⑨ 下一步（按序）**：
+1. **M-04 取舍**：把地形接进**主链**（当前只在我方 pass 里）。这是 GAP-003 变成「用户看得见」的最后一跳，
+   但属「换一条路」级别，仍建议用户裁决（§10.1 的老问题：是否整体替换渲染后端）。
+2. **GAP-007**：地形顶点格式加 `Normal` + 方块 id（需另立注入点登记 + 内存账）。
+3. **包的真实阴影**：把 P3.1 的 `LightSpaceList` 阴影贴图按真 id 绑给 `shadowtex0/1`，去掉占位。
+4. 补 B3/B4 的账：开关打开时启动期 +3.6s 的冷路径开销。

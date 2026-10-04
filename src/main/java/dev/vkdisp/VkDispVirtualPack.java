@@ -113,6 +113,48 @@ public final class VkDispVirtualPack {
             Identifier.fromNamespaceAndPath(NAMESPACE, FINAL_PATH);
 
     /**
+     * GAP-003：包内资源（包自己的地形片元，相对 assets/ 的路径）。
+     *
+     * <p>🔖 <b>与前三者语义不同</b>：composite / deferred / final 是 <b>required 管线</b>，
+     * 源必须永远存在（缺失会砸启动）；地形片元是<b>可选接线</b> ——
+     * 没有就沿用原版 {@code core/terrain}，所以 {@link #terrainProgram()} 允许为 null，
+     * 且 null 时本资源<b>根本不提供</b>（没有任何管线引用它）。
+     */
+    public static final String TERRAIN_PATH = "shaders/gbuffers_terrain.fsh";
+
+    /** 全量资源 id：assets/vkdisp_pack/shaders/gbuffers_terrain.fsh。 */
+    private static final Identifier TERRAIN_ID =
+            Identifier.fromNamespaceAndPath(NAMESPACE, TERRAIN_PATH);
+
+    /**
+     * GAP-003：最近一次 {@code openResources} 生成时选中的包地形片元契约（{@code null} = 不接线）。
+     *
+     * <p>🔖 <b>为什么是契约对象而不是裸字符串</b>：管线注册要用它的输出数、绑定组要用它的
+     * sampler 名、顶点适配层要用它的 varying 签名 —— 三处都从同一个对象读，才不会出现
+     * 「附件数 3、颜色目标 1」那种<b>崩客户端</b>的错配（X42）。
+     * volatile：生成在资源加载线程写、渲染线程读（与 {@link #hasDeferredProgram} 同款）。
+     */
+    private static volatile dev.vkdisp.pipeline.model.PackTerrainProgram terrainProgram;
+
+    /** GAP-003：所选包的地形片元契约；{@code null} = 保持原版 core/terrain（不接线）。 */
+    public static dev.vkdisp.pipeline.model.PackTerrainProgram terrainProgram() {
+        return terrainProgram;
+    }
+
+    /**
+     * GAP-003：地形片元里 VkDispBuiltins 块的 std140 布局（收编集与 composite/deferred **不同**，各解析各的）。
+     *
+     * <p>🔖 与前三套布局同一份理由（P4.1.3）：转译终稿 = 驱动编译的真源，Injector 内部的
+     * 收编结果不外传 ⇒ 只能从终稿再解析一次。空布局 = 兜底/未接线 ⇒ 绑零填充缓冲。
+     */
+    private static volatile BuiltinsBlockLayout terrainBuiltinsLayout = BuiltinsBlockLayout.empty();
+
+    /** 地形片元块布局（只读视图；空 = 零填充）。 */
+    public static BuiltinsBlockLayout terrainBuiltinsLayout() {
+        return terrainBuiltinsLayout;
+    }
+
+    /**
      * P3.3 链路开关：最近一次 {@code openResources} 生成时，所选包是否真实产出了 deferred 片元。
      *
      * <p>默认 false（资源加载前 / 兜底路径 / 总开关关闭均为 false → FrameApi 走 P3.2 直连基线）。
@@ -231,7 +273,7 @@ public final class VkDispVirtualPack {
                 // openAllSelected@3114：此刻配置已加载@3079 → 生成真正生效的源（P2.4 ③ 时机）。
                 GeneratedSources sources = generateSources();
                 return Stream.of(new VirtualPackResources(loc,
-                        sources.composite(), sources.deferred(), sources.finalSource()));
+                        sources.composite(), sources.deferred(), sources.finalSource(), sources.terrain()));
             }
         };
         Pack.Metadata metadata = new Pack.Metadata(
@@ -244,10 +286,20 @@ public final class VkDispVirtualPack {
     }
 
     /**
-     * 一次生成的三源（P3.3 deferred / P4.1.4 final 开关
-     * {@link #hasDeferredProgram} / {@link #hasFinalProgram} 随生成同步落盘）。
+     * 一次生成的四个源（P3.3 deferred / P4.1.4 final / GAP-003 地形片元）。
+     *
+     * <p>🔖 {@code terrain} <b>允许为 null</b>，且这不是「失败」而是「按设计不接线」：
+     * 前三个源服务 required 管线（缺失 = 启动失败），地形片元服务可选的派生 MRT 地形管线
+     * （缺失 = 沿用原版 core/terrain，画面照常）。两者混成同一个兜底口径就会让
+     * 「没找到地形片元」看起来像「找到了一个假的地形片元」。
      */
-    private record GeneratedSources(String composite, String deferred, String finalSource) {}
+    private record GeneratedSources(String composite, String deferred, String finalSource, String terrain) {
+
+        /** 四源形态（地形源为 null = 不接线）。 */
+        GeneratedSources(String composite, String deferred, String finalSource) {
+            this(composite, deferred, finalSource, null);
+        }
+    }
 
     /**
      * 生成 composite + deferred + final 三片元源（{@link PackCompositeSource} 冷路径编排）。
@@ -323,11 +375,23 @@ public final class VkDispVirtualPack {
             logLayout("composite", compositeBuiltinsLayout);
             logLayout("deferred", deferredBuiltinsLayout);
             logLayout("final", finalBuiltinsLayout);
+            // GAP-003：包地形片元契约（**独立**一条链，失败绝不影响上面三源）。
+            // 之所以不并进 PackCompositeSource.generate：那是一条「必有源」的 required 管线链，
+            // 它的兜底语义是 passthrough；而地形片的正确兜底是「不接线、用原版 core/terrain」。
+            String terrainSource = takeTerrainSourceMemo();
+            if (terrainSource != null) {
+                VkDisp.LOGGER.info("vkdisp: [GAP-003] terrain source reused from early contract"
+                        + " (registration-time generation; no second compile)");
+            } else {
+                terrainSource = generateTerrainSource(inventory, profile, selection, store);
+            }
             return new GeneratedSources(
-                    result.source(), result.deferredSource(), result.finalSource());
+                    result.source(), result.deferredSource(), result.finalSource(), terrainSource);
         } catch (Throwable t) {
             hasDeferredProgram = false;
             hasFinalProgram = false;
+            terrainProgram = null;
+            terrainBuiltinsLayout = BuiltinsBlockLayout.empty();
             compositeBuiltinsLayout = BuiltinsBlockLayout.empty();
             deferredBuiltinsLayout = BuiltinsBlockLayout.empty();
             finalBuiltinsLayout = BuiltinsBlockLayout.empty();
@@ -335,6 +399,104 @@ public final class VkDispVirtualPack {
                     + " -> built-in passthrough fallback", t);
             return new GeneratedSources(PackCompositeSource.FALLBACK_GLSL,
                     PackCompositeSource.FALLBACK_GLSL, PackCompositeSource.FALLBACK_GLSL);
+        }
+    }
+
+    /**
+     * GAP-003：选包地形片元并把契约落进 {@link #terrainProgram}，返回其源（{@code null} = 不接线）。
+     *
+     * <p><b>为什么必须独立 try/catch</b>：上面三源是 required 管线，崩了会砸启动；
+     * 地形片元是可选接线，崩了只该退回原版 core/terrain。把两者放同一个 try 里，
+     * 一个选择 bug 就会连带把 composite 也打成 passthrough（画面突变却报的是另一个原因）。
+     */
+    /**
+     * GAP-003：<b>提前</b>生成地形片元契约，供<b>管线注册期</b>使用。
+     *
+     * <p><b>为什么必须提前</b>（本轮 runClient 实测，唯一的时序证据）：
+     * 日志显示 RegisterRenderPipelinesEvent 在 <b>08:31:49.70</b> 触发，
+     * 而虚拟包 openResources 生成包源在 <b>08:31:54.21</b> ——
+     * 注册比生成<b>早约 4.5 秒</b>；且资源重载（切包）时该事件<b>不再触发</b>
+     * （RenderPipelines 类只初始化一次）⇒ 「等生成完再注册」这条路在原版上根本不存在。
+     * 若不提前，注册期取不到契约 ⇒ 派生 MRT 地形管线永远用原版 core/terrain，
+     * 而症状只是「开了开关没效果」，不报错（典型的静默失效）。
+     *
+     * <p><b>提前的代价与出口</b>：这是一次冷路径编译（约 0.7–3 秒，见 b4 埋点），
+     * 发生在启动期管线注册处。PackCompileCache 让随后的 openResources 命中缓存，不重复付费。
+     *
+     * <p><b>为什么用键做记忆</b>：键 = profile|selection。配置热加载切包后键变化 ⇒ 重新生成；
+     * 同一键重复调用直接复用（注册与 openResources 各调一次，只付一次钱）。
+     */
+    public static synchronized void ensureTerrainProgram() {
+        String profile = VkDispConfig.PACK_PROFILE.get();
+        String selection = VkDispConfig.SHADER_PACK.get();
+        String key = profile + "|" + selection;
+        if (key.equals(terrainMemoKey)) {
+            return;
+        }
+        terrainMemoKey = key;
+        terrainSourceMemo = null;
+        if (!VkDispConfig.ENABLED.get() || !VkDispConfig.MRT_PACK_TERRAIN_SHADER.get()) {
+            // 总开关或本开关关掉时不提前编译（默认路径零额外冷路径开销，支柱③ B3/B4）。
+            return;
+        }
+        long started = System.nanoTime();
+        terrainSourceMemo = generateTerrainSource(inventoryDir(), profile, selection,
+                PackOptionStore.load(PackOptionStore.pathFor(gameDir())));
+        VkDisp.LOGGER.info("vkdisp: [GAP-003] early terrain contract ready in {} ms (key={})",
+                (System.nanoTime() - started) / 1_000_000L, key);
+    }
+
+    /** 地形契约的记忆键（profile|selection）；null = 尚未生成过。 */
+    private static String terrainMemoKey;
+
+    /** 提前生成时的源文本（openResources 直接复用，不重编）。 */
+    private static String terrainSourceMemo;
+
+    /**
+     * 取走提前生成的源（{@code openResources} 用；无缓存返回 {@code null}）。
+     *
+     * <p>取走即清空 + 清键：这样下一次 {@link #ensureTerrainProgram} 看到「键为空」会重算，
+     * 不会拿一份**上一轮**的契约去注册新一轮的管线（切包后拿到旧包片元 = 画面错且难归因）。
+     */
+    private static String takeTerrainSourceMemo() {
+        String memo = terrainSourceMemo;
+        terrainSourceMemo = null;
+        terrainMemoKey = null;
+        return memo;
+    }
+
+    private static String generateTerrainSource(Path inventory, String profile, String selection,
+            PackOptionStore store) {
+        terrainProgram = null;
+        try {
+            dev.vkdisp.pack.PackTerrainSource.Result terrain =
+                    dev.vkdisp.pack.PackTerrainSource.generate(inventory, profile, selection, store);
+            for (TranslateDiagnostic diagnostic : terrain.diagnostics()) {
+                logDiagnostic(diagnostic);
+            }
+            if (!terrain.wired()) {
+                terrainBuiltinsLayout = BuiltinsBlockLayout.empty();
+                VkDisp.LOGGER.warn("vkdisp: [GAP-003] pack terrain fragment NOT wired"
+                        + " -> derived MRT terrain pipeline keeps vanilla core/terrain");
+                return null;
+            }
+            dev.vkdisp.pipeline.model.PackTerrainProgram program = terrain.program();
+            terrainProgram = program;
+            terrainBuiltinsLayout = BuiltinsBlockLayout.parse(program.fragmentSource());
+            logLayout("terrain", terrainBuiltinsLayout);
+            VkDisp.LOGGER.info(
+                    "vkdisp: [GAP-003] pack terrain fragment ready: program={} outputs={} samplers={}"
+                            + " varyings={} bytes={}",
+                    program.qualifiedName(), program.outputCount(),
+                    program.fragmentSamplers().size(), program.inputs().size(),
+                    program.fragmentSource().getBytes(StandardCharsets.UTF_8).length);
+            return program.fragmentSource();
+        } catch (Throwable t) {
+            terrainProgram = null;
+            terrainBuiltinsLayout = BuiltinsBlockLayout.empty();
+            VkDisp.LOGGER.error("vkdisp: [GAP-003] pack terrain fragment selection FAILED (原文如下)"
+                    + " -> derived MRT terrain pipeline keeps vanilla core/terrain", t);
+            return null;
         }
     }
 
@@ -439,13 +601,21 @@ public final class VkDispVirtualPack {
         private final byte[] compositeBytes;
         private final byte[] deferredBytes;
         private final byte[] finalBytes;
+        /** GAP-003 地形片元字节；{@code null} = 不接线（此时本资源**不存在**，见 getResource）。 */
+        private final byte[] terrainBytes;
 
         VirtualPackResources(PackLocationInfo location, String compositeSource,
                 String deferredSource, String finalSource) {
+            this(location, compositeSource, deferredSource, finalSource, null);
+        }
+
+        VirtualPackResources(PackLocationInfo location, String compositeSource,
+                String deferredSource, String finalSource, String terrainSource) {
             this.location = location;
             this.compositeBytes = compositeSource.getBytes(StandardCharsets.UTF_8);
             this.deferredBytes = deferredSource.getBytes(StandardCharsets.UTF_8);
             this.finalBytes = finalSource.getBytes(StandardCharsets.UTF_8);
+            this.terrainBytes = terrainSource == null ? null : terrainSource.getBytes(StandardCharsets.UTF_8);
         }
 
         @Override
@@ -466,6 +636,13 @@ public final class VkDispVirtualPack {
             }
             if (FINAL_ID.equals(id)) {
                 return () -> new ByteArrayInputStream(finalBytes);
+            }
+            // 🔖 地形片元「不接线」时**返回 null**（= 资源不存在），而不是返回兜底文本：
+            //   此刻没有任何管线引用 vkdisp_pack:gbuffers_terrain，注册路径不会去取它；
+            //   万一有人后来引用了却拿到兜底，症状会变成「用的是内建 passthrough 而不是原版地形」
+            //   —— 比「资源缺失」更难归因。
+            if (TERRAIN_ID.equals(id) && terrainBytes != null) {
+                return () -> new ByteArrayInputStream(terrainBytes);
             }
             return null;
         }
@@ -491,6 +668,11 @@ public final class VkDispVirtualPack {
                     || FINAL_PATH.equals(normalized)
                     || FINAL_PATH.startsWith(normalized + "/")) {
                 output.accept(FINAL_ID, () -> new ByteArrayInputStream(finalBytes));
+            }
+            if (terrainBytes != null && (normalized.isEmpty()
+                    || TERRAIN_PATH.equals(normalized)
+                    || TERRAIN_PATH.startsWith(normalized + "/"))) {
+                output.accept(TERRAIN_ID, () -> new ByteArrayInputStream(terrainBytes));
             }
         }
 

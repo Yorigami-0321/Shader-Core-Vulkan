@@ -303,6 +303,13 @@ public final class MrtTerrainPass {
         RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         ensureTargets(main);
 
+        // 🔖 GAP-003：两处 uniform 上传都必须在 **pass 打开之前**（map/close 会落盘到环，
+        //   pass 打开期间动 encoder 是已实测到的错误用法，FrameApi 同款纪律）：
+        //   ① VkDispTerrainParams = 眼空间太阳方向 → 顶点适配层算 sunVec；
+        //   ② VkDispBuiltins = OF 内建值 → 包地形片元读的那 40+ 个成员。
+        TerrainPipelineApi.updateTerrainParams();
+        TerrainPipelineApi.updateTerrainBuiltins();
+
         RenderPassDescriptor.Builder descriptor =
                 RenderPassDescriptor.builder(() -> "vkdisp gbuffer terrain (OPAQUE, " + actualSlots + " attachments)");
         // 🔴 诊断「画到主目标」：附件 0 直接用主目标的颜色视图 + 清屏成诊断绿。
@@ -345,6 +352,11 @@ public final class MrtTerrainPass {
                 VkDisp.LOGGER.warn("vkdisp: [GAP-003/A] lighting setup unavailable: {}", t.toString());
             }
             GpuTextureView atlas = blockAtlas();
+            // 🔖 GAP-003：包地形片元要绑的 uniform（VkDispBuiltins + 它自由声明的 sampler）。
+            //   **必须在 renderGroup 之前**：STRICT_VALIDATION 下 validateDraw 按布局逐条校验，
+            //   少一条即抛 Missing uniform 名（响亮失败，不是静默）。
+            TerrainPipelineApi.bindPackTerrainUniforms(renderPass, atlasSampler, atlas,
+                    colortexDepth.getDepthTextureView(), view(0));
             if (fullscreenProbe()) {
                 drawFullscreenProbe(renderPass);
             }

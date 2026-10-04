@@ -1,0 +1,113 @@
+package dev.vkdisp.pack;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import dev.vkdisp.pipeline.model.PackTerrainProgram;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+/**
+ * 【端到端 · 无头】走**生产同款链路**选出包地形片元，并钉死它的契约。
+ *
+ * <p>🔖 <b>为什么无头也能测</b>：选包 + 转译 + 契约解析全是纯 Java（不含 SPIR-V 编译）——
+ * SPIR-V 编译需要设备上下文，那部分由客户端取证覆盖（h07 已实测整包 190/190）。
+ * 本类锁的是「接线前必须知道的数字」，即 h07 指出的真正缺口。
+ *
+ * <p>🔖 <b>为什么每个断言都带具体值</b>：附件数少算/多算 = 崩客户端；绑定组少登记一条 =
+ * draw 时抛 Missing uniform；顶点适配层少供一条 varying = 链接失败。
+ * 这三类都不是「画面差一点」，因此不能只断言「非空」。
+ */
+class PackTerrainSourceTest {
+
+    private static final Path INVENTORY = Path.of("run/shaderpacks");
+    private static final Path ADAPTER = Path.of(
+            "src/main/resources/assets/vkdisp/shaders/terrain_pack_adapter.vsh");
+
+    @Test
+    @DisplayName("🔖 BSL 默认配置：地形片元契约 = 1 槽 / 5 个自由 sampler / 9 条 varying")
+    void realPackContractIsFrozen() {
+        Assumptions.assumeTrue(Files.isDirectory(INVENTORY), "库存目录不在本地（run/shaderpacks/）");
+        PackTerrainSource.Result result = PackTerrainSource.generate(INVENTORY, "", "");
+        assertTrue(result.wired(),
+                "应当能选出地形片元；诊断："
+                        + result.diagnostics().stream().map(d -> d.message()).toList());
+        PackTerrainProgram program = result.program();
+        assertNotNull(program);
+
+        assertEquals(1, program.outputCount(),
+                "🔖 **BSL 默认配置下地形片元只产出 1 个颜色输出**（h06/h07 实测口径，X42）。"
+                        + "附件数必须跟随它，否则 setPipeline 抛 IllegalStateException 崩客户端");
+        assertEquals(List.of("texture_0", "noisetex", "shadowtex0", "shadowtex1", "shadowcolor0"),
+                program.fragmentSamplers(),
+                "🔖 地形片的自由 sampler 收编集与 composite **不同**（X39：不可套用别的程序的清单）；"
+                        + "绑定组布局必须按这份名单逐条登记");
+        assertEquals(9, program.inputs().size(), "包的片元要 9 条 OF varying（location 0..8）");
+        assertEquals(0, program.inputs().getFirst().location());
+        assertEquals(8, program.inputs().getLast().location());
+        assertEquals("mat", program.inputs().getFirst().name());
+        assertEquals("color", program.inputs().getLast().name());
+        assertTrue(program.qualifiedName().endsWith("gbuffers_terrain"),
+                "选中的应当是 gbuffers_terrain，实际 " + program.qualifiedName());
+    }
+
+    @Test
+    @DisplayName("🔖 顶点适配层的 out 签名必须与包的片元 in 签名**逐位置对齐**")
+    void adapterOutputsMatchPackFragmentInputs() {
+        Assumptions.assumeTrue(Files.isDirectory(INVENTORY), "库存目录不在本地");
+        Assumptions.assumeTrue(Files.exists(ADAPTER), "适配层着色器缺失: " + ADAPTER);
+        PackTerrainSource.Result result = PackTerrainSource.generate(INVENTORY, "", "");
+        Assumptions.assumeTrue(result.wired(), "本机没选出地形片元，跳过签名对账");
+        String adapter;
+        try {
+            adapter = Files.readString(ADAPTER);
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
+        // 只取 layout(location = N) out T name; —— 适配层的 out 就是包的 in。
+        Pattern outDecl = Pattern.compile(
+                "layout\\s*\\(\\s*location\\s*=\\s*(\\d+)\\s*\\)\\s*out\\s+"
+                        + "([A-Za-z_]\\w*)\\s+([A-Za-z_]\\w*)\\s*;");
+        Matcher m = outDecl.matcher(adapter);
+        java.util.Map<Integer, String> adapterOuts = new java.util.LinkedHashMap<>();
+        while (m.find()) {
+            adapterOuts.put(Integer.parseInt(m.group(1)), m.group(3));
+        }
+        java.util.Map<Integer, String> packIns = new java.util.LinkedHashMap<>();
+        for (PackTerrainProgram.Input input : result.program().inputs()) {
+            packIns.put(input.location(), input.name());
+        }
+        assertEquals(packIns, adapterOuts,
+                "🔖 **适配层产出的 varying 必须与包片元要的逐位置逐名字一致**。"
+                        + "少一条 = 链接失败；多一条无害（VS 多出的 out 允许不被读）。"
+                        + "对账失败说明换包后没同步适配层 —— 这正是「静默接线」最常见的一环");
+    }
+
+    @Test
+    @DisplayName("🔖 shaderPack=none ⇒ 明确**不接线**（不是兜底 passthrough）")
+    void selectionNoneMeansNotWired() {
+        PackTerrainSource.Result result =
+                PackTerrainSource.generate(Path.of("run", "shaderpacks"), "", "none");
+        assertFalse(result.wired(), "保留名 none 必须不接线");
+        assertNull(result.program(), "不接线的 program 必须为 null（不能是兜底文本）");
+        assertTrue(result.diagnostics().stream().anyMatch(d -> d.severity() == dev.vkdisp.glsl.TranslateDiagnostic.Severity.WARN),
+                "「不接线」必须显式 WARN，否则用户以为开了却什么都没发生（T11）");
+    }
+
+    @Test
+    @DisplayName("🔖 指定不存在的包 ⇒ 不接线且**不落到别的包**")
+    void namedMissingPackDoesNotFallBack() {
+        PackTerrainSource.Result result = PackTerrainSource.generate(INVENTORY, "", "no-such-pack");
+        assertFalse(result.wired(), "指定包不存在时不得悄悄换包（否则 §6 的 A/B 判据失去意义）");
+        assertNull(result.packName());
+    }
+}

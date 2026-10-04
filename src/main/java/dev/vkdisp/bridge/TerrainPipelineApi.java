@@ -35,6 +35,7 @@ import com.mojang.renderpearl.api.pipeline.UniformType;
 import dev.vkdisp.VkDisp;
 import dev.vkdisp.VkDispConfig;
 import dev.vkdisp.pipeline.model.MrtPlan;
+import dev.vkdisp.pipeline.model.PackTerrainProgram;
 import dev.vkdisp.pipeline.model.TerrainDerivedPlan;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -93,6 +94,17 @@ public final class TerrainPipelineApi {
 
     /** 自定义 uniform 环（GAP-004；懒建，必须在渲染线程 / 设备就绪后）。 */
     private static MappableRingBuffer paramsRing;
+
+    /**
+     * GAP-003：包地形片元 {@code VkDispBuiltins} 块的环（懒建；每帧写 —— 块终于有真消费者了）。
+     *
+     * <p>🔖 与 {@link #paramsRing} 分开的原因：块布局不同（地形片的收编集与 composite 各不相同）
+     * ⇒ 字节数不同、成员不同；共用一个环要么装不下，要么写错成员。
+     */
+    private static MappableRingBuffer terrainBuiltinsRing;
+
+    /** 地形块环的字节下限（与 FrameApi 的 BUILTINS_MIN_BYTES 同口径：std140 对齐后仍够写）。 */
+    private static final int TERRAIN_BUILTINS_MIN_BYTES = 256;
 
     private TerrainPipelineApi() {
     }
@@ -169,6 +181,19 @@ public final class TerrainPipelineApi {
      * 任一条构造失败时其余 5 条仍应可用；合并计数会把「一条坏」表现成「全灭」。
      */
     public static void registerTerrainDerivedMrtPipelines(RegisterRenderPipelinesEvent event) {
+        // 🔖 GAP-003：本次是否换包地形片元 + **冻结附件数**。
+        //   冻结发生在**注册这一刻**（而不是每帧现算），因为管线颜色目标数与 render pass
+        //   附件数必须恒等；两者若各自现算，就会出现「注册读 3、绘制读 1」⇒ setPipeline 抛
+        //   IllegalStateException **崩客户端**（X42）。注册后两侧读同一个冻结值。
+        PackTerrainProgram packTerrain = packTerrainForMrt();
+        MrtPlan.freezePackOutputCount(packTerrain == null ? 0 : packTerrain.outputCount());
+        if (packTerrain != null) {
+            VkDisp.LOGGER.info(
+                    "vkdisp: [GAP-003] MRT terrain pipelines will use pack fragment: program={}"
+                            + " colorTargets={} samplers={} varyings={}",
+                    packTerrain.qualifiedName(), MrtPlan.slotCount(),
+                    packTerrain.fragmentSamplers().size(), packTerrain.inputs().size());
+        }
         for (TerrainDerivedPlan.Spec spec : TerrainDerivedPlan.all()) {
             String mrtKey = key(spec.layer(), spec.multiDraw());
             try {
@@ -182,8 +207,20 @@ public final class TerrainPipelineApi {
                                 .withUniform(TERRAIN_PARAMS_UNIFORM, UniformType.UNIFORM_BUFFER)
                                 .build())
                         // 🔖 与 MrtTerrainPass 建的多附件 pass 附件数**必须相等**（Vulkan 要求）。
-                        // 两侧都取 MrtPlan.SLOT_COUNT —— 单点真源，避免「一处改了一处没改」。
+                        // 两侧都取 MrtPlan.slotCount() —— 单点真源，避免「一处改了一处没改」。
                         .withColorTargetStates(0, MrtPlan.slotCount() - 1, () -> ColorTargetState.DEFAULT);
+                if (packTerrain != null) {
+                    // 🔖 GAP-003：换成「顶点适配层 + 包自己的片元」。
+                    //   顶点侧不能直接用包的 vsh —— 它要 7 个顶点属性（含 Normal / mc_Entity /
+                    //   mc_midTexCoord），而原版地形顶点缓冲 DefaultVertexFormat.BLOCK 只有 4 个；
+                    //   改网格化属另一层工程。适配层按原版格式取数、逐位置对齐产出包的 9 条 varying。
+                    builder.withVertexShader(TERRAIN_PACK_ADAPTER_ID)
+                            .withFragmentShader(PACK_TERRAIN_FRAGMENT_ID)
+                            // 布局必须**逐条**登记包片元自由声明的 sampler：STRICT_VALIDATION 下
+                            // draw() 按布局校验，SPIR-V 反射出的每个名字查不到即抛（实测原文：
+                            // Unable to find shader defined uniform）。反向（布局多于 SPIR-V）无害。
+                            .withBindGroupLayout(packTerrainBindGroupLayout(packTerrain));
+                }
                 if (spec.hasAlphaCutout()) {
                     builder.withShaderDefine("ALPHA_CUTOUT", spec.alphaCutout());
                 }
@@ -204,6 +241,53 @@ public final class TerrainPipelineApi {
         }
         VkDisp.LOGGER.info("vkdisp: [GAP-003/A] terrain MRT derived pipelines registered: {}/6 (colorTargets={})",
                 DERIVED_MRT.size(), MrtPlan.slotCount());
+    }
+
+    /** 顶点适配层着色器 id（assets/vkdisp/shaders/terrain_pack_adapter.vsh）。 */
+    private static final Identifier TERRAIN_PACK_ADAPTER_ID =
+            Identifier.fromNamespaceAndPath(TerrainDerivedPlan.NAMESPACE, "terrain_pack_adapter");
+
+    /** 包地形片元 id（虚拟资源包提供的 shaders/gbuffers_terrain.fsh）。 */
+    private static final Identifier PACK_TERRAIN_FRAGMENT_ID =
+            Identifier.fromNamespaceAndPath(dev.vkdisp.VkDispVirtualPack.NAMESPACE, "gbuffers_terrain");
+
+    /** 「不接包片元」的一次性告警哨兵（默认关 / 无包地形片元，两种原因要分开说）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean PACK_TERRAIN_OFF_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** 本次 MRT 地形管线是否改用包自己的片元；不接时返回 {@code null}（沿用原版 core/terrain）。 */
+    static PackTerrainProgram packTerrainForMrt() {
+        // 🔖 注册期早于 openResources 约 4.5 秒（runClient 实测），且切包重载时本事件不再触发
+        //   ⇒ 必须在**这里**先把契约算出来，否则这条路径永远拿不到包片元、且不报错。
+        dev.vkdisp.VkDispVirtualPack.ensureTerrainProgram();
+        if (!dev.vkdisp.VkDispConfig.MRT_PACK_TERRAIN_SHADER.get()) {
+            if (PACK_TERRAIN_OFF_LOGGED.compareAndSet(false, true)) {
+                VkDisp.LOGGER.info("vkdisp: [GAP-003] pack terrain fragment disabled by config"
+                        + " (mrt.packTerrainShader=false) -> MRT terrain pipeline keeps vanilla core/terrain");
+            }
+            return null;
+        }
+        PackTerrainProgram program = dev.vkdisp.VkDispVirtualPack.terrainProgram();
+        if (program == null) {
+            if (PACK_TERRAIN_OFF_LOGGED.compareAndSet(false, true)) {
+                VkDisp.LOGGER.warn("vkdisp: [GAP-003] pack terrain fragment requested but unavailable"
+                        + " (no pack gbuffers_terrain selected) -> MRT terrain pipeline keeps vanilla core/terrain");
+            }
+            return null;
+        }
+        PACK_TERRAIN_OFF_LOGGED.set(false);
+        return program;
+    }
+
+    /** 包地形片元的绑定组布局：VkDispBuiltins 块 + 它自由声明的每个 sampler。 */
+    private static BindGroupLayout packTerrainBindGroupLayout(PackTerrainProgram program) {
+        BindGroupLayout.Builder builder = BindGroupLayout.builder();
+        for (String name : program.bindGroupUniformNames()) {
+            builder = name.equals(PackTerrainProgram.BUILTINS_BLOCK)
+                    ? builder.withUniform(name, UniformType.UNIFORM_BUFFER)
+                    : builder.withUniform(name, UniformType.COMBINED_IMAGE_SAMPLER);
+        }
+        return builder.build();
     }
 
     /**
@@ -357,5 +441,174 @@ public final class TerrainPipelineApi {
 
     private static String key(String layer, boolean multiDraw) {
         return layer + "|" + multiDraw;
+    }
+    /**
+     * GAP-003：每帧把**眼空间太阳方向**写进 VkDispTerrainParams（顶点适配层要它算 sunVec）。
+     *
+     * <p><b>为什么从「只写一次」改成每帧写</b>：该块此前没有任何消费者，写一次是诚实的
+     * 「零值基线」；顶点适配层出现后它有了真消费者，而太阳方向逐帧变化 ⇒ 必须每帧更新。
+     *
+     * <p><b>必须在 render pass 打开之前调用</b>：MappableRingBuffer 的 map/close 会把本帧数据
+     * 落进环，而 pass 打开期间动 encoder 是已实测到的错误用法（FrameApi 同款纪律）。
+     */
+    public static void updateTerrainParams() {
+        try {
+            java.util.Map<String, Object> values = dev.vkdisp.render.OfUniformManager.gather(
+                    net.minecraft.client.Minecraft.getInstance(),
+                    mainTargetWidth(), mainTargetHeight(), blockAtlasSizeOrEmpty(), java.util.List.of());
+            Object sun = values.get("sunPosition");
+            float sx = 0.0F;
+            float sy = 1.0F;
+            float sz = 0.0F;
+            if (sun instanceof org.joml.Vector3f vector) {
+                sx = vector.x();
+                sy = vector.y();
+                sz = vector.z();
+            }
+            try (com.mojang.renderpearl.api.buffers.GpuBufferSlice.MappedView view =
+                    terrainParamsRing().currentBuffer().map(false, true)) {
+                Std140Builder.intoBuffer(view.data()).putVec4(sx, sy, sz, 0.0F);
+            }
+        } catch (Throwable t) {
+            if (!PARAMS_WRITE_FAILED_LOGGED.getAndSet(true)) {
+                VkDisp.LOGGER.error("vkdisp: [GAP-003] terrain params upload FAILED (原文如下)"
+                        + " -> sunVec 将按零向量处理", t);
+            }
+        }
+    }
+
+    /** 一次性错误哨兵（上传失败只打一次，避免每帧刷屏）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean PARAMS_WRITE_FAILED_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** 一次性错误哨兵（块上传失败只打一次）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean BUILTINS_WRITE_FAILED_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** 一次性埋点哨兵（绑定摘要只打一次）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean PACK_TERRAIN_BIND_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** GAP-003：每帧把 OF 内建值写进地形片元的 VkDispBuiltins 环（pass 打开前调用）。 */
+    public static void updateTerrainBuiltins() {
+        dev.vkdisp.glsl.translate.BuiltinsBlockLayout layout =
+                dev.vkdisp.VkDispVirtualPack.terrainBuiltinsLayout();
+        if (layout == null || layout.isEmpty()) {
+            return;
+        }
+        try {
+            java.util.Map<String, Object> values = dev.vkdisp.render.OfUniformManager.gather(
+                    net.minecraft.client.Minecraft.getInstance(),
+                    mainTargetWidth(), mainTargetHeight(), blockAtlasSizeOrEmpty(), java.util.List.of());
+            MappableRingBuffer ring = terrainBuiltinsRing(
+                    Math.max(TERRAIN_BUILTINS_MIN_BYTES, layout.byteSize()));
+            try (com.mojang.renderpearl.api.buffers.GpuBufferSlice.MappedView view =
+                    ring.currentBuffer().map(false, true)) {
+                dev.vkdisp.render.OfUniformManager.logUploadOnce("terrain", layout,
+                        dev.vkdisp.render.OfUniformManager.write(layout, values, view.data()), values);
+            }
+        } catch (Throwable t) {
+            if (!BUILTINS_WRITE_FAILED_LOGGED.getAndSet(true)) {
+                VkDisp.LOGGER.error("vkdisp: [GAP-003] terrain builtins upload FAILED (原文如下)"
+                        + " -> 该块将保持零填充", t);
+            }
+        }
+    }
+
+    private static MappableRingBuffer terrainBuiltinsRing(int bytes) {
+        MappableRingBuffer ring = terrainBuiltinsRing;
+        if (ring == null) {
+            ring = new MappableRingBuffer(() -> "vkdisp terrain builtins",
+                    GpuBuffer.USAGE_MAP_WRITE | GpuBuffer.USAGE_UNIFORM, bytes);
+            terrainBuiltinsRing = ring;
+            VkDisp.LOGGER.info("vkdisp: [GAP-003] terrain builtins ring created: bytes={}", bytes);
+        }
+        return ring;
+    }
+
+    /**
+     * GAP-003：把包地形片元要绑的 uniform 逐条绑到当前 render pass。
+     *
+     * <p><b>为什么必须逐条绑</b>：STRICT_VALIDATION 下 validateDraw 按**布局**校验，
+     * 每个条目都要先 setUniform，缺一条即抛 Missing uniform 名（实测原文）。
+     *
+     * <p><b>视图怎么选</b>（占位一律显式，不用「猜一个像的」）：
+     * texture_0 = 方块图集（真值）；noisetex = 方块图集（占位）；
+     * shadowtex0/1 = 本 pass 的深度视图（类型匹配 sampler2DShadow 的 D32 深度，
+     * 但装的是本 pass 地形深度而非真阴影贴图 ⇒ 阴影结果不承诺）；
+     * shadowcolor0 = colortex 槽 0（占位）。
+     */
+    public static void bindPackTerrainUniforms(RenderPass pass,
+            com.mojang.renderpearl.api.textures.GpuSampler sampler,
+            com.mojang.renderpearl.api.textures.GpuTextureView atlas,
+            com.mojang.renderpearl.api.textures.GpuTextureView depthView,
+            com.mojang.renderpearl.api.textures.GpuTextureView colorView) {
+        PackTerrainProgram program = dev.vkdisp.VkDispVirtualPack.terrainProgram();
+        if (program == null) {
+            return;
+        }
+        dev.vkdisp.glsl.translate.BuiltinsBlockLayout layout =
+                dev.vkdisp.VkDispVirtualPack.terrainBuiltinsLayout();
+        if (layout != null && !layout.isEmpty()) {
+            MappableRingBuffer ring = terrainBuiltinsRing;
+            if (ring == null) {
+                VkDisp.LOGGER.error("vkdisp: [GAP-003] pack terrain builtins ring is null"
+                        + " -> 不绑定 VkDispBuiltins（draw 将因 Missing uniform 抛）");
+            } else {
+                pass.setUniform(PackTerrainProgram.BUILTINS_BLOCK, ring.currentBuffer());
+            }
+        }
+        for (String name : program.fragmentSamplers()) {
+            com.mojang.renderpearl.api.textures.GpuTextureView view =
+                    switch (name) {
+                        case "texture_0" -> atlas;
+                        case "shadowtex0", "shadowtex1" -> depthView;
+                        case "shadowcolor0" -> colorView;
+                        default -> atlas;
+                    };
+            if (view == null) {
+                VkDisp.LOGGER.error("vkdisp: [GAP-003] pack terrain sampler view is null: {}"
+                        + " -> 跳过该条绑定（draw 将因 Missing uniform 抛）", name);
+                continue;
+            }
+            pass.setUniform(name, view, sampler);
+        }
+        if (!PACK_TERRAIN_BIND_LOGGED.getAndSet(true)) {
+            VkDisp.LOGGER.info("vkdisp: [GAP-003] pack terrain uniforms bound: blockMembers={} samplers={}"
+                    + " (texture_0=图集真值; noisetex/shadowcolor0=占位; shadowtex0/1=本 pass 深度)",
+                    layout == null ? 0 : layout.members().size(),
+                    program.fragmentSamplers().size());
+        }
+    }
+
+    private static int mainTargetWidth() {
+        com.mojang.blaze3d.pipeline.RenderTarget target =
+                net.minecraft.client.Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        return target == null ? 0 : target.width;
+    }
+
+    private static int mainTargetHeight() {
+        com.mojang.blaze3d.pipeline.RenderTarget target =
+                net.minecraft.client.Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        return target == null ? 0 : target.height;
+    }
+
+    /** 方块图集尺寸（OfUniformManager.gather 需要）；取不到时给 {0,0}，由 gather 侧承担零值语义。 */
+    private static int[] blockAtlasSizeOrEmpty() {
+        try {
+            net.minecraft.client.renderer.texture.AbstractTexture texture =
+                    net.minecraft.client.Minecraft.getInstance().getTextureManager().getTexture(
+                            net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS);
+            if (texture == null) {
+                return new int[] {0, 0};
+            }
+            com.mojang.renderpearl.api.textures.GpuTexture gpu = texture.getTexture();
+            if (gpu == null) {
+                return new int[] {0, 0};
+            }
+            return new int[] {gpu.getWidth(0), gpu.getHeight(0)};
+        } catch (Throwable t) {
+            return new int[] {0, 0};
+        }
     }
 }

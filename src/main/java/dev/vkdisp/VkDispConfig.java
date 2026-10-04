@@ -195,6 +195,22 @@ public final class VkDispConfig {
             .comment("地形 MRT 附件数（管线与 pass 共用；本机无 validation layer，不匹配会静默失效）")
             .defineInRange("mrt.attachments", 3, 1, 8);
 
+    /**
+     * 🔴 GAP-003：派生 MRT 地形管线**改用包自己的 gbuffers_terrain 片元** —— 默认关闭。
+     *
+     * <p><b>为什么要单独一个键</b>（M1 编码约束 ⑤「逐个开启 + 逐个关闭」）：
+     * 「地形画进多附件 pass」（mrt.terrain）与「片元来自包而不是原版」是两件独立的事 ——
+     * 前者已验通（h04/h05）；后者依赖包地形片元的契约解析、绑定组条目与顶点适配层，
+     * 且其中三条 varying 目前只能按常量供值（GAP-007）⇒ 必须能<b>一键退回</b>原版 core/terrain。
+     *
+     * <p>开启后若所选包<b>没有</b>可用的 gbuffers_terrain 片元，会显式 WARN 并保持原版
+     * （不静默换片元、不崩）。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_PACK_TERRAIN_SHADER = BUILDER
+            .comment("GAP-003：派生 MRT 地形管线使用包自己的 gbuffers_terrain 片元"
+                    + "（需配合 mrt.terrain=true；默认关 = 沿用原版 core/terrain）。")
+            .define("mrt.packTerrainShader", false);
+
     /** 诊断：地形 MRT pass 里先画一个已知可用的全屏三角形（判别「pass 不工作」vs「地形不出片元」）。 */
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_FULLSCREEN_PROBE = BUILDER
             .comment("诊断：地形 MRT pass 内先画全屏三角形（默认关）。")
