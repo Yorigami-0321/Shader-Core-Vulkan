@@ -160,8 +160,14 @@ public final class OfGlslTranslator {
         //     本段才有「声明行」可改；也必须排在 ⑧ 之前，让 uniform 注入看到的是**已兑现**的槽位。
         DrawBuffersSlotAdapter.Result slotMapped = DrawBuffersSlotAdapter.apply(stage, adapted.text());
 
+        // 7.75 派生导数探针（诊断，默认关）：**等行数**变换（只改已有声明行的右值），
+        //     因此行号映射完全不受影响。dcdx/dcdy 声明在**片元里**，顶点侧探针够不着，
+        //     'h13' 定的候选 6 只能在这里做单变量实验。
+        //     排在 7.5 之后：7.5 可能改写片元输出声明，探针只碰 dFdx 行，互不干扰。
+        DerivativeProbeAdapter.Result derProbe = DerivativeProbeAdapter.apply(stage, slotMapped.text());
+
         // ⑧ 内建 uniform 注入：运行在 ⑦½ 的输出上，诊断行号是 ⑦ 输出坐标系（⑦½ 等行数）。
-        UniformInjector.Result injected = UniformInjector.inject(slotMapped.text());
+        UniformInjector.Result injected = UniformInjector.inject(derProbe.text());
 
         int baseLineCount = SourceLines.of(versioned.text()).lineCount();
 
@@ -199,6 +205,9 @@ public final class OfGlslTranslator {
                 new int[] {declared.insertedLineCount(), adapted.insertedLineCount()})
                 .compose(upstream.lineMap());
         for (TranslateDiagnostic diagnostic : slotMapped.diagnostics()) {
+            diagnostics.add(locate(diagnostic, preInject));
+        }
+        for (TranslateDiagnostic diagnostic : derProbe.diagnostics()) {
             diagnostics.add(locate(diagnostic, preInject));
         }
         for (TranslateDiagnostic diagnostic : injected.diagnostics()) {

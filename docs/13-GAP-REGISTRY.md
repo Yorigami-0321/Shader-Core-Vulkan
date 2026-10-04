@@ -39,6 +39,14 @@
 `pipeline/model`（契约）+ `glsl/translate/PackVertexAdapterGenerator`（常量项表）+ 采样器绑定 |
 `mrt.packTerrainShader`（已存在） | 默认配置路径画面正确 ⇒ 随时可退回 |
 🟡 **已有正面证据：只有 `albedo` 为 0**（`h13`）：切到 **colortex3**（高级材质路径确实写的槽）→ 画面是**亮绿地形剪影**（`vec4(smoothness, skyOcclusion, 0, 1)` 的 `.g` 满值）⇒ **片元着色器完整跑完**，同一片元里光照/天光/法线/菲尼尔全部正常，**只有 `albedo` 是 0**。🔍 候选 6 子项①（图集 mip 链）**已排除**：`blockAtlas()` 返回的是**原版** `TextureAtlas.LOCATION_BLOCKS` 视图，mip 由原版生成填充。🔍 另外**画面独立验证了 DRAWBUFFERS 槽位路由**：槽 1 整幅纯清屏色（99.89%）、没有地形，正因为高级材质路径写的是槽 **0/3/6/7**。🟡 剩余疑独：`dFdx(texCoord)` 是否在反向 Z / MRT pass 下退化（**未验证**）|
+🔍 `h14` 进度：派生导数探针（**转译第 7¾ 段** `DerivativeProbeAdapter`）已落地，
+只把 `vec2 dcdx = dFdx(texCoord);` / `vec2 dcdy = dFdy(texCoord);` 的初值换成 `vec2(0.0)`（默认关、等行数、`finally` 复位、X45 自报）。
+🔴 单测**当场抓到**探针**自己**一处致命缺陷（正则只匹配 `dFdx`，漏了 `dFdy`，
+导致「单变量实验」实际只施加了半个变量，而日志只报 N 处不会提醒）。已修：分别捕获「名字方向」与「函数方向」并核对一致性。
+🔴 客户端那趟**作废**：M-01 冷路径基准长时间占住渲染线程（`hit x6250000` 仍在跑），
+地形片元源从未生成、**地形 pass 一次都没跑**（`terrain drawn into` = 0），探针连被调用的机会都没有。
+🔖 当时的截图看着「完全正常」，但它是 `terrainToMain=false` 下的**纯原版渲染**，
+原版永远看着正常，此时**「画面正常」不含任何信息**。🟡 候选 6 **仍未验证**，下一轮需先过两道闸（基准已跑完 + `terrain drawn into` 出现）。
 | GAP-010 | 生成式地形顶点适配层**资源登记晚于管线注册**：首轮资源重载时 `PipelineBuilder`
   报 12 条 `Couldn't find source for VERTEX shader (vkdisp_pack:terrain_pack_adapter)`；
 第二轮重载成功 ⇒ **不致命**，但会在日志里留 12 条 ERROR（实测 `h11`）|

@@ -238,6 +238,17 @@ public final class VkDispConfig {
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_PARALLAX_SKIP_PROBE = BUILDER
             .comment("诊断：顶点适配层把 dist 强制成 1000.0 以跳过视差分支（默认关，单变量实验）。")
             .define("mrt.terrainParallaxSkipProbe", false);
+
+    /**
+     * `🔦 诊断单变量实验（h13 候选 6）：把片元里的 dcdx/dcdy 初值改成 vec2(0.0)。
+     * <p>按 GLSL 规定，显式导数为 0 时 textureGrad 的 LOD 选取应与 texture() 的隐式导数相同，
+     * 因此「画面是否变亮」是一个干净的二值判据。
+     * <p>dcdx/dcdy 声明在**片元**里（第 293 行），顶点侧探针够不着 ⇒ 只能在转译阶段做。
+     * <p>开启时日志自报「已把 N 处导数置零」；N=0 时额外告警「开关没生效」。默认关。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_DERIVATIVE_PROBE = BUILDER
+            .comment("诊断：把片元 dcdx/dcdy 初值改成 vec2(0.0)（默认关，单变量实验）。")
+            .define("mrt.terrainDerivativeProbe", false);
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_FULLSCREEN_PROBE = BUILDER
             .comment("诊断：地形 MRT pass 内先画全屏三角形（默认关）。")
             .define("mrt.terrainFullscreenProbe", false);

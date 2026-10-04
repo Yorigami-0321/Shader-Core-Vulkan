@@ -521,6 +521,12 @@ public final class VkDispVirtualPack {
     private static String generateTerrainSource(Path inventory, String profile, String selection,
             PackOptionStore store) {
         terrainProgram = null;
+        // U0001f534 派生导数探针是**转译段级**的总闸（dcdx/dcdy 声明在片元里，顶点侧够不着）。
+        //   只在生成地形源这段窗口里打开，并在 finally 复位：
+        //   否则合成/延迟/最终四个程序的转译也会被它波及（它们可能也声明 dcdx）。
+        boolean probeWas = dev.vkdisp.glsl.translate.DerivativeProbeAdapter.enabled();
+        dev.vkdisp.glsl.translate.DerivativeProbeAdapter.setEnabled(
+                VkDispConfig.MRT_TERRAIN_DERIVATIVE_PROBE.get());
         try {
             dev.vkdisp.pack.PackTerrainSource.Result terrain =
                     dev.vkdisp.pack.PackTerrainSource.generate(inventory, profile, selection, store);
@@ -551,6 +557,11 @@ public final class VkDispVirtualPack {
             VkDisp.LOGGER.error("vkdisp: [GAP-003] pack terrain fragment selection FAILED (原文如下)"
                     + " -> derived MRT terrain pipeline keeps vanilla core/terrain", t);
             return null;
+        } finally {
+            // U0001f534 必须在 finally 复位：探针是全局静态闸，漏复位会让后续
+            //   合成/延迟/最终四个程序的转译也被改写（它们可能也声明 dcdx）。
+            //   漏复位的症状是「开了诊断开关之后别的画面也变了」，极难归因。
+            dev.vkdisp.glsl.translate.DerivativeProbeAdapter.setEnabled(probeWas);
         }
     }
 
