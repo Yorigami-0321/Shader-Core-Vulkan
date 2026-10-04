@@ -66,10 +66,18 @@ class ShadowSamplerAliasingTest {
                 "🔴 不得把本 pass 的深度视图**无条件**绑成 shadowtex0/1 —— 深度附件是**读写**的"
                         + "（清屏 0.0 + 地形写深度），同图又作采样器是 Vulkan 未定义行为，"
                         + "且本机无 validation layer ⇒ 永不报错");
-        assertTrue(api.contains("case \"shadowtex0\", \"shadowtex1\" -> useStubs"),
-                "shadowtex0/1 的绑定必须由开关 useStubs 决定（默认走桩纹理）");
+        // 🔶 2026-10-05 绑定改为「按 SamplerDimensionPlan 的维度决策」分派，
+        //   所以字面量从 `case "shadowtex0", …` 变成 `case SHADOW_DEPTH_2D ->`。
+        //   **本测试要守的不变式是「默认走桩」**，不是某个 case 的写法 ——
+        //   否则重构一下 switch 形状就会误报，而误报久了就会被当成噪音忽略（那才是真正的失守）。
+        assertTrue(api.contains("case SHADOW_DEPTH_2D -> useStubs"),
+                "shadowtex0/1 的绑定必须由开关 useStubs 决定（默认走桩纹理）；"
+                        + "若本测试失败，先确认绑定是否仍由 SamplerDimensionPlan 维度决策分派");
         assertTrue(api.contains("? ShadowStubs.depthView()"),
                 "🔖 **默认分支**必须是专用桩纹理（永不作附件）");
+        assertTrue(api.contains("SamplerDimensionPlan.diagnostic()")
+                        || api.contains("SamplerDimensionPlan"),
+                "🔖 绑定必须经 SamplerDimensionPlan 的**维度决策**，不得回到「一律喂图集」的 default 分支");
     }
 
     @Test
@@ -78,10 +86,31 @@ class ShadowSamplerAliasingTest {
         String api = read(API);
         assertEquals(0, countCode(api, "case \"shadowcolor0\" -> colorView"),
                 "🔴 不得把本 pass 的 colortex0 **无条件**绑成 shadowcolor0 —— 它是被清屏并写入的读写附件");
-        assertTrue(api.contains("case \"shadowcolor0\" -> useStubs"),
+        // 🔶 同上：case 形状随维度决策重构而变，守卫的是「默认走桩」这个不变式。
+        assertTrue(api.contains("case SHADOW_COLOR_2D -> useStubs"),
                 "shadowcolor0 的绑定必须由开关 useStubs 决定");
         assertTrue(api.contains("? ShadowStubs.colorView()"),
                 "🔖 **默认分支**必须是专用桩纹理");
+    }
+
+    /**
+     * 🔴 2026-10-05 新增：<b>维度决策不得回退</b>。
+     *
+     * <p>本轮修了另一个同类的静默 UB —— 包的 4 个 {@code sampler3D}
+     * （{@code lighttex} / {@code lighttex0} / {@code lighttex1} / {@code voxeltex}）
+     * 被落到 {@code default -> atlas}，也就是**拿 2D 图集视图喂 3D 采样器**：
+     * 描述符类型不匹配 = Vulkan 未定义行为，同样不报错。
+     * ⇒ 守卫「不可绑的类型宁可让 draw 抛 {@code Missing uniform}，也不喂错维度」。
+     */
+    @Test
+    @DisplayName("🔖🔖 维度不可绑时必须显式不绑（不喂错维度造成静默 UB）")
+    void unsupportedDimensionMustNotBindWrongView() {
+        String api = read(API);
+        assertTrue(api.contains("if (!binding.bindable())"),
+                "必须显式判断「该 sampler 有没有类型匹配的视图」");
+        assertTrue(api.contains("**不绑定**") || api.contains("不绑定"),
+                "不可绑时必须走「不绑定 + ERROR」这条路（响亮失败），"
+                        + "而不是回退到某个看起来能用的视图");
     }
 
     /**

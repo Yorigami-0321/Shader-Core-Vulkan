@@ -600,30 +600,54 @@ public final class TerrainPipelineApi {
                 pass.setUniform(PackTerrainProgram.BUILTINS_BLOCK, ring.currentBuffer());
             }
         }
+        // 🔴🔴 维度决策（本轮修复的核心）：**视图类别由片元声明的 sampler 类型决定**，
+        //   不是「一律喂方块图集」。原实现对未识别的名字一律 `default -> atlas`，
+        //   而 BSL 声明了 4 个 `sampler3D`（lighttex / lighttex0 / lighttex1 / voxeltex）
+        //   ⇒ 它们拿到了 2D 图集视图 = **描述符类型不匹配 = Vulkan 未定义行为**，
+        //   且本机没有 validation layer ⇒ 不报任何错（与 h27 的别名 UB 同一类：
+        //   静默、无告警、只能靠推理发现）。实测依据 = BSL v10.1.8 全包 sampler 声明统计。
+        dev.vkdisp.pipeline.model.SamplerDimensionPlan.Plan dimensionPlan =
+                dev.vkdisp.pipeline.model.SamplerDimensionPlan.fromFragmentSource(
+                        program.fragmentSource());
         boolean useStubs = dev.vkdisp.VkDispConfig.MRT_SHADOW_STUBS.get();
-        for (String name : program.fragmentSamplers()) {
+        for (dev.vkdisp.pipeline.model.SamplerDimensionPlan.Binding binding : dimensionPlan.bindings()) {
+            String name = binding.name();
+            if (!binding.bindable()) {
+                // 🔶 不可绑 ⇒ **不绑**。宁可让 draw 抛 Missing uniform（响亮失败、可定位），
+                //   也不拿 2D 视图冒充 3D/cube（静默 UB）。这是与旧 `default -> atlas` 的
+                //   根本区别：旧实现在这里总能绑出一个「看起来能用」的视图。
+                VkDisp.LOGGER.error("vkdisp: [GAP-003] sampler '{}' 类型 '{}' 无类型匹配的视图（{}）"
+                        + " -> **不绑定**（宁可 Missing uniform 抛，也不喂错维度造成静默 UB）",
+                        name, binding.declaredType(), binding.reason());
+                continue;
+            }
             com.mojang.renderpearl.api.textures.GpuTextureView view =
-                    switch (name) {
-                        case "texture_0" -> atlas;
+                    switch (binding.kind()) {
+                        case ATLAS_2D -> atlas;
                         // 🔴 h26 修正：**不得**绑本 pass 的深度/颜色附件（读写附件 + 采样器 = Vulkan UB）。
                         //   默认改绑专用桩纹理（永不作附件），彻底消除别名。
                         // 🔬 mrt.shadowStubs=false 时**故意**恢复旧绑定，仅供同二进制单变量对照取证。
-                        case "shadowtex0", "shadowtex1" -> useStubs
+                        case SHADOW_DEPTH_2D -> useStubs
                                 ? ShadowStubs.depthView()
                                 : ShadowStubs.ownDepthAttachment(depthView);
-                        case "shadowcolor0" -> useStubs
+                        case SHADOW_COLOR_2D -> useStubs
                                 ? ShadowStubs.colorView()
                                 : ShadowStubs.ownColorAttachment(colorView);
-                        // 🔴 h10 实测修正：高级材质路径的 全黑画面来自这里 ——
+                        // 🔴 h10 实测修正：高级材质路径的全黑画面来自这里 ——
                         //   把 specular/normals 绑成方块图集，而它们是逐方块**材质贴图集**，
                         //   图集的 .z（ao）与 .r/.g（smoothness/f0）不是材质语义 ⇒ albedo 被乘得全零。
                         //   ⇒ 绑**乘法单位元**（NeutralMaterialMaps）：
                         //      specular=(0,0,0,1) ⇒ metalness=0, smoothness=0 ⇒ *1
                         //      normals =(128,128,255,255) ⇒ ao=1.0 ⇒ *1
-                        //   这是可解释的缺默（“没有材质覆盖、没有 AO、法线朝上”），不是编一个假输入。
-                        case "specular" -> NeutralMaterialMaps.specularView();
-                        case "normals" -> NeutralMaterialMaps.normalsView();
-                        default -> atlas;
+                        //   这是可解释的缺省（"没有材质覆盖、没有 AO、法线朝上"），不是编一个假输入。
+                        case NEUTRAL_MATERIAL_2D -> name.equals("specular")
+                                ? NeutralMaterialMaps.specularView()
+                                : NeutralMaterialMaps.normalsView();
+                        // 🔴 本轮新增：sampler3D ⇒ 类型匹配的 3D 桩（全 0 = 无体积光照/体素数据）。
+                        case VOLUME_3D -> VolumeStubs.view();
+                        case PLACEHOLDER_2D -> atlas;
+                        // decide() 已把 UNSUPPORTED 过滤掉；这里只是让编译器知道穷尽了。
+                        case UNSUPPORTED -> null;
                     };
             if (view == null) {
                 VkDisp.LOGGER.error("vkdisp: [GAP-003] pack terrain sampler view is null: {}"
@@ -634,10 +658,14 @@ public final class TerrainPipelineApi {
         }
         if (!PACK_TERRAIN_BIND_LOGGED.getAndSet(true)) {
             VkDisp.LOGGER.info("vkdisp: [GAP-003] pack terrain uniforms bound: blockMembers={} samplers={}"
-                    + " (texture_0=图集真值; specular/normals=中性单位元 h10;"
-                            + " noisetex/shadowcolor0=占位; shadowtex0/1=本 pass 深度)",
+                            + " (by dimension: {}; texture_0=图集真值; specular/normals=中性单位元;"
+                                    + " shadowtex*=专用桩; sampler3D*=3D 桩; 其余=图集占位)",
                     layout == null ? 0 : layout.members().size(),
-                    program.fragmentSamplers().size());
+                    program.fragmentSamplers().size(),
+                    dimensionPlan.summary());
+            for (String warning : dimensionPlan.warnings()) {
+                VkDisp.LOGGER.warn("vkdisp: [GAP-003] sampler plan: {}", warning);
+            }
         }
     }
 
