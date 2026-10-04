@@ -136,6 +136,20 @@ public final class VkDispVirtualPack {
      */
     private static volatile dev.vkdisp.pipeline.model.PackTerrainProgram terrainProgram;
 
+    /**
+     * GAP-003：包内资源（按包地形片元 varying 契约**生成**的顶点适配层）。
+     *
+     * <p>🔖 为什么是生成物而不是静态资产：实测 BSL 默认配置要 9 条 varying、开
+     * {@code ADVANCED_MATERIALS} 后要 15 条；写死一份对另一个配置就是「少供」⇒
+     * 驱动层在资源加载期抛 {@code ShaderCompileException: missing output at location 14}
+     * ⇒ <b>客户端起不来</b>。详见 {@code glsl.translate.PackVertexAdapterGenerator}。
+     */
+    public static final String TERRAIN_ADAPTER_PATH = "shaders/terrain_pack_adapter.vsh";
+
+    /** 全量资源 id：assets/vkdisp_pack/shaders/terrain_pack_adapter.vsh。 */
+    private static final Identifier TERRAIN_ADAPTER_ID =
+            Identifier.fromNamespaceAndPath(NAMESPACE, TERRAIN_ADAPTER_PATH);
+
     /** GAP-003：所选包的地形片元契约；{@code null} = 保持原版 core/terrain（不接线）。 */
     public static dev.vkdisp.pipeline.model.PackTerrainProgram terrainProgram() {
         return terrainProgram;
@@ -273,7 +287,8 @@ public final class VkDispVirtualPack {
                 // openAllSelected@3114：此刻配置已加载@3079 → 生成真正生效的源（P2.4 ③ 时机）。
                 GeneratedSources sources = generateSources();
                 return Stream.of(new VirtualPackResources(loc,
-                        sources.composite(), sources.deferred(), sources.finalSource(), sources.terrain()));
+                        sources.composite(), sources.deferred(), sources.finalSource(),
+                        sources.terrain(), sources.terrainAdapter()));
             }
         };
         Pack.Metadata metadata = new Pack.Metadata(
@@ -293,11 +308,12 @@ public final class VkDispVirtualPack {
      * （缺失 = 沿用原版 core/terrain，画面照常）。两者混成同一个兜底口径就会让
      * 「没找到地形片元」看起来像「找到了一个假的地形片元」。
      */
-    private record GeneratedSources(String composite, String deferred, String finalSource, String terrain) {
+    private record GeneratedSources(String composite, String deferred, String finalSource, String terrain,
+            String terrainAdapter) {
 
         /** 四源形态（地形源为 null = 不接线）。 */
         GeneratedSources(String composite, String deferred, String finalSource) {
-            this(composite, deferred, finalSource, null);
+            this(composite, deferred, finalSource, null, null);
         }
     }
 
@@ -379,14 +395,17 @@ public final class VkDispVirtualPack {
             // 之所以不并进 PackCompositeSource.generate：那是一条「必有源」的 required 管线链，
             // 它的兜底语义是 passthrough；而地形片的正确兜底是「不接线、用原版 core/terrain」。
             String terrainSource = takeTerrainSourceMemo();
+            String terrainAdapter = takeTerrainAdapterMemo();
             if (terrainSource != null) {
                 VkDisp.LOGGER.info("vkdisp: [GAP-003] terrain source reused from early contract"
                         + " (registration-time generation; no second compile)");
             } else {
                 terrainSource = generateTerrainSource(inventory, profile, selection, store);
+                terrainAdapter = takeTerrainAdapterMemo();
             }
             return new GeneratedSources(
-                    result.source(), result.deferredSource(), result.finalSource(), terrainSource);
+                    result.source(), result.deferredSource(), result.finalSource(), terrainSource,
+                    terrainAdapter);
         } catch (Throwable t) {
             hasDeferredProgram = false;
             hasFinalProgram = false;
@@ -452,16 +471,48 @@ public final class VkDispVirtualPack {
     /** 提前生成时的源文本（openResources 直接复用，不重编）。 */
     private static String terrainSourceMemo;
 
+    /** 与地形源同批生成的适配层源；{@code null} = 不接线。 */
+    private static String terrainAdapterMemo;
+
     /**
      * 取走提前生成的源（{@code openResources} 用；无缓存返回 {@code null}）。
      *
      * <p>取走即清空 + 清键：这样下一次 {@link #ensureTerrainProgram} 看到「键为空」会重算，
      * 不会拿一份**上一轮**的契约去注册新一轮的管线（切包后拿到旧包片元 = 画面错且难归因）。
      */
+    /**
+     * 按地形片元的 varying 契约生成顶点适配层（失败 → {@code null} = 不接线）。
+     *
+     * <p>🔖 与 {@link #takeTerrainSourceMemo()} 同批取走：两者要么都给、要么都不给，
+     * 免得出现「片元是包的、顶点还是原版」的半接线状态（那正是链接失败的直接来源）。
+     */
+    private static String generateTerrainAdapter(dev.vkdisp.pipeline.model.PackTerrainProgram program) {
+        try {
+            dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.Result adapter =
+                    dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.generate(program.inputs());
+            for (TranslateDiagnostic diagnostic : adapter.diagnostics()) {
+                logDiagnostic(diagnostic);
+            }
+            return adapter.glsl();
+        } catch (Throwable t) {
+            VkDisp.LOGGER.error("vkdisp: [GAP-003] 顶点适配层生成 FAILED（原文如下）"
+                    + " -> 地形片元不接线（沿用原版 core/terrain）", t);
+            return null;
+        }
+    }
+
     private static String takeTerrainSourceMemo() {
         String memo = terrainSourceMemo;
         terrainSourceMemo = null;
+        terrainAdapterMemo = null;
         terrainMemoKey = null;
+        return memo;
+    }
+
+    /** 取走提前生成的适配层源（无缓存返回 {@code null}）。 */
+    private static String takeTerrainAdapterMemo() {
+        String memo = terrainAdapterMemo;
+        terrainAdapterMemo = null;
         return memo;
     }
 
@@ -482,6 +533,7 @@ public final class VkDispVirtualPack {
             }
             dev.vkdisp.pipeline.model.PackTerrainProgram program = terrain.program();
             terrainProgram = program;
+            terrainAdapterMemo = generateTerrainAdapter(program);
             terrainBuiltinsLayout = BuiltinsBlockLayout.parse(program.fragmentSource());
             logLayout("terrain", terrainBuiltinsLayout);
             VkDisp.LOGGER.info(
@@ -604,20 +656,25 @@ public final class VkDispVirtualPack {
         /** GAP-003 地形片元字节；{@code null} = 不接线（此时本资源**不存在**，见 getResource）。 */
         private final byte[] terrainBytes;
 
+        /** GAP-003 顶点适配层字节；与 {@link #terrainBytes} 同生共死（半接线 = 链接失败）。 */
+        private final byte[] terrainAdapterBytes;
+
         VirtualPackResources(PackLocationInfo location, String compositeSource,
                 String deferredSource, String finalSource) {
-            this(location, compositeSource, deferredSource, finalSource, null);
+            this(location, compositeSource, deferredSource, finalSource, null, null);
         }
 
         VirtualPackResources(PackLocationInfo location, String compositeSource,
-                String deferredSource, String finalSource, String terrainSource) {
+                String deferredSource, String finalSource, String terrainSource,
+                String terrainAdapterSource) {
             this.location = location;
             this.compositeBytes = compositeSource.getBytes(StandardCharsets.UTF_8);
             this.deferredBytes = deferredSource.getBytes(StandardCharsets.UTF_8);
             this.finalBytes = finalSource.getBytes(StandardCharsets.UTF_8);
             this.terrainBytes = terrainSource == null ? null : terrainSource.getBytes(StandardCharsets.UTF_8);
+            this.terrainAdapterBytes = terrainAdapterSource == null ? null
+                    : terrainAdapterSource.getBytes(StandardCharsets.UTF_8);
         }
-
         @Override
         public PackLocationInfo location() {
             return location;
@@ -643,6 +700,9 @@ public final class VkDispVirtualPack {
             //   —— 比「资源缺失」更难归因。
             if (TERRAIN_ID.equals(id) && terrainBytes != null) {
                 return () -> new ByteArrayInputStream(terrainBytes);
+            }
+            if (TERRAIN_ADAPTER_ID.equals(id) && terrainAdapterBytes != null) {
+                return () -> new ByteArrayInputStream(terrainAdapterBytes);
             }
             return null;
         }
@@ -673,6 +733,12 @@ public final class VkDispVirtualPack {
                     || TERRAIN_PATH.equals(normalized)
                     || TERRAIN_PATH.startsWith(normalized + "/"))) {
                 output.accept(TERRAIN_ID, () -> new ByteArrayInputStream(terrainBytes));
+            }
+            if (terrainAdapterBytes != null && (normalized.isEmpty()
+                    || TERRAIN_ADAPTER_PATH.equals(normalized)
+                    || TERRAIN_ADAPTER_PATH.startsWith(normalized + "/"))) {
+                output.accept(TERRAIN_ADAPTER_ID,
+                        () -> new ByteArrayInputStream(terrainAdapterBytes));
             }
         }
 

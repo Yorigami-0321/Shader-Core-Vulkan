@@ -97,7 +97,11 @@ public final class ConstEvaluator {
         if (!PREFIX_GUARD) {
             return true;
         }
-        return trimmed.startsWith("const") || trimmed.startsWith("#define");
+        // 🔖 2026-10-04：新增 //#define 前缀。DEFINE_BARE_PATTERN 只可能匹配
+        //    「整行就是 //#define NAME」这一种形态（末尾无值无括号），因此放行这个前缀
+        //    **与正则的锚定条件逐字对应**，仍然可证明等价 —— 不会把别的注释行带进来。
+        return trimmed.startsWith("const") || trimmed.startsWith("#define")
+                || trimmed.startsWith("//#define");
     }
 
     /** 一条被识别出的选项常量的元信息。 */
@@ -246,7 +250,8 @@ public final class ConstEvaluator {
      * 只是改成在给定区间上比对字符，避免为了判断而先造出子串。
      */
     private static boolean prefixAllows(String text, int from, int to) {
-        return startsWithAt(text, from, to, "const") || startsWithAt(text, from, to, "#define");
+        return startsWithAt(text, from, to, "const") || startsWithAt(text, from, to, "#define")
+                || startsWithAt(text, from, to, "//#define");
     }
 
     private static boolean startsWithAt(String text, int from, int to, String prefix) {
@@ -315,20 +320,50 @@ public final class ConstEvaluator {
                 origin.sourceFile(), origin.sourceLine(), true, false);
     }
 
+    /**
+     * 把一行 {@code #define} / {@code //#define} 认成选项常量；不匹配返回 null。
+     *
+     * <p>🔖🔖 <b>2026-10-04 语义更正（本轮核实后改）</b>：本方法原先只认
+     * {@code #define NAME <值>} 且要求尾注里有 {@code [...]} 候选表，因此<b>裸宏</b>
+     * （{@code #define NAME}）与<b>被注释掉的定义</b>（{@code //#define NAME}）全部不成为选项。
+     * 实测 BSL v10.1.8 全包程序的定义行形态分布：
+     * <pre>
+     *   446 行  #define NAME          （裸宏，功能开）
+     *    37 行  //#define NAME        （裸宏被注释 = 功能关）
+     *   278 行  #define NAME v //[..] （带值带候选 ⇒ 原规则已覆盖）
+     *    13 行  #define NAME alias    （带值无候选 = 别名，不是选项）
+     * </pre>
+     * ⇒ 原规则只让 278/774 行可见，**BSL 的 483 个布尔开关既不可见也不可改**
+     * （客户端实测：284 个枚举选项里没有 {@code ADVANCED_MATERIALS}）。
+     * 而 {@code //#define → 开启} 正是 OF 方言表达布尔选项的<b>标准写法</b>。
+     * ⇒ 改为：裸宏 / 注释掉的裸宏 = BOOLEAN（候选表合成 [true, false]，
+     *     默认值 = 注释掉 ? false : true）；<b>带值但无候选表</b>的仍是别名，不是选项。
+     * 函数宏（{@code #define f(x) ...}）因要求整行结束而不匹配，天然排除。
+     */
     private static OptionConstant tryDefineOption(String trimmed, SourceLineMap.LineOrigin origin) {
-        Matcher m = DEFINE_PATTERN.matcher(trimmed);
-        if (!m.find()) {
+        Matcher valued = DEFINE_PATTERN.matcher(trimmed);
+        if (valued.find()) {
+            String comment = extractComment(trimmed);
+            List<String> candidates = parseCandidates(comment);
+            if (candidates.isEmpty()) {
+                return null; // 带值但无候选表 = 别名（#define colortexR colortex5），不是选项
+            }
+            return new OptionConstant(valued.group(1), "define-value", valued.group(2).strip(),
+                    candidates, parseDescription(comment),
+                    origin.sourceFile(), origin.sourceLine(), true, false);
+        }
+        Matcher bare = DEFINE_BARE_PATTERN.matcher(trimmed);
+        if (!bare.matches()) {
             return null;
         }
-        String name = m.group(1);
-        String value = m.group(2).strip();
+        boolean commented = bare.group(1) != null;
         String comment = extractComment(trimmed);
         List<String> candidates = parseCandidates(comment);
         if (candidates.isEmpty()) {
-            return null; // 无候选值列表的 #define 不视为选项
+            candidates = List.of("true", "false");
         }
-        String description = parseDescription(comment);
-        return new OptionConstant(name, "define-value", value, candidates, description,
+        return new OptionConstant(bare.group(2), "define-bool", commented ? "false" : "true",
+                candidates, parseDescription(comment),
                 origin.sourceFile(), origin.sourceLine(), true, false);
     }
 
@@ -360,5 +395,8 @@ public final class ConstEvaluator {
             Pattern.compile("^const\\s+(int|float|bool|double)\\s+([A-Za-z_]\\w*)\\s*=\\s*([^;]+);");
     private static final Pattern DEFINE_PATTERN =
             Pattern.compile("^#define\\s+([A-Za-z_]\\w*)\\s+(\\S+)");
+    /** 裸宏 / 被注释掉的裸宏（组 1 = 可选的 //，组 2 = 名字）。 */
+    private static final Pattern DEFINE_BARE_PATTERN =
+            Pattern.compile("^(//)?\\s*#define\\s+([A-Za-z_]\\w*)\\s*$");
     private static final Pattern CANDIDATE_PATTERN = Pattern.compile("\\[\\s*(.*?)\\s*\\]");
 }

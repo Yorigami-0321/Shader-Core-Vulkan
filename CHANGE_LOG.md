@@ -4,46 +4,46 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
-## 2026-10-04（三十二）— ✅ 包自己的 `gbuffers_terrain` 真的跑在地形 draw 上 + 附件数跟随包输出数
+## 2026-10-04（三十三）— ✅ DRAWBUFFERS 槽位兑现 + BSL 布尔选项可开 ⇒ 8 槽 gbuffer 真正跑起来
 
-> **verdict = 接线轮 + MCP 客户端取证（跑了真实游戏）。**
-> 任务来源：`AGENT_CONTEXT` §10.4 第 6 条的 ①②③ —— h07 证明 SPIR-V 早就编好了，缺的是「接上去」。
+> **verdict = 兼容轮 + MCP 客户端取证（跑了真实游戏）。**
+> 任务来源：`AGENT_CONTEXT` §10.14 ⑨ 与 GAP-003 第 ⑤ 条遗留。
 
-- **本次改了什么**：
-  1. **新真源 `pipeline/model/PackTerrainProgram`** —— 包地形片元的**接口契约**（输出数 / 自由 sampler 名 /
-     输入 varying 签名），一次解析一次冻结。附件数、绑定组条目、适配层签名**三处读同一个对象**。
-  2. **新 `pack/PackTerrainSource`** —— 按 composite 同款三态选包选出 `gbuffers_terrain` 并解析契约；
-     **无产出即 `null` = 不接线**（不是兜底 passthrough —— 正确兜底是沿用原版 `core/terrain`）。
-  3. **虚拟包新增第 4 个资源** `shaders/gbuffers_terrain.fsh`；`null` 时**不提供**该资源（返回 null 而非兜底）。
-  4. **新顶点适配层** `assets/vkdisp/shaders/terrain_pack_adapter.vsh` —— 包的 VS 要 7 个顶点属性，
-     原版 `DefaultVertexFormat.BLOCK` 只有 4 个 ⇒ 按原版格式取数，逐位置产出包的 9 条 OF varying。
-  5. **`TerrainPipelineApi`** —— MRT 变体在开关打开且契约存在时改用 `适配层 VS + 包片元`，
-     并按契约**逐条**登记绑定组（`VkDispBuiltins` + 5 个 sampler）；新增每帧上传
-     （`VkDispTerrainParams` 眼空间太阳方向 + `VkDispBuiltins` 42 个成员）与绑定摘要埋点。
-  6. **`MrtPlan#freezePackOutputCount`** —— 附件数在**管线注册那一刻冻结**，pass 每帧读同一值。
-  7. **新配置键 `mrt.packTerrainShader`**（默认关，M1「逐个开启 + 逐个关闭」）。
-  8. 新增无头回归 `PackTerrainProgramTest`(7) + `PackTerrainSourceTest`(4)。
-  9. 文档：新增 `evidence/h08-…` 与两张截图；`13-GAP-REGISTRY` GAP-003 状态列改写 + 新登记 **GAP-007**；
-     `AGENT_CONTEXT` 新增 §10.14。
-- **🔴 最重要的发现（时序铁律）**：`RegisterRenderPipelinesEvent` **启动期只触发一次**，且**早于**虚拟包
-  `openResources` 生成包源约 **4.5 秒**（实测 08:31:49.704 vs 08:31:54.212）；切包触发的资源重载**不会**让它
-  再触发。⇒ **「等包源好了再注册管线」这条路在原版上不存在**，只能**提前**算契约
-  （`VkDispVirtualPack#ensureTerrainProgram`，按 `profile|selection` 记忆，实测 3620ms）。
-  不修的症状是「开关打开但什么都没发生、且不报错」—— 典型的静默失效。
-- **② 附件数跟随包输出数：实测生效。** 配置 `mrt.attachments=3` 故意不改 → 管线与 pass 两侧都是 **1**
-  （`colorTargets=1` / `slots=1`），契约 `outputs=1`。**X42 的坑真正堵上**（冻结而非现算）。
-- **③ 属性布局对齐：走适配层。** 9 条 varying 里 **6 条真值**（texCoord / lmCoord / sunVec / upVec /
-  eastVec / color）、**3 条常量**（mat / recolor / normal）—— 后者因原版地形顶点缓冲既无 `mc_Entity`
-  也无 `Normal` ⇒ **新登记 GAP-007**。适配层签名与包片元签名由单测**逐位置逐名字对账**。
-- **决定性取证（MCP）**：同一存档 / `time set 6000` / `yaw=35, pitch=-12` / clear，两张截图的地形像素
-  **平均绝对差 48.22**、**39.03%** 像素变化，HUD/准星一致；噪声基线（同包复现差 1.91）只到 1/25。
-  日志：`MRT terrain pipelines will use pack fragment … colorTargets=1`、`blockMembers=42 samplers=5`。
-- **稳定**：0 条 vkdisp ERROR、0 崩、`Missing uniform` / `IllegalStateException` 均未出现、残留进程 0。
-  ⚠️ 仍**不**声称「0 validation error」（本机无 validation layer，沿用 §9.4.15 纪律）。
-- **🔴 立 X43**：契约解析器首版按**行首**锚定匹配，而 BSL 转译终稿里声明是**两两并排写在同一行**的
-  ⇒ location 0 被错配成 `recolor`、location 2 被错配成 `lmCoord`，**静默少认 4 条 varying**。
-  **一行里可能有多个声明，必须逐个 findAll**；已写成断言。
-- **⛔ 仍未完成**：地形只画进**我方 pass**，主目标仍由原版绘制 ⇒ **本轮不产出用户可见画面改进**
-  （M-04 方案 B 未做）；GAP-007 三条常量；`shadowtex0/1` 占位 ⇒ 包阴影不成立；只覆盖 OPAQUE 组；
-  只覆盖 BSL 默认配置；提前生成 3620ms 对 B3/B4 的账未补；只验了一个包（X39）。
-- **测试**：659 → **670** 单测全绿（新增 11 例）；`./gradlew build` BUILD SUCCESSFUL；残留游戏进程数 = 0。
+- **本次改了什么**（三件事，一件比一件靠后，一件比一件隐蔽）：
+  1. **新增转译第 ⑦½ 段 `DrawBuffersSlotAdapter`** —— 按包源码里的 `/* DRAWBUFFERS:… */` 把
+     `layout(location = k)` 改写成包真正要的 colortex。**累积语义**（索引 k 取最后一条长度 > k 的标记）。
+     排在 ⑦ 之后、⑧ 之前；等行数变换 ⇒ 行号映射不受影响。**三条显式拒绝**：单条内槽位重复 /
+     需超过 `maxColorAttachments=8` / 标记未覆盖的输出；拒绝时 `PackTerrainSource` 跟着**拒绝接线**。
+  2. **`ConstEvaluator` + `OptionSourceRewriter` 补 `//#define` 路径** —— 裸宏 / 注释掉的裸宏 = BOOLEAN；
+     `//#define` + true ⇒ 去 `//`，false ⇒ **保持原样**（不补 `//` 污染包源）。
+  3. **顶点适配层改为按契约生成**（`PackVertexAdapterGenerator`），随片元源**同生共死**；
+     静态资产 `terrain_pack_adapter.vsh` **删除**（避免两份真源）。
+- **🔴 消灭一条静默 bug**：`gl_FragData[k]` **不等于** `location k`。原先按��标绑定会把 BSL 的材质写进
+  colortex1、法线写进 colortex2 —— **画面「有内容」但每个通道都错，没有任何一行日志会抱怨**。
+- **🔴 挖出更靠前的真门槛**：BSL 的布尔选项此前**既不可见也不可改**。实测全包 **446 行裸 `#define`**
+  + **37 行 `//#define`**，而原规则只认「带值 + `[...]` 候选表」⇒ 客户端 **284 个枚举选项里没有
+  `ADVANCED_MATERIALS`、布尔数 = 0** ⇒ **多槽路径根本无法被触发**，h06 的结论此前只能停在纸面。
+  ⇒ 选项 **284 → 386**，布尔 **0 → 102**。
+- **🔴 只跑客户端才暴露的第三个问题**：静态适配层写死 9 条 varying，开高级材质后包要 **15** 条 ⇒
+  `ShaderCompileException: Vertex shader missing output at location 14` ⇒ **资源加载失败、
+  客户端进不了世界**（jstack 证实渲染线程停在主菜单）。⇒ 改为按契约生成；实测
+  `顶点适配层已生成：varyings=15（常量供值 7 条：mat, recolor, normal, binormal, tangent, vTexCoord, vTexCoordAM）`。
+- **实测（MCP 客户端）**：契约 `outputs=8 samplers=7 varyings=15`；管线 `colorTargets=8`、pass `slots=8`
+  （配置 `mrt.attachments=3` **故意不改** ⇒ 两侧都被改成 8，h08 的冻结机制继续生效）；
+  `terrain drawn into 8 attachment(s)`；`SOLID{groups=1,draws=610}`；
+  **0 ShaderCompileException（修前 ≥3）/ 0 Missing uniform / 0 vkdisp ERROR / 残留进程 0**。
+- **⛔ 画面不对，已登记 GAP-008（不假装已修）**：截图是绿色清屏底上的**纯黑剪影** —— 几何与槽位路由对
+  （轮廓清晰、610 条 draw），**像素值错**。两条候选成因（常量供值的 7 条 varying 参与光照 / 新增
+  `specular`·`normals` 采样器绑的是图集占位）**本轮未逐项二分验证**，故不先猜一个「看起来对」的绑定。
+- **能力边界（如实登记）**：`DRAWBUFFERS:08367`（MCBL_SS + 高级材质同开）需 **9** 附件 > Vulkan 上限 8
+  ⇒ **显式拒绝接线**，不夹取。已写成断言。
+- **🔴 立 X44**：改写行的代码必须断言「输出行仍能被同一套 pattern 再解析回去」。本轮自造并修掉两个
+  同类回归：① `OptionSourceRewriter` 首版从**前导空白**上切 2 个字符（以为那是 `//`）⇒ 整行改坏 ⇒
+  预处理器报 `Range [0, -2) out of bounds` 并**丢掉全部 182 个编译阶段**；② 同类正则 `\s*` 吃掉行尾
+  注释前的空格。
+- **测试**：670 → **689** 单测全绿（本轮共新增 19 例：`DrawBuffersSlotAdapterTest` 8、
+  `PackVertexAdapterGeneratorTest` 5、`PackBooleanOptionTest` 6）；`./gradlew build` BUILD SUCCESSFUL；
+  残留游戏进程数 = 0。
+- **⛔ 仍未完成**：8 槽像素值不对（GAP-008）；地形仍只画进**我方 pass**（M-04 未做，**不产出用户可见
+  画面改进**）；GAP-007 的常量项从 3 条扩到 **7** 条；`specular`/`normals` 采样器是图集占位；
+  只覆盖 OPAQUE 组；只验一个包（X39）；新出现的 102 个布尔选项对**选项屏幕**的影响未测。

@@ -146,6 +146,18 @@ public final class PackTerrainSource {
                 continue;
             }
             String qualified = terrainQualifiedName(compiled, source);
+            // 🔴 槽位语义是否被兑现，由转译链的 ⑦½ 段（DrawBuffersSlotAdapter）判定；
+            //   它若拒绝（歧义 / 槽位重复 / 超过 maxColorAttachments），这里必须**跟着拒绝接线**。
+            //   理由：此时片元仍按「下标 = location」写着；若照样接上去，材质会静默写进 colortex1、
+            //   法线写进 colortex2 —— 画面「有内容」但每个通道都是错的，且**没有任何日志会抱怨**（h06 预言）。
+            String refusal = slotRefusal(compiled, qualified);
+            if (refusal != null) {
+                diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.WARN,
+                        "vkdisp: " + qualified + " 的 " + MARKER + " 槽位语义未被兑现，拒绝接线"
+                                + "（派生 MRT 地形管线沿用原版 core/terrain）：" + refusal,
+                        pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+                continue;
+            }
             PackTerrainProgram program =
                     PackTerrainProgram.parse(pack.name(), qualified, source);
             diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.INFO,
@@ -193,6 +205,33 @@ public final class PackTerrainSource {
     }
 
     /** 回查被选中源对应的限定名（供日志对账；找不到则回退到首见的维度程序名）。 */
+    /**
+     * 转译诊断里若带 {@code DrawBuffersSlotAdapter} 的拒绝理由，返回原文；否则 {@code null}。
+     *
+     * <p>🔖 靠**诊断原文**而不是另一份状态：拒绝理由只在那一段产生，是它的唯一真源；
+     * 再存一份布尔位就等于把「是否兑现」复制成两个可能漂移的量（X9 不猜、单一真源）。
+     */
+    private static String slotRefusal(ShaderPackCompiler.CompileResult compiled, String qualified) {
+        for (ShaderPackCompiler.CompiledStage stage : compiled.stages()) {
+            if (stage.stage() != ShaderStage.FRAGMENT || !isTerrainProgram(stage.programName())) {
+                continue;
+            }
+            for (TranslateDiagnostic diagnostic : stage.result().diagnostics()) {
+                if (!diagnostic.severity().isError()) {
+                    continue;
+                }
+                String message = diagnostic.message();
+                if (message.contains("DRAWBUFFERS") && message.contains("无法兑现")) {
+                    return stage.programName() + ": " + message;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** 复用转译段的标记名常量（不散落字面量）。 */
+    private static final String MARKER =
+            dev.vkdisp.glsl.translate.DrawBuffersSlotAdapter.MARKER;
     private static String terrainQualifiedName(ShaderPackCompiler.CompileResult compiled, String source) {
         for (ShaderPackCompiler.CompiledStage stage : compiled.stages()) {
             if (stage.stage() == ShaderStage.FRAGMENT

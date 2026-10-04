@@ -154,8 +154,14 @@ public final class OfGlslTranslator {
         // ⑦ 可能插入合成的片元输出声明：其诊断行号是插入前的（= ⑤ 级输出）行号。
         FragmentOutputAdapter.Result adapted = FragmentOutputAdapter.adapt(stage, located.text());
 
-        // ⑧ 内建 uniform 注入：运行在 ⑦ 的输出上，诊断行号是 ⑦ 输出的行号（可能已被 ⑦ 右移）。
-        UniformInjector.Result injected = UniformInjector.inject(adapted.text());
+        // ⑦½ DRAWBUFFERS 槽位改写：**等行数**变换（只改已有声明行里的 location 数字），
+        //     因此行号映射完全不受影响（同 ①–④ 与 ⑥ 段的口径），诊断行号仍在 ⑦ 输出坐标系。
+        //     🔖 必须排在 ⑦ 之后：只有 ⑦ 先把 gl_FragData[k] 落成 layout(location = k) out vec4，
+        //     本段才有「声明行」可改；也必须排在 ⑧ 之前，让 uniform 注入看到的是**已兑现**的槽位。
+        DrawBuffersSlotAdapter.Result slotMapped = DrawBuffersSlotAdapter.apply(stage, adapted.text());
+
+        // ⑧ 内建 uniform 注入：运行在 ⑦½ 的输出上，诊断行号是 ⑦ 输出坐标系（⑦½ 等行数）。
+        UniformInjector.Result injected = UniformInjector.inject(slotMapped.text());
 
         int baseLineCount = SourceLines.of(versioned.text()).lineCount();
 
@@ -192,6 +198,9 @@ public final class OfGlslTranslator {
                 new int[] {declared.insertIndex(), adapted.insertIndex()},
                 new int[] {declared.insertedLineCount(), adapted.insertedLineCount()})
                 .compose(upstream.lineMap());
+        for (TranslateDiagnostic diagnostic : slotMapped.diagnostics()) {
+            diagnostics.add(locate(diagnostic, preInject));
+        }
         for (TranslateDiagnostic diagnostic : injected.diagnostics()) {
             diagnostics.add(locate(diagnostic, preInject));
         }

@@ -61,6 +61,9 @@ public final class OptionSourceRewriter {
     private static final Pattern DEFINE_BARE = Pattern.compile(
             "^(\\s*#define\\s+)([A-Za-z_][A-Za-z0-9_]*)(\\s*)$");
 
+    /** 被注释掉的裸宏 {@code //#define NAME}（组 1 = 前导空白，组 2 = 名字，组 3 = 行尾空白+注释）。 */
+    private static final Pattern DEFINE_COMMENTED_BARE =
+            Pattern.compile("^(\\s*)//#define\\s+([A-Za-z_]\\w*)(\\s*//.*)?$");
     /** {@code const <类型> NAME = <值>;}（值与分号之间不留分号内注释，与 OF 选项常量形态一致）。 */
     private static final Pattern CONST_ASSIGN = Pattern.compile(
             "^(\\s*const\\s+[A-Za-z_][A-Za-z0-9_]*\\s+)([A-Za-z_][A-Za-z0-9_]*)(\\s*=\\s*)([^;]+)(;.*)$");
@@ -175,6 +178,29 @@ public final class OptionSourceRewriter {
             }
             appliedNames.add(name);
             return rewriteBareDefine(bare.group(1), name, bare.group(3), newValue);
+        }
+
+        // 🔖 2026-10-04 新增（实测 BSL：483 个布尔开关写成 //#define NAME）。
+        //   原先没有这条路径 ⇒ 「把默认关闭的选项打开」这个动作**根本做不到**。
+        //   true  → 去掉 // 前缀，成为真正的 #define（OF 里 //#define 就是「关掉」的写法）；
+        //   false → 保持注释形态（它本来就是关的；再补 // 会变成 ///#define 污染源）。
+        Matcher commented = DEFINE_COMMENTED_BARE.matcher(line);
+        if (commented.matches()) {
+            String name = commented.group(2);
+            String newValue = values.get(name);
+            if (newValue == null) {
+                return line;
+            }
+            appliedNames.add(name);
+            if (!"true".equalsIgnoreCase(newValue.trim())) {
+                return line;
+            }
+            // group(1) 只是**前导空白**（// 由 pattern 固定匹配），不能从它身上切字符 ——
+            // 首版就是这么写的，结果把行首空白削掉 2 个字符，整行被改坏，
+            // 下游预处理器随即报出「Range [0, -2) out of bounds」并丢掉全部阶段（本轮实测）。
+            String lead = commented.group(1);
+            String suffix = commented.group(3) == null ? "" : commented.group(3);
+            return lead + "#define " + name + suffix;
         }
         return line;
     }

@@ -30,8 +30,10 @@ import org.junit.jupiter.api.Test;
 class PackTerrainSourceTest {
 
     private static final Path INVENTORY = Path.of("run/shaderpacks");
-    private static final Path ADAPTER = Path.of(
-            "src/main/resources/assets/vkdisp/shaders/terrain_pack_adapter.vsh");
+    private static final Pattern OUT_DECL = Pattern.compile(
+            "^layout\\s*\\(\\s*location\\s*=\\s*(\\d+)\\s*\\)\\s*out\\s+"
+                    + "([A-Za-z_]\\w*)\\s+([A-Za-z_]\\w*)\\s*;",
+            Pattern.MULTILINE);
 
     @Test
     @DisplayName("🔖 BSL 默认配置：地形片元契约 = 1 槽 / 5 个自由 sampler / 9 条 varying")
@@ -61,24 +63,14 @@ class PackTerrainSourceTest {
     }
 
     @Test
-    @DisplayName("🔖 顶点适配层的 out 签名必须与包的片元 in 签名**逐位置对齐**")
-    void adapterOutputsMatchPackFragmentInputs() {
+    @DisplayName("🔖 生成的顶点适配层必须与包的片元 in 签名**逐位置逐名字对齐**")
+    void generatedAdapterMatchesPackFragmentInputs() {
         Assumptions.assumeTrue(Files.isDirectory(INVENTORY), "库存目录不在本地");
-        Assumptions.assumeTrue(Files.exists(ADAPTER), "适配层着色器缺失: " + ADAPTER);
         PackTerrainSource.Result result = PackTerrainSource.generate(INVENTORY, "", "");
         Assumptions.assumeTrue(result.wired(), "本机没选出地形片元，跳过签名对账");
-        String adapter;
-        try {
-            adapter = Files.readString(ADAPTER);
-        } catch (java.io.IOException e) {
-            throw new AssertionError(e);
-        }
-        // 只取 layout(location = N) out T name; —— 适配层的 out 就是包的 in。
-        Pattern outDecl = Pattern.compile(
-                "layout\\s*\\(\\s*location\\s*=\\s*(\\d+)\\s*\\)\\s*out\\s+"
-                        + "([A-Za-z_]\\w*)\\s+([A-Za-z_]\\w*)\\s*;");
-        Matcher m = outDecl.matcher(adapter);
+        var adapter = dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.generate(result.program().inputs());
         java.util.Map<Integer, String> adapterOuts = new java.util.LinkedHashMap<>();
+        Matcher m = OUT_DECL.matcher(adapter.glsl());
         while (m.find()) {
             adapterOuts.put(Integer.parseInt(m.group(1)), m.group(3));
         }
@@ -88,8 +80,8 @@ class PackTerrainSourceTest {
         }
         assertEquals(packIns, adapterOuts,
                 "🔖 **适配层产出的 varying 必须与包片元要的逐位置逐名字一致**。"
-                        + "少一条 = 链接失败；多一条无害（VS 多出的 out 允许不被读）。"
-                        + "对账失败说明换包后没同步适配层 —— 这正是「静默接线」最常见的一环");
+                        + "少一条 = 驱动层在资源加载期抛 ShaderCompileException，**客户端起不来**"
+                        + "（本轮实测：开 ADVANCED_MATERIALS 后要 15 条，静态适配层只供 9 条）");
     }
 
     @Test

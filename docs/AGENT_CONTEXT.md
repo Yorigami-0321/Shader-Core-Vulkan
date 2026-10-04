@@ -1493,3 +1493,57 @@ HUD/准星一致；噪声基线（上一轮同包复现差 1.91）只到 1/25。
 2. **GAP-007**：地形顶点格式加 `Normal` + 方块 id（需另立注入点登记 + 内存账）。
 3. **包的真实阴影**：把 P3.1 的 `LightSpaceList` 阴影贴图按真 id 绑给 `shadowtex0/1`，去掉占位。
 4. 补 B3/B4 的账：开关打开时启动期 +3.6s 的冷路径开销。
+
+### 10.15 ✅ DRAWBUFFERS 槽位兑现 + BSL 布尔选项可开 ⇒ 8 槽 gbuffer 真正跑起来（2026-10-04，MCP 取证）
+
+> 证据：`evidence/h09-drawbuffers-slot-mapping-and-boolean-options.md` + `evidence/h09-images/`。
+> 任务来源 = §10.14 ⑨ 与 GAP-003 第 ⑤ 条遗留（附件顺序须服从 DRAWBUFFERS）。
+
+**① 消灭一条静默 bug**：`gl_FragData[k]` **不等于** `location k`。原先按��标绑定会把 BSL 的材质写进
+colortex1、法线写进 colortex2 —— 画面「有内容」但每个通道都错，**没有一行日志会抱怨**。
+新增转译第 **⑦½ 段** `DrawBuffersSlotAdapter` 按包源码里的 `/* DRAWBUFFERS:… */` 兑现，
+**累积语义**（索引 k 取最后一条长度 > k 的标记；BSL 实测 `0` → `0367` → 0/3/6/7）。
+三条显式拒绝：单条内槽位重复 / 需 > `maxColorAttachments=8` / 标记未覆盖的输出 —— 拒绝时
+`PackTerrainSource` **拒绝接线**，绝不夹取。
+
+**② 🔴 挖出更靠前的阻塞（这才是真门槛）**：BSL 的布尔选项此前**既不可见也不可改** ——
+实测全包 446 行裸 `#define` + 37 行 `//#define`，而原规则只认「带值 + `[...]` 候选表」
+⇒ 客户端 284 个枚举选项里**没有 `ADVANCED_MATERIALS`**，布尔数 = 0
+⇒ **多槽路径根本无法被触发**（h06 的结论此前只能停在纸面）。修两处：
+`ConstEvaluator`（裸宏 / 注释掉的裸宏 = BOOLEAN）与 `OptionSourceRewriter`
+（`//#define` + true ⇒ 去 `//`；false ⇒ **保持原样**，不补 `//` 污染包源）。
+⇒ 选项 **284 → 386**，布尔 **0 → 102**。
+
+**③ 🔴 只跑客户端才暴露的第三个问题**：静态顶点适配层只写死 9 条 varying，
+开高级材质后包要 **15** 条 ⇒ 驱动层抛
+`ShaderCompileException: Vertex shader missing output at location 14` ⇒
+**资源加载失败、客户端进不了世界**（jstack 证实渲染线程停在主菜单）。
+⇒ 改为**按契约生成**适配层 `PackVertexAdapterGenerator`，随片元源**同生共死**；
+静态资产已删（避免两份真源）。供值三档：真值 8 条 / 常量 7 条（GAP-007，记账 + WARN）/
+不认识的名字类型零值 + WARN。
+
+**④ 实测**：契约 `outputs=8 samplers=7 varyings=15`；管线 `colorTargets=8`、pass `slots=8`
+（配置 `mrt.attachments=3` 故意不改）；`terrain drawn into 8 attachment(s)`；
+`captured draw groups: SOLID{groups=1,draws=610}`；
+**0 ShaderCompileException（修前 ≥3）/ 0 Missing uniform / 0 vkdisp ERROR / 残留进程 0**。
+
+**⑤ ⛔ 画面不对（已登记 GAP-008，未坐实根因）**：截图是绿色清屏底上的**纯黑剪影**。
+几何与槽位路由对（轮廓清晰、610 条 draw），**像素值错**。
+两条候选成因：常量供值的 7 条 varying 参与光照 / 新增 `specular`·`normals` 采样器绑的是图集占位。
+**本轮没有逐项二分验证是哪一条压零** ⇒ 不假装已修，也不先猜一个「看起来对」的绑定。
+
+**⑥ 立 X44**：改写行的代码必须断言「输出行仍能被同一套 pattern 再解析回去」。
+本轮自己制造并修掉两个同类回归：`OptionSourceRewriter` 首版从**前导空白**上切 2 个字符
+（以为那是 `//`）⇒ 整行改坏 ⇒ 预处理器报 `Range [0, -2) out of bounds` 并**丢掉全部 182 个编译阶段**；
+另一处 `\s*` 吃掉行尾注释前的空格。
+
+**⑦ 能力边界（如实登记）**：`DRAWBUFFERS:08367`（MCBL_SS + 高级材质同开）需 **9** 附件
+> Vulkan 上限 8 ⇒ **显式拒绝接线**，不夹取。已写成断言。
+
+**⑧ 测试**：`./gradlew build` BUILD SUCCESSFUL；**689 单测全绿**（684 → +5；本轮共新增 19 例）。
+
+**⑨ 下一步（按序）**：
+1. **GAP-008 逐项切分**：每次只放开一条常量项 / 换成真视图，定位把 colortex0 压零的那一项。
+2. **GAP-007**：地形顶点格式加 `Normal` + 方块 id（本轮常量项从 3 条扩到 7 条，欠账变大了）。
+3. **M-04**（仍需用户裁决）：把地形接进**主链**，否则这一切仍不产出用户可见改进。
+4. 补 B3/B4 的账；验新出现的 102 个布尔选项对**选项屏幕**的影响（只验了生效链，没验 UI）。

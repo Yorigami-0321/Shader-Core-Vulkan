@@ -243,9 +243,17 @@ public final class TerrainPipelineApi {
                 DERIVED_MRT.size(), MrtPlan.slotCount());
     }
 
-    /** 顶点适配层着色器 id（assets/vkdisp/shaders/terrain_pack_adapter.vsh）。 */
+    /**
+     * 顶点适配层着色器 id —— 由虚拟包**按包地形片元的 varying 契约生成**后提供。
+     *
+     * <p>🔖 为什么不是本模组自己的静态资产：实测 BSL 默认配置要 9 条 varying、开
+     * {@code ADVANCED_MATERIALS} 后要 <b>15</b> 条；静态适配层对另一个配置就是「少供」⇒
+     * 驱动层在资源加载期抛 {@code ShaderCompileException: missing output at location 14}
+     * ⇒ <b>客户端起不来</b>（本轮真实踩到）。生成物与片元源同生共死，杜绝半接线。
+     */
     private static final Identifier TERRAIN_PACK_ADAPTER_ID =
-            Identifier.fromNamespaceAndPath(TerrainDerivedPlan.NAMESPACE, "terrain_pack_adapter");
+            Identifier.fromNamespaceAndPath(dev.vkdisp.VkDispVirtualPack.NAMESPACE,
+                    "terrain_pack_adapter");
 
     /** 包地形片元 id（虚拟资源包提供的 shaders/gbuffers_terrain.fsh）。 */
     private static final Identifier PACK_TERRAIN_FRAGMENT_ID =
