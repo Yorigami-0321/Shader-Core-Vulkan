@@ -40,7 +40,7 @@ class PackVertexAdapterGeneratorTest {
                 new PackTerrainProgram.Input(1, "float", "recolor"),
                 new PackTerrainProgram.Input(2, "vec2", "texCoord"),
                 new PackTerrainProgram.Input(8, "vec4", "color"));
-        PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(inputs);
+        PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(inputs, false);
         assertEquals(List.of("0:float:mat", "1:float:recolor", "2:vec2:texCoord", "8:vec4:color"),
                 declaredOuts(r.glsl()),
                 "🔖 少一条就链接失败、多一条无害但会掩盖漏供 —— 必须逐条对齐契约");
@@ -65,7 +65,7 @@ class PackVertexAdapterGeneratorTest {
                 new PackTerrainProgram.Input(12, "vec3", "viewVector"),
                 new PackTerrainProgram.Input(13, "vec4", "vTexCoord"),
                 new PackTerrainProgram.Input(14, "vec4", "vTexCoordAM"));
-        PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(inputs);
+        PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(inputs, false);
         assertEquals(15, declaredOuts(r.glsl()).size(),
                 "🔖 **15 条必须全供** —— 本轮 runClient 正是缺第 15 条导致资源加载失败、客户端起不来");
         assertEquals(List.of("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"),
@@ -77,7 +77,7 @@ class PackVertexAdapterGeneratorTest {
     void constantSuppliesAreAccounted() {
         PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(List.of(
                 new PackTerrainProgram.Input(0, "float", "mat"),
-                new PackTerrainProgram.Input(2, "vec2", "texCoord")));
+                new PackTerrainProgram.Input(2, "vec2", "texCoord")), false);
         assertEquals(List.of("mat"), r.constantSupplies(),
                 "mat 只能按常量供（GAP-007），必须记账");
         assertTrue(r.diagnostics().stream().anyMatch(d -> d.message().contains("GAP-007")),
@@ -89,7 +89,7 @@ class PackVertexAdapterGeneratorTest {
     @DisplayName("🔖 不认识的 varying ⇒ 类型零值 + WARN（**绝不猜一个像的值**）")
     void unknownVaryingGetsZeroValueAndWarning() {
         PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(List.of(
-                new PackTerrainProgram.Input(5, "vec3", "somePackSpecificThing")));
+                new PackTerrainProgram.Input(5, "vec3", "somePackSpecificThing")), false);
         assertTrue(r.glsl().contains("somePackSpecificThing = vec3(0.0)"));
         assertTrue(r.diagnostics().stream().anyMatch(d -> d.message().contains("不认识")),
                 "不认识的名字必须显式告警（X9 不猜）");
@@ -99,7 +99,7 @@ class PackVertexAdapterGeneratorTest {
     @DisplayName("🔖 生成物必须声明原版地形顶点属性（否则地形根本没有顶点数据）")
     void declaresVanillaTerrainAttributes() {
         String glsl = PackVertexAdapterGenerator.generate(List.of(
-                new PackTerrainProgram.Input(0, "float", "mat"))).glsl();
+                new PackTerrainProgram.Input(0, "float", "mat")), false).glsl();
         assertTrue(glsl.contains("in vec3 Position"));
         assertTrue(glsl.contains("in vec4 Color"));
         assertTrue(glsl.contains("in vec2 UV0"));

@@ -572,6 +572,15 @@ public final class TerrainPipelineApi {
                         case "texture_0" -> atlas;
                         case "shadowtex0", "shadowtex1" -> depthView;
                         case "shadowcolor0" -> colorView;
+                        // 🔴 h10 实测修正：高级材质路径的 全黑画面来自这里 ——
+                        //   把 specular/normals 绑成方块图集，而它们是逐方块**材质贴图集**，
+                        //   图集的 .z（ao）与 .r/.g（smoothness/f0）不是材质语义 ⇒ albedo 被乘得全零。
+                        //   ⇒ 绑**乘法单位元**（NeutralMaterialMaps）：
+                        //      specular=(0,0,0,1) ⇒ metalness=0, smoothness=0 ⇒ *1
+                        //      normals =(128,128,255,255) ⇒ ao=1.0 ⇒ *1
+                        //   这是可解释的缺默（“没有材质覆盖、没有 AO、法线朝上”），不是编一个假输入。
+                        case "specular" -> NeutralMaterialMaps.specularView();
+                        case "normals" -> NeutralMaterialMaps.normalsView();
                         default -> atlas;
                     };
             if (view == null) {
@@ -583,7 +592,8 @@ public final class TerrainPipelineApi {
         }
         if (!PACK_TERRAIN_BIND_LOGGED.getAndSet(true)) {
             VkDisp.LOGGER.info("vkdisp: [GAP-003] pack terrain uniforms bound: blockMembers={} samplers={}"
-                    + " (texture_0=图集真值; noisetex/shadowcolor0=占位; shadowtex0/1=本 pass 深度)",
+                    + " (texture_0=图集真值; specular/normals=中性单位元 h10;"
+                            + " noisetex/shadowcolor0=占位; shadowtex0/1=本 pass 深度)",
                     layout == null ? 0 : layout.members().size(),
                     program.fragmentSamplers().size());
         }

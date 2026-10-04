@@ -309,6 +309,9 @@ public final class MrtTerrainPass {
         //   ② VkDispBuiltins = OF 内建值 → 包地形片元读的那 40+ 个成员。
         TerrainPipelineApi.updateTerrainParams();
         TerrainPipelineApi.updateTerrainBuiltins();
+        //   ③ 中性材质贴图（specular/normals）：贴图上传走 encoder，**pass 打开期间禁止**
+        //      ⇒ 懒建会在 pass 内抛 IllegalStateException 且每帧抛（h10 实测踩到）。
+        NeutralMaterialMaps.ensureCreated();
 
         RenderPassDescriptor.Builder descriptor =
                 RenderPassDescriptor.builder(() -> "vkdisp gbuffer terrain (OPAQUE, " + actualSlots + " attachments)");

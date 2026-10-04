@@ -489,7 +489,8 @@ public final class VkDispVirtualPack {
     private static String generateTerrainAdapter(dev.vkdisp.pipeline.model.PackTerrainProgram program) {
         try {
             dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.Result adapter =
-                    dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.generate(program.inputs());
+                    dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.generate(
+                            program.inputs(), VkDispConfig.MRT_TERRAIN_FULL_LIGHT_PROBE.get());
             for (TranslateDiagnostic diagnostic : adapter.diagnostics()) {
                 logDiagnostic(diagnostic);
             }

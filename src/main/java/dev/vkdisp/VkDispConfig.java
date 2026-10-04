@@ -212,6 +212,19 @@ public final class VkDispConfig {
             .define("mrt.packTerrainShader", false);
 
     /** 诊断：地形 MRT pass 里先画一个已知可用的全屏三角形（判别「pass 不工作」vs「地形不出片元」）。 */
+
+    /**
+     * U0001f50d 诊断单变量实验：顶点适配层把 lmCoord 强制成 (1,1)（满光照）。
+     *
+     * <p>用途：判定「高级材质路径的画面全黑是否由 lmCoord（天光通道）导致」。
+     * h10 实测：BSL 该路径里有 {@code sceneLighting *= skylightSqr}，而
+     * {@code skylightSqr = lightmap.y²}、{@code lightmap = clamp(lmCoord, 0, 1)}；
+     * 而原版把天光/块光两个通道共用一个打包过的 UV2。
+     * <p>开启后**只改这一个 varying**，其余全部不动（单变量，可回滚）。默认关。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_FULL_LIGHT_PROBE = BUILDER
+            .comment("诊断：顶点适配层把 lmCoord 强制成 (1,1) 满光照（默认关，单变量实验）。")
+            .define("mrt.terrainFullLightProbe", false);
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_FULLSCREEN_PROBE = BUILDER
             .comment("诊断：地形 MRT pass 内先画全屏三角形（默认关）。")
             .define("mrt.terrainFullscreenProbe", false);

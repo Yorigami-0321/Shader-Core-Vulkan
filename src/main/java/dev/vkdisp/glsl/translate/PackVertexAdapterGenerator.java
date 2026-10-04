@@ -72,13 +72,23 @@ public final class PackVertexAdapterGenerator {
      *
      * @param inputs 包片元声明的 varying 契约（{@link PackTerrainProgram#inputs()}）
      */
-    public static Result generate(List<PackTerrainProgram.Input> inputs) {
+    /**
+     * 生成适配层顶点着色器。
+     *
+     * @param inputs         包片元声明的 varying 契约
+     * @param fullLightProbe **诊断单变量实验**：把 {@code lmCoord} 强制成 (1,1)（满光照）。
+     *        用来判定「画面全黑是不是由 {@code lmCoord}（天光通道）导致」——
+     *        {@code h10} 实测 BSL 高级材质路径里有 {@code sceneLighting *= skylightSqr}，
+     *        而 {@code skylightSqr = lightmap.y²}、{@code lightmap = clamp(lmCoord, 0, 1)}。
+     *        默认关；开启时只改这一个 varying，其余全部不动（单变量）。
+     */
+    public static Result generate(List<PackTerrainProgram.Input> inputs, boolean fullLightProbe) {
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         Set<String> constants = new LinkedHashSet<>();
         StringBuilder decls = new StringBuilder();
         StringBuilder body = new StringBuilder();
         for (PackTerrainProgram.Input input : inputs) {
-            String assignment = supply(input, constants);
+            String assignment = supply(input, constants, fullLightProbe);
             if (assignment == null) {
                 diagnostics.add(TranslateDiagnostic.warn(
                         "适配层不认识 varying '" + input.name() + "'（类型 " + input.type()
@@ -107,11 +117,14 @@ public final class PackVertexAdapterGenerator {
     }
 
     /** 三档供值表；返回 {@code null} 表示「不认识这个名字」。 */
-    private static String supply(PackTerrainProgram.Input input, Set<String> constants) {
+    private static String supply(PackTerrainProgram.Input input, Set<String> constants,
+            boolean fullLightProbe) {
         String name = input.name();
         return switch (name) {
             case "texCoord" -> "texCoord = UV0";
-            case "lmCoord" -> "lmCoord = clamp((vec2(UV2) / 16.0 - 0.03125) * 1.06667,"
+            case "lmCoord" -> fullLightProbe
+                    ? "lmCoord = vec2(1.0)  // DIAG full-light probe"
+                    : "lmCoord = clamp((vec2(UV2) / 16.0 - 0.03125) * 1.06667,"
                     + " vec2(0.0), vec2(0.9333, 1.0))";
             case "color" -> "vkdispAdapterColor";
             case "sunVec" -> "sunVec = normalize(SunDir.xyz)";
