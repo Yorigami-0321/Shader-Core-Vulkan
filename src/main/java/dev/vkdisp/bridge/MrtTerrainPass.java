@@ -321,6 +321,15 @@ public final class MrtTerrainPass {
         RenderSystem.assertOnRenderThread();
         RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         ensureTargets(main);
+        // 🔖 逐槽清屏色的决策（诊断 vs 生产）在建 pass 前定一次（纯逻辑、可单测）。
+        //   判据是**调试视图是否激活**，而不是「本 pass 是否开着」——
+        //   取证时两者常同时开（h27b 就是），但用户看到的画面必须是生产语义。
+        dev.vkdisp.pipeline.model.TerrainSlotClear clearDecision =
+                dev.vkdisp.pipeline.model.TerrainSlotClear.of(
+                        diagnosticClearMode());
+        if (CLEAR_MODE_LOGGED.compareAndSet(false, true)) {
+            VkDisp.LOGGER.info(clearDecision.explainOnce(actualSlots));
+        }
 
         // 🔖 GAP-003：两处 uniform 上传都必须在 **pass 打开之前**（map/close 会落盘到环，
         //   pass 打开期间动 encoder 是已实测到的错误用法，FrameApi 同款纪律）：
@@ -343,11 +352,15 @@ public final class MrtTerrainPass {
             views.add(toMain() && slot == 0 ? mainColorView(main) : view(slot));
         }
         for (int slot = 0; slot < actualSlots; slot++) {
-            // 🔖 清屏色用**逐槽高对比诊断色**（绿/蓝/品红），不用 MrtPlan 的 R 通道指纹 ——
-            // 指纹在槽 0 恰好是 0.0（黑），一旦「什么都没画」与「画了但很暗」同时发生，
-            // 两者在截图上**无法区分**（本轮实测踩到：黑屏既可能是回读坏，也可能是没画）。
-            // 高对比色让「回读链路坏」与「地形没画进来」在一张截图里就能分开。
-            descriptor.withColorAttachment(views.get(slot), Optional.of(diagnosticClear(slot)));
+            // 🔴 GAP-009/h27b：诊断清屏色**不得**无条件进产品画面。
+            //   旧实现无条件把槽 0 清成纯绿，而我方 pass **只画地形** ⇒ 天空那片保持纯绿，
+            //   包的 composite 又采 colortex0 ⇒ **绿天空直接进最终画面**（h27b §六 实测定位）。
+            //   ⇒ 调试视图激活时保留高对比诊断色（它的用途是区分「没画 vs 很暗」，
+            //      而 MrtPlan 给槽 0 的指纹恰好是 0.0=黑，去掉它就丢了这项区分能力）；
+            //   非调试视图一律零值清屏 ⇒ 天空那片是**黑**而不是绿。
+            //   🔶 零值同样不含假信息：真正的天空要由包的 gbuffer 程序画，那属于 M-04（未做）。
+            descriptor.withColorAttachment(views.get(slot),
+                    Optional.of(new Vector4f(clearDecision.rgba(slot))));
         }
         // 🔖🔖 深度必须清到 **0.0**，不是惯例上的 1.0 —— 本引擎是**反向 Z**：
         //   原版的 clear pass 就是 `clearColorAndDepthTextures(..., 0.0)`（LevelRenderer:255），
@@ -465,6 +478,9 @@ public final class MrtTerrainPass {
                     + "**故意**把 shadowtex0/1 与 shadowcolor0 绑到本 pass 的读写附件"
                     + "（Vulkan 未定义行为），仅供 A/B 取证；画面出现闪烁是预期的");
         }
+        // 🔴 3D 桩同理：sampler3D（lighttex0/1、voxeltex）必须有类型匹配的 3D 视图，
+        //   且同样必须在开 pass 之前建好（clear 走 encoder）。
+        VolumeStubs.init();
         atlasSampler = RenderSystem.getDevice().createSampler(
                 AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE, FilterMode.LINEAR, FilterMode.LINEAR,
                 1, OptionalDouble.empty());
@@ -512,14 +528,38 @@ public final class MrtTerrainPass {
         }
     }
 
-    /** 逐槽诊断清屏色：槽 0 绿 / 槽 1 蓝 / 槽 2 品红（高对比，便于一眼分辨「哪一槽 + 有没有内容」）。 */
-    private static Vector4f diagnosticClear(int slot) {
-        return switch (slot) {
-            case 0 -> new Vector4f(0.0F, 1.0F, 0.0F, 1.0F);
-            case 1 -> new Vector4f(0.0F, 0.0F, 1.0F, 1.0F);
-            default -> new Vector4f(1.0F, 0.0F, 1.0F, 1.0F);
-        };
+    /**
+     * 本帧用哪种清屏模式。
+     *
+     * <p>🔖 判据 = **调试视图是否激活**（{@code mrt.enabled}），而不是「{@code mrt.terrain} 是否开着」：
+     * 后者在取证时经常两者同时开，而「用户此刻看到的画面」应该按生产语义走。
+     *
+     * <p>🔖 高对比诊断色被保留是因为它有正当用途 —— {@code MrtPlan} 给槽 0 的指纹恰好是
+     * {@code 0.0}（黑），于是「什么都没画」与「画了但很暗」在一张截图里无法区分
+     * （旧实现的注释记录了这个踩坑）。该能力<b>限定在诊断模式</b>，不再无条件进产品画面。
+     */
+    private static dev.vkdisp.pipeline.model.TerrainSlotClear.Mode diagnosticClearMode() {
+        boolean forceDiagnostic = VkDispConfig.MRT_SLOT_DIAGNOSTIC_CLEAR.get();
+        if (forceDiagnostic) {
+            if (CLEAR_OVERRIDE_LOGGED.compareAndSet(false, true)) {
+                VkDisp.LOGGER.warn("vkdisp: [GAP-003/A] mrt.slotDiagnosticClear=true —— "
+                        + "**故意**用高对比逐槽诊断色（绿/蓝/品红）清屏。"
+                        + "这些颜色不代表任何渲染语义，若本帧进了用户画面会出现假色天空；仅供取证。");
+            }
+            return dev.vkdisp.pipeline.model.TerrainSlotClear.Mode.DIAGNOSTIC;
+        }
+        return dev.vkdisp.bridge.MrtProbe.enabled()
+                ? dev.vkdisp.pipeline.model.TerrainSlotClear.Mode.DIAGNOSTIC
+                : dev.vkdisp.pipeline.model.TerrainSlotClear.Mode.NEUTRAL;
     }
+
+    /** 清屏模式说明只打一次（热路径日志 I/O 是真实开销，见 M-01 埋点教训）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean CLEAR_MODE_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** 「故意用诊断色」的一次性告警哨兵。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean CLEAR_OVERRIDE_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
 
     /** 我方 colortex 某一槽的视图（供调试回读）；未建 / 越界返回 {@code null}。 */
     public static GpuTextureView slotView(int slot) {

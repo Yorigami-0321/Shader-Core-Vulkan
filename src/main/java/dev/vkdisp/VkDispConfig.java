@@ -323,6 +323,60 @@ public final class VkDispConfig {
     public static final ModConfigSpec.BooleanValue MRT_SKIP_LIGHTING_SETUP = BUILDER
             .comment("诊断（GAP-011 二分）：跳过 lighting().setupFor(LEVEL)（默认关 = 保持当前行为）。")
             .define("mrt.skipLightingSetup", false);
+    /**
+     * 🟡 **GAP-009 方案 A：能力门控** —— 默认**关闭**。
+     *
+     * <p><b>它做什么</b>：着色器包的某些特性依赖本引擎**没有**的素材/能力
+     * （典型：LabPBR 逐方块材质贴图集 + 材质 UV 空间）。强行启用会让画面坏掉 ——
+     * BSL 上实测是地形 albedo 被压成<b>恰好 0</b>（纯黑剪影，主目标地形区 luma {@code 0.0000}）。
+     * 打开后，vkdisp 会把「<b>包自己声明</b>依赖该能力」的开关<b>只在内存里</b>关掉，
+     * 并给出 WARN 说明关了哪些、依据是哪份实测。
+     *
+     * <p>🔖 <b>为什么默认关</b>：门控会改变用户可见画面（关掉包特性）。
+     * 按支柱①兼容 / ②稳定的口径，任何「改变包语义」的动作都该<b>由用户显式开启</b>，
+     * 否则用户会「莫名其妙少了特性」—— 那正是最该避免的失败形态。
+     *
+     * <p>🔖 <b>为什么不硬编码选项名</b>（这是本键存在的意义）：
+     * 门控判据是「包<b>自己</b>声明的依赖」（BSL 用选项显示名末尾的 {@code *}，
+     * 共 19 条，见 {@code shaders/lang/en_US.lang}）+「我们<b>确实缺</b>这个能力」两者同时成立。
+     * 实测 Complementary 同样有视差，但复用原版 atlas、<b>零外部依赖</b>
+     * ⇒ 写成「视差一律关闭」会砍掉一个完全可用的包特性（违反 X27）。
+     *
+     * <p>🔖 <b>作用域</b>：只在「包地形片元被接到派生 MRT 地形管线」这条路径上生效
+     * （GAP-009 的实测证据全部取自地形）。那条路没走时不干预 ——
+     * 在没执行的地方砍特性同样违反 X27。
+     *
+     * <p>🔖 <b>不写你的 optionsv2.txt</b>：只改内存值。裁决依据 = Iris 自己从不因能力缺失
+     * 改写用户配置（只写用户改过的值，且等于默认值的项被移除），本项目不采用无先例的设计。
+     */
+    public static final ModConfigSpec.BooleanValue CAPABILITY_GATE = BUILDER
+            .comment("GAP-009 方案 A：按能力门控掉依赖缺失素材的包特性（默认关）。"
+                    + "打开后 vkdisp 会把包自己声明依赖、而本引擎确实缺失的开关在内存里关掉"
+                    + "（如 LabPBR 材质贴图集相关项）并打 WARN。不改写你的包配置文件。")
+            .define("pack.capabilityGate", false);
+
+    /**
+     * 🔬 A/B 开关：**故意**用高对比逐槽诊断色（绿 / 蓝 / 品红）清地形 MRT pass 的各槽。
+     *
+     * <p>🔴 <b>默认关，且不建议打开</b>。背景（实测见 {@code evidence/h27b-…} §六）：
+     * 我方 pass <b>只画地形</b>，天空那片区域永远不会被画进 gbuffer；
+     * 而逐槽诊断色是<b>无条件</b>应用的 ⇒ 天空那片保持纯绿，
+     * 包的 composite 又采 {@code colortex0} ⇒ <b>绿天空直接进最终画面</b>。
+     *
+     * <p><b>本开关存在的理由</b>：诊断色本身有正当用途 ——
+     * {@code MrtPlan} 给槽 0 的指纹恰好是 {@code 0.0}（黑），
+     * 于是「一个片元都没出」与「画了但很暗」在一张截图里<b>无法区分</b>。
+     * 高对比色能一刀切开。⇒ 该能力保留，但<b>限定在取证时按需开启</b>，
+     * 默认（以及调试视图之外的任何时候）一律零值清屏。
+     *
+     * <p>⚠️ 打开后若该帧进了用户画面，会看到<b>假色天空</b>（绿/蓝/品红）。
+     * 开启即 WARN 自报，避免「不知情地」把它当成渲染故障去查。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_SLOT_DIAGNOSTIC_CLEAR = BUILDER
+            .comment("A/B 取证用：故意用高对比逐槽诊断色清屏（默认关）。"
+                    + "诊断色不代表任何渲染语义，出现在用户画面上会呈现为假色天空，仅供取证。")
+            .define("mrt.slotDiagnosticClear", false);
+
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_FULLSCREEN_PROBE = BUILDER
             .comment("诊断：地形 MRT pass 内先画全屏三角形（默认关）。")
             .define("mrt.terrainFullscreenProbe", false);
