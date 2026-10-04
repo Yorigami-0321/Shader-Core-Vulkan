@@ -40,7 +40,7 @@ class PackVertexAdapterGeneratorTest {
                 new PackTerrainProgram.Input(1, "float", "recolor"),
                 new PackTerrainProgram.Input(2, "vec2", "texCoord"),
                 new PackTerrainProgram.Input(8, "vec4", "color"));
-        PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(inputs, false, false);
+        PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(inputs, false, false, false);
         assertEquals(List.of("0:float:mat", "1:float:recolor", "2:vec2:texCoord", "8:vec4:color"),
                 declaredOuts(r.glsl()),
                 "🔖 少一条就链接失败、多一条无害但会掩盖漏供 —— 必须逐条对齐契约");
@@ -65,7 +65,7 @@ class PackVertexAdapterGeneratorTest {
                 new PackTerrainProgram.Input(12, "vec3", "viewVector"),
                 new PackTerrainProgram.Input(13, "vec4", "vTexCoord"),
                 new PackTerrainProgram.Input(14, "vec4", "vTexCoordAM"));
-        PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(inputs, false, false);
+        PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(inputs, false, false, false);
         assertEquals(15, declaredOuts(r.glsl()).size(),
                 "🔖 **15 条必须全供** —— 本轮 runClient 正是缺第 15 条导致资源加载失败、客户端起不来");
         assertEquals(List.of("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"),
@@ -77,7 +77,7 @@ class PackVertexAdapterGeneratorTest {
     void constantSuppliesAreAccounted() {
         PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(List.of(
                 new PackTerrainProgram.Input(0, "float", "mat"),
-                new PackTerrainProgram.Input(2, "vec2", "texCoord")), false, false);
+                new PackTerrainProgram.Input(2, "vec2", "texCoord")), false, false, false);
         assertEquals(List.of("mat"), r.constantSupplies(),
                 "mat 只能按常量供（GAP-007），必须记账");
         assertTrue(r.diagnostics().stream().anyMatch(d -> d.message().contains("GAP-007")),
@@ -89,7 +89,7 @@ class PackVertexAdapterGeneratorTest {
     @DisplayName("🔖 不认识的 varying ⇒ 类型零值 + WARN（**绝不猜一个像的值**）")
     void unknownVaryingGetsZeroValueAndWarning() {
         PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(List.of(
-                new PackTerrainProgram.Input(5, "vec3", "somePackSpecificThing")), false, false);
+                new PackTerrainProgram.Input(5, "vec3", "somePackSpecificThing")), false, false, false);
         assertTrue(r.glsl().contains("somePackSpecificThing = vec3(0.0)"));
         assertTrue(r.diagnostics().stream().anyMatch(d -> d.message().contains("不认识")),
                 "不认识的名字必须显式告警（X9 不猜）");
@@ -99,7 +99,7 @@ class PackVertexAdapterGeneratorTest {
     @DisplayName("🔖 生成物必须声明原版地形顶点属性（否则地形根本没有顶点数据）")
     void declaresVanillaTerrainAttributes() {
         String glsl = PackVertexAdapterGenerator.generate(List.of(
-                new PackTerrainProgram.Input(0, "float", "mat")), false, false).glsl();
+                new PackTerrainProgram.Input(0, "float", "mat")), false, false, false).glsl();
         assertTrue(glsl.contains("in vec3 Position"));
         assertTrue(glsl.contains("in vec4 Color"));
         assertTrue(glsl.contains("in vec2 UV0"));
@@ -119,7 +119,7 @@ class PackVertexAdapterGeneratorTest {
         PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(List.of(
                 new PackTerrainProgram.Input(3, "vec2", "lmCoord"),
                 new PackTerrainProgram.Input(5, "vec3", "sunVec"),
-                new PackTerrainProgram.Input(0, "float", "mat")), true, false);
+                new PackTerrainProgram.Input(0, "float", "mat")), true, false, false);
         int assignments = 0;
         for (String line : r.glsl().lines().toList()) {
             String t = line.strip();
@@ -138,10 +138,10 @@ class PackVertexAdapterGeneratorTest {
     void probeSelfReportsItsState() {
         // 🔍 不自报的话，「开关没生效」与「结论不成立」无法区分 ⇒ 实验结论不可信。
         String off = PackVertexAdapterGenerator.generate(
-                List.of(new PackTerrainProgram.Input(3, "vec2", "lmCoord")), false, false)
+                List.of(new PackTerrainProgram.Input(3, "vec2", "lmCoord")), false, false, false)
                 .diagnostics().stream().map(Object::toString).reduce("", (a, b) -> a + b);
         String on = PackVertexAdapterGenerator.generate(
-                List.of(new PackTerrainProgram.Input(3, "vec2", "lmCoord")), true, false)
+                List.of(new PackTerrainProgram.Input(3, "vec2", "lmCoord")), true, false, false)
                 .diagnostics().stream().map(Object::toString).reduce("", (a, b) -> a + b);
         assertTrue(off.contains("lmCoord=满光照诊断开关=关"),
                 "🔍 关闭时也要自报，否则无法判断「开关是否生效」");
@@ -150,5 +150,48 @@ class PackVertexAdapterGeneratorTest {
         assertTrue(on.contains("开关没生效"),
                 "🔍 开启时必须给出「若结果与常量一致说明开关没生效」的判读指引");
     }
-}
 
+    @Test
+    @DisplayName("`U0001f50d h15 根因探针：color 开启时必须被强制成 vec4(1.0)")
+    void colorProbeForcesWhite() {
+        PackVertexAdapterGenerator.Result on = PackVertexAdapterGenerator.generate(
+                List.of(new PackTerrainProgram.Input(8, "vec4", "color")),
+                false, false, true);
+        PackVertexAdapterGenerator.Result off = PackVertexAdapterGenerator.generate(
+                List.of(new PackTerrainProgram.Input(8, "vec4", "color")),
+                false, false, false);
+        assertTrue(on.glsl().contains("color = vec4(1.0);"),
+                "`U0001f50d 判据是 albedo 首行的乘子：color.rgb 若为 0 则 albedo 恒为 0");
+        assertTrue(off.glsl().contains("color = vkdispAdapterColor;"),
+                "`U0001f516 默认必须是原版 Color 属性的真值（探针默认关）");
+        assertTrue(on.diagnostics().stream().anyMatch(
+                d -> d.message().contains("color=强制白诊断开关=已开启")),
+                "`U0001f50d X45：必须自报开关状态");
+        assertTrue(off.diagnostics().stream().anyMatch(
+                d -> d.message().contains("color=强制白诊断开关=关")),
+                "`U0001f50d 关闭时也要自报");
+    }
+
+    @Test
+    @DisplayName("`U0001f50e color 探针必须只改 color 一个 varying（单变量）")
+    void colorProbeIsSingleVariable() {
+        List<PackTerrainProgram.Input> inputs = List.of(
+                new PackTerrainProgram.Input(8, "vec4", "color"),
+                new PackTerrainProgram.Input(2, "vec2", "texCoord"),
+                new PackTerrainProgram.Input(5, "vec3", "sunVec"));
+        String[] x = PackVertexAdapterGenerator.generate(inputs, false, false, true)
+                .glsl().split("\n");
+        String[] y = PackVertexAdapterGenerator.generate(inputs, false, false, false)
+                .glsl().split("\n");
+        int differing = 0;
+        for (int i = 0; i < Math.min(x.length, y.length); i++) {
+            if (!x[i].equals(y[i])) {
+                differing++;
+                assertTrue(x[i].contains("color ="),
+                        "`U0001f50e 探针只许改 color 这一行");
+            }
+        }
+        assertEquals(1, differing,
+                "`U0001f50e 单变量实验必须只改一行");
+    }
+}

@@ -83,13 +83,13 @@ public final class PackVertexAdapterGenerator {
      *        默认关；开启时只改这一个 varying，其余全部不动（单变量）。
      */
     public static Result generate(List<PackTerrainProgram.Input> inputs, boolean fullLightProbe,
-            boolean parallaxSkipProbe) {
+            boolean parallaxSkipProbe, boolean colorProbe) {
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         Set<String> constants = new LinkedHashSet<>();
         StringBuilder decls = new StringBuilder();
         StringBuilder body = new StringBuilder();
         for (PackTerrainProgram.Input input : inputs) {
-            String assignment = supply(input, constants, fullLightProbe, parallaxSkipProbe);
+            String assignment = supply(input, constants, fullLightProbe, parallaxSkipProbe, colorProbe);
             if (assignment == null) {
                 diagnostics.add(TranslateDiagnostic.warn(
                         "适配层不认识 varying '" + input.name() + "'（类型 " + input.type()
@@ -118,11 +118,20 @@ public final class PackVertexAdapterGenerator {
                         + (fullLightProbe ? " **lmCoord=满光照诊断开关=已开启**"
                                   : " lmCoord=满光照诊断开关=关")
                         + (parallaxSkipProbe ? " **dist=视差跳过诊断开关=已开启**"
-                                  : " dist=视差跳过诊断开关=关"),
+                                  : " dist=视差跳过诊断开关=关")
+                        + (colorProbe ? " **color=强制白诊断开关=已开启**"
+                                  : " color=强制白诊断开关=关"),
                 null, 0));
         if (fullLightProbe) {
             diagnostics.add(TranslateDiagnostic.warn(
                     "[诊断] lmCoord 已强制为 vec2(1.0)：若渲染结果与常量一致，说明**开关没生效**（不是结论不成立）",
+                    null, 0));
+        }
+        if (colorProbe) {
+            diagnostics.add(TranslateDiagnostic.warn(
+                    "[诊断] color 已强制为 vec4(1.0)（原版 Color 属性的真值被完全绕过）。"
+                            + "若画面变亮 ⇒ **color.rgb 本来就是 0**（根因坐实）；"
+                            + "若仍全黑 ⇒ color 也被排除，albedo 的零点在更上游",
                     null, 0));
         }
         if (parallaxSkipProbe) {
@@ -137,7 +146,7 @@ public final class PackVertexAdapterGenerator {
 
     /** 三档供值表；返回 {@code null} 表示「不认识这个名字」。 */
     private static String supply(PackTerrainProgram.Input input, Set<String> constants,
-            boolean fullLightProbe, boolean parallaxSkipProbe) {
+            boolean fullLightProbe, boolean parallaxSkipProbe, boolean colorProbe) {
         String name = input.name();
         return switch (name) {
             case "texCoord" -> "texCoord = UV0";
@@ -150,7 +159,13 @@ public final class PackVertexAdapterGenerator {
                     ? "lmCoord = vec2(1.0)"
                     : "lmCoord = clamp((vec2(UV2) / 16.0 - 0.03125) * 1.06667,"
                     + " vec2(0.0), vec2(0.9333, 1.0))";
-            case "color" -> "vkdispAdapterColor";
+            // U0001f534 h15 定的新首要嫌疑：首行 albedo = texture(...) * vec4(color.rgb, 1.0)
+            //   若 color.rgb 为 0 ⇒ albedo ≡ 0，与 texture / textureGrad / 光照**全无关**。
+            //   六个候选至此全部排除，而 color 是**唯一没被实验触及的因子**。
+            //   此探针只改 color 一个 varying（单变量）；候选因素应为 vec4(1.0)。
+            case "color" -> colorProbe
+                    ? "color = vec4(1.0)"
+                    : "color = vkdispAdapterColor";
             case "sunVec" -> "sunVec = normalize(SunDir.xyz)";
             case "upVec" -> "upVec = normalize(ModelViewMat[1].xyz)";
             case "eastVec" -> "eastVec = normalize(ModelViewMat[0].xyz)";

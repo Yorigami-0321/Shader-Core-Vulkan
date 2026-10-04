@@ -249,6 +249,18 @@ public final class VkDispConfig {
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_DERIVATIVE_PROBE = BUILDER
             .comment("诊断：把片元 dcdx/dcdy 初值改成 vec2(0.0)（默认关，单变量实验）。")
             .define("mrt.terrainDerivativeProbe", false);
+
+    /**
+     * U0001f50d 诊断单变量实验（h15 的新首要嫌疑）：把 color 强制成 vec4(1.0)。
+     * <p>依据：两条路径的 albedo 首行逐字相同 ——
+     * {@code albedo = texture(texture_0, texCoord) * vec4(color.rgb, 1.0);}
+     * 若 color.rgb 为 0 ⇒ albedo 恒为 0，**与 texture / textureGrad / 光照全无关**。
+     * <p>h10～h15 六个候选全部排除后，color 是**唯一一个还没被实验触及的因子**。
+     * <p>判据：画面变亮 ⇒ color.rgb 本来就是 0（**根因坐实**）；仍全黑 ⇒ 排除。默认关。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_COLOR_PROBE = BUILDER
+            .comment("诊断：顶点适配层把 color 强制成 vec4(1.0)（默认关，单变量实验）。")
+            .define("mrt.terrainColorProbe", false);
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_FULLSCREEN_PROBE = BUILDER
             .comment("诊断：地形 MRT pass 内先画全屏三角形（默认关）。")
             .define("mrt.terrainFullscreenProbe", false);
