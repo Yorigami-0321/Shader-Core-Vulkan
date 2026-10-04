@@ -116,13 +116,13 @@ IllegalStateException: Close the existing render pass before performing addition
 🟢 **已修**：修复后 `resourceLoad/ERROR` **12 → 0**（`h23`），回归测试 `PackTerrainMemoTakeTest` 4 条 |
 🔖 「诊断意图与实现不同」这条比时序本身更值得记：当时按「提前登记」去想，而缺口其实是**取用顺序**。
 `VkDispVirtualPack.takeTerrainSourceMemo()` | `mrt.packTerrainShader` | 🟢 **已修**（`h23`）|
-| GAP-009 | 高级材质路径需要的**逐方块材质贴图集**（OF 的 `specular` / `normals`）本引擎没有。实测（`h10`）：包片元用 `textureLod(specular, …)` 取光滑度/金属度/孔隙/自发光遮罩，用 `textureGrad(normals, …).z` 取 AO |
-它们是**资源包附带的一整套逐方块材质贴图**，不是本项目能就地生成的资产；不引入也不假装有 |
+| GAP-009 | 高级材质路径需要的**逐方块材质贴图集**（LabPBR 的 `_n` / `_s`，Iris 经 `uniform sampler2D normals` / `specular` 两张**额外 atlas** 暴露）本引擎没有。实测（`h10`）：包片元用 `textureLod(specular, …)` 取光滑度/金属度/孔隙/自发光遮罩，用 `textureGrad(normals, …).z` 取 AO |
+它们是**资源包附带的一整套逐方块材质贴图**（LabPBR 格式规范），不是本项目能就地生成的资产；不引入也不假装有 |
 缺省绑**乘法单位元**（`specular=(0,0,0,255)` / `normals=(128,128,255,255)`，语义=「没有材质覆盖、没有 AO、法线朝上」），
 并一次性 INFO 说明「这是缺省不是材质贴图」；将来接入真资源集时替换这两个绑定即可 |
-`bridge/NeutralMaterialMaps`（中性缺省）+ 未来一个资源集加载器（未建） | `mrt.packTerrainShader`（已存在） | 
+`bridge/NeutralMaterialMaps`（中性缺省）+ 未来一个 LabPBR atlas 加载器（未建） | `mrt.packTerrainShader`（已存在） | 
 默认配置路径不经过 `GetMaterials`，画面正确 ⇒ 随时可退回 | 
-🟡 **缺省语义已落地并验证**（`h10`：两个采样器确实被读到 —— 48.41% 像素变化）；**真材质贴图集未实现** |
+🟡 **缺省语义已落地并验证**（`h10`：两个采样器确实被读到 —— 48.41% 像素变化）；**A 方案已裁决（内存覆盖 + 按包依赖关程序），真材质贴图集（B）未实现** |
 🔴 **`h29` 追加的新事实（这条改变了本条目的性质）**：缺的不只是「材质贴图」，**还有「材质贴图的 UV 空间」**。
 我们给 `vTexCoord` / `vTexCoordAM` 的中性缺省是**方块图集 UV**（`PackVertexAdapterGenerator:185-188`：
 `vTexCoord = vec4(UV0, 0.0, 0.0)`），而包的高级材质路径里 `GetParallaxCoord()` **从 `vTexCoord.st` 起步**
@@ -133,11 +133,85 @@ IllegalStateException: Close the existing render pass before performing addition
 **(B) 补最小材质集语义**？决策输入与两个落点的实测对比见
 **`review/2026-10-04-GAP009-素材缺失裁决简报.md`**（`h31`：两个落点的主目标画面**逐像素同值**，
 内部规模 `8/7/15` vs `1/5/9` ⇒ **建议落 `PARALLAX` 层**）。
-🔴 **未自行决定** —— 依据 `07-CONSTRAINTS`「发现 OF 语义与原版能力冲突 ⇒ 停下来问」+ X27。
+🟢 **A 已实现（2026-10-05，`h32`）** —— 类 `config/PackCapabilityGate`（纯逻辑，16 条单测），
+判据来源 `pack/properties/PackLangFile`（读 `shaders/lang/*.lang`），接线在 `pack/PackTerrainSource`，
+开关 `pack.capabilityGate`（**默认关**）。设计要点：
+- 🔖 **读 lang 是必需的**：BSL 声明「本选项依赖资源包提供的材质贴图」的**唯一**机制是
+  **显示名末尾的 `*`**（实测 `en_US.lang` 19 条）⇒ 不读就只能硬编码 `PARALLAX`，
+  而 Complementary 同样有视差却**零外部依赖**（实测零星号）⇒ 硬编码会砍可用特性（X27）。
+- 🔖 **星号只有一处表示**：`PackLangFile` 剥掉星号、单独收进 `starMarkedOptions`，
+  门控只认那一份。⚠️ 首版按「标签里带星号」判定而解析器已剥星号 ⇒ **门控恒空转且看起来完全正常**
+  （最该消灭的静默失效）。🔖 教训：**同一个语义不要有两处表示**。
+- 🔖 **只关布尔**、**不关本来就是关的**（否则日志会把「它本来就关着」说成「我们关了它」，
+  下次取证误判归因）、**不写用户文件**（裁决：不采用改写用户配置，Iris 亦无先例）。
+- 🔖 **作用域**：只在「包地形片元被接到派生 MRT 地形管线」时生效 ——
+  首版错接在 `PackCompositeSource`（composite/deferred/final 三个**全屏**步），
+  会在「地形没接线」时**白白砍包特性**（X27）⇒ 已改接 `PackTerrainSource`。
+- ⏳ **runClient 未跑**（`.java` 改动按 `07` 规须取证，用户协助）⇒ 实现已落地但**未客户端验证**。
+
+🟢 **已裁决（用户 2026-10-04）：采纳 A 的形态，B 留作后续正解。** 落地口径：
+- **A（立即止血）** = **只在内存里覆盖选项 + 按包自己声明的依赖关程序，不写任何用户文件**。
+  形态取自 Iris 的 `program.<name> = <表达式>`（`ShaderPack.java:257-265` 分派 / `:290-295` 执行，
+  禁用 = 返回空源码而非替换成 fallback）。**不采用「改写用户 `optionsv2.txt`」** ——
+  Iris 自己从不因能力缺失改写用户配置（只写用户改过的值，且等于默认值的项被 `remove()` 掉），
+  无先例，属本项目自担信任成本的设计。
+  🔖 门控**不必硬编码 `PARALLAX` 一个名字**：BSL 用**显示名末尾加 `*`** 标记依赖
+  `ADVANCED_MATERIALS` 的选项，共 **18/362 项**（`PARALLAX*` / `SSS` / `EMISSIVE` / `ALBEDO_METAL` /
+  `SELF_SHADOW*` / `REFLECTION_*` / `DIRECTIONAL_LIGHTMAP*` / `NORMAL_DAMPENING`）⇒ 读这个依赖闭包即可。
+  ⚠️ `*` 是**本地化显示名**，非 ASCII 资源包或改过 lang 的包上不可靠 ⇒ 判定须落到
+  `optionsv2.txt` / `shaders.properties` 的选项定义，不能只靠 lang 文件。
+- **B（后续正解，重新定义）** = **实现 LabPBR atlas 加载 + 中性回退**，**不是**「打包一套材质资源」。
+  理由（2026-10-04 核实）：`_n`/`_s` 两张图是 **LabPBR 格式规范**，由**资源包**提供
+  （Iris 文档 `shaders.properties/current/how-to/pbr_standards`：法线图同名加 `_n` 后缀、
+  高光图加 `_s`），靠 `uniform sampler2D normals` / `specular` 两张**额外 atlas** 暴露
+  ⇒ **本引擎内部永远补不出来**，它依赖用户是否装了 PBR 资源包。
+  ⇒ 打包材质资源既有许可风险（LabPBR 规范页无 license 声明），也与生态分工不符。
+  🔖 本条根因因此**不是「我们缺资源」，而是「我们缺 loader」**，`bridge/NeutralMaterialMaps`
+  已经是这个 loader 的中性缺省半成品。
+  📌 **通道语义（解释实测现象）**：`normals` 的 **A 通道 = 视差高度**；A=0 ⇒ POM 把 albedo
+  乘成 0 ⇒ 精确对应实测的 `luma 恰好 0.0000`。（Iris 的回退 `NORMAL=0x7F7FFFFF` A=255，
+  而 vkdisp 若绑全零纹理则 A=0 ⇒ **须实测 vkdisp 绑的是哪个**，这决定 A 与 B 谁更合适。）
+- 🟢 **一个重要的范围澄清（2026-10-04 核实）**：Complementary Reimagined **同样有视差
+  （`PARALLAX*` / `SELF_SHADOW*` / `PARALLAX_SLOPE_NORMALS`）但零外部依赖** ——
+  实测 `shaders/lib/surface/parallax.glsl` 与 `materialGbuffers.glsl` 里 `texture()`/`sampler`
+  引用**均为 0 处**，它复用原版 `terrain` atlas 的亮度/高度。
+  ⇒ **本条目是 BSL 选择 LabPBR 路线的特有问题，不是 shader 生态的普遍约束。**
+  ⇒ 门控**必须逐包判定**，不得写成「视差一律关闭」。
+
+
 🔶 **顺带查出的相邻风险（已登记，下一轮处理）**：我们只显式处理 5 个 sampler，
 `noisetex` / `colortex9` / **`lighttex0`** / **`lighttex1`** 落到 `default -> atlas`；
 其中 `lighttex0/1` 是 **`sampler3D`**（OF 体积光照贴图），拿 **2D** 图集视图去喂
 = 描述符类型不匹配 = UB，且**本机无 validation layer ⇒ 不报错**（同 `h27` 的别名问题）。
+
+### GAP-012 · 🔴 sampler 维度不匹配（**2026-10-05 已修**）
+
+| 项 | 内容 |
+|---|---|
+| **需求来源** | GAP-009 顺带查出的相邻风险（上一条） |
+| **原版现状（实测）** | 本引擎对**未识别名字**的 sampler 一律 `default -> atlas`（2D 图集视图）。实测扫 BSL v10.1.8 全包：`sampler2D` 34 个名字 / `sampler2DShadow` 3 个 / **`sampler3D` 4 个**（`lighttex` / `lighttex0` / `lighttex1` / `voxeltex`）⇒ 这 4 个**拿到了 2D 视图** |
+| **为什么是 UB** | `sampler3D` 在 Vulkan 里要求描述符类型是 **3D 图像视图**；喂 2D 视图 = 描述符类型不匹配 = **未定义行为**（驱动可丢 draw / 给垃圾 / 无事发生），且本机**无 validation layer ⇒ 一层都不报错** |
+| **补充方案** | ① 新增 `pipeline/model/SamplerDimensionPlan`：**从片元声明的 sampler 类型**读维度（不是从名字），产出「名字 → 视图类别 + 理由」的**可单测纯数据**；② 新增 `bridge/VolumeStubs`：4×4×4 `RGBA8` 全 0 的 **3D 桩**（语义 = 「无体积光照/无体素数据」），用 `clearColorTexture` 一次清成（`writeToTexture` 只写单层）；③ `TerrainPipelineApi#bindPackTerrainUniforms` 改为按 `Binding.kind` 分派 |
+| **新增的「响亮失败」** | cube 采样器与**任何不认识**的 sampler 类型 ⇒ **不绑** + ERROR。宁可让 draw 抛 `Missing uniform`（可定位），也不拿 2D 视图冒充。🔖 这是与旧 `default -> atlas` 的根本区别：旧实现在这里**总能**绑出「看起来能用」的视图 |
+| **影响面** | `pipeline/model/SamplerDimensionPlan`（新）+ `bridge/VolumeStubs`（新）+ `bridge/TerrainPipelineApi` |
+| **开关** | 无独立开关（正确路径即默认；A/B 逃生舱是 `mrt.shadowStubs`，本条不受它影响） |
+| **回退条件** | 原版提供类型正确的 3D 纹理视图（如真正的体积光照贴图）⇒ 换绑定源，决策层不动 |
+| **状态** | 🟢 **已修**（`h32`，2026-10-05：纯逻辑单测 15 条；**runClient 未跑** ⇒ 待补客户端取证） |
+| **⚠️ 明确不承诺** | 包基于体积光照的**体积光 / 体积 AO 效果在本引擎上不成立**（无真资源，且按 GAP-009 裁决不打包第三方光照/材质资产）。这比「喂 2D 图集」诚实 —— 后者可能碰巧「看起来有东西」，换驱动就变 |
+
+### GAP-013 · 🔴 诊断清屏色泄漏进用户画面（**2026-10-05 已修**）
+
+| 项 | 内容 |
+|---|---|
+| **需求来源** | `h27b` §六 定位（当时**只定位未修**，理由：改它要同时保留「没画 vs 很暗」的区分能力，属独立一轮的取舍） |
+| **原版现状** | 旧 `MrtTerrainPass#diagnosticClear` **无条件**把槽 0 清成**纯绿** `RGB(0,255,0)`。因果链：我方 pass **只画地形** ⇒ 天空那片区域**从不被画进 gbuffer** ⇒ 保持纯绿 ⇒ 包的 composite 采 `colortex0` ⇒ **绿天空直接进最终画面** |
+| **为什么不只是「把绿改成黑」** | `MrtPlan` 给槽 0 的**指纹恰好是 `0.0`（黑）** ⇒ 一旦「什么都没画」与「画了但很暗」同时发生，两者在截图上**无法区分**（旧实现的注释记录了这个踩坑）。直接改黑 = **删掉一项可诊断性** |
+| **补充方案** | 新增 `pipeline/model/TerrainSlotClear`（纯逻辑、可单测）分两种模式：**诊断模式**保留高对比逐槽色（绿/蓝/品红）；**生产模式**零值清屏。🔖 判据是**调试视图是否激活**（`mrt.enabled`）而不是「`mrt.terrain` 是否开着」—— 取证时两者常同时开，但用户看到的画面必须是生产语义 |
+| **保留可诊断性的另一半** | 生产模式打**一次** INFO 明说「天空黑是**预期行为，不是故障**」（此前是纯绿 = 诊断色泄漏，见 `h27b §六`）。不这么做，取证者会把「设计如此」误读成「又坏了」 |
+| **影响面** | `pipeline/model/TerrainSlotClear`（新）+ `bridge/MrtTerrainPass`（`diagnosticClear` 移除，改为模式决策） |
+| **开关** | `mrt.slotDiagnosticClear`（A/B 逃生舱，**默认关**；开启即 WARN 自报「若本帧进了用户画面会呈现假色天空」） |
+| **状态** | 🟢 **已修**（`h32`，2026-10-05：单测 10 条；**runClient 未跑** ⇒ 待补客户端取证） |
+| **⚠️ 仍不承诺** | **黑天空本身仍未修**，且**不是**本条能修的：正确的天空要由包的 gbuffer 程序去画 ⇒ 属 **M-04（未做）**。零值只是「不含假信息」（黑不骗人；纯绿会让用户以为本项目画了绿天） |
 
 ---
 
