@@ -2110,3 +2110,35 @@ String terrainAdapter = takeTerrainAdapterMemo();  // ← 于是永远拿到 nul
 
 **🔎 取证判据（h22 校准，仍然有效）**：截图判读一律用「黑色像素占比」——
 `> 90%` 全黑相位、`< 60%` 有内容相位（对照组上界 ~20%）。**不用唯一哈希**（MC 逐帧会变，纯原版也是 6/6 全不同）。
+
+### 10.29 🔎 文档同步：GAP-010 标记已修 / GAP-011 归因收敛；🔴 **派生管线与原版逐项等价**（新排除一条路径）
+
+> 本轮为**文档同步轮**（`15-ITERATION.md` 第 2 步「先改文档」），未改产品代码。
+
+**① GAP-011 条目里堆了互相矛盾的结论，本轮收敛**：`h16`（主目标被清黑）与 `h17`（pass 泄漏状态）
+都已被 `h19` 推翻，`h20` 修的两处缺陷经 `h21` 实测无效。现在条目里写的是**当前唯一未被排除的路径**
+（M-01 的管线替换），并把 `h22` 校准出的**取证判据**直接写进条目 —— 免得下一轮又拿「唯一哈希数」当判据。
+
+**② GAP-010 标记为已修**，并写清一件事：当时按「提前登记」去想，
+**实际缺口是「取用顺序」** —— 适配层不是「来晚了」，是被片元的 take **顺手抹掉**。
+
+**③ 🔴 新排除一条路径（纯静态）**：查了原版 `RenderPipelines` 与本项目 `TerrainDerivedPlan`，
+确认派生管线与原版是**逐项等价**的：
+
+| 项 | 原版 SOLID_TERRAIN | 我们的派生 | 结论 |
+|---|---|---|---|
+| 基底 snippet | `TERRAIN_SNIPPET` | 同 | ✅ |
+| color target | `ColorTargetState.DEFAULT` | 同 | ✅ |
+| `ALPHA_CUTOUT` | SOLID **没有**（0.5F 是 CUTOUT） | `null` | ✅ |
+| 绑定组 | `PROJECTION` + `CHUNK_SECTION` + `TERRAIN_INFO` | 同（且 h20 已摘掉多余的孤儿组） | ✅ |
+| depth stencil | 继承 `LIT_BLOCKS_SNIPPET` 的 `DEFAULT` | 同 | ✅ |
+| location | `pipeline/solid_terrain` | `vkdisp:pipeline/terrain_solid`（**故意不同**） | ✅ 预期内 |
+
+🔶 ⇒ 「派生管线与原版状态不一致导致天空黑」这条**排除**。
+🔖 `TerrainDerivedPlan` 的注释里已经写着「只改 location / ALPHA_CUTOUT / ColorTargetState 三处，保证与原版**逐项等价**」——
+这次是**逐行核对确认了它确实成立**，不是新增结论。
+
+**④ 测试**：``./gradlew build`` BUILD SUCCESSFUL，**705** 单测全绿（本轮未改产品代码）。
+
+**⑤ 仍未证明**：GAP-011 闪烁根因**未定位**；GAP-008 未判定；GAP-009 真材质集需要资源包配套资产（缺省语义 h10 已落地）；
+GAP-007 未做；M-04 仍需用户裁决。
