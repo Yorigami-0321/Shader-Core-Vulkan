@@ -48,7 +48,7 @@
 ```
 06-MIGRATION.md       ← bridge 包隔离 + 版本升级流程（第一天就要落实隔离）
 12-GAP-STRATEGY.md    ← 原版 Vulkan 没有的特性怎么办
-13-GAP-REGISTRY.md    ← 上面那份的登记表（GAP-003 多附件 / GAP-005 glslang / GAP-006 FFI panic）
+13-GAP-REGISTRY.md    ← 上面那份的登记表（GAP-001–011；当前焦点 GAP-003 接线已通 / GAP-008 高级材质全黑 / GAP-011 闪烁）
 15-ITERATION.md       ← 迭代维护协议
 16-READING.md         ← 按读者类型的阅读路径
 AGENT_CONTEXT.md      ← 跨会话记忆（决策、原版 API 清单、待决策项）
@@ -70,7 +70,7 @@ AGENT_CONTEXT.md      ← 跨会话记忆（决策、原版 API 清单、待决�
 | `07-CONSTRAINTS.md` | **§〇·〇 三支柱优先级** + §1.4 M1（mixin 松绑）+ 许可证 §〇 + L1–L12 + M1 + T1–T19 + 红线 X1–X32 |
 | `08-TESTING.md` | 阶段验收 + **性能 B1–B7** + **§8.2 G 系列 Rust 对比** + **§8.3 稳定性** + **§10 兼容矩阵** |
 | `12-GAP-STRATEGY.md` | 原版不支持时的自行补充规则 |
-| `13-GAP-REGISTRY.md` | 缺口登记表（GAP-003 多附件 / 004 自定义 uniform / 005 glslang 候选 / 006 FFI panic） |
+| `13-GAP-REGISTRY.md` | 缺口登记表（GAP-001–011：003 多附件 / 004 自定义 uniform / 005 glslang 候选 / 006 FFI panic / 007 顶点缺数据 / 008 高级材质全黑 / 010 已修 / 011 闪烁） |
 | `15-ITERATION.md` | 三层防乱协议（A1–A17） |
 | `16-READING.md` | 按读者类型的阅读路径 |
 | `17-NATIVE.md` | **🔴 本轮重写**：三支柱度量 + 预算 B1–B7 + 热度重标 + FFM/Rust 架构 + **§5 G 系列准入闸门与 20% 阈值** |

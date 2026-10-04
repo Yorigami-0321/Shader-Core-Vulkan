@@ -377,8 +377,8 @@ config = "${mod_id}.mixins.json"
 
 | # | 目标类 | 目标方法（签名） | 注入类型 | 用途 | 兼容性判定 | 可关闭键 | 状态 |
 |---|---|---|---|---|---|---|---|
-| M-01 | `net.minecraft.client.renderer.chunk.ChunkSectionLayer` | `pipeline(boolean)`（public，1 参 `multiDraw`） | 装配层 | 把**派生管线**（多附件 / 自定义 uniform）按**层**接到地形 draw 上 —— 零 mixin 无法达成（`02` §5.1） | 源码级核实（26.3.0.41-beta sources jar 第 39-41 行 + `ChunkSectionsToRender` 第 121/176 行）：`layer.pipeline(multiDraw)` 是派生管线被地形 draw 用上的**唯一必经点**，且按层解析 | `mixin.wireTerrain` | 🟡 **已实现（2026-10-03）**：通道已通 + GAP-004 块已挂上并每帧绑定；GAP-003 多附件 ⛔ 未做（见 §5.0.1） |
-| M-01b | `net.minecraft.client.renderer.chunk.ChunkSectionsToRender` | `renderLayers(ChunkSectionLayer[], GpuSampler, RenderPass, GpuTextureView, GpuTextureView, @Nullable RenderPipeline, @Nullable RenderPipeline)`（private，7 参，末两个是 override） | 装配层 | 把 M-01 派生管线新增的**自定义 uniform 块**绑到地形 draw 的 RenderPass（GAP-004） | 源码级核实：原版 `renderLayers` 只绑 `TerrainUniform` / `Sampler0` / `Sampler2`；驱动层 STRICT_VALIDATION 按**布局**逐条校验，布局多出的条目无人绑即抛 `Missing uniform` | `mixin.bindTerrainParams` | 🟡 **已实现（2026-10-03）**：块能挂上并每帧绑定；**但本轮片元仍是原版 `core/terrain`，它不读这个块 ⇒ 被绑定但未被消费** |
+| M-01 | `net.minecraft.client.renderer.chunk.ChunkSectionLayer` | `pipeline(boolean)`（public，1 参 `multiDraw`） | 装配层 | 把**派生管线**（多附件 / 自定义 uniform）按**层**接到地形 draw 上 —— 零 mixin 无法达成（`02` §5.1） | 源码级核实（26.3.0.41-beta sources jar 第 39-41 行 + `ChunkSectionsToRender` 第 121/176 行）：`layer.pipeline(multiDraw)` 是派生管线被地形 draw 用上的**唯一必经点**，且按层解析 | `mixin.wireTerrain` | 🟡 **已实现（2026-10-03）**：通道已通 + GAP-004 块已挂上、每帧绑定、且已被包片元消费（`h08`）。**2026-10-04 更新**：GAP-003 的包片元接线已打通（`h08`/`h09`）—— 派生 MRT 管线片元 = 包 `gbuffers_terrain`，槽位服从 `DRAWBUFFERS` 映射（转译第 ⑦½ 段）。⛔ M-04（整 pass 多附件，方案 B）仍未做；`h24` 坐实：管线替换本身引发闪烁（GAP-011） |
+| M-01b | `net.minecraft.client.renderer.chunk.ChunkSectionsToRender` | `renderLayers(ChunkSectionLayer[], GpuSampler, RenderPass, GpuTextureView, GpuTextureView, @Nullable RenderPipeline, @Nullable RenderPipeline)`（private，7 参，末两个是 override） | 装配层 | 把 M-01 派生管线新增的**自定义 uniform 块**绑到地形 draw 的 RenderPass（GAP-004） | 源码级核实：原版 `renderLayers` 只绑 `TerrainUniform` / `Sampler0` / `Sampler2`；驱动层 STRICT_VALIDATION 按**布局**逐条校验，布局多出的条目无人绑即抛 `Missing uniform` | `mixin.bindTerrainParams` | ✅ **已实现（2026-10-03）**：块挂上并每帧绑定；**2026-10-04 更新（`h08`）**：包片元接上后块**已被消费** —— 42 个块成员 + 5 个 sampler 一条不漏绑定，`VkDispBuiltins` 608 字节环由 `OfUniformManager` 按 std140 偏移每帧填值 |
 | M-02 | （待定） | （待定） | 装配层 | 实体 / 天空 draw 走派生管线 | 待源码核实 | `mixin.wireEntity` | ⏳ 未开始 |
 | M-03 | （待定） | （待定） | 装配层 | | | | ⏳ 未开始 |
 | M-04 | `net.minecraft.client.renderer.LevelRenderer` | `addMainPass(FrameGraphBuilder, FeatureRenderDispatcher$PreparedFrame, GpuBufferSlice, ChunkSectionsToRender, boolean)`（private，5 参） | 装配层 | **GAP-003 多附件的方案 B**：拿到地形 render pass 的所有权，把**整个**主 pass 改成多附件 | 源码级核实（同 jar 第 396-404、455-463 行）：原版地形 pass 由 `createRenderPass(name, mainTarget.getColorTextureView(), Optional.empty(), depthView, OptionalDouble.empty())` 建出，**颜色附件恰好 1 个** | `mixin.ownTerrainPass` | ⏸️ **已登记，未实现**（方案 B；§5.0.4 取舍表） |
@@ -395,8 +395,8 @@ config = "${mod_id}.mixins.json"
 | 片元多路输出（`layout(location=0/1/2) out`） | ✅ 可用 |
 | 「三槽拿到可区分内容」 | ✅ 逐槽 R 指纹（0 / ⅓ / ⅔）可量化判读 |
 | 设备能力收敛（`maxColorAttachments`） | ✅ 降档 + 显式 WARN |
-| 🔴 地形接入多附件 pass | ⛔ **未做** = M-04 |
-| 🔴 包的自研 `gbuffers_*` 片元 | ⛔ **未做** |
+| 🔴 地形接入多附件 pass | ✅ **方案 A 已通**（2026-10-04 `h04`/`h05`：M-05 只读捕获 + 帧图内插 pass 生产形态）；⛔ M-04（方案 B，整 pass 多附件）仍未做 |
+| 🔴 包的自研 `gbuffers_*` 片元 | ✅ **已接上**（2026-10-04 `h08`：派生 MRT 管线片元 = 包 `gbuffers_terrain`）；⚠️ 附件数必须**跟随包的输出数**（BSL 默认配置 1 槽、`ADVANCED_MATERIALS` 8 槽，`h09`），**不要按「能力上限 5 槽」建 pass**（X42） |
 
 🔖 **为什么先验原语再谈 M-04**（先测后优，`17-NATIVE` §2–§3）：
 源码级核实表明原版主 pass 把**地形、实体、特性、云、描边画在同一个 pass、同一个单附件里**
@@ -509,21 +509,24 @@ FramePass pass = frame.addPass("main");
 
 | 项 | 状态 |
 |---|---|
-| **让包自己的 `gbuffers_terrain` 跑起来** | ❌ 这才是真正的阻塞。🔴 **原写的「补齐 colortex1/2 的 gbuffer 语义」已被 `h06` 核实推翻** —— 那是 **_Iris_** 的语义；BSL 用 OF 式 `gl_FragData[N]` + `/* DRAWBUFFERS:… */` 映射，法线进 **colortex6**、材质进 **colortex3**，且 `ADVANCED_MATERIALS`/`MCBL_SS` **默认关闭** ⇒ **BSL 默认地形只写 colortex0** |
+| **让包自己的 `gbuffers_terrain` 跑起来** | ✅ **已接上**（2026-10-04 `h08`）：派生 MRT 管线片元从原版 `core/terrain` 换成包 `gbuffers_terrain`，顶点侧由适配层 `terrain_pack_adapter.vsh` 按原版顶点格式逐位置产出 9 条 OF varying；像素差 48.22 / 39.03% 证明真正生效。🔖 语义前提（`h06` 核实，仍有效）：BSL 用 OF 式 `gl_FragData[N]` + `/* DRAWBUFFERS:… */` 映射，法线进 **colortex6**、材质进 **colortex3**，且 `ADVANCED_MATERIALS`/`MCBL_SS` **默认关闭** ⇒ **BSL 默认地形只写 colortex0** |
 | ~~翻译结果能否编译成 SPIR-V~~ | ✅ **已验证**（`h07` 更正）：项目既有「整包逐阶段 SPIR-V」通路，BSL 地形片元**三个维度目录全部编译成功**（片元 46.7/63.7/79.9KB），整包 `stages=190 ok=190 failed=0` |
-| **把包的地形 SPIR-V 接进派生管线** | ❌ **这才是真正的缺口**：整包产物里**已有** BSL 地形片元的 SPIR-V，但**地形 draw 用的仍是原版 `core/terrain`**（派生 MRT 管线从 `MULTIDRAW_TERRAIN_SNIPPET` 建、片段着色器是原版的）⇒ 这一步是**接线** |
-| 附件槽位数与顺序 | ❌ 🔖 **「能力上限 5 槽」≠「生产实际 1 槽」**（`h07` 实测：默认配置预处理后只剩 `gl_FragData[0]`）。接包片元时附件数必须**跟随包的输出数**，否则 `setPipeline` 抛异常**崩客户端**；开 `ADVANCED_MATERIALS` 时顺序还要**服从 DRAWBUFFERS 而非下标** |
+| **把包的地形 SPIR-V 接进派生管线** | ✅ **已完成**（`h08`，2026-10-04）：地形 draw 用上包片元，日志 0 条 vkdisp ERROR、0 崩 |
+| 附件槽位数与顺序 | ✅ **已解决**（2026-10-04 `h09`）：转译第 ⑦½ 段 `DrawBuffersSlotAdapter` 按包源码 `/* DRAWBUFFERS:… */` 兑现槽位；附件数**跟随包的输出数**（默认 1 槽；`ADVANCED_MATERIALS` 8 槽，两侧都被改成 8）。⚠️ `DRAWBUFFERS:08367`（MCBL_SS + 高级材质同开）需 9 附件 > Vulkan 上限 8 ⇒ **显式拒绝接线**。🔖 教训仍有效：**「能力上限 5 槽」≠「生产实际」**，混用会崩客户端（X42） |
 | `sampler3D lighttex0/1` vs 原版 **2D** lightmap | ⚠️ 整包编译 190/190 通过 ⇒ **编译层面不构成阻塞**；只会在**渲染期绑采样器**时暴露 |
-| 44 条 OF uniform 的取值供给 | ❌ GAP-004 那个块目前**只收编了声明** |
+| 44 条 OF uniform 的取值供给 | ✅ **已供给**（2026-10-04 `h08`）：42 个块成员真值 + 5 个 sampler 绑定，`VkDispBuiltins` 608 字节环每帧由 `OfUniformManager` 按 std140 偏移填 |
 | 半透明地形（TRANSLUCENT 组） | ❌ 未覆盖（实测该组有 249 个 draw） |
-| 画面改进 / 性能 | ❌ 无（写自己的 colortex ⇒ 地形被画两遍；代价未测） |
+| 画面改进 / 性能 | ❌ 无（写自己的 colortex ⇒ 地形被画两遍；代价未测；主目标仍由原版绘制 ⇒ 本轮不产出用户可见画面改进，M-04 未做） |
 
-⇒ **方案 A 已通（生产形态）**。下一轮从「帧图内插 pass」转向
-**「把包自己的地形 SPIR-V 接进派生 MRT 管线」**（`h07` 已查明：编译早就通过，缺的是接线）。
-**这也是本轮把 GAP-003 与 GAP-004 分开做的原因**（`18-PARALLEL` H 线「顺序纪律」原本要求同批）：
-GAP-004 单独做**并非没有意义**（它的前提正是「派生管线」，没有派生管线就无处挂块），
-本轮把「通道是否真的通」「块能否挂上并每帧绑定」变成可验证事实，
-而 GAP-003 需要连同 M-04 + 自研 gbuffer 片元一起做，放到下一轮。**未完成项照旧登记，不许当已完成引用。**
+⇒ **方案 A 已通（生产形态）**；「把包自己的地形 SPIR-V 接进派生 MRT 管线」也已于
+2026-10-04 落地（`h08`/`h09`：片元接线 + `DRAWBUFFERS` 槽位兑现 + 布尔选项可见可改）。
+**历史注（2026-10-03 当时）**：GAP-003 与 GAP-004 曾按 `18-PARALLEL` H 线「顺序纪律」要求同批做，
+后拆开 —— GAP-004 单独做并非没有意义（其前提正是「派生管线」，没有派生管线就无处挂块），
+该轮把「通道是否真的通」「块能否挂上并每帧绑定」变成可验证事实。
+**未完成项照旧登记，不许当已完成引用。**
+当前剩余缺口（2026-10-04，逐条见 `13-GAP-REGISTRY` GAP-003 条目）：M-04 未做 ⇒ 主目标仍由原版
+绘制；GAP-007 三条 varying 常量供值；`shadowtex0/1` 绑本 pass 深度占位；仅覆盖 OPAQUE 组；仅验 BSL（X39）。
+另：`h24` 坐实 M-01 的管线替换本身引发闪烁（GAP-011）⇒ 这条路线的整体代价问题已浮出。
 
 **永久禁止登记**（M1 / L11 / X23 / X24）：Sodium / caffeinemc 任何类；第三方区块渲染器；
 `RenderSystem` / `GlStateManager` / `GL11`·`GL14`·`GL15` 等底层状态类。

@@ -7,17 +7,6 @@
 
 ## 1. 登记表
 
-| 🔶 **`h24` 单变量对照：闪烁根因坐实 = M-01 的管线替换**。只关 `mixin.wireTerrain`（其余全开，我方 pass 照跑 `terrain drawn into`=1，
-`M-01 wired`=0）⇒ 6 帧黑色像素占比**全部 51.3%**，**无一进入全黑相位** ⇒ 闪烁消失 |
-🔰 **但这不等于「关掉就好」**：M-01 正是 GAP-003 的**通道本身**（`ChunkSectionLayer#pipeline` 的返回值可被替换），
-关掉它 = 关掉通道 ⇒ 这是「**用替换管线接管原版地形绘制**」这条路线本身代价过高，而不是一个孤立 bug |
-🔴 **`h24` 同时拆出第三个独立缺陷：黑天与闪烁无关**。`wireTerrain=false` 下地形完全正常，但**天空仍是黑的**
-⇒ 「闪烁」「黑天」是**两条不同的因果链**，此前一直被当成一个 ⇒ 混在一起会让两边都定位不到 |
-🟡 **未定位**：① 管线替换**为何**导致闪烁（编译产物替换 / `getCompiledPipeline` 缓存 / 多套管线交替编译，均未验证）；
-② **黑天**的成因（第三因，完全未定位）|
-U274c `h24` 顺带**排除**两条（纯静态）：① 「派生管线状态不一致」（逐项核对原版 `RenderPipelines`：基底 snippet / color target /
-`ALPHA_CUTOUT` / 绑定组 / depth stencil **全部相同**）；② 「某个调用点拿到错东西」（原版 4 处 `layer.pipeline` 调用**全部等价**，
-其中 `LevelRenderer:796` 与 `SectionRenderDispatcher:76` 只取顶点格式，而派生管线继承同一 vertex binding）|
 | ID | 需求来源 | 原版现状（查明结果） | 补充方案 | 影响面 | 开关 | 回退条件 | 状态 |
 |---|---|---|---|---|---|---|---|
 | *(示例)* GAP-001 | BSL 需要比较采样器 | 原版有 `GpuSampler`，但未提供比较采样器组合（§2 ①~④ 均不成立） | 在 `platform/` 内组合出比较采样器 | 仅 `platform/SamplerSupport` | `supplement.compareSampler` | 官方 `GpuSampler` 提供 compare 选项后删除 | ⏳ 待实现 |
@@ -38,7 +27,7 @@ U274c `h24` 顺带**排除**两条（纯静态）：① 「派生管线状态不
 `ADVANCED_MATERIALS`，布尔数 = 0）⇒ 多槽路径无法被触发；现为 386 个选项 / 102 个布尔。
 ⛔ 但 **8 槽画面是剪影全黑**：几何与槽位路由对，像素值不对（GAP-008，未坐实根因）。
 ⚠️ 能力边界：`DRAWBUFFERS:08367`（MCBL_SS + 高级材质同开）需 9 附件 > Vulkan 上限 8 ⇒ **显式拒绝接线**。⚠️ 不要再按「能力上限 5 槽」建 pass —— 生产实际是 **1 槽**（`h07`/`h08` 双证），混用会崩客户端（X42）。
-| GAP-004 | 自定义 uniform 块无处安放：BSL/Iris 的 deferred pass 需要 `gbufferModelViewInverse`、`shadowModelView`、`shadowProjection`、`sunPosition`、`moonPosition` 等 OF 内建矩阵/向量，原版 `Globals` 仅 9 字段且不含这些 | 已源码级核实：bind group 布局在 `RenderPipeline` 构造时固化，无法给原版管线追加 uniform 块（见 GAP-003 ③）。**2026-10-03 实测补充**：派生管线多出的 bind group 条目**必须**在 draw 前 `setUniform`，否则驱动层 STRICT_VALIDATION 抛 `Missing uniform 名`（原版 `renderLayers` 只绑 `TerrainUniform`/`Sampler0`/`Sampler2`，没人会绑我们那条） | 随 GAP-003 一并在**派生管线**上构造独立 uniform bind group 布局，随管线一起注册；绑定由 M-01b 注入点补 | `pipeline/`（派生管线构造）+ `mixin/`（M-01b 绑定） | `mixin.bindTerrainParams`（M-01b，已实现） | 原版管线支持追加 uniform 块 | 🟡 **块已挂上并每帧绑定**（🔴 原文「实测 0 validation error」已撤回：本机无 validation layer；绑定是否成立的判据是 draw 不抛 `Missing uniform` 且画面正确），但 ⛔ **块尚无消费者** —— 本轮地形片元仍是原版 `core/terrain`，不读这个块；要真正消费需 GAP-003 那轮换自研 gbuffer 片元 |
+| GAP-004 | 自定义 uniform 块无处安放：BSL/Iris 的 deferred pass 需要 `gbufferModelViewInverse`、`shadowModelView`、`shadowProjection`、`sunPosition`、`moonPosition` 等 OF 内建矩阵/向量，原版 `Globals` 仅 9 字段且不含这些 | 已源码级核实：bind group 布局在 `RenderPipeline` 构造时固化，无法给原版管线追加 uniform 块（见 GAP-003 ③）。**2026-10-03 实测补充**：派生管线多出的 bind group 条目**必须**在 draw 前 `setUniform`，否则驱动层 STRICT_VALIDATION 抛 `Missing uniform 名`（原版 `renderLayers` 只绑 `TerrainUniform`/`Sampler0`/`Sampler2`，没人会绑我们那条） | 随 GAP-003 一并在**派生管线**上构造独立 uniform bind group 布局，随管线一起注册；绑定由 M-01b 注入点补 | `pipeline/`（派生管线构造）+ `mixin/`（M-01b 绑定） | `mixin.bindTerrainParams`（M-01b，已实现） | 原版管线支持追加 uniform 块 | 🟡 **块已挂上、每帧绑定、且已被消费**（`h08`，2026-10-04）：派生 MRT 管线片元换成包的 `gbuffers_terrain` 后，**42 个块成员 + 5 个 sampler 一条不漏**绑定（未触发 `Missing uniform`），`VkDispBuiltins` 608 字节环由 `OfUniformManager` 按 std140 偏移每帧填值（🔴 原文「实测 0 validation error」已撤回：本机无 validation layer；绑定是否成立的判据是 draw 不抛 `Missing uniform` 且画面正确）|
 | GAP-005 | 候选方案（非缺口，登记以免遗忘）：是否用成熟 GLSL 前端 **KhronosGroup/glslang + SPIRV-Tools** 替/辅自研 8 段转译器 | **联网核实（2026-10-02）**：glslang 与 SPIRV-Tools 为 **Apache-2.0 / BSD-3**，**可合法并入本 MIT 工程**（Fedora / openEuler / Arch 官方打包元数据三处一致）；glslang 支持完整 `#include`、`GL_*` 扩展、`-D` 宏定义与预处理开关，正是 OF 方言所需 | 三条路待比：① 维持自研；② 引入 glslang（C++ 依赖、需随 jar 分发或走原版通道）；③ 混合（自研做 OF 方言层，glslang 做 GLSL→SPIR-V） | `glsl/`（可能整体重构） | — | — | ⏳ **已登记，本轮不执行**（先做 G 系列 Rust vs Java 对比，其结论会影响是否值得重构转译链） |
 | GAP-006 | Rust 原生路径的 FFI 安全边界：Rust `panic` 穿过 FFI 边界是 UB，会直接 abort 掉整个 JVM ⇒ **游戏崩溃** | 联网核实（2026-10-02）：Rust 官方 Nomicon 明确 —— `extern "C"` 收到 panic 会终止进程；必须 `catch_unwind(AssertUnwindSafe(…))`；且 `panic = "abort"` 时 `catch_unwind` 完全失效 | `17-NATIVE.md` §4.5 的 FFI 安全清单为强制门禁；`08-TESTING.md` §8.3 要求**故意触发一次 panic** 验证 JVM 不 abort | `accel/backend/native/`（仅「采用」裁决后存在） | 与 A/B 开关同键 | — | ⏳ 待实现（仅当 G 系列裁决「采用」） |
 | GAP-007 | 地形顶点侧缺三条 per-vertex 数据：**方块 id（mat/recolor）与法线（normal）**。实测（`h08`）：BSL 的 `gbuffers_terrain` 顶点着色器按 `mc_Entity.x / 100` 推方块 id 来决定 `mat`（树叶/自发光/岩浆…）与 `recolor`（草/浆果），并把顶点 `Normal` 属性转成眼空间法线；而原版地形顶点缓冲 `DefaultVertexFormat.BLOCK` 只有 **4 个属性**（Position/Color/UV0/UV2），**既无 `mc_Entity` 也无 `Normal**` ⇒ 适配层只能按常量供值（`mat=0` / `recolor=0` / `normal=(0,1,0)`）| **根因**：地形网格化阶段没有写这两项；补它要改区块网格化产出，属渲染器层改动 | 方案 A：扩地形顶点格式（BLOCK → 加 `Normal` + `EntityId` 两属性，网格化侧逐顶点写入）；方案 B：改用 `DefaultVertexFormat.ENTITY` 作地形格式（已有 `Normal`，仍缺 `mc_Entity`）——**B 只解决一半**。两案都需另立注入点登记，且会改变内存占用 | `pipeline/model`（顶点格式）+ 网格化侧（新增注入点，待登记） | `terrain.vertexExtras`（**未实现**，占位键名以便将来一键关闭） | 原版地形顶点格式提供方块 id 与法线属性 | 🟡 **已定位、已量化、未实现**（`h08` §五逐条标注了三条常量项与各自影响面）|
@@ -49,6 +38,19 @@ U274c `h24` 顺带**排除**两条（纯静态）：① 「派生管线状态不
 ⚠️ **禁止**先猜一个「看起来对」的绑定再截图 —— 那正是本项目反复消灭的失败形态 |
 `pipeline/model`（契约）+ `glsl/translate/PackVertexAdapterGenerator`（常量项表）+ 采样器绑定 |
 `mrt.packTerrainShader`（已存在） | 默认配置路径画面正确 ⇒ 随时可退回 |
+| `h10` 进度（2026-10-04，见 `evidence/h10-gap008-bisection-neutral-material-maps.md`）：
+把乘法链**静态列全**（3 个候选：`ao*ao` / `1-metalness*smoothness` / `sceneLighting *= skylightSqr`），
+然后**逐项切分**。① 候选 1/2（`ao` 与金属度）**已被实验证伪**：把 `specular`/`normals` 从方块图集
+换成**中性材质贴图**（乘法单位元：`(0,0,0,255)` 与 `(128,128,255,255)`）后，**48.41% 的像素确实变了**
+（证明两个采样器被读到了）**但画面仍全黑** ⇒ 它们不是主因。
+② 候选 3 静态推演成立：`skylightSqr = lightmap.y²`、`lightmap = clamp(lmCoord, 0, 1)`，而原版把**天光与块光
+打包进同一个 UV2**（`uv2.y` 恒 0）⇒ `lmCoord.y ≡ 0` ⇒ `sceneLighting ≡ 0`；
+OF 语义下 `lmCoord` 应当是 `(块光, 天光)` 两条独立通道 ⇒ 疑似一处真实的映射错误。
+🔖 **后续（`h12`）**：候选 3 被**实验证伪** —— `lmCoord` 满光照 `(1,1)`（单变量开关 `mrt.terrainFullLightProbe`）
+下画面**仍纯黑**，且按推导本应过曝发白 ⇒ `albedo` 在进入 `GetLighting` **之前**就已是 0。
+⛔ 另：本轮顺带揪出并修掉一个**每帧抛**的回归 —— 在 pass 打开期间懒建贴图上传 ⇒
+IllegalStateException: Close the existing render pass before performing additional commands；
+改为开 pass 之前 `ensureCreated()`（与既有 MappableRingBuffer map/close 纪律同源）。|
 🟡 **已有正面证据：只有 `albedo` 为 0**（`h13`）：切到 **colortex3**（高级材质路径确实写的槽）→ 画面是**亮绿地形剪影**（`vec4(smoothness, skyOcclusion, 0, 1)` 的 `.g` 满值）⇒ **片元着色器完整跑完**，同一片元里光照/天光/法线/菲尼尔全部正常，**只有 `albedo` 是 0**。🔍 候选 6 子项①（图集 mip 链）**已排除**：`blockAtlas()` 返回的是**原版** `TextureAtlas.LOCATION_BLOCKS` 视图，mip 由原版生成填充。🔍 另外**画面独立验证了 DRAWBUFFERS 槽位路由**：槽 1 整幅纯清屏色（99.89%）、没有地形，正因为高级材质路径写的是槽 **0/3/6/7**。🟡 剩余疑独：`dFdx(texCoord)` 是否在反向 Z / MRT pass 下退化（**未验证**）|
 🔴 `h15` 进度：**候选 6 被否**。探针在客户端确认命中 **2 处**（`dcdx`+`dcdy`，
 顶点侧两开关均**关**，严格单变量），画面**仍全黑** ⇒ 候选 6 可定认否定。
@@ -108,6 +110,10 @@ U274c `h24` 顺带**排除**两条（纯静态）：① 「派生管线状态不
 默认配置路径不经过 `GetMaterials`，画面正确 ⇒ 随时可退回 | 
 🟡 **缺省语义已落地并验证**（`h10`：两个采样器确实被读到 —— 48.41% 像素变化）；**真材质贴图集未实现** |
 
+---
+
+## 2. 字段说明
+
 | 字段 | 要求 |
 |---|---|
 | **ID** | `GAP-001` 起递增，**永不复用** |
@@ -148,17 +154,3 @@ U274c `h24` 顺带**排除**两条（纯静态）：① 「派生管线状态不
 [ ] 回退条件是可判定的，不是"以后再说"
 [ ] 业务包没有 import platform/ 的内部实现
 ```
-
-|`h10` 进度（2026-10-04，见 `evidence/h10-gap008-bisection-neutral-material-maps.md`）：
-把乘法链**静态列全**（3 个候选：`ao*ao` / `1-metalness*smoothness` / `sceneLighting *= skylightSqr`），
-然后**逐项切分**。① 候选 1/2（`ao` 与金属度）**已被实验证伪**：把 `specular`/`normals` 从方块图集
-换成**中性材质贴图**（乘法单位元：`(0,0,0,255)` 与 `(128,128,255,255)`）后，**48.41% 的像素确实变了**
-（证明两个采样器被读到了）**但画面仍全黑** ⇒ 它们不是主因。
-② 候选 3 静态成立：`skylightSqr = lightmap.y²`、`lightmap = clamp(lmCoord, 0, 1)`，而原版把**天光与块光
-打包进同一个 UV2**（`uv2.y` 恒 0）⇒ `lmCoord.y ≡ 0` ⇒ `sceneLighting ≡ 0`；
-OF 语义下 `lmCoord` 应当是 `(块光, 天光)` 两条独立通道 ⇒ **这是一处真实的映射错误**。
-⚠️ **但尚未用实验坐实**：单变量开关 `mrt.terrainFullLightProbe`（打开时只把 `lmCoord` 改成 `vec2(1.0)`）
-已实现并通过无头测试，**本轮客户端没进世界、实验未执行**（quickPlay 有随机不生效的现象）。
-⛔ 另：本轮顺带揪出并修掉一个**每帧抛**的回归 —— 在 pass 打开期间懒建贴图上传 ⇒
-IllegalStateException: Close the existing render pass before performing additional commands；
-改为开 pass 之前 `ensureCreated()`（与既有 MappableRingBuffer map/close 纪律同源）。|
