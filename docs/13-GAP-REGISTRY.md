@@ -7,6 +7,17 @@
 
 ## 1. 登记表
 
+| 🔶 **`h24` 单变量对照：闪烁根因坐实 = M-01 的管线替换**。只关 `mixin.wireTerrain`（其余全开，我方 pass 照跑 `terrain drawn into`=1，
+`M-01 wired`=0）⇒ 6 帧黑色像素占比**全部 51.3%**，**无一进入全黑相位** ⇒ 闪烁消失 |
+🔰 **但这不等于「关掉就好」**：M-01 正是 GAP-003 的**通道本身**（`ChunkSectionLayer#pipeline` 的返回值可被替换），
+关掉它 = 关掉通道 ⇒ 这是「**用替换管线接管原版地形绘制**」这条路线本身代价过高，而不是一个孤立 bug |
+🔴 **`h24` 同时拆出第三个独立缺陷：黑天与闪烁无关**。`wireTerrain=false` 下地形完全正常，但**天空仍是黑的**
+⇒ 「闪烁」「黑天」是**两条不同的因果链**，此前一直被当成一个 ⇒ 混在一起会让两边都定位不到 |
+🟡 **未定位**：① 管线替换**为何**导致闪烁（编译产物替换 / `getCompiledPipeline` 缓存 / 多套管线交替编译，均未验证）；
+② **黑天**的成因（第三因，完全未定位）|
+U274c `h24` 顺带**排除**两条（纯静态）：① 「派生管线状态不一致」（逐项核对原版 `RenderPipelines`：基底 snippet / color target /
+`ALPHA_CUTOUT` / 绑定组 / depth stencil **全部相同**）；② 「某个调用点拿到错东西」（原版 4 处 `layer.pipeline` 调用**全部等价**，
+其中 `LevelRenderer:796` 与 `SectionRenderDispatcher:76` 只取顶点格式，而派生管线继承同一 vertex binding）|
 | ID | 需求来源 | 原版现状（查明结果） | 补充方案 | 影响面 | 开关 | 回退条件 | 状态 |
 |---|---|---|---|---|---|---|---|
 | *(示例)* GAP-001 | BSL 需要比较采样器 | 原版有 `GpuSampler`，但未提供比较采样器组合（§2 ①~④ 均不成立） | 在 `platform/` 内组合出比较采样器 | 仅 `platform/SamplerSupport` | `supplement.compareSampler` | 官方 `GpuSampler` 提供 compare 选项后删除 | ⏳ 待实现 |
@@ -70,6 +81,16 @@
 | ❌ 唯一哈希数 **不可用** —— 模组总闸**关**（纯原版、毫无异常）时同机位连拍 6 帧也是 **6/6 全不同**|
 | ✅ 改用**黑色像素占比**：**> 90%** ⇒ 全黑相位；**< 60%** ⇒ 有内容相位。对照组（纯原版）上界 ~20%（天空是蓝的），实验组下界 52.8% ⇒ **区间内无样本，阈值可用**|
 | `dev.vkdisp.bridge.TerrainPipelineApi` + `MrtTerrainPass` | `mixin.wireTerrain` + `mrt.terrain*` | 🔴 **根因未定位**（`h21`）|
+| 🔶 **`h24` 单变量对照：闪烁根因坐实 = M-01 的管线替换**。只关 `mixin.wireTerrain`（其余全开：我方 pass 照跑，
+`terrain drawn into`=1、`M-01 wired`=0）⇒ 6 帧黑色像素占比**全部 51.3%**，**无一进入全黑相位** ⇒ **闪烁消失**|
+🔰 **但这不等于「关掉就好」**：M-01 正是 GAP-003 的**通道本身**（`ChunkSectionLayer#pipeline` 的返回值可被替换），
+关掉它 = 关掉通道 ⇒ 这是「**用替换管线接管原版地形绘制**」这条路线本身代价过高，而不是一个孤立 bug|
+🔴 **`h24` 同时拆出第三个独立缺陷：黑天与闪烁无关**。`wireTerrain=false` 下地形完全正常，但**天空仍是黑的**
+⇒ 「闪烁」与「黑天」是**两条不同的因果链**，此前一直被当成一个 ⇒ 混在一起会让两边都定位不到|
+🟡 **仍未定位**：① 管线替换**为何**导致闪烁（编译产物替换 / `getCompiledPipeline` 缓存 / 多套管线交替编译，均未验证）；② **黑天**的成因|
+❌ `h24` 顺带**排除**两条（纯静态）：① 「派生管线状态不一致」（逐项核对原版 `RenderPipelines`：基底 snippet / color target /
+`ALPHA_CUTOUT` / 绑定组 / depth stencil **全部相同**）；② 「某个调用点拿到错东西」（原版 4 处 `layer.pipeline` 调用**全部等价**，
+其中 `LevelRenderer:796` 与 `SectionRenderDispatcher:76` 只取顶点格式，而派生管线继承同一 vertex binding）|
 | GAP-010 | 🟢 **已修**：地形顶点适配层的 memo 被**片元的 take 顺带抹掉**，首轮资源重载时找不到它的 VERTEX 源（实测 `h11`）|
 🔶 根因不是「登记太晚」，而是**多余的一次清空**：`takeTerrainSourceMemo()` 取走片元 memo 时顺手清了适配层 memo，
 而调用点恰好先片元后适配层 ⇒ 适配层永远拿到 null ⇒ `PipelineBuilder` 报 12 条 ERROR。
