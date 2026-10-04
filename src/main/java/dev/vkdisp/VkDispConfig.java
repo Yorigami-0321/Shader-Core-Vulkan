@@ -261,6 +261,16 @@ public final class VkDispConfig {
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_COLOR_PROBE = BUILDER
             .comment("诊断：顶点适配层把 color 强制成 vec4(1.0)（默认关，单变量实验）。")
             .define("mrt.terrainColorProbe", false);
+
+    /**
+     * U0001f50d **GAP-011 二分诊断**：跳过 `gameRenderer.lighting().setupFor(LEVEL)`。
+     * <p>该调用改的是**全局**光照状态，而我方 pass 跑在 AfterLevel（帧图执行完之后），
+ * 结束后没有任何 pass 会重画主目标 ⇒ 残留状态直接作用到**下一帧**。
+     * <p>判据：跳过它之后**天空是否恢复成蓝色**（见 h17 证据）。默认 false = 保持当前行为。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_SKIP_LIGHTING_SETUP = BUILDER
+            .comment("诊断（GAP-011 二分）：跳过 lighting().setupFor(LEVEL)（默认关 = 保持当前行为）。")
+            .define("mrt.skipLightingSetup", false);
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_FULLSCREEN_PROBE = BUILDER
             .comment("诊断：地形 MRT pass 内先画全屏三角形（默认关）。")
             .define("mrt.terrainFullscreenProbe", false);

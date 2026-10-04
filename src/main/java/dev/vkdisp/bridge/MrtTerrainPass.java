@@ -244,6 +244,9 @@ public final class MrtTerrainPass {
         return v;
     }
 
+    /** GAP-011 二分诊断：跳过的 setupFor 次数（只用于自报，不进热路径）。 */
+    private static long lightingSetupSkips;
+
     /** 顺序标记是否已打过（每轮只打一次，避免日志 I/O 进热路径）。 */
     private static boolean orderMarkerLogged;
 
@@ -349,10 +352,21 @@ public final class MrtTerrainPass {
             RenderSystem.bindDefaultUniforms(renderPass);
             // 🔖 原版在 executeSolid 之前必做的一步（LevelRenderer:450）：新光照系统的每关卡入口。
             // 我方 pass 不在原版序列里，缺这一步时 TerrainUniform/lightmap 相关状态是上一帧的残留。
-            try {
-                Minecraft.getInstance().gameRenderer.lighting().setupFor(com.mojang.blaze3d.platform.Lighting.Entry.LEVEL);
-            } catch (Throwable t) {
-                VkDisp.LOGGER.warn("vkdisp: [GAP-003/A] lighting setup unavailable: {}", t.toString());
+            // U0001f50d GAP-011 二分诊断（mrt.skipLightingSetup，默认关 = 保持当前行为）：
+            //   判据 = 跳过它之后天空是否恢复蓝色。h17 实测：模组关 = 蓝天，
+            //   模组开 + pass 运行 = 黑天而**地形完全正常** ⇒ 指向跨 pass 的全局状态泄漏。
+            if (VkDispConfig.MRT_SKIP_LIGHTING_SETUP.get()) {
+                lightingSetupSkips++;
+                if (lightingSetupSkips == 1L) {
+                    VkDisp.LOGGER.info("vkdisp: [GAP-011] lighting().setupFor(LEVEL) **skipped** (diagnostic)");
+                }
+            } else {
+                try {
+                    Minecraft.getInstance().gameRenderer.lighting()
+                            .setupFor(com.mojang.blaze3d.platform.Lighting.Entry.LEVEL);
+                } catch (Throwable t) {
+                    VkDisp.LOGGER.warn("vkdisp: [GAP-003/A] lighting setup unavailable: {}", t.toString());
+                }
             }
             GpuTextureView atlas = blockAtlas();
             // 🔖 GAP-003：包地形片元要绑的 uniform（VkDispBuiltins + 它自由声明的 sampler）。
