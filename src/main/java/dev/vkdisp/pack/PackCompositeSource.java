@@ -252,6 +252,11 @@ public final class PackCompositeSource {
 
             // F 线选项链：默认 → profile → 选项存储回放（P4.3，GUI 优先）→ 与默认值差分出覆盖表。
             // 与选项屏幕共用 PackOptionsSession（同一编排 = 单一真源，两侧永不漂移）。
+            //
+            // 🔖 GAP-009 能力门控**不在这里**：它的作用域是「包地形片元被接到派生 MRT 地形管线」
+            //   这条路径（实测证据 h29/h31 全部取自地形），而本方法产出的是 composite/deferred/final
+            //   三个全屏步 —— 门控若插在这里，会在缺能力的那条路径**根本没执行**时白白砍掉包特性（X27）。
+            //   正确接线点 = {@link PackTerrainSource}（与 {@link #DEFERRED_PROGRAM} 同源的独立链）。
             PackOptionsSession session = PackOptionsSession.create(pack, profile, store);
             for (OptionDiagnostic diagnostic : session.buildDiagnostics()) {
                 diagnostics.add(optionDiagnostic(diagnostic, pack.name()));

@@ -5,7 +5,10 @@ import dev.vkdisp.glsl.TranslateResult;
 import dev.vkdisp.glsl.preprocess.ConstEvaluator;
 import dev.vkdisp.glsl.preprocess.GlslPreprocessor;
 import dev.vkdisp.glsl.preprocess.IncludeResolver;
+import dev.vkdisp.pack.properties.PackLangFile;
 import dev.vkdisp.pack.properties.ShaderProperties;
+import dev.vkdisp.pack.ShaderPackRepository.MountPlan;
+import dev.vkdisp.pack.ShaderPackScanner.DiscoveredPack;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -315,6 +318,83 @@ public final class ShaderPackService {
     static String readText(ShaderPackRepository.MountPlan plan, String relativePath) {
         try (InputStream in = plan.openShader(relativePath)) {
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    // ------------------------------------------------------------------ lang（GAP-009 能力门控）
+
+    /** lang 目录在包内的固定位置（相对 shaders/ 根；实测 BSL / Complementary 都是它）。 */
+    public static final String LANG_DIRECTORY = "lang";
+
+    /**
+     * 读取包内 {@code lang/*.lang} 的选项显示名与说明（GAP-009 能力门控的判据来源）。
+     *
+     * <p>🔖 <b>为什么必须读 lang</b>：BSL v10.1.8 声明「本选项依赖资源包提供的材质贴图」的
+     * <b>唯一</b>机制是显示名末尾的 {@code *}（{@code en_US.lang} 里 19 条），
+     * 它的 {@code option.ADVANCED_MATERIALS.comment} 明写
+     * 「requires a resource pack which contains specular and/or normal maps」。
+     * 不读 lang 就只能硬编码 {@code PARALLAX}，而 Complementary 的视差实测<b>零外部依赖</b>
+     * ⇒ 硬编码会砍掉一个完全可用的包特性（违反 X27）。
+     *
+     * <p>⚠️ <b>降级纪律</b>：<b>没有 lang 文件是合法情形</b>（不少包不带本地化）⇒ 返回空结果、
+     * 不产生诊断；<b>有 lang 但读失败 / 有坏行</b> ⇒ WARN（T11：门控判据不完整必须可见，
+     * 否则「画面又黑了」会查不到原因）。
+     *
+     * <p>🔖 <b>lang 不参与 {@link ShaderPack} 模型</b>：它是门控的判据而非包的身份，
+     * 加进冻结契约要走 {@code 18-PARALLEL} §3.2 流程（X12），当前不需要 ⇒ 由调用方单独取。
+     */
+    public static PackLangFile.Result readLang(MountPlan plan, List<TranslateDiagnostic> diagnostics) {
+        List<String> langFiles = new ArrayList<>();
+        for (String relative : plan.shaderFiles()) {
+            if (relative.startsWith(LANG_DIRECTORY + "/") && relative.endsWith(".lang")) {
+                langFiles.add(relative);
+            }
+        }
+        if (langFiles.isEmpty()) {
+            return PackLangFile.Result.empty();
+        }
+        LinkedHashMap<String, java.util.function.Supplier<InputStream>> readers = new LinkedHashMap<>();
+        for (String relative : langFiles) {
+            readers.put(PackLangFile.langIdOf(relative), () -> {
+                try {
+                    return plan.openShader(relative);
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            });
+        }
+        PackLangFile.Result result = PackLangFile.parseAll(readers);
+        for (String warning : result.warnings()) {
+            diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.WARN,
+                    "vkdisp: " + warning + "（GAP-009 能力门控判据可能不完整）",
+                    String.valueOf(plan.source()), TranslateDiagnostic.UNKNOWN_LINE));
+        }
+        return result;
+    }
+
+    /** 读某个已发现包的 lang；<b>索引失败</b>时返回空结果 + 一条 WARN（不抛）。 */
+    public static PackLangFile.Result readLang(
+            DiscoveredPack discovered, List<TranslateDiagnostic> diagnostics) {
+        MountPlan plan = planOrNull(discovered);
+        if (plan == null) {
+            diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.WARN,
+                    "vkdisp: 无法索引包 '" + (discovered == null ? "null" : discovered.name())
+                            + "' 以读取 lang 文件 ⇒ GAP-009 能力门控判据缺失（可能不门控）",
+                    String.valueOf(discovered), TranslateDiagnostic.UNKNOWN_LINE));
+            return PackLangFile.Result.empty();
+        }
+        return readLang(plan, diagnostics);
+    }
+
+    /** 只规划挂载路径（不抛）；索引失败返回 {@code null}。包级可见（能力门控链复用）。 */
+    static MountPlan planOrNull(DiscoveredPack discovered) {
+        if (discovered == null) {
+            return null;
+        }
+        try {
+            return ShaderPackRepository.plan(discovered);
         } catch (IOException | RuntimeException e) {
             return null;
         }

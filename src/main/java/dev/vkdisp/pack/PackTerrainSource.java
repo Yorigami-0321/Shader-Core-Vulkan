@@ -21,11 +21,14 @@ package dev.vkdisp.pack;
  * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只读思路，零代码并入。
  * 5. 性能基线：冷路径（虚拟包 openResources 时一次），清晰优先，不做性能优化。
  */
+import dev.vkdisp.config.OptionDiagnostic;
+import dev.vkdisp.config.PackCapabilityGate;
 import dev.vkdisp.config.PackOptionStore;
 import dev.vkdisp.config.PackOptions;
 import dev.vkdisp.config.PackOptionsSession;
 import dev.vkdisp.glsl.TranslateDiagnostic;
 import dev.vkdisp.glsl.translate.ShaderStage;
+import dev.vkdisp.pack.properties.PackLangFile;
 import dev.vkdisp.pipeline.model.PackTerrainProgram;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -129,6 +132,10 @@ public final class PackTerrainSource {
                 continue;
             }
             PackOptionsSession session = PackOptionsSession.create(pack, profile, store);
+            // GAP-009 方案 A：能力门控 —— 门控的产物是「选项被改成 false」，
+            // 而覆盖表是「当前值 vs 默认值」的差分 ⇒ 被门控的项默认是 true ⇒ **必须**在差分之前跑。
+            // 放在之后 ⇒ 日志说「已门控」而画面没变 = 最坏的失败形态（静默空转，X9）。
+            diagnostics.addAll(applyCapabilityGate(discovered, pack, session, diagnostics));
             Map<String, String> overrides = diffAgainstDefaults(session.options());
 
             ShaderPackCompiler.CompileResult compiled =
@@ -271,6 +278,44 @@ public final class PackTerrainSource {
             }
         }
         return overrides;
+    }
+
+    /**
+     * GAP-009 方案 A：能力门控（把「包自己声明依赖、而本引擎确实缺失该能力」的包特性
+     * <b>只在内存里</b>关掉，不写任何用户文件），诊断并入本次选取的诊断列表。
+     *
+     * <p>🔖 <b>为什么接在这里、而不是 composite 那条链</b>：GAP-009 的全部实测证据
+     * （h29 定位视差分支、h31 主目标 luma {@code 0.0000 → 96.1485}）都取自<b>地形</b>；
+     * 而 {@link PackCompositeSource} 产出的是 composite/deferred/final 三个全屏步。
+     * 在那里门控会在「地形片元没接线」时<b>白白砍掉包特性</b>，而那条路径根本不执行（违反 X27）。
+     *
+     * <p>🔖 <b>作用域恒为「适用」</b>：能走到本方法并选到 {@code gbuffers_terrain}，
+     * 就说明包地形片元<b>即将</b>被接到派生 MRT 地形管线上 ⇒ 缺能力的那条路径会执行
+     * ⇒ 门控该生效。（若最终因槽位语义被拒而没接线，那次编译根本不会发生，同样不构成「白砍」。）
+     *
+     * <p>🔖 <b>只改内存</b>：{@link PackOptionStore} 一个字节都不碰（裁决：不改写用户配置）。
+     *
+     * @param sink 本次选取的诊断表（读 lang 时的读失败警告要并进去）
+     * @return 门控步骤自身产生的诊断
+     */
+    private static List<TranslateDiagnostic> applyCapabilityGate(
+            ShaderPackScanner.DiscoveredPack discovered,
+            ShaderPack pack,
+            PackOptionsSession session,
+            List<TranslateDiagnostic> sink) {
+        List<TranslateDiagnostic> produced = new ArrayList<>();
+        PackLangFile.Result lang = ShaderPackService.readLang(discovered, sink);
+        PackCapabilityGate.GateResult gate = PackCapabilityGate.apply(
+                new PackCapabilityGate.GateRequest(
+                        session.options(), lang.optionLabels(), lang.starMarkedOptions(),
+                        lang.hints(), PackCapabilityGateSwitch.enabled(), true));
+        for (OptionDiagnostic diagnostic : gate.diagnostics()) {
+            produced.add(TranslateDiagnostic.of(
+                    TranslateDiagnostic.Severity.WARN,
+                    "选项 [" + diagnostic.code() + "] " + diagnostic.message(),
+                    pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+        }
+        return produced;
     }
 
     private static TranslateDiagnostic.Severity severityOf(ShaderPackScanner.ProblemKind kind) {
