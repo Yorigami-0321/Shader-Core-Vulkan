@@ -39,6 +39,18 @@
 `pipeline/model`（契约）+ `glsl/translate/PackVertexAdapterGenerator`（常量项表）+ 采样器绑定 |
 `mrt.packTerrainShader`（已存在） | 默认配置路径画面正确 ⇒ 随时可退回 |
 🟡 **已有正面证据：只有 `albedo` 为 0**（`h13`）：切到 **colortex3**（高级材质路径确实写的槽）→ 画面是**亮绿地形剪影**（`vec4(smoothness, skyOcclusion, 0, 1)` 的 `.g` 满值）⇒ **片元着色器完整跑完**，同一片元里光照/天光/法线/菲尼尔全部正常，**只有 `albedo` 是 0**。🔍 候选 6 子项①（图集 mip 链）**已排除**：`blockAtlas()` 返回的是**原版** `TextureAtlas.LOCATION_BLOCKS` 视图，mip 由原版生成填充。🔍 另外**画面独立验证了 DRAWBUFFERS 槽位路由**：槽 1 整幅纯清屏色（99.89%）、没有地形，正因为高级材质路径写的是槽 **0/3/6/7**。🟡 剩余疑独：`dFdx(texCoord)` 是否在反向 Z / MRT pass 下退化（**未验证**）|
+🔴 `h15` 进度：**候选 6 被否**。探针在客户端确认命中 **2 处**（`dcdx`+`dcdy`，
+顶点侧两开关均**关**，严格单变量），画面**仍全黑** ⇒ 候选 6 可定认否定。
+🟡 **六个候选至此全部排除** ⇒ 排除法见底，下一步必须换策略（去证明**最上游**那一项）。
+🔴 当常见发现：**`h08-B` 可能也是原版画面**（当时并未开 `terrainToMain`）
+⇒ **我们从未真正看过自己 pass 输出的 colortex0 内容**。因此候选 4（首行 `texture()*color`）**降级为「未验证」**
+（h12 当时当成「结构性排除、无需实验」，依据的是一张**没经 `terrain drawn into` 核验**的截图。
+🔖 **教训**：结构性的推论也必须建立在**已验证的前提**上。
+🔴 **新首要疑独**：**`color`**。两条路径首行逐字相同：
+``vec4 albedo = texture(texture_0, texCoord) * vec4(color.rgb, 1.0);``
+若 `color.rgb` 为 0 ⇒ `albedo ≡ 0`，**与 texture / textureGrad / 光照全无关**，
+且这是**唯一一个还没被任何实验触及的因子**。
+🔶 待实测：原版地形网格往 `Color` 里填了什么（`PutColor` 实参在全仓 grep 不到，网格化代码可能不在该 sources jar 内）。
 🔍 `h14` 进度：派生导数探针（**转译第 7¾ 段** `DerivativeProbeAdapter`）已落地，
 只把 `vec2 dcdx = dFdx(texCoord);` / `vec2 dcdy = dFdy(texCoord);` 的初值换成 `vec2(0.0)`（默认关、等行数、`finally` 复位、X45 自报）。
 🔴 单测**当场抓到**探针**自己**一处致命缺陷（正则只匹配 `dFdx`，漏了 `dFdy`，
