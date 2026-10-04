@@ -1,16 +1,16 @@
-# h20 · U0001f534U0001f536 定位到**两个具体缺陷**：① `active()` 门控会把 **8 附件管线**交给原版；② 自定义绑定组在我方 pass 之外**无人绑定**
+# h20 · 🔴🔶 定位到**两个具体缺陷**：① `active()` 门控会把 **8 附件管线**交给原版；② 自定义绑定组在我方 pass 之外**无人绑定**
 
 > 任务来源：`AGENT_CONTEXT.md` §10.25 ⑥（纯静态对比派生管线与原版 SOLID 管线）。
 > 取证方式：**全程纯静态**（读 `TerrainPipelineApi` + 原版 sources jar），**零客户端成本**。
 >
-> 判定：U0001f534「多附件管线被单附件 pass 使用」这条**部分成立，但触发条件不是 pass 污染**；
-> 　　 U0001f534U0001f536 而是 `derivedTerrainPipeline` 的**两个代码级缺陷**。
+> 判定：🔴「多附件管线被单附件 pass 使用」这条**部分成立，但触发条件不是 pass 污染**；
+> 　　 🔴🔶 而是 `derivedTerrainPipeline` 的**两个代码级缺陷**。
 
 ---
 
 ## 〇、一句话结论
 
-U0001f536 M-01 接线的管线**是单附件的**（`withColorTargetState` 单数）⇒「8 附件管线被误用」**不是**当前闪烁的直接原因；
+🔶 M-01 接线的管线**是单附件的**（`withColorTargetState` 单数）⇒「8 附件管线被误用」**不是**当前闪烁的直接原因；
 但在同一段代码里找到了**两个真实的缺陷**，都能独立造成「画面时好时坏」：
 
 | # | 缺陷 | 后果 |
@@ -23,18 +23,18 @@ U0001f536 M-01 接线的管线**是单附件的**（`withColorTargetState` 单�
 ## 一、上一轮假设的**修正**（先说清哪条错了）
 
 h19 提出的假设是：「多附件管线被拿到只有 1 个 color attachment 的 pass 里用」。
-U0001f536 **本轮静态核实后，这句话要拆成两半**：
+🔶 **本轮静态核实后，这句话要拆成两半**：
 
 | 命题 | 核实结果 |
 |---|---|
 | M-01 接线用的管线是 8 附件的 | ❌ **错**。`registerTerrainDerivedPipelines` 第 140 行用 `withColorTargetState`（**单数**），基底 `TERRAIN_SNIPPET`，只有 1 个 color target |
 | 存在「8 附件管线被交给原版」的代码路径 | ✅ **对**。见 §二① |
 
-U0001f536 即：**管线本身没错，错的是「谁在什么条件下能拿到它」。**
+🔶 即：**管线本身没错，错的是「谁在什么条件下能拿到它」。**
 
 ---
 
-## 二、U0001f534U0001f536 缺陷①：`active()` 门控会把 MRT 管线交给原版
+## 二、🔴🔶 缺陷①：`active()` 门控会把 MRT 管线交给原版
 
 `TerrainPipelineApi.derivedTerrainPipeline`（第 306–322 行）：
 
@@ -51,16 +51,16 @@ public static RenderPipeline derivedTerrainPipeline(String layer, boolean multiD
 }
 ~~~
 
-U0001f536 `MrtTerrainPass.active()` 读的是 `inMrtPass`，一个**进程级静态布尔**。
+🔶 `MrtTerrainPass.active()` 读的是 `inMrtPass`，一个**进程级静态布尔**。
 它的生命周期被 `try { ... } finally { inMrtPass = false; }` 框住（这部分是对的，h06 已核过）。
 
-U0001f536 **但风险不在 finally，在命中条件**：只要 `active()` 在**任何时刻**为 true，
+🔶 **但风险不在 finally，在命中条件**：只要 `active()` 在**任何时刻**为 true，
 而原版此刻正在为**单附件 pass** 取地形管线，它就会拿到 8 附件管线。
 ⚠️ 原版取 `ChunkSectionLayer#pipeline` 的时机**不受我方控制**（`LevelRenderer`、`SectionRenderDispatcher` 等多处）。
 
 ---
 
-## 三、U0001f534U0001f536 缺陷②：自定义绑定组在我方 pass 之外**无人绑定**
+## 三、🔴🔶 缺陷②：自定义绑定组在我方 pass 之外**无人绑定**
 
 ### 3.1 我们的派生管线**追加**了一个绑定组
 
@@ -83,12 +83,12 @@ public static final RenderPipeline.Snippet TERRAIN_SNIPPET = RenderPipeline.buil
         .buildSnippet();
 ~~~
 
-### 3.2 U0001f536 绑定者只在**我方 pass** 里
+### 3.2 🔶 绑定者只在**我方 pass** 里
 
 `VkDispTerrainParams` 只由 `MrtTerrainPass.drawTerrain` 里的 `TerrainPipelineApi.updateTerrainParams()` 写入，
 绑定动作也只发生在 `drawTerrain` 内。⇒ **原版拿着这条管线画地形时，那个绑定组根本没有人绑。**
 
-### 3.3 U0001f516 这为什么是「画面时好时坏」的温床
+### 3.3 🔖 这为什么是「画面时好时坏」的温床
 
 派生管线**被绑到了原版的地形绘制路径上**（M-01 的全部意义），而它携带的绑定组**只在我方 pass 里有人负责**。
 两条路径对同一条管线的**状态要求不一致** —— 这是一类典型的「同一资源被两个消费者以不同前置条件使用」。
@@ -102,8 +102,8 @@ public static final RenderPipeline.Snippet TERRAIN_SNIPPET = RenderPipeline.buil
 | 项 | 状态 |
 |---|---|
 | 「M-01 管线是 8 附件」 | ❌ **错**，它是单附件 |
-| 缺陷① `active()` 门控可把 MRT 管线交给原版 | U0001f534 **成立**（代码级确定） |
-| 缺陷② 自定义绑定组在我方 pass 之外无人绑定 | U0001f534 **成立**（代码级确定） |
+| 缺陷① `active()` 门控可把 MRT 管线交给原版 | 🔴 **成立**（代码级确定） |
+| 缺陷② 自定义绑定组在我方 pass 之外无人绑定 | 🔴 **成立**（代码级确定） |
 | 两者对闪烁的贡献占比 | 🟡 **未验证** |
 | 客户端成本 | ✅ **0**（全程纯静态） |
 | 测试 | ✅ **699** 单测全绿（本轮未改产品代码） |

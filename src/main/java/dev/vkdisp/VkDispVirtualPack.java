@@ -507,7 +507,13 @@ public final class VkDispVirtualPack {
     private static String takeTerrainSourceMemo() {
         String memo = terrainSourceMemo;
         terrainSourceMemo = null;
-        terrainAdapterMemo = null;
+        // 🔴🔶 GAP-010 根因（h16 定位）：**不要在这里清** 
+
+        //   terrainAdapterMemo 。😶 原实现清了它，而调用点是**先 takeTerrainSourceMemo() 再 takeTerrainAdapterMemo()**
+        //   ⇒ 适配层元永远拿到 null ⇒ 资源加载期找不到 vkdisp_pack:terrain_pack_adapter 的 VERTEX 源
+        //   ⇒ **12 条** resourceLoad/ERROR，且只能靠第二次资源重载自愈（用户在 UI 上看得见）。
+        // 🔗 语义不变：两者仍然“同生共死”（片元为 null 时适配层也是 null），
+        //   而 takeTerrainAdapterMemo() 本身就会清自己，不需要这里多一手。
         terrainMemoKey = null;
         return memo;
     }
