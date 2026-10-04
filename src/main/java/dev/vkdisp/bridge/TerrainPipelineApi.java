@@ -127,13 +127,14 @@ public final class TerrainPipelineApi {
                 RenderPipeline.Builder builder = spec.multiDraw()
                         ? RenderPipeline.builder(RenderPipelines.MULTIDRAW_TERRAIN_SNIPPET)
                         : RenderPipeline.builder(RenderPipelines.TERRAIN_SNIPPET);
+                // 🔴 h20 缺陷②：接线用的派生管线**必须不带**自定义绑定组。
+                //   VkDispTerrainParams 只在 MrtTerrainPass.drawTerrain 里绑定；
+                //   而 M-01 把这条管线交回给**原版**地形绘制路径 —— 那条路上没人绑这个组。
+                //   一条管线带着「只有某个消费者会准备」的状态交给另一个消费者 = 状态泄漏温床。
+                //   🔺 自定义 uniform 块由 GAP-003 的 **MRT 变体**管线承载（那是唯一会画的地方）。
                 builder.withLocation(Identifier.fromNamespaceAndPath(
-                                TerrainDerivedPlan.NAMESPACE, spec.location()
-                                        .substring((TerrainDerivedPlan.NAMESPACE + ":").length())))
-                        // GAP-004：自定义 uniform 块挂在派生管线自己的绑定组上（原版 Globals 只有 9 字段，放不下）。
-                        .withBindGroupLayout(BindGroupLayout.builder()
-                                .withUniform(TERRAIN_PARAMS_UNIFORM, UniformType.UNIFORM_BUFFER)
-                                .build());
+                        TerrainDerivedPlan.NAMESPACE, spec.location()
+                                .substring((TerrainDerivedPlan.NAMESPACE + ":").length())));
                 if (spec.hasAlphaCutout()) {
                     builder.withShaderDefine("ALPHA_CUTOUT", spec.alphaCutout());
                 }
@@ -310,6 +311,12 @@ public final class TerrainPipelineApi {
         // ⚠️ 标记漏清 ⇒ 原版单附件 pass 拿到多附件管线 ⇒ 立刻 validation error
         //（所以置位/清位都放在 finally 里）。
         if (MrtTerrainPass.active()) {
+            // 🔴 h20 缺陷①守卫：只有当**当前 pass 的 color attachment 数**确实是 8，
+            //   才允许把 MRT 变体交出去。
+            //   🔖 理由：MrtTerrainPass.active() 只是进程级静态布尔，它为 true 并**不能证明**
+            //   「此刻取管线的原版调用点正处于那个 8 附件 pass 里」。
+            //   前提一旦不成立，原版单附件 pass 就会拿到 8 附件管线 ⇒ Vulkan 未定义 ⇒ 画面时好时坏。
+            if (MrtTerrainPass.hasExpectedAttachmentCount()) {
             RenderPipeline mrt = DERIVED_MRT.get(key(layer, multiDraw));
             if (mrt != null) {
                 WIRED.put(key(layer, multiDraw), Boolean.TRUE);
@@ -318,6 +325,15 @@ public final class TerrainPipelineApi {
                             layer, multiDraw, mrt.getLocation());
                 }
                 return mrt;
+            }
+            } else {
+                // 🔶 守卫命中：**不给**原版 MRT 管线。
+                if (MRT_GUARD_FALLBACK.add(layer)) {
+                    VkDisp.LOGGER.warn(
+                            "vkdisp: [GAP-011] active() 为 true 但当前 pass 的 color attachment 数不是 {}"
+                                    + "⇒ **回退原版管线**（绝不把 8 附件管线交给原版单附件 pass）。layer={} multiDraw={}",
+                            MrtTerrainPass.expectedAttachmentCount(), layer, multiDraw);
+                }
             }
         }
         if (!wireTerrainEnabled()) {
@@ -347,6 +363,10 @@ public final class TerrainPipelineApi {
         }
         return pipeline;
     }
+
+    /** 🔴 h20 守卫去重集合：同一 layer 只告警一次（热路径上不能刷日志）。 */
+    private static final java.util.Set<String> MRT_GUARD_FALLBACK =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /** 派生管线是否已被原版取用（= 通道真的通了，而不是只注册成功）。 */
     public static int wiredDerivedPipelineCount() {

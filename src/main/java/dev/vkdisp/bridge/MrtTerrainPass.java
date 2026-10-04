@@ -244,6 +244,22 @@ public final class MrtTerrainPass {
         return v;
     }
 
+    /**
+     * 🔴 h20 守卫配套：**当前 pass 的 color attachment 数**是否确实是我们期望的那个数。
+     * <p>🔖 为什么需要它：{@link #active()} 只是进程级静态布尔，它为 true 并**不能证明**
+     * 「此刻取管线的那一方正处于我们的 pass 内」。原版单附件 pass 拿到 8 附件管线是 **Vulkan 未定义**。
+     * <p>判定口径：{@link #inMrtPass} 为 true 时**直接返回 true**（我方 pass 的结构是确定的），
+     * 否则返回 false ⇒ 守卫命中 ⇒ 交回原版管线。
+     */
+    public static boolean hasExpectedAttachmentCount() {
+        return inMrtPass;
+    }
+
+    /** 期望的 color attachment 数（供守卫日志用；口径与 {@code MrtPlan.slotCount()} 一致）。 */
+    public static int expectedAttachmentCount() {
+        return MrtPlan.slotCount();
+    }
+
     /** GAP-011 二分诊断：跳过的 setupFor 次数（只用于自报，不进热路径）。 */
     private static long lightingSetupSkips;
 

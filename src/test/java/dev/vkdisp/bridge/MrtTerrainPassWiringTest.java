@@ -13,6 +13,7 @@ package dev.vkdisp.bridge;
  * 5. 性能基线：❄️ 单测。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -222,5 +223,38 @@ class MrtTerrainPassWiringTest {
         String body = pass.substring(bodyAt);
         assertTrue(body.contains("TerrainDrawCapture.current()"),
                 "pass 体（执行期）必须读捕获 —— 那才是本帧的数据");
+    }
+
+    @Test
+    @DisplayName("`U0001f534 h20 缺陷②：接线用的派生管线**不得**携带只在我方 pass 里绑定的自定义绑定组")
+    void wiredPipelineCarriesNoOrphanBindGroup() {
+        String src = readBridgeSource("TerrainPipelineApi.java");
+        int i = src.indexOf("public static void registerTerrainDerivedPipelines");
+        assertTrue(i >= 0, "注册方法没找到");
+        int end = src.indexOf("public static", i + 10);
+        String body = src.substring(i, end > i ? end : src.length());
+        assertFalse(body.contains("TERRAIN_PARAMS_UNIFORM"),
+                "`U0001f534 接线管线带了 VkDispTerrainParams 绑定组：原版路径无人绑定它");
+    }
+
+    @Test
+    @DisplayName("`U0001f534 h20 缺陷①：MRT 变体须有 attachment 数守卫，命中即回退原版管线")
+    void mrtVariantIsGuardedByAttachmentCount() {
+        String src = readBridgeSource("TerrainPipelineApi.java");
+        assertTrue(src.contains("hasExpectedAttachmentCount()"),
+                "`U0001f535 没有守卫调用：active() 为 true 就无条件把 8 附件管线交给原版");
+        assertTrue(src.contains("MRT_GUARD_FALLBACK"),
+                "`U0001f50d 守卫命中必须去重告警（热路径上不能刷日志）");
+        assertTrue(src.contains("回退原版管线"),
+                "`U0001f50d 守卫命中必须自报，否则无法区分「没触发」与「触发了但没生效」");
+    }
+
+    private static String readBridgeSource(String file) {
+        try {
+            return Files.readString(java.nio.file.Path.of(
+                    "src/main/java/dev/vkdisp/bridge", file));
+        } catch (java.io.IOException e) {
+            throw new AssertionError("读不到 bridge 源码: " + file, e);
+        }
     }
 }
