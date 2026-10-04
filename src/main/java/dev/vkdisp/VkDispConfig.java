@@ -225,6 +225,44 @@ public final class VkDispConfig {
                     + "（需配合 mrt.terrain=true；默认关 = 沿用原版 core/terrain）。")
             .define("mrt.packTerrainShader", false);
 
+    /**
+     * GAP-003/A：包地形片元的 {@code shadowtex0}/{@code shadowtex1}/{@code shadowcolor0}
+     * 绑到**专用 1×1 桩纹理**，而不是本 MRT pass 自己的深度 / colortex0 附件。
+     *
+     * <p>🔴 <b>为什么默认开</b>：本 pass 的深度附件（清屏 0.0 + 地形写深度）与 colortex0
+     * 都是<b>读写 render pass 附件</b>；Vulkan 里「同一 image 既作读写附件又作采样器」是
+     * <b>未定义行为</b> —— 驱动可以丢 draw / 给垃圾 / 无事发生，
+     * <b>且不报 validation error</b>（本机没装 validation layer）。
+     * 🔶 实测症状与之吻合：闪烁的触发条件被 2×2 对照收敛到<b>只有包地形片元</b>
+     * （原版 {@code core/terrain} 不声明这些 sampler ⇒ 不触发）。
+     *
+     * <p>🔖 <b>代价（如实登记）</b>：桩纹理里没有真阴影贴图 ⇒ 阴影项**不承诺**
+     * （与原实现的语义承诺一致）。桩深度清到 0.0 = 本引擎反向 Z 的**远平面** ⇒ 阴影取「无遮挡」。
+     *
+     * <p>🔬 <b>这是 A/B 开关，不是给用户调的手柄</b>：置 {@code false} 会<b>故意恢复</b>
+     * 上述未定义行为，仅用于同二进制单变量对照取证（见 {@code evidence/h27-…}）。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_SHADOW_STUBS = BUILDER
+            .comment("GAP-003/A：shadowtex0/1 与 shadowcolor0 绑专用 1x1 桩纹理（不绑本 pass 的读写附件，"
+                    + "那是 Vulkan 未定义行为）。false = 故意恢复旧行为，仅供 A/B 取证。")
+            .define("mrt.shadowStubs", true);
+
+    /**
+     * 🔬 A/B 开关：故意恢复 GAP-010 修复（{@code 7206d6d}）之前的行为。
+     *
+     * <p>🔶 <b>为什么需要它</b>：GAP-011「闪烁」的归因链上有一处被混淆的对照 ——
+     * {@code h21}/{@code h22} 观测到闪烁（99.89% 全黑相位），紧接着 {@code 7206d6d}
+     * 修好了「适配层元被顺手清掉」，然后 {@code h24} 就再也观测不到闪烁，
+     * 于是 {@code h24} 把功劳记给了「关掉 M-01 管线替换」。
+     * 但那不是单变量：<b>代码在 h21 与 h24 之间变过</b>。
+     * 🔖 本开关把「修复前/修复后」变成同一个二进制里的可切换变量，重新拿到真正的单变量对照。
+     *
+     * <p>⚠️ <b>默认关，且不是给用户调的手柄</b>：置 true 会重现 12 条 {@code resourceLoad/ERROR}。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_GAP010_REGRESSION = BUILDER
+            .comment("🔬 A/B 取证用：故意丢弃适配层 memo，复现 7206d6d 之前的状态（默认关）。")
+            .define("mrt.gap010Regression", false);
+
     /** 诊断：地形 MRT pass 里先画一个已知可用的全屏三角形（判别「pass 不工作」vs「地形不出片元」）。 */
 
     /**

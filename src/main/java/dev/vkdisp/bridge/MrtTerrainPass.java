@@ -455,6 +455,16 @@ public final class MrtTerrainPass {
         colortex = targets.toArray(new TextureTarget[0]);
         colortexDepth = new TextureTarget("vkdisp gbuffer depth", main.width, main.height,
                 null, GpuFormat.D32_FLOAT);
+        // 🔴 阴影桩纹理必须在**建 pass 之前**建好：它的 clear 需要新建 command encoder，
+        //   而 render pass 打开期间新建 encoder 会被 RenderPearl 拒绝
+        //   （"Close the existing render pass before creating a new one!"，本轮第一版踩过）。
+        if (dev.vkdisp.VkDispConfig.MRT_SHADOW_STUBS.get()) {
+            ShadowStubs.init();
+        } else {
+            dev.vkdisp.VkDisp.LOGGER.warn("vkdisp: [GAP-003/A] mrt.shadowStubs=false —— "
+                    + "**故意**把 shadowtex0/1 与 shadowcolor0 绑到本 pass 的读写附件"
+                    + "（Vulkan 未定义行为），仅供 A/B 取证；画面出现闪烁是预期的");
+        }
         atlasSampler = RenderSystem.getDevice().createSampler(
                 AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE, FilterMode.LINEAR, FilterMode.LINEAR,
                 1, OptionalDouble.empty());

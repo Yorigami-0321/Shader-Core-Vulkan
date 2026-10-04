@@ -562,9 +562,23 @@ public final class TerrainPipelineApi {
      *
      * <p><b>视图怎么选</b>（占位一律显式，不用「猜一个像的」）：
      * texture_0 = 方块图集（真值）；noisetex = 方块图集（占位）；
-     * shadowtex0/1 = 本 pass 的深度视图（类型匹配 sampler2DShadow 的 D32 深度，
-     * 但装的是本 pass 地形深度而非真阴影贴图 ⇒ 阴影结果不承诺）；
-     * shadowcolor0 = colortex 槽 0（占位）。
+     * shadowtex0/1 = **专用 1×1 D32 桩**（类型匹配 sampler2DShadow）；
+     * shadowcolor0 = **专用 1×1 RGBA8 桩**。
+     *
+     * <p>🔴🔴 <b>为什么不能绑「本 pass 的深度 / colortex 0」</b>（原实现那样绑过，本轮修正）：
+     * 那两张图**同时是本 pass 的读写 render pass 附件**
+     * （深度附件清屏 0.0 且地形写深度；colortex0 被清屏并写入）。
+     * 在 Vulkan 里把同一张 image **既作为读写附件、又作为采样器**属于
+     * <b>未定义行为</b> —— 驱动可以丢弃 draw、可以给出垃圾、也可以什么都不做，
+     * <b>而且不会报 validation error</b>（本机无 validation layer，§9.4.15）。
+     * 🔶 本项目实测到的症状正是「整帧地形间歇性消失」（`evidence/h25`/`h26` 把触发条件收敛到
+     * **只有包片元**；而原版 {@code core/terrain} 不声明这些 sampler ⇒ 不触发，与观测一致）。
+     * ⇒ 桩纹理**永远不被当附件**，从根上消除别名（aliasing）。
+     *
+     * <p>🔖 <b>代价要说清</b>：桩纹理里没有真阴影贴图 ⇒ 阴影项仍**不承诺**
+     * （与原实现的语义承诺一致：原注释也写「阴影结果不承诺」）。桩值选成
+     * 「深度 = 0.0 = 本引擎的<b>远平面</b>」⇒ 阴影项取「无遮挡」，
+     * 是<b>可解释的缺省</b>，比喂一张含本 pass 自身深度的图更接近正确。
      */
     public static void bindPackTerrainUniforms(RenderPass pass,
             com.mojang.renderpearl.api.textures.GpuSampler sampler,
@@ -586,12 +600,20 @@ public final class TerrainPipelineApi {
                 pass.setUniform(PackTerrainProgram.BUILTINS_BLOCK, ring.currentBuffer());
             }
         }
+        boolean useStubs = dev.vkdisp.VkDispConfig.MRT_SHADOW_STUBS.get();
         for (String name : program.fragmentSamplers()) {
             com.mojang.renderpearl.api.textures.GpuTextureView view =
                     switch (name) {
                         case "texture_0" -> atlas;
-                        case "shadowtex0", "shadowtex1" -> depthView;
-                        case "shadowcolor0" -> colorView;
+                        // 🔴 h26 修正：**不得**绑本 pass 的深度/颜色附件（读写附件 + 采样器 = Vulkan UB）。
+                        //   默认改绑专用桩纹理（永不作附件），彻底消除别名。
+                        // 🔬 mrt.shadowStubs=false 时**故意**恢复旧绑定，仅供同二进制单变量对照取证。
+                        case "shadowtex0", "shadowtex1" -> useStubs
+                                ? ShadowStubs.depthView()
+                                : ShadowStubs.ownDepthAttachment(depthView);
+                        case "shadowcolor0" -> useStubs
+                                ? ShadowStubs.colorView()
+                                : ShadowStubs.ownColorAttachment(colorView);
                         // 🔴 h10 实测修正：高级材质路径的 全黑画面来自这里 ——
                         //   把 specular/normals 绑成方块图集，而它们是逐方块**材质贴图集**，
                         //   图集的 .z（ao）与 .r/.g（smoothness/f0）不是材质语义 ⇒ albedo 被乘得全零。

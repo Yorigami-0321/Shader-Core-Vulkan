@@ -512,6 +512,15 @@ public final class VkDispVirtualPack {
         //   terrainAdapterMemo 。😶 原实现清了它，而调用点是**先 takeTerrainSourceMemo() 再 takeTerrainAdapterMemo()**
         //   ⇒ 适配层元永远拿到 null ⇒ 资源加载期找不到 vkdisp_pack:terrain_pack_adapter 的 VERTEX 源
         //   ⇒ **12 条** resourceLoad/ERROR，且只能靠第二次资源重载自愈（用户在 UI 上看得见）。
+        // 🔬 A/B 用：mrt.gap010Regression=true 时**故意**恢复这行 = 复现 7206d6d 之前的状态
+        //   （适配层元永远为 null ⇒ 资源加载期 terrain_pack_adapter 拿不到 VERTEX 源）。
+        //   🔶 用途：GAP-011「闪烁」到底是不是随这个修复一起消失的 —— h24 的「单变量对照」被它混淆了
+        //   （h21 有闪烁 → 7206d6d → h24 无闪烁，中间代码变过）。默认关，且开启即 WARN 自报。
+        if (dev.vkdisp.VkDispConfig.MRT_GAP010_REGRESSION.get()) {
+            terrainAdapterMemo = null;
+            VkDisp.LOGGER.warn("vkdisp: [GAP-010/AB] mrt.gap010Regression=true —— "
+                    + "**故意**丢弃适配层 memo，复现 7206d6d 之前的状态（仅供 A/B 取证）");
+        }
         // 🔗 语义不变：两者仍然“同生共死”（片元为 null 时适配层也是 null），
         //   而 takeTerrainAdapterMemo() 本身就会清自己，不需要这里多一手。
         terrainMemoKey = null;
