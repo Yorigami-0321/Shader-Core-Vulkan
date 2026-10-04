@@ -61,7 +61,18 @@ def main(argv):
     if not argv:
         print(__doc__)
         return 2
-    arms = [argv[:argv.index("--")], argv[argv.index("--") + 1:]] if "--" in argv else [argv]
+    # 🔖 `--` 是**组分隔符**，可以出现多次（上一版只按第一个切分 ⇒ 三组时第二、三个 `--`
+    #    被当成文件名，抛 FileNotFoundError）。实测踩到过。
+    arms, cur = [], []
+    for a in argv:
+        if a == "--":
+            if cur:
+                arms.append(cur)
+            cur = []
+        else:
+            cur.append(a)
+    if cur:
+        arms.append(cur)
     for arm in arms:
         if not arm:
             continue
