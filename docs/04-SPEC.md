@@ -91,6 +91,11 @@ glsl/
   ConstEvaluator.java      // OF 的 const int X = ... 选项常量
 ```
 
+> **转译段数说明**：主流水线 **8 段**（上表）。另有**两个按需启用的适配器段**（默认关、诊断/槽位适配性质，
+> 不算「第 9 段」）：**第 ⑦½ 段 `DrawBuffersSlotAdapter`**（`h09`，按包源码 `/* DRAWBUFFERS:… */`
+> 兑现槽位 → `gl_FragData[k] → location k`）与**第 7¾ 段 `DerivativeProbeAdapter`**（`h14`，
+> `dFdx`/`dFdy` 初值改 0 的单变量诊断探针，`finally` 复位）。
+
 > **141 阶段矩阵修复（`LegacyBuiltinInjector`，转译第 8 段，2026-10-02 运行时闭环）**：
 > GLSL 1.20 旧内建在 Vulkan GLSL 下两类失败 —— `(a) undeclared identifier`（属性旧名
 > `gl_MultiTexCoord*` / `gl_Color` / `gl_Normal` / `gl_Vertex` 及其展开的 `Position`、

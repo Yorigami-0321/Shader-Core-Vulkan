@@ -2,7 +2,7 @@
 
 > 工程：`vkdisp`（Vulkan Shader Dispatcher）· 许可证：**MIT**
 > 定位：基于 Minecraft **原版 Vulkan 渲染后端**的、兼容 **OptiFine / Iris 格式**着色器包的引擎。
-> 最后整理：2026-10-02（🔴 三支柱目标 + mixin 松绑 + 原生可实测）
+> 最后整理：2026-10-04（文档清理 + 审查改进项落地；详见 `CHANGE_LOG.md` 顶部条目）
 
 ---
 
@@ -76,6 +76,7 @@ AGENT_CONTEXT.md      ← 跨会话记忆（决策、原版 API 清单、待决�
 | `17-NATIVE.md` | **🔴 本轮重写**：三支柱度量 + 预算 B1–B7 + 热度重标 + FFM/Rust 架构 + **§5 G 系列准入闸门与 20% 阈值** |
 | `18-PARALLEL.md` | **并行开发路线**：A–H 八条线（新增 **G 线 Rust 对比**、**H 线 mixin 装配**）、契约冻结闸门、边界与限制 |
 | `AGENT_CONTEXT.md` | 跨会话记忆 |
+| `QUALITY-DEBT.md` | **代码质量债登记表**（无编号文档）：`@Nullable` / `debugLog` 死开关 / 静态可变状态 / 长方法等代码层待办，附「每轮迭代第 0 步」闭环回路 |
 
 ---
 

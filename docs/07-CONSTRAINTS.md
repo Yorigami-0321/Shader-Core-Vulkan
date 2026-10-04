@@ -101,6 +101,19 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 2. ✅ **能增附件** —— 派生管线改 `ColorTargetState` 即可上多附件 gbuffer。
 3. ✅ **能加自定义 uniform 块** —— 派生管线自带 bind group 布局，顺带解掉 `Globals` 仅 9 字段限制。
 
+### 1.4.1 🔴 NeoForge 升版 mixin 签名回归清单（C-04，2026-10-04 立）
+
+`vkdisp.mixins.json` 当前 `required: true` + `defaultRequire: 1` ⇒ 任一 mixin 目标签名在升版后变了会**直接崩客户端**（非降级）。这是当前阶段的合理选择（M-01 是 GAP-003 通道本身，关掉等于关兼容支柱），但升版时必须**先于 `runClient`** 做以下核查：
+
+| 步骤 | 动作 | 判据 |
+|---|---|---|
+| ① | 拉取新版 sources jar，`grep` 每个 mixin 目标方法签名是否仍存在 | `ChunkSectionLayer#pipeline(boolean)`、`ChunkSectionsToRender#renderLayers(7 参)`、`LevelRenderer#prepareChunkRenders*` |
+| ② | 若签名变了：先改 `bridge/MixinTargets` 常量 + mixin 类 `@At`/`@Inject` 注解，**再**跑 `runClient` | 不许「先跑看崩不崩」 |
+| ③ | `runClient` 启动到主菜单，日志 grep `Mixin apply failed` | 0 命中 |
+| ④ | 进世界，确认每个注入点的 `vkdisp: [注入点名] hit` 日志至少出现 1 次 | T10 落地 |
+
+本清单与 `06-MIGRATION.md` R1–R9 回归同源，可并入升版流程。
+
 ### 1.2 L11 的落地尺度（Sodium 彻底隔绝）
 
 **L11 是 L2 / L3 / L4 的加强版**，把「不抄、不替代、不提 PR」升级为**全链条隔绝**：
@@ -188,7 +201,7 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 | **T2** | **所有 GPU 操作必须走 `com.mojang.renderpearl.*`** | 用户约束：禁止重复造轮子 |
 | **T3** | **不得自研 Vulkan 设备 / 命令缓冲 / render pass** | 官方有 |
 | **T4** | **不得自研 SPIR-V 编译器** | 走原版编译通道 |
-| **T5** | **业务代码不得直接 `import com.mojang.renderpearl.*`** | 必须经 `bridge` 包 —— 升级时只改一处（见 `06-MIGRATION.md` §2） |
+| **T5** | **业务包不得直接 `import com.mojang.renderpearl.*`**；**`mixin/` 装配层豁免**（mixin 注入原版方法时，方法签名里的 `RenderPipeline`/`RenderPass` 等类型天然要被引用，强求经 bridge 不成比例） | 「业务包」= `pack/`·`glsl/`·`render/`·`pipeline/`·`screen/`，**不含 `mixin/`**；`bridge/` 是唯一允许 import 的业务可见入口（升级时只改一处，见 `06-MIGRATION.md` §2）。`mixin/` 仍受 X25 约束（只转发不写业务） |
 | **T6** | **jar 内不得含游戏类**（`net/minecraft/**`、`com/mojang/**`） | 会与游戏冲突 |
 | **T7** | **jar 内不得含任何第三方模组类**（`net/caffeinemc/**`、`dev/vitrail/**`） | 会冲突且牵连许可证 |
 | **T8** | **`RenderTarget` / `TextureTarget` 仍在 `com.mojang.blaze3d.pipeline`** | 26.3 搬迁**不完整**，盲改包名会改坏 |
