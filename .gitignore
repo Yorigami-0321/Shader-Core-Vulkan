@@ -119,3 +119,7 @@ local.properties
 # 2026-10-03 补 core.* —— 起因是 FFM 回传实测时崩过一次 JVM（悬垂指针），
 # systemd-coredump 接管时不落地，但换台机器就可能落地到仓库根目录。
 core.*
+
+# Python 工具的字节码缓存（evidence/tools/*.py 是入库的测量工具）
+__pycache__/
+*.pyc
