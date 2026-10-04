@@ -40,7 +40,7 @@ class PackVertexAdapterGeneratorTest {
                 new PackTerrainProgram.Input(1, "float", "recolor"),
                 new PackTerrainProgram.Input(2, "vec2", "texCoord"),
                 new PackTerrainProgram.Input(8, "vec4", "color"));
-        PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(inputs, false);
+        PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(inputs, false, false);
         assertEquals(List.of("0:float:mat", "1:float:recolor", "2:vec2:texCoord", "8:vec4:color"),
                 declaredOuts(r.glsl()),
                 "🔖 少一条就链接失败、多一条无害但会掩盖漏供 —— 必须逐条对齐契约");
@@ -65,7 +65,7 @@ class PackVertexAdapterGeneratorTest {
                 new PackTerrainProgram.Input(12, "vec3", "viewVector"),
                 new PackTerrainProgram.Input(13, "vec4", "vTexCoord"),
                 new PackTerrainProgram.Input(14, "vec4", "vTexCoordAM"));
-        PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(inputs, false);
+        PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(inputs, false, false);
         assertEquals(15, declaredOuts(r.glsl()).size(),
                 "🔖 **15 条必须全供** —— 本轮 runClient 正是缺第 15 条导致资源加载失败、客户端起不来");
         assertEquals(List.of("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14"),
@@ -77,7 +77,7 @@ class PackVertexAdapterGeneratorTest {
     void constantSuppliesAreAccounted() {
         PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(List.of(
                 new PackTerrainProgram.Input(0, "float", "mat"),
-                new PackTerrainProgram.Input(2, "vec2", "texCoord")), false);
+                new PackTerrainProgram.Input(2, "vec2", "texCoord")), false, false);
         assertEquals(List.of("mat"), r.constantSupplies(),
                 "mat 只能按常量供（GAP-007），必须记账");
         assertTrue(r.diagnostics().stream().anyMatch(d -> d.message().contains("GAP-007")),
@@ -89,7 +89,7 @@ class PackVertexAdapterGeneratorTest {
     @DisplayName("🔖 不认识的 varying ⇒ 类型零值 + WARN（**绝不猜一个像的值**）")
     void unknownVaryingGetsZeroValueAndWarning() {
         PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(List.of(
-                new PackTerrainProgram.Input(5, "vec3", "somePackSpecificThing")), false);
+                new PackTerrainProgram.Input(5, "vec3", "somePackSpecificThing")), false, false);
         assertTrue(r.glsl().contains("somePackSpecificThing = vec3(0.0)"));
         assertTrue(r.diagnostics().stream().anyMatch(d -> d.message().contains("不认识")),
                 "不认识的名字必须显式告警（X9 不猜）");
@@ -99,7 +99,7 @@ class PackVertexAdapterGeneratorTest {
     @DisplayName("🔖 生成物必须声明原版地形顶点属性（否则地形根本没有顶点数据）")
     void declaresVanillaTerrainAttributes() {
         String glsl = PackVertexAdapterGenerator.generate(List.of(
-                new PackTerrainProgram.Input(0, "float", "mat")), false).glsl();
+                new PackTerrainProgram.Input(0, "float", "mat")), false, false).glsl();
         assertTrue(glsl.contains("in vec3 Position"));
         assertTrue(glsl.contains("in vec4 Color"));
         assertTrue(glsl.contains("in vec2 UV0"));
@@ -110,23 +110,23 @@ class PackVertexAdapterGeneratorTest {
     }
 
     @Test
-    @DisplayName("U0001f50d X44 回归：诊断开关产出的赋值行必须以分号收尾（行尾注释会把分号吃掉）")
+    @DisplayName("🔍 X44 回归：诊断开关产出的赋值行必须以分号收尾（行尾注释会把分号吃掉）")
     void generatedAssignmentsAlwaysTerminated() {
-        // U0001f516 本轮真踩到：表达里带 `// ...` 注释时，后面拼上的 `;` 被注释吃掉，
+        // 🔖 本轮真踩到：表达里带 `// ...` 注释时，后面拼上的 `;` 被注释吃掉，
         //   生成 `lmCoord = vec2(1.0)  // ...;` ⇒ 驱动层 GLSL 解析失败
         //   ⇒ 6 条地形管线全部加载失败 ⇒ **资源重载抛异常 ⇒ 游戏根本起不来**。
         //   ⇒ 断言「每一条赋值行都以 `;` 结尾」，把这条坑钉死。
         PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(List.of(
                 new PackTerrainProgram.Input(3, "vec2", "lmCoord"),
                 new PackTerrainProgram.Input(5, "vec3", "sunVec"),
-                new PackTerrainProgram.Input(0, "float", "mat")), true);
+                new PackTerrainProgram.Input(0, "float", "mat")), true, false);
         int assignments = 0;
         for (String line : r.glsl().lines().toList()) {
             String t = line.strip();
             if (t.startsWith("lmCoord") || t.startsWith("sunVec") || t.startsWith("mat ")) {
                 assignments++;
                 assertTrue(t.endsWith(";"),
-                        "U0001f50d 赋值行必须以分号收尾，实际: <" + t + ">"
+                        "🔍 赋值行必须以分号收尾，实际: <" + t + ">"
                                 + "（行尾注释会把分号吃掉 ⇒ 整批管线加载失败）");
             }
         }
@@ -134,21 +134,21 @@ class PackVertexAdapterGeneratorTest {
     }
 
     @Test
-    @DisplayName("U0001f50d X45 回归：诊断开关必须**在诊断文本里自报状态**")
+    @DisplayName("🔍 X45 回归：诊断开关必须**在诊断文本里自报状态**")
     void probeSelfReportsItsState() {
-        // U0001f50d 不自报的话，「开关没生效」与「结论不成立」无法区分 ⇒ 实验结论不可信。
+        // 🔍 不自报的话，「开关没生效」与「结论不成立」无法区分 ⇒ 实验结论不可信。
         String off = PackVertexAdapterGenerator.generate(
-                List.of(new PackTerrainProgram.Input(3, "vec2", "lmCoord")), false)
+                List.of(new PackTerrainProgram.Input(3, "vec2", "lmCoord")), false, false)
                 .diagnostics().stream().map(Object::toString).reduce("", (a, b) -> a + b);
         String on = PackVertexAdapterGenerator.generate(
-                List.of(new PackTerrainProgram.Input(3, "vec2", "lmCoord")), true)
+                List.of(new PackTerrainProgram.Input(3, "vec2", "lmCoord")), true, false)
                 .diagnostics().stream().map(Object::toString).reduce("", (a, b) -> a + b);
         assertTrue(off.contains("lmCoord=满光照诊断开关=关"),
-                "U0001f50d 关闭时也要自报，否则无法判断「开关是否生效」");
+                "🔍 关闭时也要自报，否则无法判断「开关是否生效」");
         assertTrue(on.contains("lmCoord=满光照诊断开关=已开启"),
-                "U0001f50d 开启时必须自报已开启");
+                "🔍 开启时必须自报已开启");
         assertTrue(on.contains("开关没生效"),
-                "U0001f50d 开启时必须给出「若结果与常量一致说明开关没生效」的判读指引");
+                "🔍 开启时必须给出「若结果与常量一致说明开关没生效」的判读指引");
     }
 }
 

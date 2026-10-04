@@ -490,7 +490,8 @@ public final class VkDispVirtualPack {
         try {
             dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.Result adapter =
                     dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.generate(
-                            program.inputs(), VkDispConfig.MRT_TERRAIN_FULL_LIGHT_PROBE.get());
+                            program.inputs(), VkDispConfig.MRT_TERRAIN_FULL_LIGHT_PROBE.get(),
+                            VkDispConfig.MRT_TERRAIN_PARALLAX_SKIP_PROBE.get());
             for (TranslateDiagnostic diagnostic : adapter.diagnostics()) {
                 logDiagnostic(diagnostic);
             }

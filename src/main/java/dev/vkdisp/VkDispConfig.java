@@ -225,6 +225,19 @@ public final class VkDispConfig {
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_FULL_LIGHT_PROBE = BUILDER
             .comment("诊断：顶点适配层把 lmCoord 强制成 (1,1) 满光照（默认关，单变量实验）。")
             .define("mrt.terrainFullLightProbe", false);
+
+    /**
+     * U0001f50d 诊断单变量实验（h12 根因探针）：把 dist 强制成 1000.0。
+     * <p>parallaxFade = clamp((1000-64)/32, 0, 1) = 1.0 ⇒ 命中
+     * {@code GetParallaxCoord} 的早退 {@code if (parallaxFade >= 1.0 || ...) return texCoord;} ⇒
+     * <b>视差分支整体跳过</b>、newCoord = texCoord ⇒ albedo 按普通方式采样。
+     * <p>只改 dist 一个 varying（单变量）。判定：若画面亮起来 ⇒
+     * 压零项在<b>视差分支</b>（即 GAP-007 的 vTexCoord / vTexCoordAM 常量供值）；若仍黑 ⇒
+     * 候选 3/4/5 全否定，须换切分方向。默认关。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_PARALLAX_SKIP_PROBE = BUILDER
+            .comment("诊断：顶点适配层把 dist 强制成 1000.0 以跳过视差分支（默认关，单变量实验）。")
+            .define("mrt.terrainParallaxSkipProbe", false);
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_FULLSCREEN_PROBE = BUILDER
             .comment("诊断：地形 MRT pass 内先画全屏三角形（默认关）。")
             .define("mrt.terrainFullscreenProbe", false);

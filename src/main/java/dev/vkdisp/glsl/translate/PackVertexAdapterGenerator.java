@@ -82,13 +82,14 @@ public final class PackVertexAdapterGenerator {
      *        而 {@code skylightSqr = lightmap.y²}、{@code lightmap = clamp(lmCoord, 0, 1)}。
      *        默认关；开启时只改这一个 varying，其余全部不动（单变量）。
      */
-    public static Result generate(List<PackTerrainProgram.Input> inputs, boolean fullLightProbe) {
+    public static Result generate(List<PackTerrainProgram.Input> inputs, boolean fullLightProbe,
+            boolean parallaxSkipProbe) {
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         Set<String> constants = new LinkedHashSet<>();
         StringBuilder decls = new StringBuilder();
         StringBuilder body = new StringBuilder();
         for (PackTerrainProgram.Input input : inputs) {
-            String assignment = supply(input, constants, fullLightProbe);
+            String assignment = supply(input, constants, fullLightProbe, parallaxSkipProbe);
             if (assignment == null) {
                 diagnostics.add(TranslateDiagnostic.warn(
                         "适配层不认识 varying '" + input.name() + "'（类型 " + input.type()
@@ -115,11 +116,20 @@ public final class PackVertexAdapterGenerator {
                         + "（常量供值 " + constants.size() + " 条："
                         + (constants.isEmpty() ? "无" : String.join(", ", constants)) + "）"
                         + (fullLightProbe ? " **lmCoord=满光照诊断开关=已开启**"
-                                  : " lmCoord=满光照诊断开关=关"),
+                                  : " lmCoord=满光照诊断开关=关")
+                        + (parallaxSkipProbe ? " **dist=视差跳过诊断开关=已开启**"
+                                  : " dist=视差跳过诊断开关=关"),
                 null, 0));
         if (fullLightProbe) {
             diagnostics.add(TranslateDiagnostic.warn(
                     "[诊断] lmCoord 已强制为 vec2(1.0)：若渲染结果与常量一致，说明**开关没生效**（不是结论不成立）",
+                    null, 0));
+        }
+        if (parallaxSkipProbe) {
+            diagnostics.add(TranslateDiagnostic.warn(
+                    "[诊断] dist 已强制为 1000.0：parallaxFade = 1.0 ⇒ 视差分支整体跳过。"
+                            + "若画面亮起来 ⇒ 压零项在**视差分支**（即 GAP-007 的 vTexCoord/vTexCoordAM 常量供值）；"
+                            + "若仍黑 ⇒ 候选 3/4/5 全部否定，须换切分方向",
                     null, 0));
         }
         return new Result(glsl, diagnostics, List.copyOf(constants));
@@ -127,7 +137,7 @@ public final class PackVertexAdapterGenerator {
 
     /** 三档供值表；返回 {@code null} 表示「不认识这个名字」。 */
     private static String supply(PackTerrainProgram.Input input, Set<String> constants,
-            boolean fullLightProbe) {
+            boolean fullLightProbe, boolean parallaxSkipProbe) {
         String name = input.name();
         return switch (name) {
             case "texCoord" -> "texCoord = UV0";
@@ -145,7 +155,14 @@ public final class PackVertexAdapterGenerator {
             case "upVec" -> "upVec = normalize(ModelViewMat[1].xyz)";
             case "eastVec" -> "eastVec = normalize(ModelViewMat[0].xyz)";
             case "viewVector" -> "viewVector = normalize(vkdispAdapterViewPos)";
-            case "dist" -> "dist = length(vkdispAdapterViewPos)";
+            // U0001f50d h12 根因探针：强制 dist = 1000 ⇒ parallaxFade = clamp((1000-64)/32,0,1) = 1.0
+            //   ⇒ 命中 GetParallaxCoord 里的早退 `if (parallaxFade >= 1.0 || ...) return texCoord;`
+            //   ⇒ 视差分支**整体跳过**、newCoord = texCoord ⇒ albedo 按普通方式采样。
+            //   只改 dist 一个 varying（单变量）；若画面亮起来 ⇒
+            //   压零项在**视差分支**，而不是光照/材质/采样器。
+            case "dist" -> parallaxSkipProbe
+                    ? "dist = 1000.0"
+                    : "dist = length(vkdispAdapterViewPos)";
             case "mat", "recolor" -> mark(constants, name) + name + " = 0.0";
             case "normal" -> mark(constants, name) + name + " = vec3(0.0, 1.0, 0.0)";
             case "binormal" -> mark(constants, name) + name + " = vec3(1.0, 0.0, 0.0)";

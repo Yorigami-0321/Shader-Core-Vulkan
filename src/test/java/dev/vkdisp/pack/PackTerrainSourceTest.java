@@ -68,7 +68,7 @@ class PackTerrainSourceTest {
         Assumptions.assumeTrue(Files.isDirectory(INVENTORY), "库存目录不在本地");
         PackTerrainSource.Result result = PackTerrainSource.generate(INVENTORY, "", "");
         Assumptions.assumeTrue(result.wired(), "本机没选出地形片元，跳过签名对账");
-        var adapter = dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.generate(result.program().inputs(), false);
+        var adapter = dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.generate(result.program().inputs(), false, false);
         java.util.Map<Integer, String> adapterOuts = new java.util.LinkedHashMap<>();
         Matcher m = OUT_DECL.matcher(adapter.glsl());
         while (m.find()) {

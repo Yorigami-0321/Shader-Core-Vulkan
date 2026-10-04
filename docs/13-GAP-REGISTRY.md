@@ -38,7 +38,7 @@
 ⚠️ **禁止**先猜一个「看起来对」的绑定再截图 —— 那正是本项目反复消灭的失败形态 |
 `pipeline/model`（契约）+ `glsl/translate/PackVertexAdapterGenerator`（常量项表）+ 采样器绑定 |
 `mrt.packTerrainShader`（已存在） | 默认配置路径画面正确 ⇒ 随时可退回 |
-U0001f7e1 **根因仍未坐实**：候选 1/2（`ao`/`metalness`）已实验证伪（`h10`）；候选 3（`lmCoord`）在 `h11` 执行了但**判读不成立**（开关生效性不可观测，已按 X45 补上自报）。U0001f50d 关键量化判据：`albedo` 被乘成**恰好 0**（采样区 37.00% 为纯 `(0,0,0)`，**无任何暗色像素**），而不是「很暗」 |
+🟡 **范围已缩到一个算子，尚未验证**（`h12`）：候选 1/2（`ao`/`metalness`）、候选 3（`lmCoord`）、候选 5（视差分支）均已**实验证伪**（开关均自报已生效，非「判读不可信」）；候选 4（首行 `texture()*color`）被**结构性排除**（工作路径同一表达式算出可见画面）。🔍 剩下唯一一个「坏路径有、工作路径没有」的 `albedo` 算子：**`albedo = textureGrad(texture_0, newCoord, dFdx(texCoord), dFdy(texCoord))`**（坏路径 7 次 / 工作路径 **0** 次）。🟡 待查：方块图集 mip 链可用性 / 反向 Z 下 `dFdx` 是否退化 |
 | GAP-010 | 生成式地形顶点适配层**资源登记晚于管线注册**：首轮资源重载时 `PipelineBuilder`
   报 12 条 `Couldn't find source for VERTEX shader (vkdisp_pack:terrain_pack_adapter)`；
 第二轮重载成功 ⇒ **不致命**，但会在日志里留 12 条 ERROR（实测 `h11`）|
@@ -48,7 +48,7 @@ U0001f7e1 **根因仍未坐实**：候选 1/2（`ao`/`metalness`）已实验证�
 目标是首轮重载 0 条该 ERROR |
 `VkDispVirtualPack`（资源登记时序）+ `bridge/TerrainPipelineApi`（注册时机） | `mrt.packTerrainShader` |
 第二次重载会自愈 ⇒ 画面不受影响 | 
-U0001f7e2 **已定位、未修**（`h11`）|
+🟢 **已定位、未修**（`h11`）|
 | GAP-009 | 高级材质路径需要的**逐方块材质贴图集**（OF 的 `specular` / `normals`）本引擎没有。实测（`h10`）：包片元用 `textureLod(specular, …)` 取光滑度/金属度/孔隙/自发光遮罩，用 `textureGrad(normals, …).z` 取 AO |
 它们是**资源包附带的一整套逐方块材质贴图**，不是本项目能就地生成的资产；不引入也不假装有 |
 缺省绑**乘法单位元**（`specular=(0,0,0,255)` / `normals=(128,128,255,255)`，语义=「没有材质覆盖、没有 AO、法线朝上」），
