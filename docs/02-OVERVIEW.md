@@ -82,9 +82,9 @@ vkdisp
         原版 Vulkan 后端（不碰）
 ```
 
-### 5.1 🔴 为什么必须开 mixin（2026-10-02 源码级核实，已成定案）
+### 5.1 🔴 mixin 已放开到「管线装配层」（2026-10-02 拍板，2026-10-04 修正依据）
 
-零 mixin 路线**做不到**支柱①「完整兼容」。三处硬缺口：
+**先读这条纠错**：本节原写「零 mixin 做不到完整兼容」并列为三处硬缺口，**该推论已于 2026-10-04 撤回**。三处缺口本身（`putIfAbsent` / 单附件 / `Globals` 9 字段）**都成立**，但它们**都有官方旁路通道** ⇒ 被证伪的是**「必须用 mixin」这个结论**，不是缺口本身。官方通道见 `07-CONSTRAINTS.md` §1.4.2（`PipelineModifier`）。
 
 | 缺口 | 事实 | 零 mixin 能否解决 |
 |---|---|---|
@@ -92,8 +92,8 @@ vkdisp
 | **零成本增不了附件** | `SOLID_TERRAIN` 等全部写死 `ColorTargetState.DEFAULT`（单附件 RGBA8）；派生管线能改附件数，但要**被地形用到**必须走 draw 侧注入点 | ❌ |
 | **加不了自定义 uniform 块** | bind group 布局在 `RenderPipeline` 构造时固化；`BindGroupLayouts.Globals` 仅 9 字段（无相机矩阵/太阳方向） | ❌ |
 
-⇒ **完整 gbuffer 管线（多附件 + 自定义 uniform）必须放开 mixin。这是技术结论，
-而用户 2026-10-02 已拍板「略放开 mixin 限制」** ⇒ `07-CONSTRAINTS.md` M1 已松绑到
+⇒ **mixin 已略放开**（用户 2026-10-02 拍板）：`07` M1 松绑到「管线装配层 + 登记制 + 可关闭制 + 逐个开启」，仍然禁止注入 Sodium / 底层 GL 状态类 / 第三方渲染器。
+🔖 **mixin 是手段不是目标** —— 官方 `PipelineModifier` 能在 `getCompiledPipelineNullable` 首行拦截、覆盖任意渲染路径，比 mixin 更靠前且不撞 `putIfAbsent`。它带两条硬约束（**必须幂等** + **栈非空即抛 `IllegalStateException`**），迁移前必须先解决幂等性。**当前立场：M-01/M-01b 保留为 A/B 对照臂，两条路并跑一轮取证再决定是否下线。**
 「管线装配层 + 登记制 + 可关闭制」，仍然禁止注入 Sodium / 底层 GL 状态类 / 第三方渲染器。
 
 ### 5.2 零 mixin 仍然可用的两条路（继续保留，成本低收益高）

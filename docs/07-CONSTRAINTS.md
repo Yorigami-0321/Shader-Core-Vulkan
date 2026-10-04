@@ -53,8 +53,8 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 | # | 约束 | 原因 |
 |---|---|---|
 | **L1** | **本项目许可证 = MIT，已写入 `LICENSE` 与 `gradle.properties`** | 无许可证 = 默认保留所有权利 = 别人无法合法使用 |
-| **L2** | **不得复制 Sodium 的**任何**代码** | Sodium 是 PolyForm Shield 1.0.0，Noncompete 禁止竞争性使用 |
-| **L3** | **不得把本项目描述成「Sodium 替代品」** | 同上；且本项目根本不需要 Sodium |
+| **L2** | **不得复制 Sodium 的**任何**代码** | Sodium 是 PolyForm Shield 1.0.0（**不是 LGPL**）。但注意：`Noncompete`/`Competition` 约束的是**持有其授权的人**（"use the software"），本项目既不依赖也不使用其代码 ⇒ 从未成为 licensee ⇒ **该条款对我们不生效**。真正约束我们的只是**不复制代码**这一条本身 |
+| **L3** | **不得把本项目描述成「Sodium 替代品」** | 事实层面：本项目做的是**在 Vulkan 上跑 OF/Iris 着色器包**，Sodium 是区块渲染引擎优化，两者**不是同一层的东西、不构成竞争关系**；Sodium 与着色器包本身无关。⇒ 本条是**表述纪律**（不误导用户 + 不触碰其商标/品牌），**不是**许可证风险 |
 | **L4** | **不得向 Sodium 仓库提 PR 或 issue 索要内部 API** | 其 CONTRIBUTING 明确拒绝任何 AI 生成代码 |
 | **L5** | **不得复制 Sulkan（GPL-3.0）的任何代码** | `.java` / `.glsl` / 资源文件，一个字都不抄 |
 | **L6** | **不得复制 Beryl（ARR）的任何内容** | All Rights Reserved，完全不可用 |
@@ -64,7 +64,7 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 | **L10** | **jar 内必须包含 `LICENSE`** | MIT 署名要求 |
 | **L11** | 🔴 **与 Sodium 彻底隔绝：零代码、零依赖、零集成、零兼容、零引用** | 用户 2026-09-29 拍板：「不保留，和 sodium 彻底隔绝开」。见 §1.2 |
 | **L12** | 🔴 **调研参考前必须先核许可证（合规是第 0 步，不是最后一步）** | 一旦先读了代码，就难以自证"没受影响"；先判合规才能自证清白。见 §1.3 |
-| **M1** | 🔴 **mixin 允许开到「管线装配层」**；仍**禁止注入 Sodium / 底层 GL 状态类 / 第三方区块渲染器** | 2026-10-02 用户放开限制。理由：三支柱里**兼容优先**，而零 mixin 路线已被源码级核实**无法实现完整 gbuffer 管线**（多附件 + 自定义 uniform 块 + 原版 location 覆盖，三件事都无官方通道）。见 §1.4 |
+| **M1** | 🔴 **mixin 允许开到「管线装配层」**；仍**禁止注入 Sodium / 底层 GL 状态类 / 第三方区块渲染器** | 2026-10-02 用户放开限制，2026-10-04 撤回其「零 mixin 无解」的依据（见 §1.4）。理由只剩一条：三支柱里**兼容优先**。注意 mixin 是**手段不是目标** —— 若官方 API 能达成同一结果，优先用官方 API（见 §1.4.2 `PipelineModifier`） |
 
 ### 1.4 M1 的落地尺度（mixin 已松绑到「管线装配层」）
 
@@ -73,7 +73,9 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 | 版本 | 立场 | 结论依据 |
 |---|---|---|
 | 2026-09-29 ~ 10-02 早 | 零 mixin 是**默认路线**，从未成文为红线 | 保守推定 |
-| 2026-10-02（P4.4 核实） | 源码级确认：零 mixin **做不到**完整 gbuffer 管线 —— ① `registerCustomPipelines` 用 `putIfAbsent`，改不了原版 location；② `SOLID_TERRAIN` 等写死 `ColorTargetState.DEFAULT`（单附件），派生管线要被地形用到必须走注入点；③ `BindGroupLayouts.Globals` 仅 9 字段，BSL 自定义 uniform 无处安放 | 硬证据 |
+| 2026-10-02（P4.4 核实） | 🔴 **部分撤回**（2026-10-04）：源码级确认的三条里，`putIfAbsent` / 单附件 / `Globals` 9 字段**都成立**，但三条**都有官方旁路通道** ⇒ 被证伪的是 **M-01 这条实现路径**，不是零 mixin 路线本身 | 硬证据已被 2026-10-04 复核推翻其推论 |
+| **2026-10-04（最新核实）** | ✅ **官方旁路通道存在**：`net.neoforged.neoforge.client.pipeline.PipelineModifier`（`RenderPipeline apply(RenderPipeline, Identifier)`，javadoc 明写可用 `toBuilder()` 改、可用 `withColorTargetState` 改附件数），且 `RenderSystem` patch 在 `getCompiledPipelineNullable` **方法体首行**注入 `PIPELINE_MODIFIERS.apply(pipeline)` ⇒ 比 mixin 更靠前、覆盖任意渲染路径；location 由官方自动改写为 `location + "/transform/<路径>"` ⇒ 不撞 `putIfAbsent` ⇒ **零 mixin 达成 L2 是可能的** | 硬证据（已逐文件核实 26.3.x 分支） |
+| **2026-10-04（同轮附带）** | 🔴 **旧记载「`FrameGraphSetupEvent` 没有插 pass 入口」= 错**。`getFrameGrapBuilder()` 返回 `FrameGraphBuilder`；`LevelRenderer` patch 显示 `fireFrameGraphSetup` 在 `frame.addPass("clear")`（下一行）**之前**触发 ⇒ 帧图内插 pass 本就通 | 硬证据 |
 | **2026-10-02（本次）** | **用户拍板放开限制**：兼容完整 > 零 mixin | 三支柱优先级 |
 
 **松绑后的规则（现行）**：
@@ -88,19 +90,6 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 | **稳定性要求** | 注入后若出现崩溃/validation error，**必须能通过关闭单个注入点定位** | ❌ 多个注入点互相耦合，无法单独关闭 |
 | **默认策略** | **逐个开启**：先 1 个打通并验证，再考虑下一个 | ❌ 一次性全开 |
 
-**为什么仍然禁止底层 GL 状态类**：那会绑死后端，违反 X7（OpenGL 环境直接崩），
-且 VulkanMod 正是这条路 —— 本项目走 `renderpearl` 官方插口，不走后端替换。
-
-**为什么不再限制「只 1 个」**：上一版把数量当红线，是因为当时认为零 mixin 路线能走通。
-现在该路线已被证据否决，「1 个」的限制只会挡住兼容目标。**改为「登记制 + 可关闭制 + 逐个开启」，
-把风险从「事前禁止」移到「事中可控 + 事后可定位」。**
-
-**松绑后 mixin 解决得了的三件事（对照上一版「解决不了的三件事」）**：
-
-1. ✅ **能覆盖原版管线的实际使用** —— 派生管线可被地形 draw 指向。
-2. ✅ **能增附件** —— 派生管线改 `ColorTargetState` 即可上多附件 gbuffer。
-3. ✅ **能加自定义 uniform 块** —— 派生管线自带 bind group 布局，顺带解掉 `Globals` 仅 9 字段限制。
-
 ### 1.4.1 🔴 NeoForge 升版 mixin 签名回归清单（C-04，2026-10-04 立）
 
 `vkdisp.mixins.json` 当前 `required: true` + `defaultRequire: 1` ⇒ 任一 mixin 目标签名在升版后变了会**直接崩客户端**（非降级）。这是当前阶段的合理选择（M-01 是 GAP-003 通道本身，关掉等于关兼容支柱），但升版时必须**先于 `runClient`** 做以下核查：
@@ -113,6 +102,48 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 | ④ | 进世界，确认每个注入点的 `vkdisp: [注入点名] hit` 日志至少出现 1 次 | T10 落地 |
 
 本清单与 `06-MIGRATION.md` R1–R9 回归同源，可并入升版流程。
+
+### 1.4.2 `PipelineModifier`：官方旁路通道（2026-10-04 核实，优先于 mixin 考虑）
+
+**是什么**：`net.neoforged.neoforge.client.pipeline.PipelineModifier`，函数式接口
+`RenderPipeline apply(RenderPipeline pipeline, Identifier name)`。注册走
+`RegisterPipelineModifiersEvent`，作用域用 `RenderSystem.pushPipelineModifier` /
+`popPipelineModifier` / `renderWithPipelineModifier(key, runnable)`。
+
+**为什么它比 mixin 更优先**：`RenderSystem` 的 NeoForge patch 在
+`getCompiledPipelineNullable` **方法体首行**插入 `PIPELINE_MODIFIERS.apply(pipeline)` ⇒
+① 拦截点**早于** `PipelineCache` 解析；② 覆盖**任意渲染路径**（不只地形层）；
+③ location 由官方自动改写为 `location + "/transform/<modifier路径>"` ⇒ **不撞 `putIfAbsent`**。
+
+**两条硬约束（官方 javadoc 明写，不是我们的推断）**：
+
+| 约束 | 原文要点 | 对本项目的含义 |
+|---|---|---|
+| **必须幂等** | 「must be idempotent and have to return the exact same result for the given input，结果会被缓存」 | 本项目现有 4 个独立开关（M-01/M-01b/M-04/M-05）+ 虚拟包源与 `RegisterRenderPipelinesEvent` 约 **4.5 秒**的时序差，**不满足幂等前提** ⇒ 这是迁移的主要工作量，也是最大未知点 |
+| **栈非空即崩** | `PipelineModifierStack.ensureEmpty()` 在栈非空时 `throw new IllegalStateException`；`push`/`pop`/`apply` 均 `assertOnRenderThread()` | 栈失衡 = **直接崩客户端**（与 X34 那类「零报错静默变空」相反的另一类硬崩），须单独登记 |
+
+**关联 API（同一轮顺带发现，未在旧文档中）**：`SubmitCustomGeometryEvent`（`LevelRenderer` patch 注入），
+公开 `getRenderableSections()` 返回可见 section 的 `Iterable`、`getSubmitNodeCollector()`、`getPoseStack()`。
+⚠️ 触发时机在**粒子提交后、opaque 提交前**，且 javadoc 明说 custom render state 须在
+`ExtractLevelRenderStateEvent` 提取 ⇒ 它**可能**是「接管地形 pass 时拿不到 draw 数据」的零 mixin 出口，
+**属待实测，不得当既成事实**。
+
+**当前立场**：🔴 **登记为待评估的实现路径，不改现有代码**。M-01/M-01b 保留为 A/B 对照臂
+（符合 X52 单变量对照），两条路并跑一轮取证再决定是否下线 —— 现成基线是 `h08` 的
+`h08` 地形像素平均绝对差 **48.22** / **39.03%** 像素变化，可直接对比。
+
+**为什么仍然禁止底层 GL 状态类**：那会绑死后端，违反 X7（OpenGL 环境直接崩），
+且 VulkanMod 正是这条路 —— 本项目走 `renderpearl` 官方插口，不走后端替换。
+
+**为什么不再限制「只 1 个」**：上一版把数量当红线，是因为当时认为零 mixin 路线能走通。
+现在该路线已被证据否决，「1 个」的限制只会挡住兼容目标。**改为「登记制 + 可关闭制 + 逐个开启」，
+把风险从「事前禁止」移到「事中可控 + 事后可定位」。**
+
+**松绑后 mixin 解决得了的三件事（对照上一版「解决不了的三件事」）**：
+
+1. ✅ **能覆盖原版管线的实际使用** —— 派生管线可被地形 draw 指向。
+2. ✅ **能增附件** —— 派生管线改 `ColorTargetState` 即可上多附件 gbuffer。
+3. ✅ **能加自定义 uniform 块** —— 派生管线自带 bind group 布局，顺带解掉 `Globals` 仅 9 字段限制。
 
 ### 1.2 L11 的落地尺度（Sodium 彻底隔绝）
 
