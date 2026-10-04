@@ -108,11 +108,20 @@ public final class PackVertexAdapterGenerator {
                     .append(String.valueOf((char) 10));
         }
         String glsl = header() + decls + MAIN_HEAD + body + "}" + String.valueOf((char) 10);
+        // U0001f50d X45：诊断开关必须自报状态。
+        //   否则「开关没生效」与「结论不成立」无法区分 ⇒ 实验结论不可信（h11 笈的被该榁则挡住了）。
         diagnostics.add(TranslateDiagnostic.info(
                 "顶点适配层已生成：varyings=" + inputs.size()
                         + "（常量供值 " + constants.size() + " 条："
-                        + (constants.isEmpty() ? "无" : String.join(", ", constants)) + "）",
+                        + (constants.isEmpty() ? "无" : String.join(", ", constants)) + "）"
+                        + (fullLightProbe ? " **lmCoord=满光照诊断开关=已开启**"
+                                  : " lmCoord=满光照诊断开关=关"),
                 null, 0));
+        if (fullLightProbe) {
+            diagnostics.add(TranslateDiagnostic.warn(
+                    "[诊断] lmCoord 已强制为 vec2(1.0)：若渲染结果与常量一致，说明**开关没生效**（不是结论不成立）",
+                    null, 0));
+        }
         return new Result(glsl, diagnostics, List.copyOf(constants));
     }
 
@@ -122,8 +131,13 @@ public final class PackVertexAdapterGenerator {
         String name = input.name();
         return switch (name) {
             case "texCoord" -> "texCoord = UV0";
+            // 🔴 X44 现场复现（本轮真踩到）：供值表达式里带行尾注释时，后面拼上去的分号
+            //   会被注释吃掉 ⇒ 生成出 `lmCoord = vec2(1.0)  // ...;` ⇒ 驱动层报
+            //   "Couldn't parse GLSL ...: syntax error, unexpected IDENTIFIER, expecting ... SEMICOLON"
+            //   ⇒ 6 条地形管线全部加载失败 ⇒ **资源重载抛异常 ⇒ 世界根本进不去**。
+            //   ⇒ 供值表达式里一律不带注释；注释只能单独成行。
             case "lmCoord" -> fullLightProbe
-                    ? "lmCoord = vec2(1.0)  // DIAG full-light probe"
+                    ? "lmCoord = vec2(1.0)"
                     : "lmCoord = clamp((vec2(UV2) / 16.0 - 0.03125) * 1.06667,"
                     + " vec2(0.0), vec2(0.9333, 1.0))";
             case "color" -> "vkdispAdapterColor";

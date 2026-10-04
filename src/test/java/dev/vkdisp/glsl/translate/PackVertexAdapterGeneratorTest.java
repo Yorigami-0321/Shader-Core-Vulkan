@@ -108,4 +108,47 @@ class PackVertexAdapterGeneratorTest {
                 "适配层要读 GAP-004 那个块拿眼空间太阳方向（块名必须与绑定布局逐字一致）");
         assertTrue(glsl.contains("gl_Position"), "没有 gl_Position 的顶点着色器没有意义");
     }
+
+    @Test
+    @DisplayName("U0001f50d X44 回归：诊断开关产出的赋值行必须以分号收尾（行尾注释会把分号吃掉）")
+    void generatedAssignmentsAlwaysTerminated() {
+        // U0001f516 本轮真踩到：表达里带 `// ...` 注释时，后面拼上的 `;` 被注释吃掉，
+        //   生成 `lmCoord = vec2(1.0)  // ...;` ⇒ 驱动层 GLSL 解析失败
+        //   ⇒ 6 条地形管线全部加载失败 ⇒ **资源重载抛异常 ⇒ 游戏根本起不来**。
+        //   ⇒ 断言「每一条赋值行都以 `;` 结尾」，把这条坑钉死。
+        PackVertexAdapterGenerator.Result r = PackVertexAdapterGenerator.generate(List.of(
+                new PackTerrainProgram.Input(3, "vec2", "lmCoord"),
+                new PackTerrainProgram.Input(5, "vec3", "sunVec"),
+                new PackTerrainProgram.Input(0, "float", "mat")), true);
+        int assignments = 0;
+        for (String line : r.glsl().lines().toList()) {
+            String t = line.strip();
+            if (t.startsWith("lmCoord") || t.startsWith("sunVec") || t.startsWith("mat ")) {
+                assignments++;
+                assertTrue(t.endsWith(";"),
+                        "U0001f50d 赋值行必须以分号收尾，实际: <" + t + ">"
+                                + "（行尾注释会把分号吃掉 ⇒ 整批管线加载失败）");
+            }
+        }
+        assertEquals(3, assignments, "三条赋值都必须产出");
+    }
+
+    @Test
+    @DisplayName("U0001f50d X45 回归：诊断开关必须**在诊断文本里自报状态**")
+    void probeSelfReportsItsState() {
+        // U0001f50d 不自报的话，「开关没生效」与「结论不成立」无法区分 ⇒ 实验结论不可信。
+        String off = PackVertexAdapterGenerator.generate(
+                List.of(new PackTerrainProgram.Input(3, "vec2", "lmCoord")), false)
+                .diagnostics().stream().map(Object::toString).reduce("", (a, b) -> a + b);
+        String on = PackVertexAdapterGenerator.generate(
+                List.of(new PackTerrainProgram.Input(3, "vec2", "lmCoord")), true)
+                .diagnostics().stream().map(Object::toString).reduce("", (a, b) -> a + b);
+        assertTrue(off.contains("lmCoord=满光照诊断开关=关"),
+                "U0001f50d 关闭时也要自报，否则无法判断「开关是否生效」");
+        assertTrue(on.contains("lmCoord=满光照诊断开关=已开启"),
+                "U0001f50d 开启时必须自报已开启");
+        assertTrue(on.contains("开关没生效"),
+                "U0001f50d 开启时必须给出「若结果与常量一致说明开关没生效」的判读指引");
+    }
 }
+

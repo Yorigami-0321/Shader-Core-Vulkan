@@ -32,6 +32,23 @@
 | GAP-006 | Rust 原生路径的 FFI 安全边界：Rust `panic` 穿过 FFI 边界是 UB，会直接 abort 掉整个 JVM ⇒ **游戏崩溃** | 联网核实（2026-10-02）：Rust 官方 Nomicon 明确 —— `extern "C"` 收到 panic 会终止进程；必须 `catch_unwind(AssertUnwindSafe(…))`；且 `panic = "abort"` 时 `catch_unwind` 完全失效 | `17-NATIVE.md` §4.5 的 FFI 安全清单为强制门禁；`08-TESTING.md` §8.3 要求**故意触发一次 panic** 验证 JVM 不 abort | `accel/backend/native/`（仅「采用」裁决后存在） | 与 A/B 开关同键 | — | ⏳ 待实现（仅当 G 系列裁决「采用」） |
 | GAP-007 | 地形顶点侧缺三条 per-vertex 数据：**方块 id（mat/recolor）与法线（normal）**。实测（`h08`）：BSL 的 `gbuffers_terrain` 顶点着色器按 `mc_Entity.x / 100` 推方块 id 来决定 `mat`（树叶/自发光/岩浆…）与 `recolor`（草/浆果），并把顶点 `Normal` 属性转成眼空间法线；而原版地形顶点缓冲 `DefaultVertexFormat.BLOCK` 只有 **4 个属性**（Position/Color/UV0/UV2），**既无 `mc_Entity` 也无 `Normal**` ⇒ 适配层只能按常量供值（`mat=0` / `recolor=0` / `normal=(0,1,0)`）| **根因**：地形网格化阶段没有写这两项；补它要改区块网格化产出，属渲染器层改动 | 方案 A：扩地形顶点格式（BLOCK → 加 `Normal` + `EntityId` 两属性，网格化侧逐顶点写入）；方案 B：改用 `DefaultVertexFormat.ENTITY` 作地形格式（已有 `Normal`，仍缺 `mc_Entity`）——**B 只解决一半**。两案都需另立注入点登记，且会改变内存占用 | `pipeline/model`（顶点格式）+ 网格化侧（新增注入点，待登记） | `terrain.vertexExtras`（**未实现**，占位键名以便将来一键关闭） | 原版地形顶点格式提供方块 id 与法线属性 | 🟡 **已定位、已量化、未实现**（`h08` §五逐条标注了三条常量项与各自影响面）|
 | GAP-008 | 高级材质（`ADVANCED_MATERIALS`）路径下 gbuffer 输出**像素全黑**。实测（`h09`）：8 槽接线全对（`colorTargets=8` / `slots=8` / 610 条 SOLID draw），画面却是绿色清屏底上的**纯黑剪影**；而默认配置（1 槽）同一机位画面正确可见 |
+两条候选成因（**本轮未逐项二分验证，不假装已坐实**）：① 该路径会用在 GAP-007 里**按常量供值**的 7 条 varying（`normal` / `tangent` / `binormal` / `mat` / `vTexCoord*`）参与光照与材质分支；
+② 新增的 `specular` / `normals` 采样器**绑的是方块图集占位视图**。两者相乘把 colortex0 压到 0 |
+先做**逐项切分**（每次只放开一条常量项 / 换成真视图）定位压零的那一项；再按定位结果决定是补数据还是降级。
+⚠️ **禁止**先猜一个「看起来对」的绑定再截图 —— 那正是本项目反复消灭的失败形态 |
+`pipeline/model`（契约）+ `glsl/translate/PackVertexAdapterGenerator`（常量项表）+ 采样器绑定 |
+`mrt.packTerrainShader`（已存在） | 默认配置路径画面正确 ⇒ 随时可退回 |
+U0001f7e1 **根因仍未坐实**：候选 1/2（`ao`/`metalness`）已实验证伪（`h10`）；候选 3（`lmCoord`）在 `h11` 执行了但**判读不成立**（开关生效性不可观测，已按 X45 补上自报）。U0001f50d 关键量化判据：`albedo` 被乘成**恰好 0**（采样区 37.00% 为纯 `(0,0,0)`，**无任何暗色像素**），而不是「很暗」 |
+| GAP-010 | 生成式地形顶点适配层**资源登记晚于管线注册**：首轮资源重载时 `PipelineBuilder`
+  报 12 条 `Couldn't find source for VERTEX shader (vkdisp_pack:terrain_pack_adapter)`；
+第二轮重载成功 ⇒ **不致命**，但会在日志里留 12 条 ERROR（实测 `h11`）|
+这与 §10.14 记的「管线注册早于包源生成」是**同一时序约束的另一面**；适配层是生成物，
+比静态资产更晚就绪 |
+把适配层资源登记**提前**到管线注册之前（或让它在缺源时给出可读诊断而不是 ERROR）；
+目标是首轮重载 0 条该 ERROR |
+`VkDispVirtualPack`（资源登记时序）+ `bridge/TerrainPipelineApi`（注册时机） | `mrt.packTerrainShader` |
+第二次重载会自愈 ⇒ 画面不受影响 | 
+U0001f7e2 **已定位、未修**（`h11`）|
 | GAP-009 | 高级材质路径需要的**逐方块材质贴图集**（OF 的 `specular` / `normals`）本引擎没有。实测（`h10`）：包片元用 `textureLod(specular, …)` 取光滑度/金属度/孔隙/自发光遮罩，用 `textureGrad(normals, …).z` 取 AO |
 它们是**资源包附带的一整套逐方块材质贴图**，不是本项目能就地生成的资产；不引入也不假装有 |
 缺省绑**乘法单位元**（`specular=(0,0,0,255)` / `normals=(128,128,255,255)`，语义=「没有材质覆盖、没有 AO、法线朝上」），
@@ -39,13 +56,6 @@
 `bridge/NeutralMaterialMaps`（中性缺省）+ 未来一个资源集加载器（未建） | `mrt.packTerrainShader`（已存在） | 
 默认配置路径不经过 `GetMaterials`，画面正确 ⇒ 随时可退回 | 
 🟡 **缺省语义已落地并验证**（`h10`：两个采样器确实被读到 —— 48.41% 像素变化）；**真材质贴图集未实现** |
-两条候选成因（**本轮未逐项二分验证，不假装已坐实**）：① 该路径会用在 GAP-007 里**按常量供值**的 7 条 varying（`normal` / `tangent` / `binormal` / `mat` / `vTexCoord*`）参与光照与材质分支；
-② 新增的 `specular` / `normals` 采样器**绑的是方块图集占位视图**。两者相乘把 colortex0 压到 0 |
-先做**逐项切分**（每次只放开一条常量项 / 换成真视图）定位压零的那一项；再按定位结果决定是补数据还是降级。
-⚠️ **禁止**先猜一个「看起来对」的绑定再截图 —— 那正是本项目反复消灭的失败形态 |
-`pipeline/model`（契约）+ `glsl/translate/PackVertexAdapterGenerator`（常量项表）+ 采样器绑定 |
-`mrt.packTerrainShader`（已存在） | 默认配置路径画面正确 ⇒ 随时可退回 |
-🟡 **已定位到「几何对、像素错」这一层，根因未坐实**（`h09` §六）|
 
 | 字段 | 要求 |
 |---|---|
