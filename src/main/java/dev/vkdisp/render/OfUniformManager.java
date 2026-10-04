@@ -178,7 +178,17 @@ public final class OfUniformManager {
         values.put("timeAngle", worldTime / 24000.0F);
         values.put("aspectRatio", width / (float) height);
         values.put("frameTimeCounter", tickFrameTime(mc, inWorld));
-        values.put("frameCounter", ++frameCounter);
+        int frameNo = ++frameCounter;
+        values.put("frameCounter", frameNo);
+        // 🔖 QD-02：`vkdisp.debugLog` 的**真实消费点之一**。此前该开关只有定义与热重载快照、
+        //   **零消费点**（`grep DEBUG_LOG` 只有 2 处命中）⇒ 开关它没有任何可观察效果，比没有更误导。
+        //   这里报「本帧实际写进了哪些键」，用于排查 uniform 缺失（静默失败的头号来源）。
+        //   ⚠️ **必须节流**：本方法每帧都跑，无节流的 INFO 会把热路径变成 I/O 瓶颈。
+        if (dev.vkdisp.VkDispConfig.DEBUG_LOG.get() && frameNo % 300 == 0) {
+            dev.vkdisp.VkDisp.LOGGER.info(
+                    "vkdisp: [qd-02] ofUniform keys={} frame={} firstKeys={}",
+                    values.size(), frameNo, new java.util.ArrayList<>(values.keySet()).subList(0, 6));
+        }
         MoonPhase moonPhase = inWorld
                 ? probe.getValue(EnvironmentAttributes.MOON_PHASE, partialTicks) : null;
         values.put("moonPhase", (moonPhase != null ? moonPhase : sky.moonPhase).index());

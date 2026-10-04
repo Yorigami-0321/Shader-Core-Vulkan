@@ -409,6 +409,15 @@ public final class MrtTerrainPass {
         //（本轮踩过：首帧打出 groups=0，一度被误读成「捕获到的数据是空的」）。
         if (framesDrawn == 300L || framesDrawn == 1200L) {
             probeDrawCounts(draws);
+            // 🔖 QD-02：`vkdisp.debugLog` 的**真实消费点之二**。
+            //   这一行是排查「多附件/管线不匹配」的第一手事实：附件数、深度格式、
+            //   以及**当前挂的是原版还是包自己的片元**。默认关掉时不会有这行。
+            if (VkDispConfig.DEBUG_LOG.get()) {
+                VkDisp.LOGGER.info(
+                        "vkdisp: [qd-02] gbuffer terrain pass: attachments={} depth={} packFragment={} frame={}",
+                        actualSlots, "D32_FLOAT@0.0",
+                        TerrainPipelineApi.packTerrainForMrt() != null, framesDrawn);
+            }
         }
         if (!probed) {
             probed = true;

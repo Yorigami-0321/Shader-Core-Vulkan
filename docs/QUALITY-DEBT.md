@@ -24,7 +24,7 @@
 | ID | 来源 | 级别 | 描述 | 最低闭环动作 | 成本 | 状态 |
 |---|---|---|---|---|---|---|
 | **QD-01** | G-02（连续六轮未动）· C-01 | 🟠 中 | `@Nullable` 严重不足：全主源码仅 **2 处**（`bridge/MixinTargets`）；`return null` **67 处**（上轮 50）。`07` §3.2 已写规范「所有可空返回值必须标注」，执行未跟上 | 先标注 `bridge/` 公开 API（`DeviceApi`/`PipelineApi`/`FrameApi`/`TextureApi` 等，约 10-15 处）；剩余内部 `return null` 登记为本表后续项 | 30 min（首批） | ⏳ 待实现 |
-| **QD-02** | G-03（连续六轮未动）· C-02 | 🟠 中 | `debugLog` 仍是死开关：`VkDispConfig:31` 定义了 `DEBUG_LOG`，`VkDispConfigHotReload` 把它当核心项追踪（变了触发重载），但**全代码无任何 `if (DEBUG_LOG.get())` 消费点**。开关它无任何可观察效果 —— 比没有更糟（误导用户） | 二选一：① 在 `MrtTerrainPass`/`OfUniformManager`/`FullscreenPassHook` 补 3-5 处 `if (DEBUG_LOG.get()) LOGGER.info(...)` 真实消费；② 若短期不消费，删掉该配置项 + 热重载快照里的 `debugLog` 字段 | ① 20 min / ② 10 min | ⏳ 待实现 |
+| ~~**QD-02**~~ | G-03（连续六轮未动）· C-02 | 🟠 中 | ~~`debugLog` 是死开关：只有定义与热重载快照、**零消费点** ⇒ 开关它无任何可观察效果，比没有更误导~~ → **2026-10-04 闭环**：采纳方案 ①，在 `OfUniformManager` / `MrtTerrainPass` / `FullscreenPassHook` 补 **3 处真实消费点**（分别报 uniform 键数与前几个键名、多附件 pass 的附件数+深度格式+挂的是原版还是包的片元、原本无条件的 uniform 传参周期行改为受控）。🔖 **三处全部节流**（每 300 / 300 / 120 帧）—— 这三段代码都在**每帧**执行路径上，无节流的 INFO 会把热路径变成 I/O 瓶颈（M-01 埋点 600→250000 是同一类教训）。实测日志已见 `[qd-02]` 行。证据 `evidence/h25-…` §6 | — | — | ✅ **已闭环** |
 | **QD-03** | G-08 → C-03 | 🟡 低 | 静态非 final 可变字段 **50 → 95 翻倍**（2026-09-30→2026-10-04）。集中在 `bridge/`（缓存：`MappableRingBuffer`/`RenderPipeline`/`TextureTarget`）与 `render/`（`FullscreenPassHook` 标记/计数器、`OfUniformManager` 累加器）。渲染线程单线程访问不构成缺陷，但**单测间无法隔离**（静态状态无重置路径） | 给 `FullscreenPassHook` 与 `OfUniformManager` 的累加器加 `@VisibleForTesting` 重置方法（如 `@TestOnly static void resetState()`），单测 `@BeforeEach` 调一次；剩余登记为后续 | 40 min（首批） | ⏳ 待实现 |
 | **QD-04** | C-06 | 🔵 观察 | 主源码仍有 **3 个 `>60` 行方法**（2026-09-30 时 17 个，已显著改善）。未定位具体位置 —— 若是 `LegacyBuiltinInjector`/`OfGlslTranslator` 核心转译逻辑，长方法可接受；若是别的，可能值得拆 | 下一轮审查先 `grep` 定位这 3 个方法，再判断是否需拆 | 下轮审查 | ⏳ 待定位 |
 
@@ -37,6 +37,7 @@
 | F-04 | `ModConfig.Type.COMMON` | 2026-10-04 复核 | `VkDisp.java:45` = `ModConfig.Type.CLIENT` ✅ |
 | F-05 | `04-SPEC:86` namespace:path 错误 | 2026-10-04 复核 | 行号已变，84-88 行现为 `glsl/` 目录注释 ✅ |
 | F-06 | `mods.toml` 悬空引用 `docs/22-版本基线.md` | 2026-10-04 复核 | `src/main/templates/META-INF/neoforge.mods.toml` 无 `22-`/`版本基线` 命中 ✅ |
+| **QD-02**（原 §1） | `debugLog` 死开关 → 补 3 处节流消费点 | 2026-10-04 | `evidence/h25-flicker-is-pack-fragment-not-m01.md` §6；运行期日志 `[qd-02]` 行 |
 | G-08 旧口径 | 「无 static 可变状态」结论是错的 | 2026-10-01 复核 | 已更正为 50 处；2026-10-04 复核为 95 处（见 QD-03）|
 
 ---

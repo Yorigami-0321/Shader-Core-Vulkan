@@ -27,9 +27,23 @@ public final class VkDispConfig {
             .comment("总开关。关闭后本模组不介入任何渲染，用于快速二分定位问题。")
             .define("enabled", true);
 
-    /** 诊断日志：打开后在各个 pass 与管线构建点输出计数类日志。 */
+    /**
+     * 诊断日志：打开后在**各 pass 的周期点**追加计数类诊断行，便于排查静默失败。
+     *
+     * <p>🔖 **QD-02（2026-10-04 闭环）**：本开关此前**只有定义与热重载快照、零消费点**
+     * ⇒ 开关它没有任何可观察效果，**比没有更糟**（误导用户以为自己在控制日志量）。
+     * 现补三处真实消费点，全部**节流**（每 300 / 300 / 120 帧各一行）：
+     * <ul>
+     *   <li>{@code OfUniformManager} —— 本帧写进 uniform 块的键数与前几个键名（排查 uniform 缺失）；</li>
+     *   <li>{@code MrtTerrainPass} —— 多附件 pass 的**附件数 + 深度格式 + 挂的是原版还是包的片元**；</li>
+     *   <li>{@code FullscreenPassHook} —— 原本无条件输出的 uniform 传参周期行，改为受控。</li>
+     * </ul>
+     * ⚠️ 全部**无条件开启**（默认 true），所以关掉开关会真的少掉这些行 —— 那才是开关该有的效果。
+     * ⚠️ 三处都做了节流：这三段代码都在**每帧**执行路径上，无节流的 INFO 会把热路径变成 I/O 瓶颈
+     * （与 M-01 埋点「600 → 250000」是同一类教训）。
+     */
     public static final ModConfigSpec.BooleanValue DEBUG_LOG = BUILDER
-            .comment("诊断日志。打开后输出管线构建/编译计数，便于排查静默失败。")
+            .comment("诊断日志。打开后在各 pass 的周期点追加计数诊断行（已节流）；关掉可观察地变安静。")
             .define("debugLog", true);
 
     /**

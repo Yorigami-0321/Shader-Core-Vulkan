@@ -190,7 +190,10 @@ public final class FullscreenPassHook {
                 VkDisp.LOGGER.info(
                         "vkdisp shadow sample chain executed ({}x{}), lightMatrixPhase={} (1: 几何光空间 -> 阴影贴图, 2: 世界视图+阴影采样 -> offscreen1, 3: offscreen1 -> main)",
                         size.width(), size.height(), phase);
-            } else if (paramLogs < 5 && frameCounter % 120 == 0) {
+            } else if (paramLogs < 5 && frameCounter % 120 == 0
+                    && dev.vkdisp.VkDispConfig.DEBUG_LOG.get()) {
+                // 🔖 QD-02：`vkdisp.debugLog` 的**真实消费点之三**。
+                //   原为无条件输出 ⇒ 该开关对它无效。关掉开关时这行消失，**可观察**。
                 paramLogs++;
                 VkDisp.LOGGER.info(
                         "vkdisp: uniform {} phase={} at frame {}", PipelineApi.PARAMS_UNIFORM, phase, frameCounter);
