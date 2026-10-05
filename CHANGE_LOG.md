@@ -11,9 +11,10 @@
 > **verdict = 「composite 只喂 scene、只跑三步」的时代结束**：deferred*→composite*→final
 > 全链进入引擎并在 **Vulkan 上真跑通**（BSL passes=11、40/40 管线编译对齐、逐帧执行自报）；
 > 用户点名的「FrameApi 的 packColor 从 scene 改采 colortex」成为链上的一个自然结果。
-> 🔴 **GAP-008 由 F 臂坐标探针判定：`texCoord` varying 被供成 (0,0)** —— 坐标链路，
-> 不是采样器/LOD。证据：evidence/h46-post-chain-integration.md。
-> 单测全绿（+45 条）；取证全程 Vulkan（lavapipe），按用户指令不做性能结论。
+> 🔴 **GAP-008 主因经 h46 四臂交叉改判 = 包片元对图集的隐式导数 LOD 选了坏 mip**（登记
+> **GAP-016**，止血 `mrt.terrainAtlasLod0` 已验证生效）；新的前线症状 = 链输出近全白（H 臂 254.8）。
+> 证据：evidence/h46-post-chain-integration.md。单测全绿（+50 条）；
+> 取证全程 Vulkan（lavapipe），按用户指令不做性能结论。
 
 - **✅ 整链的机制（此前没有任何东西保证链能建出来）**
   - `pipeline/model/PostPassContract`：按转译终稿解析「该 pass 写哪些 colortex 槽 + 声明哪些 sampler」；
@@ -59,14 +60,19 @@
   - E 臂（链基线）：`post chain executed: passes=11 first=deferred last=final`、
     `pipeline count check: registered=40, compiled=40 (aligned)`、
     `builtin noisetex created 64x64`、`custom texture loaded: sampler='noise' 512x512`。
-  - F 臂（坐标探针）：`colortex0` = vec4(texCoord,0,1) 实测 `meanRGB=(0,0,0) allZero=true`
-    ⇒ **texCoord ≡ (0,0)**（同帧 colortex3/6/7 正常 ⇒ 片元在产出）⇒
-    GAP-008 从「采样返回 0」再收窄为「**坐标 varying 供值为 0**」；采样器/LOD 侧排除。
+  - F2 臂**作废**（探针自己取错坐标名 shadowPosXY ⇒ 测的不是被测对象；已修锚点 + 回归测试——
+    「命中一处」≠「命中的是该测的那处」）。
+  - F3 臂（输出直写坐标）：`texCoord ≈ (0.43,0.26–0.35)` **非零** ⇒ **撤回 F 臂「坐标为 0」判读**。
+  - G 臂（显式 LOD0）：albedo 立刻非零 ⇒ 四臂交叉 + h45 交叉 ⇒ **主因 = 隐式导数 LOD 选坏 mip**
+    ⇒ 登记 **GAP-016**，止血 = `mrt.terrainAtlasLod0`（图集采样器 maxLod=0，默认开、可关并 WARN）。
+  - H 臂（止血开、探针全关）：`colortex0` 非零（止血与 G 臂逐字同形）；
+    🔴 新症状：`main` 变**近全白（254.8）** —— 黑前线换成了白前线（链上某级过曝，下一刀逐级二分）。
 
-- **🔴 本轮没做 / 不承诺**：texCoord≡0 的再下一跳定位（属性 UV0 读 0/NaN vs location 衔接
-  丢值 —— 判据已设计，见证据 §F 臂后）；shadow 真贴图进链（GAP-015 语义不变）；
-  非地形的 gbuffers_*；三段 texture 键；TAA 需要的 `gbufferPrevious*`；
-  validation layer 仍无 ⇒ 按 X35 不说「无 validation error」；性能一律不下结论。
+- **🔴 本轮没做 / 不承诺**：**链输出近全白的逐级二分**（H 臂新前线；黑→白只是前线的移动）；
+  GAP-016 的根因（图集 mip 链内容 vs lavapipe 导数路径 —— 按 mip 回读判据已备好）；
+  shadow 真贴图进链（GAP-015 语义不变）；非地形的 gbuffers_*（water/entities/sky/hand…）；
+  三段 texture 键；TAA 需要的 `gbufferPrevious*`；validation layer 仍无 ⇒ 按 X35 不说
+  「无 validation error」；性能一律不下结论（取证铁律）。
 
 - **是否已提交**：待测试段完成后随下条提交（**不带任何 trailer**）。
 

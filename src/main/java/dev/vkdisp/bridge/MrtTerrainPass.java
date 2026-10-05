@@ -619,9 +619,22 @@ public final class MrtTerrainPass {
      */
     private static void ensureAtlasSampler() {
         if (atlasSampler == null) {
+            // 🔴 GAP-016（h45/h46 三臂交叉定位）：包片元对图集的**隐式导数 LOD 选了坏 mip**
+            //   ⇒ texture() 恒 0，而 textureLod(…,0.0) 与 textureGrad 都非零。
+            //   止血 = 图集采样器 maxLod=0（钉 mip0）；关掉即回到坏行为并 WARN 说明代价。
+            boolean lod0 = dev.vkdisp.VkDispConfig.MRT_TERRAIN_ATLAS_LOD0.get();
             atlasSampler = RenderSystem.getDevice().createSampler(
                     AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE,
-                    FilterMode.LINEAR, FilterMode.LINEAR, 1, OptionalDouble.empty());
+                    FilterMode.LINEAR, FilterMode.LINEAR, 1,
+                    lod0 ? OptionalDouble.of(0.0) : OptionalDouble.empty());
+            if (lod0) {
+                VkDisp.LOGGER.info("vkdisp: [GAP-016] terrain atlas sampler created with maxLod=0"
+                        + " (workaround: implicit-derivative LOD picks a bad mip;"
+                        + " mrt.terrainAtlasLod0=false restores it — SEE registry)");
+            } else {
+                VkDisp.LOGGER.warn("vkdisp: [GAP-016] mrt.terrainAtlasLod0=false —— 图集采样回到"
+                        + "隐式导数 LOD；h45/h46 实测该路径对包片元恒给 0（GAP-008 的当前主因）");
+            }
         }
     }
 

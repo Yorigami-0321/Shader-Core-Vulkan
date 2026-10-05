@@ -726,6 +726,8 @@ public final class VkDispVirtualPack {
         boolean multiplierFactorWas =
                 dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceMultiplierEnabled();
         boolean coordOutWas = dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceCoordOutEnabled();
+        boolean coordOutFinalWas =
+                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceCoordOutFinalEnabled();
         boolean lodZeroWas = dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceLodZeroEnabled();
         dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceSample(
                 VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_SAMPLE.get());
@@ -733,6 +735,8 @@ public final class VkDispVirtualPack {
                 VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_MULTIPLIER.get());
         dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceCoordOut(
                 VkDispConfig.MRT_TERRAIN_COORD_OUT.get());
+        dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceCoordOutFinal(
+                VkDispConfig.MRT_TERRAIN_COORD_OUT_FINAL.get());
         dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceLodZero(
                 VkDispConfig.MRT_TERRAIN_LOD_ZERO.get());
         // 🔖🔖 两侧同时开 = 两边都被换掉 = 什么都没分开。必须在这里就吵出来，
@@ -776,13 +780,14 @@ public final class VkDispVirtualPack {
             VkDisp.LOGGER.info(
                     "vkdisp: [GAP-003] pack terrain fragment ready: program={} outputs={} samplers={}"
                             + " varyings={} bytes={} sampleFactorProbe[sample={} multiplier={}"
-                            + " coordOut={} lodZero={} hits={}]",
+                            + " coordOut={} coordOutFinal={} lodZero={} hits={}]",
                     program.qualifiedName(), program.outputCount(),
                     program.fragmentSamplers().size(), program.inputs().size(),
                     fragment.getBytes(StandardCharsets.UTF_8).length,
                     dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceSampleEnabled(),
                     dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceMultiplierEnabled(),
                     dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceCoordOutEnabled(),
+                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceCoordOutFinalEnabled(),
                     dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceLodZeroEnabled(),
                     sampleFactor.patchedAny());
             return fragment;
@@ -800,6 +805,7 @@ public final class VkDispVirtualPack {
             dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceSample(sampleFactorWas);
             dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceMultiplier(multiplierFactorWas);
             dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceCoordOut(coordOutWas);
+            dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceCoordOutFinal(coordOutFinalWas);
             dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceLodZero(lodZeroWas);
         }
     }

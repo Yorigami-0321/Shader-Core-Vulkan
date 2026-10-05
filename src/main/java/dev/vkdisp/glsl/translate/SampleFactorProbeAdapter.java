@@ -104,11 +104,19 @@ public final class SampleFactorProbeAdapter {
 
     /**
      * 🔬 h45 §七① 的「坐标数值」探针：把命中行的整个右值换成 {@code vec4(<采样坐标>, 0.0, 1.0)}。
-     * <p>colortex0 于是直接携带 texCoord 数值（×255 量化），像素回读给出「采样到底落在哪」。
-     * 判据：读数 ≈ 0 ⇒ 坐标链路坏（属性/位置错配，供进的是 (0,0) = 图集角部填充）；
-     * 读数 ≈ 图集合理值 ⇒ 坐标正常，问题在采样器/纹理侧。
+     * <p>🔴 <b>本形态的判据洞（h46 自查发现）</b>：BSL 的 ADVANCED_MATERIALS 路径在采样赋值
+     * <b>之后</b>还有 {@code GetLighting(albedo…)} 一类的乘法 —— 换第一处赋值测的仍是
+     * 「采样×后续衰减」的合成品，不是坐标本身。⇒ 保留本形态（它锚在乘法链上，与左右档同源），
+     * 但判据改由 <b>输出档</b>（{@link #setForceCoordOutFinal}）承担。
      */
     private static volatile boolean forceCoordOut;
+
+    /**
+     * 🔬 h46 修正档：**输出直写坐标** —— 把 {@code gl_FragData[0] = albedo;} /
+     * {@code vkdispFragOut0 = albedo;} 的右值整体换成 {@code vec4(<采样坐标>,0,1)}，
+     * 跳过其后所有下游衰减 ⇒ 读数 = 纯坐标值。
+     */
+    private static volatile boolean forceCoordOutFinal;
 
     /**
      * 🔬 h45 §七② 的「显式 LOD0」探针：把命中行里的两参数 {@code texture(s, c)} 改成
@@ -135,14 +143,24 @@ public final class SampleFactorProbeAdapter {
         forceCoordOut = value;
     }
 
-    /** 开关「显式 LOD0」（采样调用换 textureLod(…, 0.0)）。 */
-    public static void setForceLodZero(boolean value) {
-        forceLodZero = value;
+    /** 开关「输出直写坐标」（最终输出右值整体换成采样坐标，跳过下游衰减）。 */
+    public static void setForceCoordOutFinal(boolean value) {
+        forceCoordOutFinal = value;
     }
 
     /** 是否开启了坐标数值输出探针（供调用点自报配置）。 */
     public static boolean forceCoordOutEnabled() {
         return forceCoordOut;
+    }
+
+    /** 是否开启了输出直写坐标探针。 */
+    public static boolean forceCoordOutFinalEnabled() {
+        return forceCoordOutFinal;
+    }
+
+    /** 开关「显式 LOD0」（采样调用换 textureLod(…, 0.0)）。 */
+    public static void setForceLodZero(boolean value) {
+        forceLodZero = value;
     }
 
     /** 是否开启了显式 LOD0 探针。 */
@@ -152,8 +170,15 @@ public final class SampleFactorProbeAdapter {
 
     /** 当前是否开启了任一探针。 */
     public static boolean anyEnabled() {
-        return forceSample || forceMultiplier || forceCoordOut || forceLodZero;
+        return forceSample || forceMultiplier || forceCoordOut || forceLodZero || forceCoordOutFinal;
     }
+
+    /**
+     * 最终输出对 albedo 的裸赋值（输出直写档的锚点）：
+     * {@code gl_FragData[0] = albedo;} / {@code vkdispFragOut0 = albedo;}。
+     */
+    private static final Pattern OUTPUT0_ASSIGN = Pattern.compile(
+            "^(\\s*)(gl_FragData\\[0\\]|vkdispFragOut0)(\\s*=\\s*)([A-Za-z_]\\w*)\\s*(;.*)$");
 
     /** 是否开启了左侧（供调用点自报配置）。 */
     public static boolean forceSampleEnabled() {
@@ -196,7 +221,7 @@ public final class SampleFactorProbeAdapter {
      */
     public record Result(String text, List<TranslateDiagnostic> diagnostics,
             int patchedSample, int patchedMultiplier, int patchedCoordOut, int patchedLodZero,
-            List<String> hitLines) {
+            int patchedCoordOutFinal, List<String> hitLines) {
 
         public Result {
             diagnostics = diagnostics == null ? List.of() : List.copyOf(diagnostics);
@@ -208,9 +233,10 @@ public final class SampleFactorProbeAdapter {
             return patchedSample + patchedMultiplier;
         }
 
-        /** 任一探针的命中总数（自报行用它，漏了坐标档就会出现「开了却没数字」）。 */
+        /** 任一探针的命中总数（自报行用它，漏了任何一档就会出现「开了却没数字」）。 */
         public int patchedAny() {
-            return patchedSample + patchedMultiplier + patchedCoordOut + patchedLodZero;
+            return patchedSample + patchedMultiplier + patchedCoordOut + patchedLodZero
+                    + patchedCoordOutFinal;
         }
     }
 
@@ -223,85 +249,110 @@ public final class SampleFactorProbeAdapter {
     public static Result apply(ShaderStage stage, String text) {
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         if (!anyEnabled() || text == null || stage != ShaderStage.FRAGMENT) {
-            return new Result(text, diagnostics, 0, 0, 0, 0, List.of());
+            return new Result(text, diagnostics, 0, 0, 0, 0, 0, List.of());
         }
         String[] lines = text.split("\n", -1);
         StringBuilder out = new StringBuilder(text.length() + 64);
         int sampleHits = 0;
         int multiplierHits = 0;
         int coordOutHits = 0;
+        int coordFinalHits = 0;
         int lodZeroHits = 0;
         boolean coordOutCollision = false;
+        // 输出直写档的坐标名：取全文第一个两参采样的第二实参（通常就是 texCoord）。
+        final String coordName = firstSampleCoord(text);
+        if (forceCoordOutFinal && coordName == null) {
+            diagnostics.add(TranslateDiagnostic.warn(
+                    "输出直写坐标档**已开启但没找到任何两参采样调用** ⇒ 无法取坐标名，"
+                            + "本档未生效（开关没生效 ≠ 结论不成立，X45）", null, 0));
+        }
         List<String> hitLines = new ArrayList<>();
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
-            Matcher matcher = MULTIPLY_ASSIGN.matcher(line);
             String rewritten = line;
-            if (matcher.matches()) {
-                String indent = matcher.group(1);
-                // 🔖 类型前缀（声明形态）与被赋值名字分开保留：改写时两者都要原样写回，
-                //   少写类型就把「声明」变成了「赋值」，语义从「定义」变成「改写已有变量」。
-                String typePrefix = matcher.group(2);
-                String lhs = matcher.group(3);
-                String left = matcher.group(4).strip();
-                String right = matcher.group(5).strip();
-                String tail = matcher.group(6);
-                boolean hasSample = SAMPLE_CALL.matcher(left).find();
-                // 🔖🔖 **顶层加减法一律不改写**：那会把「换因子」变成「改表达式结构」，
-                //   产出的画面差异不再只归因于被换掉的那个因子 ⇒ **假证据**。
-                //   括号内的加减（如 texture(a - b, c) 里的减号）不算。
-                boolean additive = hasTopLevelAdditive(left) || hasTopLevelAdditive(right);
-                boolean changed = false;
-                String newLeft = left;
-                String newRight = right;
-                if (!additive && hasSample) {
-                    // 🔖🔖🔖 **两个开关都只认「左值是采样调用」的那一行**（h45 实测踩到）：
-                    //   首版让「乘子探针」命中**任何**乘法赋值 ⇒ 实测在 BSL 地形片元上
-                    //   命中 **124 处**，其中绝大多数是 `float f = a * b;` 这类标量运算
-                    //   ⇒ 改写后变成 `float f = a * vec4(1,1,1,1);` = **类型错误**
-                    //   ⇒ 片元编译直接抛 ShaderCompileException、地形契约掉回原版。
-                    //   🔖 是「命中数自报」把它现形了：预期 1 处、实测 124 处。
-                    //   ⇒ 两侧探针都锚在**同一条** albedo 乘法链上，才是真正的单变量。
-                    if (forceCoordOut) {
-                        // 坐标档换掉**整个右值** ⇒ 与左右两侧探针在同一条线上互斥。
-                        String coord = topLevelSecondArg(left);
-                        if (coord != null) {
-                            rewritten = indent + typePrefix + lhs + " = vec4(" + coord
-                                    + ", 0.0, 1.0);";
-                            coordOutHits++;
-                            changed = true;
-                            if (forceSample || forceMultiplier) {
-                                coordOutCollision = true;
-                            }
-                        }
-                    } else {
-                        if (forceLodZero) {
-                            String lodded = forceLodZeroOnSampleCall(left);
-                            if (!lodded.equals(left)) {
-                                newLeft = lodded;
-                                lodZeroHits++;
-                                changed = true;
-                            }
-                        }
-                        if (forceSample) {
-                            newLeft = PROBE_SAMPLE;
-                            sampleHits++;
-                            changed = true;
-                        }
-                        if (forceMultiplier) {
-                            newRight = PROBE_MULTIPLIER;
-                            multiplierHits++;
-                            changed = true;
-                        }
+            boolean changed = false;
+            if (forceCoordOutFinal && coordName != null) {
+                Matcher outMatch = OUTPUT0_ASSIGN.matcher(line);
+                if (outMatch.matches()) {
+                    rewritten = outMatch.group(1) + outMatch.group(2) + outMatch.group(3)
+                            + "vec4(" + coordName + ", 0.0, 1.0)" + outMatch.group(5);
+                    coordFinalHits++;
+                    changed = true;
+                    hitLines.add("第 " + (i + 1) + " 行: " + line.strip());
+                    if (forceSample || forceMultiplier || forceCoordOut) {
+                        coordOutCollision = true;
                     }
                 }
-                if (changed && !forceCoordOut) {
-                    rewritten = indent + typePrefix + lhs + " = " + newLeft + " * " + newRight + tail;
-                }
-                if (changed) {
-                    // 🔖 自报命中的**那一行原文**：这是「改的到底是哪一句」的唯一直接证据。
-                    //   只报「已改 N 处」不够 —— N>0 也可能改在了无关的乘法上。
-                    hitLines.add("第 " + (i + 1) + " 行: " + line.strip());
+            }
+            if (!changed) {
+                Matcher matcher = MULTIPLY_ASSIGN.matcher(line);
+                if (matcher.matches()) {
+                    String indent = matcher.group(1);
+                    // 🔖 类型前缀（声明形态）与被赋值名字分开保留：改写时两者都要原样写回，
+                    //   少写类型就把「声明」变成了「赋值」，语义从「定义」变成「改写已有变量」。
+                    String typePrefix = matcher.group(2);
+                    String lhs = matcher.group(3);
+                    String left = matcher.group(4).strip();
+                    String right = matcher.group(5).strip();
+                    String tail = matcher.group(6);
+                    boolean hasSample = SAMPLE_CALL.matcher(left).find();
+                    // 🔖🔖 **顶层加减法一律不改写**：那会把「换因子」变成「改表达式结构」，
+                    //   产出的画面差异不再只归因于被换掉的那个因子 ⇒ **假证据**。
+                    //   括号内的加减（如 texture(a - b, c) 里的减号）不算。
+                    boolean additive = hasTopLevelAdditive(left) || hasTopLevelAdditive(right);
+                    boolean changedLine = false;
+                    String newLeft = left;
+                    String newRight = right;
+                    if (!additive && hasSample) {
+                        // 🔖🔖🔖 **两个开关都只认「左值是采样调用」的那一行**（h45 实测踩到）：
+                        //   首版让「乘子探针」命中**任何**乘法赋值 ⇒ 实测在 BSL 地形片元上
+                        //   命中 **124 处**，其中绝大多数是 `float f = a * b;` 这类标量运算
+                        //   ⇒ 改写后变成 `float f = a * vec4(1,1,1,1);` = **类型错误**
+                        //   ⇒ 片元编译直接抛 ShaderCompileException、地形契约掉回原版。
+                        //   🔖 是「命中数自报」把它现形了：预期 1 处、实测 124 处。
+                        //   ⇒ 两侧探针都锚在**同一条** albedo 乘法链上，才是真正的单变量。
+                        if (forceCoordOut) {
+                            // 坐标档换掉**整个右值** ⇒ 与左右两侧探针在同一条线上互斥。
+                            String coord = topLevelSecondArg(left);
+                            if (coord != null) {
+                                rewritten = indent + typePrefix + lhs + " = vec4(" + coord
+                                        + ", 0.0, 1.0);";
+                                coordOutHits++;
+                                changedLine = true;
+                                if (forceSample || forceMultiplier) {
+                                    coordOutCollision = true;
+                                }
+                            }
+                        } else {
+                            if (forceLodZero) {
+                                String lodded = forceLodZeroOnSampleCall(left);
+                                if (!lodded.equals(left)) {
+                                    newLeft = lodded;
+                                    lodZeroHits++;
+                                    changedLine = true;
+                                }
+                            }
+                            if (forceSample) {
+                                newLeft = PROBE_SAMPLE;
+                                sampleHits++;
+                                changedLine = true;
+                            }
+                            if (forceMultiplier) {
+                                newRight = PROBE_MULTIPLIER;
+                                multiplierHits++;
+                                changedLine = true;
+                            }
+                        }
+                    }
+                    if (changedLine && !forceCoordOut) {
+                        rewritten = indent + typePrefix + lhs + " = " + newLeft + " * " + newRight + tail;
+                    }
+                    if (changedLine) {
+                        // 🔖 自报命中的**那一行原文**：这是「改的到底是哪一句」的唯一直接证据。
+                        //   只报「已改 N 处」不够 —— N>0 也可能改在了无关的乘法上。
+                        hitLines.add("第 " + (i + 1) + " 行: " + line.strip());
+                    }
+                    changed = changedLine;
                 }
             }
             out.append(rewritten);
@@ -310,7 +361,7 @@ public final class SampleFactorProbeAdapter {
             }
         }
         String text2 = out.toString();
-        if (coordOutHits + sampleHits + multiplierHits + lodZeroHits == 0) {
+        if (coordOutHits + sampleHits + multiplierHits + lodZeroHits + coordFinalHits == 0) {
             // 🔖🔖 自报「没命中」并明说它意味着什么：开关生效与否，本行是唯一判据。
             diagnostics.add(TranslateDiagnostic.warn(
                     "采样探针**已开启但一处都没命中** ⇒ 本次画面若与默认一致，"
@@ -322,7 +373,8 @@ public final class SampleFactorProbeAdapter {
             StringBuilder message = new StringBuilder("采样因子探针命中：左侧(采样) ")
                     .append(sampleHits).append(" 处、右侧(乘子) ").append(multiplierHits)
                     .append(" 处、坐标输出 ").append(coordOutHits)
-                    .append(" 处、显式LOD0 ").append(lodZeroHits).append(" 处");
+                    .append(" 处、显式LOD0 ").append(lodZeroHits)
+                    .append(" 处、输出直写坐标 ").append(coordFinalHits).append(" 处");
             if (forceSample && forceMultiplier) {
                 message.append("。🔴 **两侧同时开启** ⇒ 乘法链两侧都被换掉，"
                         + "**不能**据此分出是哪一侧为 0（要分开判定必须只开一侧）");
@@ -350,13 +402,51 @@ public final class SampleFactorProbeAdapter {
                 message.append("。显式LOD0档：texture(…) → textureLod(…, 0.0) —— "
                         + "非零 ⇒ 隐式导数选了坏 mip；仍零 ⇒ LOD 因素排除");
             }
+            if (forceCoordOutFinal && coordFinalHits > 0) {
+                message.append("。输出直写档：gl_FragData[0]/vkdispFragOut0 的右值整体换成 vec4(")
+                        .append(coordName).append(",0,1) —— **跳过全部下游衰减**，"
+                                + "读数=纯坐标（≈0 ⇒ 坐标链路坏；图集合理值 ⇒ 排除坐标侧）");
+            }
             diagnostics.add(TranslateDiagnostic.warn(message.toString(), null, 0));
             for (String hit : hitLines) {
                 diagnostics.add(TranslateDiagnostic.info("采样因子探针命中: " + hit, null, 0));
             }
         }
         return new Result(text2, diagnostics, sampleHits, multiplierHits, coordOutHits,
-                lodZeroHits, List.copyOf(hitLines));
+                lodZeroHits, coordFinalHits, List.copyOf(hitLines));
+    }
+
+    /** 全文第一个**两参数**采样调用的第二个顶层实参（输出直写档取坐标名用）。 */
+    private static String firstSampleCoord(String text) {
+        // 🔴 只认**乘法链形态**行上的采样坐标；多个候选时优先 OF 标准名 texCoord，
+        //   并把**全部候选**随自报打出（选错可见）。第一版按文件顺序取第一个，
+        //   实测抓到 BSL 阴影行的 shadowPosXY ⇒ 整臂作废（h46 F2）——「命中一处」
+        //   ≠「命中的是该测的那处」，这次由**顺序**引起，与 124 处误命中同一课。
+        List<String> candidates = new ArrayList<>();
+        for (String line : text.split("\n", -1)) {
+            Matcher m = MULTIPLY_ASSIGN.matcher(line);
+            if (!m.matches()) {
+                continue;
+            }
+            String left = m.group(4).strip();
+            String right = m.group(5).strip();
+            if (hasTopLevelAdditive(left) || hasTopLevelAdditive(right)) {
+                continue;
+            }
+            if (SAMPLE_CALL.matcher(left).find()) {
+                String coord = topLevelSecondArg(left);
+                if (coord != null && !candidates.contains(coord)) {
+                    candidates.add(coord);
+                }
+            }
+        }
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        if (candidates.contains("texCoord")) {
+            return "texCoord";
+        }
+        return candidates.get(0);
     }
 
     /**

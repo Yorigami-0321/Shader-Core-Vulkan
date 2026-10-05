@@ -513,8 +513,24 @@ public final class VkDispConfig {
      */
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_COORD_OUT = BUILDER
             .comment("诊断：把 albedo 行的右值换成 vec4(采样坐标,0,1)，让像素直接携带坐标数值"
-                    + "（默认关，单变量）。读数≈0 ⇒ 坐标链路坏；图集合理值 ⇒ 排除坐标侧。")
+                    + "（默认关，单变量）。读数≈0 ⇒ 坐标链路坏；图集合理值 ⇒ 排除坐标侧。"
+                    + "⚠️ 判据洞见 terrainCoordOutFinalProbe 的注释 —— 精确判定请用输出直写档。")
             .define("mrt.terrainCoordOutProbe", false);
+
+    /**
+     * 🔬 **输出直写坐标档**（h46 修正判据洞）：把最终输出对 albedo 的裸赋值
+     * （{@code gl_FragData[0] = albedo;} / {@code vkdispFragOut0 = albedo;}）的右值
+     * **整体**换成 {@code vec4(<采样坐标>,0,1)} ⇒ 读数 = 纯坐标，跳过 GetLighting 等
+     * 全部下游乘法。
+     *
+     * <p>🔖 <b>为什么需要它</b>：F 臂用 {@link #MRT_TERRAIN_COORD_OUT} 只换了**第一处**赋值，
+     * 而 ADVANCED_MATERIALS 路径在其后还有光照/衰减乘法 ⇒ 「读数 0」区分不了
+     * 「坐标为 0」与「坐标正常但被下游压零」。本档把这两件事一刀切开（单变量：只动输出行）。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_COORD_OUT_FINAL = BUILDER
+            .comment("诊断：把最终输出行 (gl_FragData[0]/vkdispFragOut0 = albedo) 的右值整体换成 "
+                    + "vec4(采样坐标,0,1)，跳过全部下游衰减 ⇒ 读数=纯坐标（默认关，单变量）。")
+            .define("mrt.terrainCoordOutFinalProbe", false);
 
     /**
      * 🔬 **显式 LOD0 探针**（h45 §七 候选②）：把命中行的两参数 {@code texture(s, c)}
@@ -550,6 +566,19 @@ public final class VkDispConfig {
             .comment("通用后处理链：跑完整 deferred*/composite*/final 序列并按名接 colortex"
                     + "（默认开；关闭 = 退回旧的三步链）。前提见注释。")
             .define("mrt.postChain", true);
+
+    /**
+     * 🔴 **GAP-016 止血开关**（默认开）：包地形链的方块图集采样器钉 `maxLod = 0`。
+     *
+     * <p>依据（h45/h46 三臂交叉）：{@code texture()} 的隐式导数 LOD 对本链选了坏 mip ⇒
+     * albedo ≡ 0；{@code textureLod(…,0.0)} / {@code textureGrad} 均非零；
+     * {@code texCoord} 数值本身正常（F3 臂）。钉 mip0 = 止血，**不是修根**，
+     * 代价与回退条件见 {@code 13-GAP-REGISTRY.md} GAP-016。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_ATLAS_LOD0 = BUILDER
+            .comment("GAP-016 止血：包地形图集采样器 maxLod=0（默认开；关闭即回到实测恒 0 的"
+                    + "隐式导数 LOD 路径，仅用于复现/修根对照）。")
+            .define("mrt.terrainAtlasLod0", true);
 
     public static final ModConfigSpec SPEC = BUILDER.build();
 

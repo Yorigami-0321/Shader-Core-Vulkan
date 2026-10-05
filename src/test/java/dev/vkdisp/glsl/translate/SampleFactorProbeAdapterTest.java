@@ -28,6 +28,7 @@ class SampleFactorProbeAdapterTest {
         SampleFactorProbeAdapter.setForceSample(false);
         SampleFactorProbeAdapter.setForceMultiplier(false);
         SampleFactorProbeAdapter.setForceCoordOut(false);
+        SampleFactorProbeAdapter.setForceCoordOutFinal(false);
         SampleFactorProbeAdapter.setForceLodZero(false);
     }
 
@@ -240,5 +241,39 @@ class SampleFactorProbeAdapterTest {
                 SampleFactorProbeAdapter.apply(ShaderStage.FRAGMENT,
                         wrap("\tvec3 g = c * d;" + REAL_ALBEDO_LINE));
         assertTrue(lod.text().contains("vec3 g = c * d;"), "无采样的行一律不动");
+    }
+
+    @Test
+    @DisplayName("🔬 输出直写档：只动最终输出行，跳过下游衰减；坐标名取自第一个两参采样")
+    void coordOutFinalRewritesOnlyTheOutputLine() {
+        SampleFactorProbeAdapter.setForceCoordOutFinal(true);
+        String source = wrap(REAL_ALBEDO_LINE
+                + "\n\talbedo.rgb *= light;"
+                + "\n\tgl_FragData[0] = albedo;"
+                + "\n\tvkdispFragOut1 = other;");
+        SampleFactorProbeAdapter.Result result =
+                SampleFactorProbeAdapter.apply(ShaderStage.FRAGMENT, source);
+        assertTrue(result.text().contains("gl_FragData[0] = vec4(texCoord, 0.0, 1.0);"),
+                () -> "输出行必须整体换成坐标；实际:\n" + result.text());
+        assertTrue(result.text().contains("albedo = texture2D(texture, texCoord) * vec4(color.rgb, 1.0)"),
+                "采样行必须逐字不动（与第一处赋值档区分 = 本档的意义）");
+        assertTrue(result.text().contains("albedo.rgb *= light;"), "下游行逐字保留");
+        assertTrue(result.text().contains("vkdispFragOut1 = other;"), "非 0 号输出不动");
+        assertEquals(1, result.patchedCoordOutFinal());
+    }
+
+    @Test
+    @DisplayName("🔴 坐标名锚点：阴影行在前也不得抢走 texCoord（h46 F2 作废重跑的教训）")
+    void coordNamePrefersTexCoordEvenWhenShadowLineComesFirst() {
+        SampleFactorProbeAdapter.setForceCoordOutFinal(true);
+        String source = wrap("\tfloat sh = texture2D(shadowtex0, shadowPosXY) * vec4(1.0);"
+                + "\n" + REAL_ALBEDO_LINE
+                + "\n\tgl_FragData[0] = albedo;");
+        SampleFactorProbeAdapter.Result result =
+                SampleFactorProbeAdapter.apply(ShaderStage.FRAGMENT, source);
+        assertTrue(result.text().contains("gl_FragData[0] = vec4(texCoord, 0.0, 1.0);"),
+                () -> "候选含 texCoord 时必须选它；实际:\n" + result.text());
+        assertFalse(result.text().contains("vec4(shadowPosXY"),
+                "shadowPosXY 抢锚 = 整臂测错量（已真实发生过一次）");
     }
 }
