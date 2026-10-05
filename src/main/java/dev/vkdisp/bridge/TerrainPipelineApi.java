@@ -183,18 +183,29 @@ public final class TerrainPipelineApi {
      * 任一条构造失败时其余 5 条仍应可用；合并计数会把「一条坏」表现成「全灭」。
      */
     public static void registerTerrainDerivedMrtPipelines(RegisterRenderPipelinesEvent event) {
-        // 🔖 GAP-003：本次是否换包地形片元 + **冻结附件数**。
+        // 🔖 GAP-003：本次是否换包地形片元 + **冻结包片元契约**（附件数 + 声明写的槽）。
         //   冻结发生在**注册这一刻**（而不是每帧现算），因为管线颜色目标数与 render pass
-        //   附件数必须恒等；两者若各自现算，就会出现「注册读 3、绘制读 1」⇒ setPipeline 抛
+        //   附件数必须恒等；两者若各自现算，就会出现「注册读 8、绘制读 1」⇒ setPipeline 抛
         //   IllegalStateException **崩客户端**（X42）。注册后两侧读同一个冻结值。
+        // 🔖🔖 两个数**必须同一次调用一起冻结**（MrtPlan.FrozenPackContract）：
+        //   附件数与「哪些槽被写」若走两条独立通道，就可能出现「附件按新契约、被写的槽按旧契约」，
+        //   两者互相矛盾而日志完全正常。
         PackTerrainProgram packTerrain = packTerrainForMrt();
-        MrtPlan.freezePackOutputCount(packTerrain == null ? 0 : packTerrain.outputCount());
+        MrtPlan.freezePackProgram(
+                packTerrain == null ? 0 : packTerrain.outputCount(),
+                packTerrain == null ? java.util.List.of() : packTerrain.declaredOutputSlots());
         if (packTerrain != null) {
+            // 🔖 证据行必须**同时**打出「附件数」与「哪些槽被写」——
+            //   只打 colorTargets=8 会让人以为 8 个附件都被写了（实测 BSL 默认档是 [0,3,6,7]，
+            //   附件 1/2/4/5 存在但无片元输出）。这是本轮实测定位的假证据来源。
             VkDisp.LOGGER.info(
                     "vkdisp: [GAP-003] MRT terrain pipelines will use pack fragment: program={}"
-                            + " colorTargets={} samplers={} varyings={}",
+                            + " colorTargets={} declaredOutputSlots={} samplers={} varyings={}"
+                            + " unwrittenAttachments={}",
                     packTerrain.qualifiedName(), MrtPlan.slotCount(),
-                    packTerrain.fragmentSamplers().size(), packTerrain.inputs().size());
+                    packTerrain.declaredOutputSlots(),
+                    packTerrain.fragmentSamplers().size(), packTerrain.inputs().size(),
+                    unwrittenAttachments(packTerrain, MrtPlan.slotCount()));
         }
         for (TerrainDerivedPlan.Spec spec : TerrainDerivedPlan.all()) {
             String mrtKey = key(spec.layer(), spec.multiDraw());
@@ -243,6 +254,32 @@ public final class TerrainPipelineApi {
         }
         VkDisp.LOGGER.info("vkdisp: [GAP-003/A] terrain MRT derived pipelines registered: {}/6 (colorTargets={})",
                 DERIVED_MRT.size(), MrtPlan.slotCount());
+    }
+
+    /**
+     * 存在但<b>没有</b>包片元输出的附件下标（升序）。
+     *
+     * <p>🔖🔖 <b>为什么专门把它打出来</b>（2026-10-05 实测）：
+     * {@code colorTargets=8} 单独看会让人以为 8 个附件都被包片元写了；
+     * 而 BSL 默认档实测是 {@code declaredOutputSlots=[0,3,6,7]} ⇒ 附件 <b>1/2/4/5</b>
+     * 存在但**没有任何片元输出**，读它们只会得到清屏值。
+     * 不自报这四项 ⇒ 诊断一旦读了其中一槽，就会把「清屏值」当成「包输出是黑的」报出去。
+     *
+     * <p>声明槽位为空（不接包片元 / 契约不可得）时返回 {@code [-]}：
+     * 「不知道」与「全部被写」必须能分开（同本项目一贯口径）。
+     */
+    private static String unwrittenAttachments(PackTerrainProgram program, int attachments) {
+        java.util.List<Integer> declared = program.declaredOutputSlots();
+        if (declared.isEmpty()) {
+            return "[-] (declared slots unknown)";
+        }
+        java.util.List<Integer> missing = new java.util.ArrayList<>();
+        for (int slot = 0; slot < attachments; slot++) {
+            if (!program.declaresOutputSlot(slot)) {
+                missing.add(slot);
+            }
+        }
+        return missing.toString();
     }
 
     /**

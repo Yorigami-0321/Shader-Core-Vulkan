@@ -55,12 +55,27 @@ public final class MrtPlan {
      * 实测其全部 gbuffer 程序的 DRAWBUFFERS 集合都是 {@code {0, 0367, 08, 08367}}
      * ⇒ 最多写 <b>5</b> 个槽，且 {@code gl_FragData[1]}→<b>colortex3</b>、
      * {@code [2]}→<b>colortex6</b>（法线）、{@code [3]}→colortex7 —— <b>不是下标</b>。
-     * ⚠️ 且 {@code ADVANCED_MATERIALS}/{@code MCBL_SS} 在 BSL 里<b>默认注释掉</b>
-     * ⇒ 默认配置下地形只写 colortex0。
+     * ⇒ <b>槽位数与顺序都必须由该包自己的 DRAWBUFFERS 决定</b>，
+     * 按附件下标硬绑会**静默绑错槽**（画面有内容但每个通道都错，且没有一行日志会抱怨）。
      *
-     * <p>⚠️ <b>按附件下标绑定会静默绑错槽</b>。真要把 BSL 的多槽路径跑起来，
-     * 槽位数与<b>顺序</b>都必须由该包自己的 DRAWBUFFERS 决定。
-     * 本常量暂留 3（Iris 口径，且是当前诊断路径的实测值），上调前先改这一处与
+     * <p>🔖🔖 <b>2026-10-05 更正：本类旧注释里「{@code ADVANCED_MATERIALS}/{@code MCBL_SS}
+     * 在 BSL 里默认注释掉 ⇒ 默认配置下地形只写 colortex0」是错的</b>，而这条错注释
+     * 已经产生了两处**实际**后果（同一族的第五例：<b>注释里的前提被当成事实往下推</b>）：
+     * <ol>
+     *   <li>2026-10-05 实测：BSL v10.1.8 的 {@code shaders.properties} <b>没有任何
+     *       {@code option.*} 行</b>，profile 里也不含 {@code ADVANCED_MATERIALS}
+     *       ⇒ 该选项取默认 <b>true</b>；{@code MCBL_SS} 则是包自己声明
+     *       {@code option.MCBL_SS type=BOOLEAN <b>default=false</b>}。
+     *       ⇒ 默认档走的是 {@code #else} 分支里那条活标记 {@code /* DRAWBUFFERS:0367 *}{@code /}，
+     *       片元声明的输出槽实测是 <b>[0, 3, 6, 7]</b>，{@code outputs=8}（日志逐字对得上：
+     *       {@code colorTargets=8} / {@code gbuffer terrain targets ready: … slots=8}）。</li>
+     *   <li>因此「默认档只写 colortex0」为假 ⇒ 由此推出的「{@code terrainToMain} 档拿不到
+     *       第二个被写的槽、只能降级为不产出两源对照」也为假 ⇒ 该档其实<b>可以</b>做有效对照
+     *       （拿 colortex3 / 6 / 7）。旧结论据此作废。</li>
+     * </ol>
+     * ⇒ 想知道「哪些槽被写了」只有一个入口：{@link #packDeclaredOutputSlots()}（注册期冻结）。
+     *
+     * <p>本常量暂留 3（Iris 口径，且是当前诊断路径的实测值），上调前先改这一处与
      * {@link #slotCount()}。
      */
     public static final int SLOT_COUNT = 3;
@@ -90,26 +105,65 @@ public final class MrtPlan {
     }
 
     /**
-     * 包地形片元的输出数，<b>0 = 不接包片元</b>（此时附件数回到配置值）。
+     * 🔖🔖 注册期**冻结**的包片元契约（输出数 + 声明写的槽位集合）。
      *
-     * <p>🔖 <b>冻结而不是现算的原因</b>（X42 的最后一环）：管线注册与 pass 每帧取附件数，
-     * 若这个值随「包源是否已生成」变化，就会出现
-     * 「注册时读到 3、画的时候读到 1」⇒ render pass 附件数与管线颜色目标数不等
+     * <p>🔖 <b>为什么必须冻结而不是每帧现算</b>（同 {@link #frozenPackOutputCount} 的理由，
+     * X42 的最后一环）：管线注册与 pass 每帧取附件数，两侧若各自现算就会出现
+     * 「注册时读到 8、画的时候读到 1」⇒ render pass 附件数与管线颜色目标数不等
      * ⇒ {@code setPipeline} 抛 IllegalStateException <b>崩客户端</b>。
-     * ⇒ 只有 {@link #freezePackOutputCount}（由管线注册那一刻调用）能写它，两侧此后读同一个数。
      *
-     * <p>volatile：注册在资源加载线程写、渲染线程每帧读。
+     * <p>🔖 <b>为什么两个数必须由同一次调用一起冻结</b>：若让「附件数」与「被写的槽」
+     * 走两条独立的 freeze 通道，就可能出现「附件数按新契约、被写的槽按旧契约」——
+     * 两者互相矛盾而日志完全正常。造键与校验必须同源是本项目已吃过一次的教训
+     * （{@code VkDispVirtualPack#currentTerrainMemoKey} 的「造键用 A、校验用 B」）。
      */
-    private static volatile int frozenPackOutputCount;
+    private record FrozenPackContract(int outputCount, List<Integer> declaredSlots) {
 
-    /** 注册期冻结包片元输出数；{@code 0} 表示「本次不接包片元」。只由管线注册调用。 */
-    public static void freezePackOutputCount(int outputs) {
-        frozenPackOutputCount = outputs <= 0 ? 0 : Math.min(HARD_MAX_SLOTS, outputs);
+        FrozenPackContract {
+            declaredSlots = declaredSlots == null ? List.of() : List.copyOf(declaredSlots);
+        }
+    }
+
+    /** 冻结值；默认 = 「不接包片元」。volatile：注册线程写、渲染线程每帧读。 */
+    private static volatile FrozenPackContract frozenPack = new FrozenPackContract(0, List.of());
+
+    /**
+     * 注册期一次性冻结包地形片元契约（<b>两个数一起</b>，见 {@link FrozenPackContract}）。
+     *
+     * @param outputs        包片元输出数；{@code <= 0} 表示「本次不接包片元」（附件数回到配置值）
+     * @param declaredSlots  包片元<b>声明</b>写的槽位（升序）；空 = 未知/不接包片元
+     */
+    public static void freezePackProgram(int outputs, List<Integer> declaredSlots) {
+        int clamped = outputs <= 0 ? 0 : Math.min(HARD_MAX_SLOTS, outputs);
+        if (clamped == 0) {
+            frozenPack = new FrozenPackContract(0, List.of());
+            return;
+        }
+        List<Integer> slots = declaredSlots == null ? List.of() : declaredSlots.stream()
+                .filter(slot -> slot != null && slot >= 0 && slot < clamped)
+                .distinct().sorted().toList();
+        frozenPack = new FrozenPackContract(clamped, slots);
     }
 
     /** 冻结后的包片元输出数（0 = 不接包片元，附件数用 {@code mrt.attachments}）。 */
     public static int packOutputCount() {
-        return frozenPackOutputCount;
+        return frozenPack.outputCount();
+    }
+
+    /**
+     * 冻结后的「包片元<b>声明</b>写的槽位」（升序）。
+     *
+     * <p>🔖🔖 <b>空列表 = 未知，不是「全部都写」</b>。两种来源：
+     * ① 本次不接包片元（沿用原版 {@code core/terrain}）—— 那时挂的片元是原版的，
+     * 本项目<b>没有</b>它的输出契约（也没去解析原版资源）⇒ 只能承认不知道；
+     * ② 契约解析不出声明（正常路径下由 {@code PackTerrainProgram} 显式抛错挡住）。
+     *
+     * <p>⇒ 调用方<b>不得</b>把空列表当成「0..attachments-1 全被写」——
+     * 那会退化成「按附件下标猜槽」，正是 {@link dev.vkdisp.glsl.translate.DrawBuffersSlotAdapter}
+     * 要消灭的那一类静默绑错槽。
+     */
+    public static List<Integer> packDeclaredOutputSlots() {
+        return frozenPack.declaredSlots();
     }
 
     /** 槽位的 OF 身份（仅日志/文档口径，不参与任何渲染逻辑）。 */

@@ -16,8 +16,8 @@ package dev.vkdisp.pipeline.model;
  *    地形片的收编集是**另一批**（h06 实测），拿别的程序的清单套自己的包
  *    就是 X39「不同程序语义不同，不可套用」。
  * 3. 我们的差异点：把「这个包的地形片元到底要什么」变成**可单测的纯数据**（输出数 /
- *    自由 sampler 名 / 输入 varying 签名），让「附件数该是多少、绑定组该登记哪些条目、
- *    顶点适配层该产出哪些 varying」三件事**各有唯一真源**，而不是散落字面量。
+ *    自由 sampler 名 / 输入 varying 签名 / **声明写哪些槽**），让「附件数该是多少、绑定组该登记哪些条目、
+ *    顶点适配层该产出哪些 varying」「诊断该读哪一槽」四件事**各有唯一真源**，而不是散落字面量。
  * 4. 许可证核对：本项目 MIT；零第三方代码复制。
  * 5. 性能基线：冷路径（每次资源重载解析一次）；渲染期零开销（只读已解析结果）。
  */
@@ -55,7 +55,8 @@ public record PackTerrainProgram(
         String fragmentSource,
         int outputCount,
         List<String> fragmentSamplers,
-        List<Input> inputs) {
+        List<Input> inputs,
+        List<Integer> declaredOutputSlots) {
 
     /** OF 内建块名（与 UniformInjector / PipelineApi.BUILTINS_UNIFORM 同名）。 */
     public static final String BUILTINS_BLOCK = "VkDispBuiltins";
@@ -85,6 +86,52 @@ public record PackTerrainProgram(
         }
         fragmentSamplers = fragmentSamplers == null ? List.of() : List.copyOf(fragmentSamplers);
         inputs = inputs == null ? List.of() : List.copyOf(inputs);
+        // 🔖 去重 + 升序：诊断侧要按「有序集合」用（挑第一个被写的槽、逐槽报数字），
+        //   而解析扫描天然按行序收集，同一 location 出现两次也不是没发生过。
+        declaredOutputSlots = declaredOutputSlots == null
+                ? List.of()
+                : declaredOutputSlots.stream().distinct().sorted().toList();
+        for (Integer slot : declaredOutputSlots) {
+            if (slot == null || slot < 0 || slot >= outputCount) {
+                throw new IllegalArgumentException(
+                        "vkdisp: 声明的输出槽 " + slot + " 越出 0.." + (outputCount - 1)
+                                + "（" + qualifiedName + "）⇒ 契约自相矛盾，拒绝接线");
+            }
+        }
+    }
+
+    /**
+     * 🔖🔖 包片元**声明**了哪些颜色输出槽（升序、去重）。
+     *
+     * <p><b>为什么它必须与 {@link #outputCount()} 分开存在</b>（2026-10-05 实测）：
+     * 两者回答的是<b>不同</b>的问题，而把它们当成一件事就会读出一个**不存在的槽位事实**：
+     * <pre>
+     *   outputCount()         = max(declared) + 1 = <b>8</b>（BSL 默认档实测）
+     *   declaredOutputSlots() =              [0, 3, 6, 7]
+     * </pre>
+     * ⇒ 附件 0..7 全部存在，但附件 <b>1 / 2 / 4 / 5 没有任何片元输出</b>。
+     * 拿「附件存在」当「附件被写了」用，就会去读一张<b>只有清屏值</b>的图，
+     * 然后把它当成「包片元输出是黑的」报出去 ——
+     * 那正是本项目最该消灭的形态：<b>诊断给出一个看起来像证据的假数字</b>
+     * （与 h31 收尾被推翻、`terrainToMain` 档误测槽 0 是同一族）。
+     *
+     * <p><b>口径只到「声明」，不到「运行期赋值」</b>：本列表来自<b>转译终稿</b>里
+     * {@code layout(location = N) out} 的声明；而 ⑦ 段 {@code FragmentOutputAdapter}
+     * <b>只为源里真的引用了 {@code gl_FragData[N]} / {@code gl_FragColor} 的槽合成声明</b>
+     * ⇒ 声明集 ⊇ 引用集，且死分支已被预处理消掉。
+     * 但「引用点处在本次运行没走到的分支里」这种情形静态判不出来
+     * ⇒ 因此本列表**不承诺**每一槽运行时都被写过，只承诺「片元有权限写它」。
+     */
+    public boolean declaresOutputSlot(int slot) {
+        return declaredOutputSlots.contains(slot);
+    }
+
+    /**
+     * 本契约里<b>没有任何</b>声明的输出槽（= 解析不出 out 声明时不可能发生；
+     * 仅在外部直接构造本 record 时可能出现 —— 那种情况一律按「未知」处理，不猜）。
+     */
+    public boolean declaredOutputSlotsUnknown() {
+        return declaredOutputSlots.isEmpty();
     }
 
     /**
@@ -119,7 +166,11 @@ public record PackTerrainProgram(
      */
     public static PackTerrainProgram parse(String packName, String qualifiedName, String fragmentSource) {
         Objects.requireNonNull(fragmentSource, "fragmentSource");
-        int maxLocation = -1;
+        // 🔖 收集**全部**声明的输出 location，而不是只留最大值 ——
+        //   最大值只能回答「要几个附件」，回答不了「哪些附件被写了」
+        //   （BSL 默认档实测 outputCount=8 而 declaredOutputSlots=[0,3,6,7]，
+        //     附件 1/2/4/5 存在但无片元输出，见 declaredOutputSlots 的 javadoc）。
+        java.util.TreeSet<Integer> outLocations = new java.util.TreeSet<>();
         List<Input> inputs = new ArrayList<>();
         Set<String> samplers = new LinkedHashSet<>();
         int braceDepth = 0;
@@ -138,7 +189,7 @@ public record PackTerrainProgram(
                 // ⇒ 逐个声明 findAll，不按行取首个。
                 Matcher out = LOCATION_OUT.matcher(line);
                 while (out.find()) {
-                    maxLocation = Math.max(maxLocation, Integer.parseInt(out.group(1)));
+                    outLocations.add(Integer.parseInt(out.group(1)));
                 }
                 Matcher in = LOCATION_IN.matcher(line);
                 while (in.find()) {
@@ -166,14 +217,15 @@ public record PackTerrainProgram(
                 }
             }
         }
-        if (maxLocation < 0) {
+        if (outLocations.isEmpty()) {
             throw new IllegalArgumentException(
                     "vkdisp: " + qualifiedName + " 的转译终稿里找不到任何"
                             + " layout(location = N) out vec4 —— 契约不成立（拒绝猜测，X9）");
         }
+        int maxLocation = outLocations.last();
         inputs.sort(Comparator.comparingInt(Input::location));
         return new PackTerrainProgram(packName, qualifiedName, fragmentSource,
-                maxLocation + 1, List.copyOf(samplers), inputs);
+                maxLocation + 1, List.copyOf(samplers), inputs, List.copyOf(outLocations));
     }
 
     private static final Pattern LOCATION_IN =

@@ -62,6 +62,8 @@ import com.mojang.renderpearl.api.textures.GpuTexture;
 import dev.vkdisp.VkDisp;
 import dev.vkdisp.VkDispConfig;
 import dev.vkdisp.pipeline.model.MrtPlan;
+import dev.vkdisp.pipeline.model.PixelProbePlan;
+import dev.vkdisp.pipeline.model.PixelProbeVerdict;
 import dev.vkdisp.pipeline.model.PixelStats;
 import java.util.HashMap;
 import java.util.Map;
@@ -109,11 +111,15 @@ public final class TargetReadback {
     /** 「没有可回读的目标」只报一次。 */
     private static final AtomicBoolean NO_TARGET_NOTED = new AtomicBoolean();
 
-    /** 「terrainToMain 档下改测槽 1」只报一次（说明为什么不是槽 0）。 */
-    private static final AtomicBoolean toMainSlotNoted = new AtomicBoolean();
-
-    /** 「terrainToMain 档下没有第二个被写的目标」只报一次。 */
-    private static final AtomicBoolean toMainNoSlotNoted = new AtomicBoolean();
+    /**
+     * 🔖🔖 本轮探针的**决策签名**（上次打过说明的那一条）。
+     *
+     * <p>决策本身由 {@link PixelProbePlan} 给出；这里只负责「决策变了才把说明打进日志」。
+     * 为什么不每轮都打：探针默认每 300 帧一轮，一次三分钟取证就是几十行**逐字相同**的说明
+     * （h33 刷过 2702 行、h34 刷过 499 行 —— 同一条纪律）。
+     * 而「决策变了」（切档 / 切包 / 换附件数 / 换槽位集合）正是最该被看到的那一刻。
+     */
+    private static String lastPlanNote;
 
     /** 提交成功次数（诊断视图：探针有没有真跑过）。 */
     private static long submitted;
@@ -168,34 +174,22 @@ public final class TargetReadback {
         RenderTarget main = net.minecraft.client.Minecraft.getInstance().gameRenderer.mainRenderTarget();
         // 🔖 主目标先测：它是「用户看到的」那个面（h31 收尾被撤回的教训 = 判读对象必须自报）。
         boolean any = submit("main", main == null ? null : main.getColorTexture());
-        // 🔖 再测我方 pass 写出的某一槽：两者的差值就是「落点」与「内容」的分离判据。
-        if (MrtTerrainPass.enabled() && MrtTerrainPass.actualSlots() > 0) {
-            // 🔴🔖 **槽 0 在 terrainToMain 模式下不是附件**（附件 0 已被换成主目标视图）。
-            //   本轮实测踩到：那一档下 `colortex0` 根本没被写过，读它必然是「零填充的旧内容」
-            //   ⇒ 日志会报 `colortex0 allZero=true`，而**真相是「那张图这一帧不是附件」**。
-            //   那正是本项目最该消灭的形态：诊断给出一个**看起来像证据**的假数字。
-            //   ⇒ 该档下改测**确实被写**的槽（1..n）；若只有一个槽（没得挑），
-            //   就**明确报「本档下无法做两源对照」**，而不是拿一个不存在的数字充数。
-            int slots = MrtTerrainPass.actualSlots();
-            if (MrtTerrainPass.toMain()) {
-                if (slots >= 2) {
-                    int slot = 1;
-                    if (!toMainSlotNoted.getAndSet(true)) {
-                        VkDisp.LOGGER.warn("vkdisp: [pixel-probe] mrt.terrainToMain=true ⇒ 槽 0 已被换成"
-                                + "主目标视图，**colortex0 这一帧不是附件**；本探针改测确实被写的 colortex"
-                                + slot + "（bsl 默认配置只写槽 0，故该档的两源对照不含 albedo 槽）");
-                    }
-                    any |= submit("colortex" + slot, MrtTerrainPass.slotTexture(slot));
-                } else if (!toMainNoSlotNoted.getAndSet(true)) {
-                    VkDisp.LOGGER.warn("vkdisp: [pixel-probe] mrt.terrainToMain=true 且只有 " + slots
-                            + " 个附件 ⇒ 除主目标外**没有第二个被写的目标** ⇒ 本档**不产出**两源对照结论"
-                            + "（只报主目标的数字）。⚠️ 拿 colortex0 当对照会得到假证据："
-                            + "它在 terrainToMain 档下根本不是附件");
-                }
-            } else {
-                int slot = MrtPlan.requireViewSlot(MrtProbe.viewSlot(), slots);
-                any |= submit("colortex" + slot, MrtTerrainPass.slotTexture(slot));
-            }
+        // 🔖🔖 再测我方 pass 写出的槽：**挑哪一槽由 PixelProbePlan 决定，不由本类猜**。
+        //   本类上一版硬编码「terrainToMain 档改测槽 1」，而实测默认档包声明写的是
+        //   [0, 3, 6, 7]（outputCount=8）⇒ 槽 1 那一帧**不是附件**，读它必然是清屏值
+        //   ⇒ 日志会报 `colortex1 allZero=true`，被读成「包片元输出黑」——
+        //   那是**假证据**：真相是「那张图没有包的输出」。
+        //   （同族第五例：把「附件存在」当成「附件被写了」。）
+        PixelProbePlan plan = decidePlan();
+        if (!plan.note().equals(lastPlanNote)) {
+            lastPlanNote = plan.note();
+            VkDisp.LOGGER.warn("vkdisp: [pixel-probe] 本轮测槽决策: toMain={} attachments={} 测={}"
+                            + " comparable={} truncated={} —— {}",
+                    MrtTerrainPass.toMain(), MrtTerrainPass.actualSlots(), plan.colortexSlots(),
+                    plan.comparable(), plan.truncated(), plan.note());
+        }
+        for (int slot : plan.colortexSlots()) {
+            any |= submit("colortex" + slot, MrtTerrainPass.slotTexture(slot));
         }
         if (!any) {
             if (NO_TARGET_NOTED.compareAndSet(false, true)) {
@@ -204,6 +198,21 @@ public final class TargetReadback {
                         + "⚠️ 「没有数字」与「数字是 0」是两件事，不要混读");
             }
         }
+    }
+
+    /**
+     * 算出本轮测槽决策（纯逻辑委托，决策本身可单测）。
+     *
+     * <p>🔖 槽位集合取 {@link MrtPlan#packDeclaredOutputSlots()} —— 注册期与附件数
+     * <b>同一次</b>冻结的那一份（见 {@code MrtPlan.FrozenPackContract}）。
+     * 空集合 = 未知（未接包片元）⇒ 决策会明确降级为「只报原始数字，不产出对照结论」。
+     */
+    private static PixelProbePlan decidePlan() {
+        return PixelProbePlan.decide(
+                MrtTerrainPass.actualSlots(),
+                MrtTerrainPass.toMain(),
+                MrtPlan.packDeclaredOutputSlots(),
+                MrtProbe.viewSlot());
     }
 
     /**
@@ -293,6 +302,12 @@ public final class TargetReadback {
      * <p>🔖 <b>同帧校验</b>：两个数字必须来自<b>同一轮</b>。本类的回调按提交顺序触发
      * （主目标先提交），因此「已见到 colortex 的统计」时，主目标的统计若已存在则同轮 ——
      * 不成立就不对照（宁可不出结论，也不拿跨帧数字硬比）。
+     *
+     * <p>🔖🔖 <b>逐槽各自一条结论</b>（2026-10-05 改）：本类第一版只有一个 {@code lastVerdict}，
+     * 而 {@link PixelProbePlan} 现在会测<b>多个</b>被写的槽。用单一状态位的结果是
+     * 「槽 3 报了 SLOT_BLACK、槽 6 报 BOTH_HAVE_CONTENT」时，第二个槽的结论会被第一个槽
+     * 的状态位吃掉（误判成「没变化」而不报）⇒ 恰恰漏掉最该看到的那一格。
+     * ⇒ 状态按槽分别记；每槽只在**自己的**结论变化时报。
      */
     private static void compareSources(String label, String roundTag) {
         if (!label.startsWith("colortex")) {
@@ -305,49 +320,38 @@ public final class TargetReadback {
         if (main == null || slot == null || main.samples() == 0L || slot.samples() == 0L) {
             return; // 缺一侧或无样本 ⇒ 本轮**不构成**对照结论（不是「两者一致」）
         }
-        boolean mainZero = main.isAllZero();
-        boolean slotZero = slot.isAllZero();
-        // 🔖🔖 **四种组合都必须区分**，不能只有「都黑 / 不都黑」两分。
-        //   本类第一版写成三分（两黑 / 都非黑 / 主黑槽非黑），漏掉的正是
-        //   「主目标有内容、colortex 逐像素全黑」这一格 —— 而那恰好是
-        //   **GAP-008 的定义形态**（包片元 albedo ≡ 0；主目标此时是原版画面，看着正常）。
-        //   漏掉它 ⇒ 日志会说「两源都有内容」⇒ 取证者据此以为 colortex 正常 ⇒ 又一次误判。
-        String verdict = (mainZero && slotZero) ? "BOTH_BLACK"
-                : (!mainZero && slotZero) ? "SLOT_BLACK"
-                : (mainZero && !slotZero) ? "NOT_ON_MAIN"
-                : "BOTH_HAVE_CONTENT";
-        // 🔖 只在结论变化时报告，不每轮重复。
+        // 🔖🔖 判读委托给纯逻辑的 PixelProbeVerdict：**必须带档位**。
+        //   本类上一版有一张与档位无关的四分标签表，而那在 terrainToMain=true 下整张是反的
+        //   （该档「主目标」就是我方 pass 的附件 0 = 包的 albedo）⇒ 2026-10-05 实测拿到
+        //   「主黑 + colortex3 正常」时，旧标签会读成 NOT_ON_MAIN（"draw 没落到主目标"），
+        //   而真相是 draw **落到了**、只是 albedo ≡ 0 = GAP-008 本体。
+        PixelProbeVerdict verdict =
+                PixelProbeVerdict.of(MrtTerrainPass.toMain(), main.isAllZero(), slot.isAllZero(), label);
+        // 🔖 只在该槽自己的结论变化时报告，不每轮重复。
         //   理由：verdict 是一个**状态**，不是每帧的事件。按探针间隔（默认 300 帧）重复报
         //   同一句话，一次三分钟取证就是几十行噪声（h33 的 2702 行 / h34 的 499 行同族）。
         //   而「结论从 BOTH_HAVE_CONTENT 变成 SLOT_BLACK」这种**变化**恰恰最该被看到。
-        if (verdict.equals(lastVerdict)) {
+        String previous = LAST_VERDICT.get(label);
+        if (verdict.id().equals(previous)) {
             return;
         }
-        lastVerdict = verdict;
-        switch (verdict) {
-            case "NOT_ON_MAIN" -> VkDisp.LOGGER.warn(
-                    "vkdisp: [pixel-probe] 🔴 结论变化 = NOT_ON_MAIN：colortex 有内容（{}）"
-                            + "而主目标逐像素全黑（{}）⇒ 地形 draw **没有落到主目标**"
-                            + "（落点/接线问题，不是着色问题）。"
-                            + "这条把「输出黑」与「没落到主目标」分开了（h42 §4.3 登记的未分辨因素）",
-                    slot.format("colortex"), main.format("main"));
-            case "SLOT_BLACK" -> VkDisp.LOGGER.warn(
-                    "vkdisp: [pixel-probe] 🔴 结论变化 = SLOT_BLACK：主目标有内容（{}）"
-                            + "而 colortex 逐像素全黑（{}）⇒ 我方 pass **写进 colortex 的地形是黑的**"
-                            + "（= GAP-008 本体：包片元输出黑）。⚠️ 主目标此刻是原版画面，"
-                            + "看着「正常」不构成任何证据 —— h31 的收尾就是这么被推翻的",
-                    main.format("main"), slot.format("colortex"));
-            case "BOTH_BLACK" -> VkDisp.LOGGER.warn(
-                    "vkdisp: [pixel-probe] 结论变化 = BOTH_BLACK：两源都逐像素全黑"
-                            + " ⇒ 包地形片元输出黑**且**没落到主目标（或主目标也被清成零）");
-            default -> VkDisp.LOGGER.info(
-                    "vkdisp: [pixel-probe] 结论变化 = BOTH_HAVE_CONTENT：两源都有内容"
-                            + " ⇒ 主目标链路正常；若画面仍不对，问题在两者之后（合成/上屏）");
+        LAST_VERDICT.put(label, verdict.id());
+        String head = "vkdisp: [pixel-probe] 结论变化 = " + verdict.id() + "（" + label + "，"
+                + (MrtTerrainPass.toMain() ? "toMain档" : "toMain=false档") + "）：";
+        String numbers = " main=(" + main.format("main") + ") " + slot.format(label) + ")";
+        switch (verdict.severity()) {
+            case RED -> VkDisp.LOGGER.warn(head + verdict.meaning() + " 数字：" + numbers);
+            case YELLOW -> VkDisp.LOGGER.warn(head + verdict.meaning() + " 数字：" + numbers);
+            default -> VkDisp.LOGGER.info(head + verdict.meaning() + " 数字：" + numbers);
         }
     }
 
-    /** 上一次的对照结论（null = 尚未对照过）；与结论相同则不重复报告。 */
-    private static String lastVerdict;
+    /**
+     * 每个 colortex 源<b>各自</b>上一次的对照结论（源标签 → verdict）。
+     *
+     * <p>🔖 必须是按源分开的一张表：测多个槽时单一状态位会互相吃掉结论（见 compareSources）。
+     */
+    private static final Map<String, String> LAST_VERDICT = new HashMap<>();
 
     /** 按字节数取该源的回读缓冲（尺寸变化时重建；重建前要求该源无在途请求）。 */
     private static @Nullable GpuBuffer bufferFor(String label, long bytes,

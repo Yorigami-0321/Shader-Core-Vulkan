@@ -18,6 +18,7 @@ package dev.vkdisp.bridge;
  * 5. 性能基线：❄️ 单测（扫源码）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -40,6 +41,9 @@ class PixelProbeWiringTest {
     private static final Path FRAME = Path.of("src/main/java/dev/vkdisp/bridge/FrameApi.java");
     private static final Path HOOK = Path.of("src/main/java/dev/vkdisp/render/FullscreenPassHook.java");
     private static final Path PROBE = Path.of("src/main/java/dev/vkdisp/bridge/TargetReadback.java");
+    private static final Path PLAN = Path.of("src/main/java/dev/vkdisp/pipeline/model/PixelProbePlan.java");
+    private static final Path VERDICT =
+            Path.of("src/main/java/dev/vkdisp/pipeline/model/PixelProbeVerdict.java");
     private static final Path PASS = Path.of("src/main/java/dev/vkdisp/bridge/MrtTerrainPass.java");
     private static final Path CONFIG = Path.of("src/main/java/dev/vkdisp/VkDispConfig.java");
 
@@ -140,22 +144,56 @@ class PixelProbeWiringTest {
     }
 
     @Test
-    @DisplayName("🔖🔖 terrainToMain 档不得拿 colortex0 当对照（它那档不是附件）")
-    void toMainLaneMustNotProbeSlotZero() {
-        // 🔴🔖 本轮实测踩到：`mrt.terrainToMain=true` 时**附件 0 已被换成主目标视图**，
-        //   所以 `colortex0` 这一帧根本没被写过 ⇒ 读它必然得到「零填充的旧内容」
-        //   ⇒ 日志会报 `colortex0 allZero=true`，而真相是「那张图不是附件」。
-        //   那正是本项目最该消灭的形态：**诊断给出一个看起来像证据的假数字**
-        //   （会让人以为「colortex 全黑 ⇒ 包片元输出黑」，而实际是没写过）。
+    @DisplayName("🔖🔖 探针不得硬编码槽号（槽 1 在 BSL 默认档不是包输出 ⇒ 读它是假证据）")
+    void probeMustNotHardcodeASlot() {
+        // 🔴🔖 本轮实测定位：上一版在 `terrainToMain` 档里硬编码「改测槽 1」。
+        //   而 BSL 默认档实测 `declaredOutputSlots=[0,3,6,7]` / `outputCount=8`
+        //   ⇒ 槽 1 那一帧**不是包的输出**，只有清屏值 ⇒ 读出来必然 `allZero=true`
+        //   ⇒ 日志报「包片元输出黑」—— 结论反了（真相反是「没写」）。
+        //   判据 = **源码里不得出现任何字面槽号**：挑槽必须是 PixelProbePlan 的职责。
         String probe = readOrSkip(PROBE);
+        for (String literal : List.of("int slot = 1", "slotTexture(1)", "colortex1\"")) {
+            assertFalse(probe.contains(literal),
+                    "探针里出现字面槽号 " + literal + " ⇒ 挑槽又被写死回本类了。"
+                            + "必须交给 PixelProbePlan.decide(...)（按包声明写的槽集合挑），"
+                            + "否则包配置一变就静默指错槽（BSL 默认档 [0,3,6,7]，槽 1 无输出）");
+        }
+        assertTrue(probe.contains("PixelProbePlan.decide("),
+                "探针必须把挑槽委托给 PixelProbePlan（纯逻辑、可单测）");
+        assertTrue(probe.contains("MrtPlan.packDeclaredOutputSlots()"),
+                "槽位集合必须取注册期与附件数**同一次**冻结的那一份（MrtPlan.FrozenPackContract）");
         assertTrue(probe.contains("MrtTerrainPass.toMain()"),
                 "探针必须显式判 terrainToMain 档 —— 该档下 colortex0 不是附件");
-        assertTrue(probe.contains("toMainNoSlotNoted"),
-                "该档下若没有第二个被写的目标，必须**明确说不产出两源对照**，"
-                        + "而不是拿一个不存在的数字充数");
-        assertTrue(probe.contains("不是附件"),
-                "必须把「槽 0 在该档下不是附件」这句话写进日志 —— 否则读日志的人无从分辨"
-                        + "「没写」与「写了但是黑的」");
+    }
+
+    @Test
+    @DisplayName("🔖🔖 测多个槽时，对照结论必须**逐槽**记状态（单一状态位会互相吃掉结论）")
+    void verdictStateIsPerSource() {
+        // 🔖 上一版只有一个 `lastVerdict`：槽 3 报过 SLOT_BLACK 之后，
+        //   槽 6 的 BOTH_HAVE_CONTENT 会被误判成「没变化」而**不报**
+        //   ⇒ 恰恰漏掉最该看到的那一格（哪个视图正常、哪个坏了）。
+        String probe = readOrSkip(PROBE);
+        assertTrue(probe.contains("LAST_VERDICT"),
+                "对照结论状态必须按源标签分别记（Map），不能是单一 lastVerdict");
+        assertTrue(probe.contains("LAST_VERDICT.get(") && probe.contains("LAST_VERDICT.put("),
+                "读与写都要带源标签，否则多槽结论会互相覆盖");
+        assertFalse(probe.contains("private static String lastVerdict;"),
+                "单一 lastVerdict 字段必须删掉 —— 它是多槽场景下漏结论的根因");
+    }
+
+    @Test
+    @DisplayName("🔖 terrainToMain 档「拿 colortex0 当对照」这条禁令必须留在代码里")
+    void toMainLaneMustNotProbeSlotZero() {
+        // 🔖 禁令本身没变（该档槽 0 不是附件），只是**执行位置**从本类挪进了 PixelProbePlan。
+        //   这里守的是「别把这条禁令一起删掉」—— 它是 h31 收尾被推翻的直接原因。
+        String plan = readOrSkip(PLAN);
+        assertTrue(plan.contains("不是附件"),
+                "PixelProbePlan 的说明里必须出现「不是附件」—— 否则读日志的人"
+                        + "无从分辨「没写」与「写了但是黑的」");
+        assertTrue(plan.contains("filter(slot -> slot != 0)"),
+                "terrainToMain 档必须把槽 0 从候选里剔掉（那一档它已被换成主目标视图）");
+        assertTrue(plan.contains("不产出"),
+                "取不到对照源时必须明说「本档不产出两源对照结论」，而不是拿一个不存在的数字充数");
     }
 
     @Test
@@ -182,6 +220,18 @@ class PixelProbeWiringTest {
     }
 
     @Test
+    @DisplayName("🔖 测槽决策的日志必须带去重守卫（否则每 300 帧刷一行同样的说明）")
+    void planDecisionLogIsDeduplicated() {
+        // 🔖 决策说明是**长文本**（含槽位集合与降级原因）。探针每 300 帧算一次，
+        //   无节流就是一次三分钟几十行逐字相同的 WARN —— h33 刷过 2702 行、h34 刷过 499 行。
+        String probe = readOrSkip(PROBE);
+        assertTrue(probe.contains("lastPlanNote"),
+                "必须记住上次打过的那条决策说明，只在**决策变了**时才报");
+        assertTrue(probe.contains("!plan.note().equals(lastPlanNote)"),
+                "守卫判据必须是「说明与上次不同」—— 决策变了正是最该被看到的那一刻");
+    }
+
+    @Test
     @DisplayName("🔖🔖 四种组合都必须能报出来（漏掉的那一格恰好是 GAP-008 的定义形态）")
     void allFourVerdictsAreDistinguishable() {
         // 🔖🔖 本类第一版只写了三种组合，漏掉的正是
@@ -189,12 +239,23 @@ class PixelProbeWiringTest {
         //   **GAP-008 的定义形态**（包片元 albedo ≡ 0；主目标此时是原版画面，看着正常）。
         //   漏掉它 ⇒ 日志会说「两源都有内容」⇒ 取证者据此以为 colortex 正常
         //   ⇒ 又一次误判（h31 的收尾就是这样被推翻的）。
-        String probe = readOrSkip(PROBE);
+        // 🔖 判读已挪进纯逻辑的 PixelProbeVerdict（2026-10-05）—— 断言随之跟过去，
+        //   并**新增**一条：标签表必须带档位（那一档主目标就是我方 pass 的附件 0）。
+        String verdictClass = readOrSkip(VERDICT);
         for (String verdict : List.of("BOTH_BLACK", "SLOT_BLACK", "NOT_ON_MAIN", "BOTH_HAVE_CONTENT")) {
-            assertTrue(probe.contains("\"" + verdict + "\""),
+            assertTrue(verdictClass.contains(verdict),
                     "缺少结论分支 " + verdict + " —— 四种组合必须齐全，"
                             + "少一格就会让某一类现象被读成另一类");
         }
+        assertTrue(verdictClass.contains("ALBEDO_BLACK_OTHERS_OK")
+                        && verdictClass.contains("ALL_BLACK")
+                        && verdictClass.contains("SLOT_BLACK_ALBEDO_OK"),
+                "terrainToMain=true 档必须有自己的三条结论 —— 那一档「主目标」就是我方 pass 的"
+                        + "附件 0（包的 albedo），沿用 toMain=false 的标签会把已定位的 GAP-008"
+                        + "误读成落点/接线问题（本轮实测踩到）");
+        String probe = readOrSkip(PROBE);
+        assertTrue(probe.contains("PixelProbeVerdict.of(MrtTerrainPass.toMain()"),
+                "判读调用**必须**把档位传进去 —— 不带档位的标签表在 toMain 档整张是反的");
     }
 
     @Test
