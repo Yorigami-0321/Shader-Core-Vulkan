@@ -985,6 +985,13 @@ public final class FrameApi {
         // 原版 PostPass 同款：绘制后再 rotate，保证本帧写入的槽在 GPU 用完前不被复用。
         ring.rotate();
 
+        // 🔖 像素回读探针**不在这里调用** —— 它移到 {@code FullscreenPassHook} 的最末尾。
+        //   🔴🔖 本轮实测踩到并修掉：放在这里时，本方法还没跑完、地形 MRT pass
+        //   （{@link MrtTerrainPass#drawAfterLevel()}，由 Hook 在本方法**返回之后**调用）
+        //   也就还没往主目标里画 ⇒ 在 {@code mrt.terrainToMain=true} 这一档下，
+        //   探针读到的「主目标」是**我方 pass 写入之前**的内容 ⇒ 恰好在需要它的时候失效。
+        //   ⇒ 位置必须晚于地形 pass、早于诊断 blit（唯一满足处 = Hook 末尾）。
+
         // GAP-003 多附件能力验证（诊断视图，默认关闭 ⇒ 常规帧到这里零开销）。
         // ⚠️ 放在**整条链之后**：它会把主目标覆盖成某个 colortex 的内容，
         // 放在链中间会毁掉前面 pass 的产物（那不是诊断，是自伤）。

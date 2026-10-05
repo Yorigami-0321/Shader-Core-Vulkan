@@ -381,6 +381,68 @@ public final class VkDispConfig {
             .comment("诊断：地形 MRT pass 内先画全屏三角形（默认关）。")
             .define("mrt.terrainFullscreenProbe", false);
 
+    /**
+     * 🔬 **单变量取证覆盖**：按名字强制包选项的值（默认空串 = 不覆盖）。
+     *
+     * <p>🔖 <b>它为什么必须存在</b>（h42 §4.2 登记的未做项）：能力门控在 BSL 上一次关掉
+     * <b>9 个</b>选项，并把派生程序形状一起改掉（{@code outputs 8→1}、{@code samplers 7→5}、
+     * {@code varyings 15→9}）⇒ 两臂之间<b>不是单变量</b>。要验证「视差到底相不相关」，
+     * 就必须有一个「<b>只改一个指定名字</b>」的入口。
+     *
+     * <p>语法：{@code NAME=value}，多条用 {@code ;} 分隔，例如 {@code "PARALLAX=false"}。
+     *
+     * <p>🔖 <b>为什么不是「再给视差加一个专用开关」</b>：那等于把 {@code PARALLAX}
+     * 硬编码进产品配置 —— Complementary 同样有视差却零外部依赖（X27：不许无谓砍包特性），
+     * 而且硬编码之后下轮要试别的选项又得再加一个键。必须是按名通用的机制。
+     *
+     * <p>🔖 <b>只改内存</b>，一个字节都不写用户的包配置文件（同能力门控那条裁决）。
+     */
+    public static final ModConfigSpec.ConfigValue<String> OPTION_OVERRIDES = BUILDER
+            .comment("单变量取证覆盖：强制包选项的值，语法 NAME=value，多条用 ';' 分隔"
+                    + "（例：\"PARALLAX=false\"）。只在内存里生效，不改写你的包配置文件。"
+                    + "🔬 这是取证开关：能力门控一次改一整个闭包，两臂之间不是单变量。")
+            .define("pack.optionOverrides", "");
+
+    /**
+     * 🔖 **像素回读探针**：把主目标 / colortex 的像素统计成数字打进日志（默认关）。
+     *
+     * <p><b>它回答什么</b>（h42 §4.3 登记的未分辨因素）：「画面全黑」有两种<b>完全不同</b>的成因 ——
+     * ① 包的地形片元输出全黑；② 地形 draw 根本没落到我们以为的那个目标上。
+     * 两者截图都是黑的，<b>只看截图分不开</b>。本探针对<b>同一帧</b>的两个源各取一次数：
+     * <pre>
+     *   colortex 有内容 + 主目标全黑 ⇒ draw 没落到主目标（落点问题，不是着色问题）
+     *   两者都全黑                   ⇒ 包片元输出就是黑（GAP-008 本体）
+     * </pre>
+     *
+     * <p>🔖 <b>为什么不用 MCP 截图 + 外部 python 脚本</b>（h22～h42 一直在用的办法）：
+     * ① 它需要<b>人</b>在运行之外再跑脚本，而这里要的是<b>同帧两个数字</b>；
+     * ② 采样区写死在脚本里，窗口尺寸一变就与历史数字不可比；
+     * ③ <b>数字不在日志里</b> ⇒ 跨会话的读者（AI）读不到量化判据，只能重新截图重算 ——
+     * 这正是 {@code h42}「推翻自己结论」那类事故的温床。
+     *
+     * <p>🔖 <b>默认关</b>：回读要走一趟 GPU→CPU 拷贝并映射内存，不是可以在每帧做的事
+     * （支柱③ B1 ≤ +2%）。开启后按 {@link #MRT_PIXEL_PROBE_EVERY} 帧节流。
+     *
+     * <p>⚠️ <b>统计口径不在配置里</b>：采样区比例固定为中心
+     * {@code x∈[45%,65%] / y∈[15%,75%]}，逐字等于 {@code evidence/tools/flicker_ratio.py}
+     * 里被 h22 校准出来的那一组 —— 换掉它就等于让本机数字与历史证据不可比。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_PIXEL_PROBE = BUILDER
+            .comment("像素回读探针：把主目标与 colortex 的像素统计（mean_luma / 非黑占比 / maxR /"
+                    + " 是否逐像素全黑）打进日志，并区分「输出黑」与「没落到主目标」（默认关）。")
+            .define("mrt.pixelProbe", false);
+
+    /**
+     * 像素回读探针的节流间隔（帧）。
+     *
+     * <p>🔖 <b>为什么默认 300 而不是 1</b>：回读是 GPU→CPU 拷贝 + 内存映射，
+     * 每帧做会直接违反支柱③。且探针的价值是「有没有数字」，不是「每帧一个数字」——
+     * h42 那类问题都是<b>稳定复现</b>的（黑屏不是闪烁），采样频率不参与结论。
+     */
+    public static final ModConfigSpec.IntValue MRT_PIXEL_PROBE_EVERY = BUILDER
+            .comment("像素回读探针的间隔帧数（默认 300）。回读要走 GPU→CPU 拷贝，不能每帧做。")
+            .defineInRange("mrt.pixelProbeEvery", 300, 1, 100000);
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     private VkDispConfig() {

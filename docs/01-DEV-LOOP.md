@@ -119,9 +119,44 @@ bash tools/vulkan-local/run-client.sh iso -PquickPlay  # 隔离车道（run/h27�
 ③ 接上 prefix 环境（免 root loader + lavapipe ICD）；④ 起跑后**断言后端**。
 
 **P0.2 当前状态（2026-10-05）**：✅ **已达成**
-（`vkdisp: backend=Vulkan, device=llvmpipe (LLVM 22.1.8, 256 bits)`，证据 `evidence/h36-…`）。
+（`vkdisp: backend=Vulkan, device=llvmpipe (LLVM 23.1.8, 256 bits)`，证据 `evidence/h36-…`）。
 ⚠️ 设备是 **lavapipe（CPU 软件 Vulkan）**，不是独显 ⇒
 **Vulkan 语义是真的，但帧率不代表任何真实硬件**（支柱③ B1–B7 仍无结论）。
+
+### 1.3 🔖 像素级判据走 `mrt.pixelProbe`，不必再手动截图 + 跑脚本（2026-10-05）
+
+h22～h42 取数字的办法是「MCP 截图 + 外部 python 脚本」，它有三个实测缺陷
+（详见 `evidence/h43-…` §二）：需要人在运行之外再跑脚本、采样区写死、
+**数字不在日志里**（跨会话的读者是 AI，读不到截图里没有的数字）。
+
+现已内置进程内回读：
+
+```toml
+[mrt]
+  pixelProbe = true        # 默认关（GPU→CPU 拷贝 + 内存映射，不是每帧可做的事）
+  pixelProbeEvery = 300    # 节流间隔帧
+```
+
+开启后每 N 帧在日志里给两行（**主目标**与**当前 colortex 槽**各一行），
+外加一条**只在结论变化时**报的四分判定：
+
+| 结论 | 含义 |
+|---|---|
+| `NOT_ON_MAIN` | colortex 有内容、主目标全黑 ⇒ 地形 draw **没落到主目标**（落点/接线问题） |
+| `SLOT_BLACK` | 主目标有内容、colortex 全黑 ⇒ **我方 pass 写进 colortex 的地形是黑的**（GAP-008 本体） |
+| `BOTH_BLACK` | 两者都全黑 |
+| `BOTH_HAVE_CONTENT` | 两者都有内容 ⇒ 主目标链路正常 |
+
+🔖 **统计口径与历史证据逐字一致**（采样区中心 `x∈[45%,65%]/y∈[15%,75%]`、黑阈值 8、
+Rec.709 luma，取自 `evidence/tools/flicker_ratio.py` 的 h22 校准结果），
+且采样区**按比例**换算 ⇒ 换窗口尺寸后仍与 h22/h31 的数字可比。
+外部脚本仍可用来复核（`python3 tools/vulkan-local/flicker_ratio.py <png>`）。
+
+⚠️ **三处位置/口径约束**（都是实测踩出来的，守卫 `PixelProbeWiringTest` 钉住）：
+① 必须在所有 render pass 关闭之后；② 必须在**地形 MRT pass 之后**
+（否则 `terrainToMain=true` 档读到的是写入前的内容）；③ 必须在诊断 blit 之前。
+⚠️ `terrainToMain=true` 档下附件 0 已被换成主目标视图 ⇒ `colortex0` **不是附件**，
+该档的对照槽由代码自动改选，只有一个附件时**明确不产出两源对照结论**。
 
 ---
 

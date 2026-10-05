@@ -139,6 +139,129 @@ neoForge {
     }
 }
 
+// ============================================================================
+// P0.2 守卫：Vulkan loader 预检 + 免 root prefix 接线（env-1，2026-10-05）
+//
+// 🔴 这里解决的不是「崩溃」，是**静默降级**：
+//   runs.client / runs.clientIso 传了 `--graphicsBackend VULKAN`，但 libvulkan.so.1
+//   缺失时 Minecraft **不会退出**。它只打两行（实测 run/logs/latest.log:32 / :102）：
+//     WARN  NativeLibrariesBootstrap: Failed to load Vulkan loader
+//     ERROR Minecraft: Failed to create backend Vulkan
+//   然后 `Using graphics backend OpenGL, using drivers: 4.6 …`（同文件 :111）
+//   **静默退回 OpenGL/llvmpipe 继续跑满取证帧数**。2026-10-05 09:22 那次裸启动
+//   就是这样：M-01 / qd-02 / GAP-003 全部是 OpenGL 产物，直接违反
+//   docs/01-DEV-LOOP.md P0.2:357「打印出后端类型且不是 OPENGL」。
+//
+//   故做两件事：
+//   ① 【接线】把 tools/vulkan-local/prefix 接进客户端子进程环境。LWJGL 走
+//      dlopen("libvulkan.so.1")，必须在 LD_LIBRARY_PATH 里；**刻意放在配置期**
+//      而不是 doFirst —— gradle.properties:6 开了 configuration-cache，
+//      在任务动作里改 environment / 启进程都会破坏它。
+//   ② 【守卫】客户端两条车道 dependsOn vulkanPreflight（+ 深层探测 vulkanProbe），
+//      loader/ICD 就绪与否**硬失败**，不再让证据静默降级。
+//
+// ⚠️ tools/ 被 .gitignore 忽略（.gitignore:80），别人 clone 的仓库没有 prefix，
+//    故整段按 prefix 是否就绪条件接线：prefix 不在就退回「系统 loader 在不在」的判断，
+//    两者都没有才失败（报错文案同时给出免 root 与 pacman 两条修法）。
+//
+// 共享文件：build.gradle 属 docs/18-PARALLEL.md §7.2 的 env-1 独占清单，
+// 本次为 env-1 应用户要求的一次性改动（§7.1 的禁令针对并行线，不适用）。
+// ============================================================================
+def vkPrefixDir = file('tools/vulkan-local/prefix')
+def vkLibDir = new File(vkPrefixDir, 'usr/lib')
+def vkIcdFile = new File(vkPrefixDir, 'usr/share/vulkan/icd.d/lvp_icd.json')
+def vkScript = file('tools/vulkan-local/preflight.sh')
+def vkSkipCheck = project.findProperty('vulkanSkipCheck')?.toString()?.toBoolean() ?: false
+
+// —— 配置期判定：不 exec、不在任务动作里引用 project ⇒ configuration-cache 安全
+def vkPrefixReady = vkLibDir.isDirectory() && new File(vkLibDir, 'libvulkan.so.1').exists() && vkIcdFile.isFile()
+if (vkPrefixReady) {
+    def m = (vkIcdFile.text =~ /"library_path"\s*:\s*"([^"]+)"/)
+    def icdLib = m.find() ? m.group(1) : ''
+    def icdOk = icdLib.startsWith('/') ? new File(icdLib).exists()
+            : (!icdLib.isEmpty() && new File(vkLibDir, icdLib).exists())
+    if (!icdOk) {
+        logger.warn("[vulkan] ICD ${vkIcdFile.name} 指向的库解析不到（${icdLib}）⇒ 不注入 prefix 环境，交由 vulkanPreflight 报错")
+        vkPrefixReady = false
+    }
+}
+def vkSystemLoader = ['/usr/lib/libvulkan.so.1', '/lib/libvulkan.so.1', '/usr/lib64/libvulkan.so.1',
+                      '/usr/lib/x86_64-linux-gnu/libvulkan.so.1'].find { new File(it).exists() }
+
+// —— ① prefix 接线（配置期；只有就绪时才注入，绝不覆盖别人的环境）
+if (vkPrefixReady) {
+    def curLdPath = System.getenv('LD_LIBRARY_PATH')
+    def vkLdPath = curLdPath ? "${vkLibDir.absolutePath}:${curLdPath}".toString() : vkLibDir.absolutePath
+    ['runClient', 'runClientIso'].each { String runTask ->
+        tasks.named(runTask).configure { t ->
+            t.environment 'LD_LIBRARY_PATH', vkLdPath
+            t.environment 'VK_DRIVER_FILES', vkIcdFile.absolutePath
+            t.environment 'VK_ICD_FILENAMES', vkIcdFile.absolutePath
+            t.logger.lifecycle("[vulkan] prefix 已接线：${vkLibDir.absolutePath} + ICD ${vkIcdFile.name}")
+        }
+    }
+}
+
+// —— ② 深层探测：dlopen loader → vkCreateInstance → 枚举物理设备
+//    用 Exec 任务而非任务动作里 exec {}，就是为了不破坏 configuration-cache。
+def vulkanProbe = tasks.register('vulkanProbe', Exec) {
+    group = 'verification'
+    description = '深层探测 Vulkan：等同 bash tools/vulkan-local/preflight.sh'
+    onlyIf { !vkSkipCheck && vkScript.isFile() }
+    workingDir = projectDir
+    commandLine 'bash', vkScript.absolutePath
+    if (vkPrefixReady) {
+        environment 'LD_LIBRARY_PATH', vkLibDir.absolutePath
+        environment 'VK_DRIVER_FILES', vkIcdFile.absolutePath
+        environment 'VK_ICD_FILENAMES', vkIcdFile.absolutePath
+    }
+}
+
+// —— ③ 存在性兜底：prefix 缺失且系统也没有 loader ⇒ 硬失败（而不是让游戏退回 OpenGL）
+def vulkanPreflight = tasks.register('vulkanPreflight') {
+    group = 'verification'
+    description = 'Vulkan 启动前自检：loader / ICD 就绪性硬检查（不启动游戏）'
+    // 配置期固化下面四个值：任务动作里只读它们，不碰 project / provider
+    def ready = vkPrefixReady
+    def sysLoader = vkSystemLoader
+    def scriptFile = vkScript
+    def skip = vkSkipCheck
+    dependsOn vulkanProbe
+
+    doLast {
+        if (skip) {
+            logger.lifecycle('[vulkan] -PvulkanSkipCheck=true ⇒ 跳过自检（可能静默退回 OpenGL，后果自负）')
+            return
+        }
+        if (ready) {
+            logger.lifecycle("[vulkan] loader/ICD 就绪（本地 prefix）：${vkLibDir.absolutePath}")
+            return
+        }
+        if (sysLoader) {
+            logger.lifecycle("[vulkan] 使用系统级 loader：${sysLoader}（本地 prefix 未就绪）")
+            return
+        }
+        if (scriptFile.isFile()) {
+            logger.lifecycle("[vulkan] 本地 prefix 未就绪；深层探测结果见上方 vulkanProbe")
+            return
+        }
+        throw new GradleException(
+                "[vulkan] 找不到 libvulkan.so.1，客户端车道已中止。\n" +
+                "  继续启动的后果不是崩溃，而是 Minecraft 静默退回 OpenGL/llvmpipe，\n" +
+                "  采到的帧与截图全部不是 Vulkan 证据（违反 docs/01-DEV-LOOP.md P0.2）。\n" +
+                "  修法二选一：\n" +
+                "    1) 免 root：补齐 tools/vulkan-local/prefix\n" +
+                "       （usr/lib/libvulkan.so.1 + usr/lib/libvulkan_lvp.so + usr/share/vulkan/icd.d/lvp_icd.json）\n" +
+                "    2) 系统级：sudo pacman -S vulkan-icd-loader vulkan-tools\n" +
+                "  临时绕过（明知会退回 OpenGL）：-PvulkanSkipCheck=true")
+    }
+}
+
+// 客户端两条车道前置自检；server / gameTestServer / data 不需要 Vulkan，不挂
+['runClient', 'runClientIso'].each { String runTask ->
+    tasks.named(runTask).configure { dependsOn vulkanPreflight }
+}
+
 // Sets up a dependency configuration called 'localRuntime'.
 // This configuration should be used instead of 'runtimeOnly' to declare
 // a dependency that will be present for runtime testing but that is

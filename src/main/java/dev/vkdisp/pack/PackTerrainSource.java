@@ -23,6 +23,7 @@ package dev.vkdisp.pack;
  */
 import dev.vkdisp.config.OptionDiagnostic;
 import dev.vkdisp.config.PackCapabilityGate;
+import dev.vkdisp.config.PackOptionOverride;
 import dev.vkdisp.config.PackOptionStore;
 import dev.vkdisp.config.PackOptions;
 import dev.vkdisp.config.PackOptionsSession;
@@ -136,6 +137,10 @@ public final class PackTerrainSource {
             // 而覆盖表是「当前值 vs 默认值」的差分 ⇒ 被门控的项默认是 true ⇒ **必须**在差分之前跑。
             // 放在之后 ⇒ 日志说「已门控」而画面没变 = 最坏的失败形态（静默空转，X9）。
             diagnostics.addAll(applyCapabilityGate(discovered, pack, session, diagnostics));
+            // 🔬 单变量取证覆盖（h42 §4.2 登记的未做项）：门控一次改一整个闭包（BSL 上 9 项）
+            //   且同时改变派生程序形状 ⇒ 两臂之间不是单变量。本项只改**用户点名的那几个**，
+            //   放在门控**之后**：门控是产品止血（要最终生效），覆盖是取证（要压过门控）。
+            diagnostics.addAll(applyOptionOverrides(pack, session));
             Map<String, String> overrides = diffAgainstDefaults(session.options());
 
             ShaderPackCompiler.CompileResult compiled =
@@ -329,6 +334,56 @@ public final class PackTerrainSource {
                     pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
         }
         return produced;
+    }
+
+    /**
+     * 🔬 单变量取证覆盖：把 {@code pack.optionOverrides} 里点名的选项在内存里强制成指定值。
+     *
+     * <p>🔖 <b>顺序说明（不是随手放的）</b>：本项在
+     * {@link #applyCapabilityGate} <b>之后</b>、{@code diffAgainstDefaults} <b>之前</b>。
+     * ① 在差分之前 ⇒ 覆盖值一定进覆盖表（否则「改了但没生效」是最坏失败形态：
+     * 日志说改了、画面没变）；② 在门控之后 ⇒ 门控是产品止血、覆盖是取证，
+     * 取证者要能压过门控（否则「关掉视差」那条指令可能被门控重新打开）。
+     *
+     * <p>🔖 <b>不写任何用户文件</b>：{@link PackOptionStore} 一个字节都不碰。
+     */
+    private static List<TranslateDiagnostic> applyOptionOverrides(
+            ShaderPack pack, PackOptionsSession session) {
+        List<TranslateDiagnostic> produced = new ArrayList<>();
+        PackOptionOverride.Result result = PackOptionOverride.apply(
+                session.options(), PackOptionOverrideSwitch.spec());
+        for (OptionDiagnostic diagnostic : result.diagnostics()) {
+            produced.add(TranslateDiagnostic.of(severityOf(diagnostic.severity()),
+                    "选项覆盖 [" + diagnostic.code() + "] " + diagnostic.message(),
+                    pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+        }
+        // 🔴 与能力门控开关同一条纪律（h33 实测）：反射失败会让开关**静默**取默认值，
+        //   而「我写了覆盖但它没生效」在日志上完全看不出来 ⇒ 必须变成一条可见诊断。
+        String failure = PackOptionOverrideSwitch.reflectionFailure();
+        if (failure != null) {
+            produced.add(TranslateDiagnostic.of(
+                    TranslateDiagnostic.Severity.ERROR,
+                    "选项覆盖 [OPTION_OVERRIDES_SWITCH_UNREADABLE] 读取失败：" + failure
+                            + " ⇒ " + PackOptionOverrideSwitch.CONFIG_KEY
+                            + " 将**恒为空串（= 不覆盖）**，即该配置写了也不生效。这是真错误不是正常状态。",
+                    pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+        }
+        return produced;
+    }
+
+    /**
+     * {@link OptionDiagnostic.Severity} → {@link TranslateDiagnostic.Severity} 的<b>逐项</b>映射。
+     *
+     * <p>🔖 <b>为什么不一律降成 WARN</b>（既有 {@link #applyCapabilityGate} 现在的做法）：
+     * 那会把「覆盖串根本解析不了 ⇒ 本帧一条都没改」这条<b>真错误</b>报成 WARN。
+     * 解析失败时用户看到的是「配置写了没生效」，那必须与「值被钳制」区分开。
+     */
+    private static TranslateDiagnostic.Severity severityOf(OptionDiagnostic.Severity severity) {
+        return switch (severity) {
+            case ERROR -> TranslateDiagnostic.Severity.ERROR;
+            case WARN -> TranslateDiagnostic.Severity.WARN;
+            case INFO -> TranslateDiagnostic.Severity.INFO;
+        };
     }
 
     private static TranslateDiagnostic.Severity severityOf(ShaderPackScanner.ProblemKind kind) {

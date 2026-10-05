@@ -442,13 +442,27 @@ public final class VkDispVirtualPack {
      * <p><b>提前的代价与出口</b>：这是一次冷路径编译（约 0.7–3 秒，见 b4 埋点），
      * 发生在启动期管线注册处。PackCompileCache 让随后的 openResources 命中缓存，不重复付费。
      *
-     * <p><b>为什么用键做记忆</b>：键 = profile|selection。配置热加载切包后键变化 ⇒ 重新生成；
-     * 同一键重复调用直接复用（注册与 openResources 各调一次，只付一次钱）。
+     * <p><b>为什么用键做记忆</b>：键 = {@code profile|selection|overrides}。
+     * 配置热加载切包后键变化 ⇒ 重新生成；同一键重复调用直接复用
+     * （注册与 openResources 各调一次，只付一次钱）。
+     *
+     * <p>🔖🔖 <b>键里必须有覆盖串</b>（本轮实测）：原键只有 {@code profile|selection}，
+     * 改 {@code pack.optionOverrides} 时 composite 源会按新覆盖重新生成、
+     * 地形契约却因键未变直接返回旧 memo ⇒ 两条链对同一份配置给出不同答案，
+     * 而**没有一行日志**会说「地形契约被记忆命中」。凡是「在生成期被读一次」的
+     * 配置项都必须进这个键。
      */
     public static synchronized void ensureTerrainProgram() {
         String profile = VkDispConfig.PACK_PROFILE.get();
         String selection = VkDispConfig.SHADER_PACK.get();
-        String key = profile + "|" + selection;
+        // 🔖🔖 键由 {@link #currentTerrainMemoKey()} 造 —— 它是**单一真源**，
+        //   取走时校验（{@link #takeTerrainSourceMemo}）用的是同一个算法。
+        //   🔖 「造键用 A、校验用 B」会让校验永远通过；本轮首版就是这么写的，
+        //   随后实测到 memo 与配置不符却仍被复用（见 takeTerrainSourceMemo 的注释）。
+        // 🔖 键必须含**包选项覆盖串**：凡是「在生成期被读一次」的配置项都得进键
+        //   （原键只有 profile|selection ⇒ 改覆盖串时 composite 侧按新配置、地形侧按旧配置，
+        //   两条链互相矛盾而日志看起来完全正常 —— 与 h33 死开关同族）。
+        String key = currentTerrainMemoKey();
         if (key.equals(terrainMemoKey)) {
             return;
         }
@@ -504,7 +518,36 @@ public final class VkDispVirtualPack {
         }
     }
 
+    /**
+     * 当前配置下应使用的记忆键（{@code profile|selection|overrides}）。
+     *
+     * <p>🔖 单一真源：{@link #ensureTerrainProgram} 造键、{@link #takeTerrainSourceMemo} 校验键，
+     * 两处必须用同一份算法 —— 否则「造键用 A、校验用 B」会让校验永远通过（本轮就踩过）。
+     */
+    private static String currentTerrainMemoKey() {
+        return VkDispConfig.PACK_PROFILE.get()
+                + "|" + VkDispConfig.SHADER_PACK.get()
+                + "|" + dev.vkdisp.pack.PackOptionOverrideSwitch.spec();
+    }
+
     private static String takeTerrainSourceMemo() {
+        // 🔴🔖 **键不符就丢弃 memo**（本轮实测修的真缺陷）：
+        //   `ensureTerrainProgram` 只在**管线注册期**调一次，而注册事件在资源重载时**不再触发**
+        //   （原版 RenderPipelines 只初始化一次，见本方法上方「为什么必须提前」的说明）。
+        //   ⇒ 重载后 memo 若还在，它就是**按上一轮配置**生成的那一份。
+        //   实测症状：`pack.optionOverrides` 改成 `PARALLAX=true` 后，
+        //   日志同时出现「composite 侧覆盖表已变」与「terrain source reused from early contract」
+        //   ⇒ 两条链对同一份配置给出**互相矛盾**的答案，而没有任何一行说「memo 是旧的」。
+        //   ⇒ 取走时必须核对键；不符就返回 null，让调用点走同步重生成（冷路径，慢但正确）。
+        if (terrainSourceMemo != null && !currentTerrainMemoKey().equals(terrainMemoKey)) {
+            VkDisp.LOGGER.warn("vkdisp: [GAP-003] 地形契约 memo 与当前配置不符（生成于 key={}，"
+                    + "当前 key={}）⇒ **丢弃**并同步重生成。"
+                    + "⚠️ 不丢弃的后果：composite 侧按新配置、地形侧按旧配置，"
+                    + "两条链互相矛盾而日志看起来完全正常",
+                    terrainMemoKey, currentTerrainMemoKey());
+            terrainSourceMemo = null;
+            terrainAdapterMemo = null;
+        }
         String memo = terrainSourceMemo;
         terrainSourceMemo = null;
         // 🔴🔶 GAP-010 根因（h16 定位）：**不要在这里清** 

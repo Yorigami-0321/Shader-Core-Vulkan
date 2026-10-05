@@ -45,6 +45,7 @@ import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
 import com.mojang.renderpearl.api.textures.AddressMode;
 import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.vkdisp.VkDisp;
 import dev.vkdisp.VkDispConfig;
@@ -85,6 +86,20 @@ public final class MrtTerrainPass {
 
     /** 我方 colortex 目标（懒建；尺寸跟随主目标）。 */
     private static TextureTarget[] colortex;
+
+    /**
+     * 🔖 像素回读探针要的是<b>纹理</b>（GPU→CPU 拷贝的源），不是视图。
+     *
+     * <p>与 {@link #slotView(int)} 的区别不是「多一个方法」而是<b>不同能力</b>：
+     * 视图只能当采样器/附件，纹理才能被 {@code copyTextureToBuffer} 读回。
+     */
+    @Nullable
+    public static GpuTexture slotTexture(int slot) {
+        if (colortex == null || slot < 0 || slot >= colortex.length || colortex[slot] == null) {
+            return null;
+        }
+        return colortex[slot].getColorTexture();
+    }
 
     /** 我方深度目标（地形要深度测试/写深度；与 colortex 同尺寸）。 */
     private static TextureTarget colortexDepth;

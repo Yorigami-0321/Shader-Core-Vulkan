@@ -38,6 +38,7 @@ import dev.vkdisp.VkDispConfig;
 import dev.vkdisp.bridge.FrameApi;
 import dev.vkdisp.bridge.MrtTerrainPass;
 import dev.vkdisp.bridge.PipelineApi;
+import dev.vkdisp.bridge.TargetReadback;
 import dev.vkdisp.bridge.TerrainDrawCapture;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -214,5 +215,18 @@ public final class FullscreenPassHook {
                 VkDisp.LOGGER.error("vkdisp: gbuffer terrain pass failed", t);
             }
         }
+
+        // 🔖🔖 像素回读探针（默认关）。**位置有三重约束，本轮全部是实测踩出来的**：
+        //  ① 必须在**所有** render pass 关闭之后（原版 FrontendCommandEncoder 在 pass 内
+        //     做 copyTextureToBuffer 会抛 "Close the existing render pass before
+        //     performing additional commands"）；
+        //  ② 必须在**地形 MRT pass 之后** —— 它在 afterLevel 模式下会写主目标，
+        //     探针若在它之前跑，读到的「主目标」就是**写入前**的内容
+        //     ⇒ 恰好在 `mrt.terrainToMain=true`（GAP-008 取证那一档）失效；
+        //  ③ 必须在**诊断视图 blit 之前** —— 那个 blit 会把主目标覆盖成某个 colortex 的
+        //     内容，在它之后回读会让「主目标」与「colortex」两个数字指向同一张图，
+        //     两源对照静默失效。
+        //  ⇒ 「链尾」之后、「地形 pass」之后、「诊断 blit」之前 = 只能是本方法末尾。
+        TargetReadback.probeFrameTail();
     }
 }

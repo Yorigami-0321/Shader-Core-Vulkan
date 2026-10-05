@@ -45,6 +45,7 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.neoforge.client.event.ClientResourceLoadFinishedEvent;
+import org.jspecify.annotations.Nullable;
 
 /**
  * 配置热加载 → 分流执行（P4.2 切包重载 / P4.3 选项屏幕驱动）。
@@ -76,9 +77,12 @@ public final class VkDispConfigHotReload {
      * @param packProfile     核心项（变了要重载）
      * @param shaderPack      核心项（变了要重载）
      * @param packOptionsScreen 驱动项（变了只执行屏幕动作，不重载）
+     * @param capabilityGate  核心项（包选项相关，变了要重载）
+     * @param optionOverrides 核心项（包选项相关，变了要重载）
      */
     private record Snapshot(boolean enabled, boolean debugLog, String packProfile,
-            String shaderPack, String packOptionsScreen) {}
+            String shaderPack, String packOptionsScreen, boolean capabilityGate,
+            String optionOverrides) {}
 
     /** 最近一次快照；null = 还没见 Loading（防御位，实际由首载 Loading 填充）。 */
     private static volatile Snapshot last;
@@ -179,23 +183,17 @@ public final class VkDispConfigHotReload {
                 VkDisp.LOGGER.warn("vkdisp: config hot-reload: no Loading snapshot yet, treating as core change");
             }
 
-            boolean coreChanged = previous == null
-                    || previous.enabled() != current.enabled()
-                    || previous.debugLog() != current.debugLog()
-                    || !Objects.equals(previous.packProfile(), current.packProfile())
-                    || !Objects.equals(previous.shaderPack(), current.shaderPack());
-            boolean driveChanged = previous != null
-                    && !Objects.equals(previous.packOptionsScreen(), current.packOptionsScreen());
-
             Minecraft minecraft = Minecraft.getInstance();
-            if (coreChanged) {
+            if (coreChanged(previous, current)) {
                 // T11：切换必须显式留痕 —— 这一行是 §6 四截图各阶段的日志锚点（p417 逐字保留）。
                 VkDisp.LOGGER.info(
                         "vkdisp: config hot-reload: file={} type={} enabled={} debugLog={}"
-                                + " packProfile='{}' shaderPack='{}' -> resource reload",
+                                + " packProfile='{}' shaderPack='{}'"
+                                + " capabilityGate={} optionOverrides='{}' -> resource reload",
                         config.getFileName(), config.getType(),
                         current.enabled(), current.debugLog(),
-                        current.packProfile(), current.shaderPack());
+                        current.packProfile(), current.shaderPack(),
+                        current.capabilityGate(), current.optionOverrides());
                 if (minecraft != null) {
                     //观察者线程（nightconfig FileWatcher）不能直接开资源重载 → 挪渲染线程。
                     // P4.5：先异步预编译，编译完成再重载（切 BSL 实测 3.97s 同步阻塞 → 未响应）。
@@ -203,22 +201,53 @@ public final class VkDispConfigHotReload {
                 }
             }
 
+            boolean driveChanged = previous != null
+                    && !Objects.equals(previous.packOptionsScreen(), current.packOptionsScreen());
             if (driveChanged) {
-                ScreenDriveCommand command = ScreenDriveCommand.parse(current.packOptionsScreen());
-                VkDisp.LOGGER.info(
-                        "vkdisp: pack options screen drive: raw='{}' -> {}",
-                        current.packOptionsScreen(), describe(command));
-                if (command instanceof ScreenDriveCommand.Malformed malformed) {
-                    VkDisp.LOGGER.warn(
-                            "vkdisp: pack options screen drive rejected: {}（{}）",
-                            malformed.raw(), malformed.reason());
-                } else if (minecraft != null) {
-                    minecraft.execute(() -> PackOptionsDrive.run(minecraft, command));
-                }
+                runScreenDrive(current, minecraft);
             }
         } catch (Throwable t) {
             // 失败必须打 ERROR 原文（T11），且不许让观察者线程带着异常死掉。
             VkDisp.LOGGER.error("vkdisp: config hot-reload handling failed", t);
+        }
+    }
+
+    /**
+     * 边沿判定：本次热加载是否要触发<b>资源重载</b>。
+     *
+     * <p>🔖🔖 包选项相关的两项（能力门控 / 单变量覆盖）<b>也必须在这里</b>：
+     * 它们在 {@code VkDispVirtualPack#openResources} 生成<b>包源</b>时被读一次，
+     * 而包源生成只在资源重载时发生 ⇒ 不重载 = 配置改了但画面不变。
+     * 🔖 本轮实测踩到：改 {@code pack.optionOverrides} 后<b>日志毫无反应</b>，
+     * 而若不查包源日志，会误读成「开关又是死的」（QD-02 / h33 那一族）。
+     * ⚠️ 它们<b>不在</b>「核心四项」的历史口径里，但<b>行为上</b>与那四项同类（都改变画面），
+     * 故归入 core 判定而不是 drive 判定。
+     *
+     * <p>🔖 单独成方法而不是留在事件体里：判据「哪几项算核心」是这一段里
+     * <b>最该被一眼看全</b>的东西，混在事件体的多分支里必然被后来人漏看。
+     */
+    private static boolean coreChanged(@Nullable Snapshot previous, Snapshot current) {
+        if (previous == null) {
+            return true;
+        }
+        return previous.enabled() != current.enabled()
+                || previous.debugLog() != current.debugLog()
+                || !Objects.equals(previous.packProfile(), current.packProfile())
+                || !Objects.equals(previous.shaderPack(), current.shaderPack())
+                || previous.capabilityGate() != current.capabilityGate()
+                || !Objects.equals(previous.optionOverrides(), current.optionOverrides());
+    }
+
+    /** 屏幕驱动分支（{@code packOptionsScreen} 边沿）：解析 → 自报 → 执行（挪渲染线程）。 */
+    private static void runScreenDrive(Snapshot current, @Nullable Minecraft minecraft) {
+        ScreenDriveCommand command = ScreenDriveCommand.parse(current.packOptionsScreen());
+        VkDisp.LOGGER.info("vkdisp: pack options screen drive: raw='{}' -> {}",
+                current.packOptionsScreen(), describe(command));
+        if (command instanceof ScreenDriveCommand.Malformed malformed) {
+            VkDisp.LOGGER.warn("vkdisp: pack options screen drive rejected: {}（{}）",
+                    malformed.raw(), malformed.reason());
+        } else if (minecraft != null) {
+            minecraft.execute(() -> PackOptionsDrive.run(minecraft, command));
         }
     }
 
@@ -291,12 +320,15 @@ public final class VkDispConfigHotReload {
     }
 
     /** 当前配置快照。 */
-    private static Snapshot snapshot() {        return new Snapshot(
+    private static Snapshot snapshot() {
+        return new Snapshot(
                 VkDispConfig.ENABLED.get(),
                 VkDispConfig.DEBUG_LOG.get(),
                 VkDispConfig.PACK_PROFILE.get(),
                 VkDispConfig.SHADER_PACK.get(),
-                VkDispConfig.PACK_OPTIONS_SCREEN.get());
+                VkDispConfig.PACK_OPTIONS_SCREEN.get(),
+                VkDispConfig.CAPABILITY_GATE.get(),
+                VkDispConfig.OPTION_OVERRIDES.get());
     }
 
     /** drive INFO 的动作摘要（与解析结果一一对应，坏输入也可见原文）。 */
