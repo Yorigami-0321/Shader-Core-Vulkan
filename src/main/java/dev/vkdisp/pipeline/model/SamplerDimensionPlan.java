@@ -219,30 +219,58 @@ public final class SamplerDimensionPlan {
         return new Plan(bindings, warnings);
     }
 
+    /**
+     * 名字规则（只选**来源**）。
+     *
+     * <p>🔖 <b>为什么它只能选来源、不能选维度</b>：GAP-012 的核心主张是
+     * 「维度来自**声明的类型**」。旧实现让名字无条件压过类型，
+     * 于是 `sampler3D shadowtex0` 会被喂一张 2D 深度图 —— 正是同一个 bug。
+     * 现在 {@link #declaredNon2D} 先把非 2D 声明挡在门外。
+     *
+     * @return 命中的绑定；未命中返回 {@code null}（由调用方走类型路径）
+     */
+    private static Binding byName(String name, String type) {
+        return switch (name) {
+            // texture_0 恒为方块图集；specular/normals 是 LabPBR 那对 atlas；
+            // shadowtex* 是阴影贴图；shadowcolor0 是阴影颜色贴图。
+            case "texture_0", "texture", "tex" ->
+                    new Binding(name, type, ViewKind.ATLAS_2D, "方块图集（真值）");
+            case "specular", "normals" ->
+                    new Binding(name, type, ViewKind.NEUTRAL_MATERIAL_2D,
+                            "包要的逐方块材质贴图集本引擎没有 ⇒ 绑乘法单位元（GAP-009）");
+            case "shadowtex", "shadowtex0", "shadowtex1" ->
+                    new Binding(name, type, ViewKind.SHADOW_DEPTH_2D,
+                            "绑专用 1x1 D32 桩（**不得**绑本 pass 的读写深度附件：Vulkan UB）");
+            case "shadowcolor0" ->
+                    new Binding(name, type, ViewKind.SHADOW_COLOR_2D, "绑专用 1x1 RGBA8 桩");
+            default -> null;
+        };
+    }
+
+    /**
+     * 声明的类型是否蕴含**非 2D** 维度（h39）。
+     *
+     * <p>🔖 裸 `sampler`（无后缀）返回 {@code false}：维度未知时不猜（X9），
+     * 但也不因此剥夺名字规则 —— 既有行为保持不变。
+     */
+    private static boolean declaredNon2D(String name, String declaredType) {
+        String n = declaredType == null ? "" : declaredType.toLowerCase(Locale.ROOT);
+        return n.equals("sampler3d")
+                || n.startsWith("sampler2darray")
+                || n.startsWith("samplercube");
+    }
+
     /** 单个 sampler 的决策（纯函数；包级可见便于单测逐条断言）。 */
     static Binding decide(String name, String declaredType, List<String> warnings) {
         String type = declaredType == null ? "" : declaredType;
         String normalized = type.toLowerCase(Locale.ROOT);
-        // 🔖 名字优先于维度：这几类语义是**包的约定**（texture_0 恒为方块图集，
-        //   specular/normals 是 LabPBR 那对 atlas，shadowtex* 是阴影贴图），
-        //   它们全都是 2D ⇒ 先按名字定，再对没命中的按维度兜底。
-        switch (name) {
-            case "texture_0", "texture", "tex" -> {
-                return new Binding(name, type, ViewKind.ATLAS_2D, "方块图集（真值）");
-            }
-            case "specular", "normals" -> {
-                return new Binding(name, type, ViewKind.NEUTRAL_MATERIAL_2D,
-                        "包要的逐方块材质贴图集本引擎没有 ⇒ 绑乘法单位元（GAP-009）");
-            }
-            case "shadowtex", "shadowtex0", "shadowtex1" -> {
-                return new Binding(name, type, ViewKind.SHADOW_DEPTH_2D,
-                        "绑专用 1x1 D32 桩（**不得**绑本 pass 的读写深度附件：Vulkan UB）");
-            }
-            case "shadowcolor0" -> {
-                return new Binding(name, type, ViewKind.SHADOW_COLOR_2D, "绑专用 1x1 RGBA8 桩");
-            }
-            default -> {
-                // 未命名规则 ⇒ 按声明的类型决定维度。
+        // 🔖 名字只选**来源**；**声明类型约束维度**（h39）。
+        //   非 2D 声明不走名字规则 ⇒ 直接落类型路径，由它决定。
+        //   （裸 sampler 与 2D 声明仍走名字规则，维持既有行为。）
+        if (!declaredNon2D(name, declaredType)) {
+            Binding byName = byName(name, type);
+            if (byName != null) {
+                return byName;
             }
         }
         // 🔴 本轮的核心修复：维度来自**声明的类型**。

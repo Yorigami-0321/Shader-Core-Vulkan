@@ -213,4 +213,57 @@ class SamplerDimensionPlanTest {
         assertTrue(plan.summary().contains("UNSUPPORTED=2"), plan.summary());
         assertTrue(SamplerDimensionPlan.describe(plan).contains("warnings="));
     }
+
+    // ── h39：名字只选来源，声明类型约束维度 ───────────────────────────────
+
+    @Test
+    @DisplayName("🔖🔖 h39：名字**不得**压过非 2D 的声明类型（sampler3D shadowtex0 是 GAP-012 同类 bug）")
+    void nameRuleMustNotOverrideNon2DDeclaredType() {
+        // 旧实现会让名字无条件生效 ⇒ 一张 2D 深度图被喂给 sampler3D = 描述符类型不匹配。
+        SamplerDimensionPlan.Plan plan = SamplerDimensionPlan.fromDeclaredTypes(
+                Map.of("shadowtex0", "sampler3D"));
+        assertEquals(SamplerDimensionPlan.ViewKind.VOLUME_3D, plan.kindOf("shadowtex0"),
+                "sampler3D shadowtex0 必须落到 3D 决策路径，而不是被名字规则塞一张 2D 深度桩");
+    }
+
+    @Test
+    @DisplayName("🔖🔖 h39：cube 声明同样不得被名字规则救回来（宁可响亮失败）")
+    void nameRuleMustNotRescueCubeDeclaration() {
+        SamplerDimensionPlan.Plan plan = SamplerDimensionPlan.fromDeclaredTypes(
+                Map.of("texture_0", "samplerCube", "shadowcolor0", "samplerCubeShadow"));
+        assertEquals(SamplerDimensionPlan.ViewKind.UNSUPPORTED, plan.kindOf("texture_0"),
+                "samplerCube texture_0 必须按 cube 处理（UNSUPPORTED），"
+                        + "不能因为名字是 texture_0 就绑方块图集");
+        assertEquals(SamplerDimensionPlan.ViewKind.UNSUPPORTED, plan.kindOf("shadowcolor0"),
+                "samplerCubeShadow 同样不得被名字规则绑成 RGBA 桩");
+    }
+
+    @Test
+    @DisplayName("🔖 h39：2D 声明与裸 sampler 的既有行为**不变**（名字规则照常生效）")
+    void twoDAndBareDeclarationsKeepNameRule() {
+        SamplerDimensionPlan.Plan plan = SamplerDimensionPlan.fromDeclaredTypes(
+                Map.of("shadowtex0", "sampler2DShadow",
+                        "shadowtex1", "sampler2D",
+                        "texture_0", "sampler",
+                        "specular", "sampler2D"));
+        assertEquals(SamplerDimensionPlan.ViewKind.SHADOW_DEPTH_2D, plan.kindOf("shadowtex0"),
+                "sampler2DShadow shadowtex0 仍绑 1x1 D32 深度桩（Vulkan 允许非比较方式采样深度图）");
+        assertEquals(SamplerDimensionPlan.ViewKind.SHADOW_DEPTH_2D, plan.kindOf("shadowtex1"),
+                "sampler2D shadowtex1 同样走深度桩：阴影贴图**本就是**深度纹理，"
+                        + "按 OF 语义而不是按 GLSL 后缀改语义");
+        assertEquals(SamplerDimensionPlan.ViewKind.ATLAS_2D, plan.kindOf("texture_0"),
+                "裸 sampler（维度未知）不该被剥夺名字规则 —— 不猜维度（X9）但也不改既有行为");
+        assertEquals(SamplerDimensionPlan.ViewKind.NEUTRAL_MATERIAL_2D, plan.kindOf("specular"));
+    }
+
+    @Test
+    @DisplayName("🔖 h39：2DArray 声明走类型路径（不靠名字），行为与旧实现一致")
+    void arrayDeclarationGoesThroughTypePath() {
+        SamplerDimensionPlan.Plan plan = SamplerDimensionPlan.fromDeclaredTypes(
+                Map.of("texture_0", "sampler2DArray"));
+        assertEquals(SamplerDimensionPlan.ViewKind.PLACEHOLDER_2D, plan.kindOf("texture_0"),
+                "sampler2DArray 目前仍落 PLACEHOLDER_2D（与旧实现同值）；"
+                        + "是否该改成 UNSUPPORTED 属独立决策（GAP-014 已证实原版不能建数组纹理，"
+                        + "但改动会让用到它的包整条地形不渲染）");
+    }
 }
