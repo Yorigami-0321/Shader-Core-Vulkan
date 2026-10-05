@@ -244,6 +244,23 @@ IllegalStateException: Close the existing render pass before performing addition
 
 ---
 
+### GAP-015 · 🔴 原版**没有「比较采样器」能力** ⇒ `sampler2DShadow` 无法类型匹配绑定（**2026-10-05 新登记**）
+
+| 项 | 内容 |
+|---|---|
+| **需求来源** | GAP-012 的**同类问题再次出现**：这次不是「3D 视图喂给 sampler3D」，而是「**非比较**采样器喂给 `sampler2DShadow`」 |
+| **原版现状（源码级核实，`h38`）** | 从 `minecraft-patched-26.3.0.41-beta.jar` 逐类反汇编：<br>① `GpuDevice` 只有**一个**工厂 `createSampler(AddressMode, AddressMode, FilterMode, FilterMode, int, OptionalDouble)` —— **签名里没有 `CompareOp`**；<br>② `SamplerCache.getClampToEdge(FilterMode, boolean)` 的那个 `boolean`，经 `LocalVariableTable` 核实是 **`useMipmaps`**，**不是** `compare`。<br>⇒ **拿不到 `VkCompareOp != NONE` 的采样器** |
+| **触发条件** | BSL v10.1.8 把 `shadowtex0` / `shadowtex1` 声明为 `sampler2DShadow`（全包扫出 `sampler2DShadow` 3 个名字）；实测本包地形程序的绑定摘要是 `SHADOW_DEPTH_2D=2` ⇒ **每种配置都在** |
+| **为什么是 UB** | Vulkan 里 `sampler2DShadow` 要求描述符带**比较**采样器；喂非比较采样器 = 描述符类型不匹配 = **未定义行为**（与 GAP-012 同族）。且本机**无 validation layer**（`h37` §八：全盘搜到的三个 `VkLayer_khronos_validation` **全是 Windows `.dll`**）⇒ **不报错** |
+| **当前做法与取舍** | **照样绑**（深度视图 + 非比较采样器），并打**一次性** WARN 说清「阴影项结果不可信」。<br>🔖 **为什么不学 GAP-012/014 那样「不绑 + 报错」**：那两条的对象（`sampler3D` / cube）在本包**地形程序里是 0 条**，不绑不影响渲染；而 `shadowtex0/1` **每种配置都在**，不绑 ⇒ 每个用阴影的包 draw 抛 `Missing uniform` ⇒ **地形整条不渲染**。按支柱①（兼容优先），「画面里阴影不可信」优于「地形完全不画」 |
+| **影响面** | `bridge/TerrainPipelineApi`（一次性说明）+ `pipeline/model/SamplerDimensionPlan`（`shadowtex*` 目前**按名字**而非按类型分类，见下） |
+| **开关** | 无独立开关（**做不出**正确的绑定；做成可关只会把「阴影不可信」换成「地形不渲染」） |
+| **回退条件** | 原版 `GpuDevice` 增加带 `CompareOp` 的采样器工厂 ⇒ 改绑比较采样器，决策层不动 |
+| **状态** | 🟡 **已登记并明示**（`h38`：一次性 WARN + 守卫测试） |
+| **⚠️ 顺带发现** | `SamplerDimensionPlan` 对 `shadowtex*` 是**按名字**分类（注释原文「它们全都是 2D ⇒ 先按名字定」），**没有**走它自己那条「按声明类型定维度」的规则。这与 GAP-012 修复的初衷不一致，已登记为待改项（改它会让「声明成 `sampler2D` 的 shadowtex」拿到 RGBA 桩而不是深度桩，属独立一轮） |
+
+---
+
 ---
 
 ## 2. 字段说明
