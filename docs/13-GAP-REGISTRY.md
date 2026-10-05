@@ -196,7 +196,7 @@ IllegalStateException: Close the existing render pass before performing addition
 | **影响面** | `pipeline/model/SamplerDimensionPlan`（新）+ `bridge/VolumeStubs`（新）+ `bridge/TerrainPipelineApi` |
 | **开关** | 无独立开关（正确路径即默认；A/B 逃生舱是 `mrt.shadowStubs`，本条不受它影响） |
 | **回退条件** | 原版提供类型正确的 3D 纹理视图（如真正的体积光照贴图）⇒ 换绑定源，决策层不动 |
-| **状态** | 🟢 **已修**（`h32`，2026-10-05：纯逻辑单测 15 条；**runClient 未跑** ⇒ 待补客户端取证） |
+| **状态** | 🟢 **已修**（`h32`，2026-10-05：纯逻辑单测 15 条）。⚠️ **`h33` 实测发现该修法的前提不成立** —— 原版 26.3 **建不出 3D 纹理**，3D 桩不可达；本条已由 **GAP-014** 接管，并连带更正本条目「4 个 `sampler3D`」（实为 **3** 个）与 `h32` §6.1 的 `VOLUME_3D=4` 判据（实为 **0**，且不可达） |
 | **⚠️ 明确不承诺** | 包基于体积光照的**体积光 / 体积 AO 效果在本引擎上不成立**（无真资源，且按 GAP-009 裁决不打包第三方光照/材质资产）。这比「喂 2D 图集」诚实 —— 后者可能碰巧「看起来有东西」，换驱动就变 |
 
 ### GAP-013 · 🔴 诊断清屏色泄漏进用户画面（**2026-10-05 已修**）
@@ -210,8 +210,27 @@ IllegalStateException: Close the existing render pass before performing addition
 | **保留可诊断性的另一半** | 生产模式打**一次** INFO 明说「天空黑是**预期行为，不是故障**」（此前是纯绿 = 诊断色泄漏，见 `h27b §六`）。不这么做，取证者会把「设计如此」误读成「又坏了」 |
 | **影响面** | `pipeline/model/TerrainSlotClear`（新）+ `bridge/MrtTerrainPass`（`diagnosticClear` 移除，改为模式决策） |
 | **开关** | `mrt.slotDiagnosticClear`（A/B 逃生舱，**默认关**；开启即 WARN 自报「若本帧进了用户画面会呈现假色天空」） |
-| **状态** | 🟢 **已修**（`h32`，2026-10-05：单测 10 条；**runClient 未跑** ⇒ 待补客户端取证） |
+| **状态** | 🟢 **已修**（`h32`，2026-10-05：单测 10 条）。✅ **`h33` 已补齐 runClient 取证**：A 组（`mrt.enabled=true`）天空带平均 RGB `(35.9, 236.5, 35.7)`、偏绿像素 **79.01%**；B 组（`mrt.enabled=false`）`(44.0, 43.2, 44.2)`、偏绿 **0.00%** ⇒ 判据「默认打 NEUTRAL 一次、天空黑不是绿」**达成** |
 | **⚠️ 仍不承诺** | **黑天空本身仍未修**，且**不是**本条能修的：正确的天空要由包的 gbuffer 程序去画 ⇒ 属 **M-04（未做）**。零值只是「不含假信息」（黑不骗人；纯绿会让用户以为本项目画了绿天） |
+
+### GAP-014 · 🔴 原版 26.3 不支持 3D / 数组纹理（**2026-10-05 已登记并绕开**）
+
+| 项 | 内容 |
+|---|---|
+| **需求来源** | GAP-012 的**修法被原版能力直接否掉**：那条的方案是「给 `sampler3D` 绑一个类型匹配的 3D 桩」，而桩本身建不出来 |
+| **原版现状（字节码级核实）** | `com.mojang.renderpearl.frontend.FrontendGpuDevice#verifyTextureCreationArgs`：`depthOrLayers > 1` 且非 cube 数组 ⇒ **无条件** `throw UnsupportedOperationException("Array or 3D textures are not yet supported")`；cube 数组 `depthOrLayers > 6` ⇒ `"Array textures are not yet supported"`。🔖 该类在 `frontend`（**前后端共用层**）⇒ **与 OpenGL/Vulkan 后端无关**，不是环境现象 |
+| **实测来源** | `h33`（2026-10-05，MCP 驱动 runClient）：`VolumeStubs.ensure` 首行即抛，整条地形 MRT pass 每帧失败 1940 次 |
+| **补充方案** | **不做补充**（无法补）。改为：`VolumeStubs.init()` 探测并**记录**失败（不再抛、不再每帧重试）；`view()` 返回 `null` ⇒ 沿用 GAP-012 已定的「**不绑 + ERROR** ⇒ draw 抛 `Missing uniform`」响亮失败路径 |
+| **为什么不喂 2D 图集** | 那正是 GAP-012 要消灭的 UB（描述符类型不匹配，且无 validation layer ⇒ 不报错） |
+| **为什么不删掉这些 sampler** | 布局多于 SPIR-V 无害；删掉会让「包声明了它」不可见（可诊断性损失） |
+| **影响面** | `bridge/VolumeStubs`（探测 + 按需报错）+ `bridge/MrtTerrainPass`（`ensureTargets` 去级联，见 `h33` §三） |
+| **开关** | 无独立开关（能力缺失无法开关；A/B 逃生舱仍是 `mrt.shadowStubs`） |
+| **回退条件** | 原版放开 3D / 数组纹理创建（`FrontendGpuDevice` 对 `depthOrLayers > 1` 不再抛）⇒ 改回绑定真 3D 桩，决策层不动 |
+| **状态** | 🟡 **已登记并按「不绑定 + 响亮失败」处理**（`h33`；runClient 三组取证，C 组该分支未被触发 ⇒ 因包未声明） |
+| **⚠️ 明确不承诺** | 依赖体积光照 / 体素数据的**包特效在本引擎上不成立**。BSL v10.1.8 全包实测有 **3 个** `sampler3D`（`lighttex0` / `lighttex1` / `voxeltex`，**没有**无下标的 `lighttex` —— 更正 GAP-012 条目里的「4 个」），且它们**不在 `gbuffers_terrain` 的采样器里**（该文件自身 `uniform samplerXX` 数为 0）⇒ 本条在 BSL 地形路径上**不会**被触发 |
+| **🔖 连带更正** | GAP-012 `h32` §6.1 写的验收判据「应出现 `VOLUME_3D=4`」**不可达且前提错误**（假定原版能建 3D 纹理）。实际 `by dimension` 里 `VOLUME_3D` 为 **0** —— 这本身就是本条的结论，不是「没跑到」 |
+
+---
 
 ---
 

@@ -4,6 +4,91 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-05（五十六）— 🔴🔴 MCP 驱动 runClient：抓到 1 个 P0 回归 + 2 个真缺陷，全部修掉
+
+> **verdict = 上一轮（`h32`）的三个 commit 里有一个让整条地形 MRT pass 每帧死掉的回归；
+> 本轮靠 runClient 抓到并修掉，另修一个「静默失效」的死开关 + 一个日志刷屏问题。
+> 783 条单测全绿 + runClient 三组 A/B 取证（C 组除环境事实外零 ERROR）。**
+> 证据：`evidence/h33-mcp-driven-runclient-three-defects.md`（含 4 张 MCP 截图与像素级判据）。
+> 任务来源 = 用户指令「用 MCP 驱动游戏进行测试验证。先拉取最新的推送，再进行开发」。
+
+- **🔴🔴 本轮最重要的产出不是新功能，而是这个事实**：
+  `h32` 的三项改动**从未跑过 runClient**（当时由用户协助），
+  而其中 `273b94a`（GAP-012 的 3D 桩）**建不出来** ——
+  原版 26.3 对 `depthOrLayers > 1` **无条件**抛
+  `UnsupportedOperationException: Array or 3D textures are not yet supported`。
+  它在 `ensureTargets` 里抛 ⇒ **把创建 `atlasSampler` 的那一步整个跳过**
+  ⇒ `atlasSampler` 永远 `null` ⇒ 每帧 `setUniform(name, view, null)`
+  ⇒ 实测一次运行 **1940 条 pass 失败 + 2702 条 setUniform 异常**。
+  **拉取前 pass 能跑（带一处静默 UB），拉取后 pass 完全不可用。**
+
+- **轮一 · GAP-014（原版无 3D / 数组纹理能力）—— 新登记**
+  - 从 `minecraft-patched-26.3.0.41-beta.jar` 抽 `FrontendGpuDevice.class` **逐字节码核实**
+    （`javap -p -c`）⇒ 抛点在 `com.mojang.renderpearl.frontend` = **前后端共用层**
+    ⇒ **与 OpenGL/Vulkan 后端无关**，不是本机环境现象
+  - `VolumeStubs`：`init()` 改为**探测 + 记录**（不再抛、不再每帧重试）；
+    `view()` 返回 `null` ⇒ 沿用 GAP-012 已定的「**不绑 + ERROR**」响亮失败路径
+  - 🔖 **一处自我纠正**：第一版把 ERROR 放在「探测到不支持」时报 ⇒ 实测发现
+    **包根本没用到 sampler3D 也会吵**（`init()` 无条件调）
+    ⇒ 改成**按需求**（`view()` 真被调用才报），只报一次
+
+- **轮二 · `ensureTargets` 的级联：一个 sampler 的问题炸掉了整个 pass**
+  - 根因定位到**行号**：`colortex` 在第 468 行已赋值，`atlasSampler` 在**第 484 行**（抛点下一行）
+  - 下一帧 early-return 只看 `colortex != null` ⇒ **半初始化被当成已初始化** ⇒ 永不补建
+  - 拆成四个互相独立的 ensure（`ensureColortex` / `ensureShadowStubs` / `VolumeStubs.init` /
+    `ensureAtlasSampler`），采样器改为**每帧幂等兜底**
+  - 加一道**可定位的停机点**（`atlasSamplerReady()`）——
+    否则症状是看不出根因的 `textureView and sampler must both or neither be null`
+
+- **轮三 · 能力门控是**死开关**（静默失效，与已闭环的 QD-02 同族）**
+  - `PackCapabilityGateSwitch` 反射时用的是**配置键名** `pack.capabilityGate`，
+    而真实 **Java 字段名**是 `CAPABILITY_GATE` ⇒ 每次 `NoSuchFieldException`
+    ⇒ 被 `catch (Throwable)` 吞掉 ⇒ **恒返回默认关**
+  - 实测原文：配置写 `capabilityGate = true`，日志打「（pack.capabilityGate=false）」
+  - 修法：拆出独立 `FIELD_NAME`；`NoSuchFieldException` **单独捕获**并走可见报错路径
+  - 🔖 **被单测抓出来的自身错误**：本来打算在开关类里直接打日志，
+    结果**单测 classpath 上没有 slf4j**（`PackBooleanOptionTest` 炸成
+    `NoClassDefFoundError: org/slf4j/LoggerFactory`）
+    ⇒ 改为「记录原因 + `reflectionFailure()`」，由 `PackTerrainSource` 走既有
+    `TranslateDiagnostic` 管道输出。**诊断手段不该把无关测试拖挂。**
+
+- **附带修**：渲染期重复 ERROR 节流（实测 2702 行 / 次 → 1 行）。
+  与 `h25` 的 M-01 埋点 600→250000 是**同一课**：热路径上的无节流日志会把 I/O 变瓶颈。
+
+- **✅ 三组 runClient 取证（A/B/C）**
+  | 组 | `pack.capabilityGate` | `mrt.enabled` | 结果 |
+  |---|---|---|---|
+  | A | `true` | `true` | 门控真的生效：`CAPABILITY_GATE_APPLIED`×18、关掉 **9 个**包特性、输出槽位 **8→1** |
+  | B | `false` | `false` | `terrain slot clear = NEUTRAL`；天空偏绿像素 **79.01%(A) → 0.00%(B)** |
+  | C | `false` | `false` | **除环境事实外零 ERROR**；`pass frames=600`、pass 失败 **0** 条 |
+
+  🔖 **A 组顺带正面回答了 GAP-008 / GAP-009**：`ADVANCED_MATERIALS` 被门控关掉后，
+  地形**可见且有光照**，不是纯黑剪影。
+
+- **🔖 对 `h32` 的两处事实更正**（不沿用）
+  1. BSL v10.1.8 的 `sampler3D` 是 **3 个**（`lighttex0`/`lighttex1`/`voxeltex`），
+     **没有**无下标的 `lighttex` —— `h32` 写「4 个」。
+  2. `h32` §6.1 的验收判据「应出现 `VOLUME_3D=4`」**不可达且前提错误**：
+     那 3 个都不在 `gbuffers_terrain` 的采样器里（该文件自身 `uniform samplerXX` 数为 0），
+     且原版根本建不出 3D 纹理 ⇒ 实际 **`VOLUME_3D` 为 0**。
+
+- **🔴 环境事实登记**：本机 WSL2 **无 Vulkan ICD**（`libvulkan.so.1` 缺失）⇒ 客户端跑在
+  **OpenGL** 后端 ⇒ `P0.2` 断言失败。按 `07` X42，**本轮任何 Vulkan 专属结论都不可在本机验证**；
+  已如实登记，未把「OpenGL 上成立」写成「Vulkan 上成立」。
+  🔖 本轮修的三条里，D1 来自原版 API 字节码、D2/D3 是纯逻辑/资源生命周期，**均与后端无关**。
+
+- **同步的文档**：`13-GAP-REGISTRY` 新增 **GAP-014** 完整条目 + GAP-012/013 状态补上 `h33` 取证；
+  `evidence/h33-…` 全新（含 4 张 MCP 截图 + 像素级判据 + 三份复算命令）。**`CHANGE_LOG.md` 本条。**
+
+- **一轮内的三次测试失败，全部是本轮引入的，已全部修掉**
+  | 失败 | 根因 | 性质 |
+  |---|---|---|
+  | 开关测试 2 条 | 单测 classpath 无 slf4j，诊断类自己打日志炸了无关测试 | 🔴 **真 bug**（诊断手段拖挂测试） |
+  | 开关测试 1 条 | 我自己的注释里写了被断言的字面量 | 🟡 测试写法问题（改为只看非注释行） |
+  | 守卫测试 1 条 | 报错时机写成「探测即报」，实测是噪声 | 🔴 **真设计问题**（改为按需求报） |
+
+- **是否已提交**：见本次提交（一个功能一个 commit；**不带任何 trailer**）。
+
 ## 2026-10-05（五十五）— 🔴 连续三轮功能开发：GAP-009 能力门控落地 + sampler3D 维度 UB 修复 + 诊断色泄漏修复
 
 > **verdict = 主源码编译通过 + 单测全绿 + 文档同步。三项都是「修掉真实缺陷」而非「加新功能」，
