@@ -73,7 +73,8 @@
   我方池只有 mip0 ⇒ 下一个自行补充项 = colortex 池 mip 链（GAP-017 候选，未动手不登记完成）。
   产品级修复：地形片元 albedo 行随 `mrt.terrainAtlasLod0` 转正为显式 mip0（守卫：只动一行，否则 ERROR 自报）。
 
-- **🔴 本轮没做 / 不承诺**：colortex mip 链（上条新登记）；
+- **🔴 本轮没做 / 不承诺**：colortex mip 链（GAP-017 已登记，**止血 `maxLod=0` 经 K 臂实测证伪**
+  —— 白是 BloomTile 八级 tap 全落 mip0 的必然抬升，不是驱动未定义；修根 = 渲染金字塔，方案已写进登记表）；
   GAP-016 的根因（图集 mip 链内容 vs lavapipe 导数路径 —— 按 mip 回读判据已备好）；
   shadow 真贴图进链（GAP-015 语义不变）；非地形的 gbuffers_*（water/entities/sky/hand…）；
   三段 texture 键；TAA 需要的 `gbufferPrevious*`；validation layer 仍无 ⇒ 按 X35 不说

@@ -1110,7 +1110,16 @@ public final class FrameApi {
         java.util.Map<String, Object> builtinsValues = OfUniformManager.gather(
                 Minecraft.getInstance(), width, height, blockAtlasSize(), lightSpaceList());
 
-        GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+        // 🔴 GAP-017 止血：链上的采样一律钳 maxLod=0。引擎还给不出 colortex 的真实 mip 链
+        //   （CommandEncoder 无 generateMips，逐类核实过），而 BSL 有 6 个后处理程序按
+        //   `colortexNMipmapEnabled` 做高 LOD 采样 —— 不钳就是驱动未定义行为
+        //   （h46 I/J 实测：composite4 的 BloomTile 把 bloom 打成全白 251.7）。
+        //   钳后 bloom = 同图多偏移 taps 的有界近似，**不承诺观感正确**（修根判据见登记表）。
+        GpuSampler sampler = RenderSystem.getDevice().createSampler(
+                com.mojang.renderpearl.api.textures.AddressMode.CLAMP_TO_EDGE,
+                com.mojang.renderpearl.api.textures.AddressMode.CLAMP_TO_EDGE,
+                FilterMode.LINEAR, FilterMode.LINEAR, 1,
+                java.util.OptionalDouble.of(0.0));
         GpuTextureView sceneView = SceneCaptureApi.hasScene() ? SceneCaptureApi.sceneColorView() : null;
         // InSampler（OF 语义 = 场景色）：链模式采不到 colortex 时才回 scene。
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
