@@ -702,6 +702,29 @@ public final class TerrainPipelineApi {
             for (String warning : dimensionPlan.warnings()) {
                 VkDisp.LOGGER.warn("vkdisp: [GAP-003] sampler plan: {}", warning);
             }
+            // 🔴🔴 GAP-015（h38 源码级核实）：**本引擎没有「比较采样器」这个能力**。
+            //   已从 minecraft-patched-26.3.0.41-beta.jar 逐类核实：
+            //   · GpuDevice 只有**一个** createSampler(AddressMode, AddressMode,
+            //     FilterMode, FilterMode, int, OptionalDouble) —— **没有 CompareOp 参数**；
+            //   · SamplerCache.getClampToEdge(FilterMode, boolean) 那个 boolean
+            //     经 LocalVariableTable 核实是 **useMipmaps**，**不是** compare。
+            //   ⇒ 拿不到 VkCompareOp 不为 NONE 的采样器。
+            //   而包把 shadowtex0/1 声明为 **sampler2DShadow**（要比较采样器）
+            //   ⇒ 只能绑**非比较**采样器 ⇒ 描述符类型不匹配 = **Vulkan 未定义行为**。
+            //   🔖 为什么**照样绑**、不学 GAP-012/014 那样「不绑 + 报错」：
+            //   那两条的对象（sampler3D / cube）在本包的**地形程序里是 0 条**，
+            //   不绑不影响渲染；而 shadowtex0/1 **每种配置都在（实测 SHADOW_DEPTH_2D=2）**，
+            //   不绑 ⇒ 每个用阴影的包 draw 直接抛 Missing uniform ⇒ 地形整条不渲染。
+            //   在支柱①（兼容优先）下「画面里阴影不可信」优于「地形完全不画」。
+            //   ⇒ 但**绝不沉默**：这条一次性说明让取证者不会把阴影结果当成可信数据。
+            VkDisp.LOGGER.warn(
+                    "vkdisp: [GAP-015] shadowtex* 是 sampler2DShadow（比较采样器），"
+                            + "而本引擎**建不出比较采样器**（GpuDevice 无 CompareOp 重载，"
+                            + "SamplerCache 的 boolean 是 useMipmaps 不是 compare）"
+                            + " ⇒ 当前绑的是**非比较**采样器 = 描述符类型不匹配 = Vulkan UB。"
+                            + " 后果限定为：**阴影项的结果不可信**（不是崩溃、不是全黑）；"
+                            + "地形本身仍会画。不绑则会让每个用阴影的包整条地形不渲染，"
+                            + "按兼容优先故保留绑定。正确修法需要原版提供比较采样器。");
         }
     }
 
