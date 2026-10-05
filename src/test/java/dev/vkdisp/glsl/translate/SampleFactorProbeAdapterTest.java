@@ -27,6 +27,8 @@ class SampleFactorProbeAdapterTest {
     void reset() {
         SampleFactorProbeAdapter.setForceSample(false);
         SampleFactorProbeAdapter.setForceMultiplier(false);
+        SampleFactorProbeAdapter.setForceCoordOut(false);
+        SampleFactorProbeAdapter.setForceLodZero(false);
     }
 
     private static String wrap(String body) {
@@ -178,5 +180,65 @@ class SampleFactorProbeAdapterTest {
                 SampleFactorProbeAdapter.apply(ShaderStage.VERTEX, source);
         assertEquals(source, result.text());
         assertEquals(0, result.patched());
+    }
+
+    @Test
+    @DisplayName("🔬 坐标输出档：右值整行换成 vec4(<采样坐标>,0,1)，坐标取自采样调用的第二个顶层实参")
+    void coordOutRewritesWholeRightValue() {
+        SampleFactorProbeAdapter.setForceCoordOut(true);
+        SampleFactorProbeAdapter.Result result =
+                SampleFactorProbeAdapter.apply(ShaderStage.FRAGMENT,
+                        wrap(REAL_ALBEDO_LINE
+                                + "\n\talbedo = textureGrad(texture_0, newCoord, dcdx, dcdy) * vec4(color.rgb, 1.0);"));
+        // 第一行（texture2D 两参）坐标 = texCoord
+        assertTrue(result.text().contains("vec4 albedo = vec4(texCoord, 0.0, 1.0);"),
+                "两参采样必须取第二实参作坐标并换掉整个右值");
+        // 第二行（textureGrad 四参）顶层第二实参 = newCoord（不能被误取成 dcdx）
+        assertTrue(result.text().contains("vec4(texCoord, 0.0, 1.0)"), "两参行取 texCoord");
+        assertTrue(result.text().contains("albedo = vec4(newCoord, 0.0, 1.0);"),
+                "四参 textureGrad 必须按**顶层逗号**切分取 newCoord —— 取错就产出假坐标");
+        assertEquals(2, result.patchedCoordOut());
+        // 坐标档与左右互斥：同开时坐标优先并 WARN（不能悄悄只报命中数）
+        SampleFactorProbeAdapter.setForceSample(true);
+        SampleFactorProbeAdapter.Result clash =
+                SampleFactorProbeAdapter.apply(ShaderStage.FRAGMENT, wrap(REAL_ALBEDO_LINE));
+        assertEquals(0, clash.patchedSample(), "坐标档生效时左侧改写不得在同一条线上叠加");
+        assertTrue(clash.diagnostics().stream().anyMatch(d -> d.message().contains("坐标档优先")),
+                "互斥碰撞必须自报");
+    }
+
+    @Test
+    @DisplayName("🔬 显式 LOD0 档：texture(s,c) → textureLod(s,c,0.0)；三参以上与非采样部分逐字不动")
+    void lodZeroRewritesOnlyTwoArgSamples() {
+        SampleFactorProbeAdapter.setForceLodZero(true);
+        String source = wrap(REAL_ALBEDO_LINE
+                + "\n\tvec4 s2 = texture(texture_1, uv) * vec4(v.rgb, 1.0);");
+        SampleFactorProbeAdapter.Result result =
+                SampleFactorProbeAdapter.apply(ShaderStage.FRAGMENT, source);
+        assertTrue(result.text().contains("textureLod(texture, texCoord, 0.0)")
+                        || result.text().contains("texture2DLod(texture, texCoord, 0.0)"),
+                "两参 texture 系采样必须换成显式 LOD0；实际: " + result.text());
+        assertTrue(result.text().contains("textureLod(texture_1, uv, 0.0)"),
+                "第二条两参采样同样处理");
+        assertTrue(result.text().contains("* vec4(color.rgb, 1.0)")
+                        || result.text().contains("* vec4(color.rgb, 1.0)"),
+                "乘子必须逐字保留（LOD0 档只动采样侧）");
+        assertEquals(2, result.patchedLodZero(), "自报计数必须等于命中数（两条线各一处）");
+    }
+
+    @Test
+    @DisplayName("🔬 坐标/LOD 档不得命中「左值不是采样调用」的乘法（沿用 h45 的 124 处教训）")
+    void newModesKeepScalarMultiplyUntouched() {
+        SampleFactorProbeAdapter.setForceCoordOut(true);
+        SampleFactorProbeAdapter.Result coord =
+                SampleFactorProbeAdapter.apply(ShaderStage.FRAGMENT,
+                        wrap("\tfloat f = a * b;" + REAL_ALBEDO_LINE));
+        assertTrue(coord.text().contains("float f = a * b;"), "标量乘法逐字保留");
+        SampleFactorProbeAdapter.setForceCoordOut(false);
+        SampleFactorProbeAdapter.setForceLodZero(true);
+        SampleFactorProbeAdapter.Result lod =
+                SampleFactorProbeAdapter.apply(ShaderStage.FRAGMENT,
+                        wrap("\tvec3 g = c * d;" + REAL_ALBEDO_LINE));
+        assertTrue(lod.text().contains("vec3 g = c * d;"), "无采样的行一律不动");
     }
 }

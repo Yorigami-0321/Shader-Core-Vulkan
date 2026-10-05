@@ -6,6 +6,70 @@
 ---
 ---
 
+## 2026-10-05（六十七）— 🔴 BSL 整条后处理链接入（colortex 按名接线）+ 内置 noisetex + GAP-008 决定性探针
+
+> **verdict = 「composite 只喂 scene、只跑三步」的时代结束**：deferred*→composite*→final
+> 全链进入引擎并在 **Vulkan 上真跑通**（BSL passes=11、40/40 管线编译对齐、逐帧执行自报）；
+> 用户点名的「FrameApi 的 packColor 从 scene 改采 colortex」成为链上的一个自然结果。
+> 🔴 **GAP-008 由 F 臂坐标探针判定：`texCoord` varying 被供成 (0,0)** —— 坐标链路，
+> 不是采样器/LOD。证据：evidence/h46-post-chain-integration.md。
+> 单测全绿（+45 条）；取证全程 Vulkan（lavapipe），按用户指令不做性能结论。
+
+- **✅ 整链的机制（此前没有任何东西保证链能建出来）**
+  - `pipeline/model/PostPassContract`：按转译终稿解析「该 pass 写哪些 colortex 槽 + 声明哪些 sampler」；
+  - `pipeline/model/PostOutputRenumber`：**colortex 槽号 → 附件下标**重编号
+    （Vulkan 的 location 是附件下标；地形 pass 因附件恰为前缀而掩盖了这个差别）；拒绝形态全部抛；
+  - `pack/PackPostChain`：OF 族序+序号整链（deferred*→composite*→final）、维度隔离、
+    超集闸门（`PostSamplerSuperset`，含 InSampler 豁免）；
+  - `VkDispVirtualPack`：16 个 `shaders/postK.fsh` 槽位资源（尾部 = passthrough）+ 每槽 builtins 布局；
+  - `PipelineApi`：16 条定宽（8 颜色目标）后处理管线 + 全量 sampler 绑定；
+    `FrameApi.drawPostChain`：**colortexN=池视图 / gaux1=colortex4 / depthtex=池深度 / shadow*=桩 /
+    自定义纹理优先**；未写槽挂 scratch ⇒「既作附件又作采样器」构造性不可能（h26 那族的机制封堵）；
+  - `FullscreenPassHook`：链模式时序 = **先地形 MRT 写 gbuffer，再跑链**（旧三步时代时序反了看不出来）。
+
+- **🔴 本轮自己抓到并修掉的真 bug（BSL 真包测试现形）**
+  - 多维度包同名程序**重复进链**：BSL 的 deferred 有 world-1/world0/world1 三条 ⇒ 链预算 16
+    被 5×3 吃光，**composite5..final 整体消失且没有任何一行报错**。按名去重修复。
+    🔖 与 h44「声明写哪些槽」同族：**「能建出来」不等于「建出来的是对的」**。
+
+- **✅ GAP-008 决定性探针 ×2（`mrt.terrainCoordOutProbe` / `mrt.terrainLodZeroProbe`）**
+  h45 把成因钉在 `texture(texture_0, texCoord)` 的返回值上，剩下二叉：
+  坐标落错（图集约 26% 是透明填充）vs 采样器/LOD 侧坏。
+  坐标档让 colortex0 直接携带 texCoord 数值（像素回读给数）；LOD 档把 `texture(s,c)` 换
+  `textureLod(s,c,0.0)`。两档各自单变量 + 命中自报（与左右探针互斥时坐标档优先并 WARN）。
+
+- **✅ GAP-009 素材线第一步：自定义纹理 + 内置 noisetex**
+  - `PackTextureBindings`（纯）：`texture.<sampler>=path` 两段键按名绑定；**三段键
+    （`texture.composite.colortex7`）语义未核实 ⇒ 不收并点名**（X9）；
+  - `bridge/PackTextures`：渲染线程、开 pass 前懒上传（NativeImage → TextureTarget +
+    writeToTexture），指纹比对换包重建；失败逐条 ERROR 回落显式占位；
+  - **内置 noisetex**（64×64 固定种子确定性噪声；OptiFine 公开 API 事实：引擎自带该采样器）
+    —— BSL 的 blue-noise 抖动/胶片颗粒自此有真值可采。
+
+- **🔴 本轮运行期暴露并当场修掉的三个真缺陷（证据 §三）**
+  1. 槽位管线**片元 id 形态**猜错（多带 `shaders/` 前缀）⇒ 16 条 required 管线
+     「Couldn't find source」；对照既有范本本可避免 —— **猜 id = X9**。
+  2. 超集缺 `depthtex2` ⇒ composite2/3 被闸门踢出。**闸门第一次真拦住了东西**，
+     行为正确、清单缺员。
+  3. VS 适配层 `vUv@0` 与契约 `texCoord@0` **location 重叠** ⇒ glslang 拒绝 ⇒
+     全部 16 条 required 管线编译失败、**整次资源重载被砸**（用户会看见）。
+     已按「契约占 0 就不输出 vUv」修复 + 3 条单测钉住。
+
+- **✅ 运行期取证（iso 车道，MCP 驱动被会话权限拦 ⇒ 走 h43 起的进程内探针通道）**
+  - E 臂（链基线）：`post chain executed: passes=11 first=deferred last=final`、
+    `pipeline count check: registered=40, compiled=40 (aligned)`、
+    `builtin noisetex created 64x64`、`custom texture loaded: sampler='noise' 512x512`。
+  - F 臂（坐标探针）：`colortex0` = vec4(texCoord,0,1) 实测 `meanRGB=(0,0,0) allZero=true`
+    ⇒ **texCoord ≡ (0,0)**（同帧 colortex3/6/7 正常 ⇒ 片元在产出）⇒
+    GAP-008 从「采样返回 0」再收窄为「**坐标 varying 供值为 0**」；采样器/LOD 侧排除。
+
+- **🔴 本轮没做 / 不承诺**：texCoord≡0 的再下一跳定位（属性 UV0 读 0/NaN vs location 衔接
+  丢值 —— 判据已设计，见证据 §F 臂后）；shadow 真贴图进链（GAP-015 语义不变）；
+  非地形的 gbuffers_*；三段 texture 键；TAA 需要的 `gbufferPrevious*`；
+  validation layer 仍无 ⇒ 按 X35 不说「无 validation error」；性能一律不下结论。
+
+- **是否已提交**：待测试段完成后随下条提交（**不带任何 trailer**）。
+
 ## 2026-10-05（六十六）— 像素回读探针 + 单变量 A/B 入口；并修掉它们各自暴露的三个真缺陷
 
 > **verdict = 两件新取证工具落地；GAP-008 在本机 Vulkan 上**没有**复现

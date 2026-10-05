@@ -500,6 +500,57 @@ public final class VkDispConfig {
                     + "变亮 ⇒ 原乘子为 0。不可与左侧探针同时开。")
             .define("mrt.terrainSampleFactorMultiplier", false);
 
+    /**
+     * 🔬 **坐标数值探针**（h45 §七 候选① 的直接判据）：把命中行的整个右值换成
+     * {@code vec4(<采样坐标>, 0.0, 1.0)} ⇒ colortex0 变成「texCoord 的可视化」。
+     *
+     * <p>🔖 <b>它回答什么</b>：h45 已把 albedo≡0 的成因钉在 {@code texture(texture_0, texCoord)}
+     * 的返回值上，剩下的分叉是「坐标落错」vs「采样器/纹理侧坏」—— 只有 h45 里约 26%
+     * 的图集透明填充这一种「坐标落错」形态，单看截图分不开。开本档后像素数字
+     * 直接携带坐标值（×255 量化）：读数 ≈ 0 ⇒ 坐标链路坏；读数 = 图集合理值 ⇒ 排除坐标。
+     *
+     * <p>🔴 与左右两侧探针同开时坐标档优先（适配器会 WARN，那条线只剩坐标证据）。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_COORD_OUT = BUILDER
+            .comment("诊断：把 albedo 行的右值换成 vec4(采样坐标,0,1)，让像素直接携带坐标数值"
+                    + "（默认关，单变量）。读数≈0 ⇒ 坐标链路坏；图集合理值 ⇒ 排除坐标侧。")
+            .define("mrt.terrainCoordOutProbe", false);
+
+    /**
+     * 🔬 **显式 LOD0 探针**（h45 §七 候选②）：把命中行的两参数 {@code texture(s, c)}
+     * 换成 {@code textureLod(s, c, 0.0)}，其余一概不动。
+     *
+     * <p>🔖 强线索（h45 §七）：{@code PARALLAX=true} 时同一采样器走 {@code textureGrad} 却非零，
+     * 而 {@code PARALLAX=false} 的裸 {@code texture()} 逐像素恰好 0 —— 两条采样路径只差
+     * 「显式梯度 vs 隐式导数」。开本档：非零 ⇒ 隐式导数选了坏 mip（LOD 侧坐实）；
+     * 仍零 ⇒ LOD 因素排除，只剩坐标/绑定。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_LOD_ZERO = BUILDER
+            .comment("诊断：把 albedo 行的 texture(s,c) 换成 textureLod(s,c,0.0)（默认关，单变量）。"
+                    + "非零 ⇒ 隐式导数选了坏 mip；仍零 ⇒ LOD 因素排除。")
+            .define("mrt.terrainLodZeroProbe", false);
+
+    /**
+     * 🔴 **通用后处理链**（deferred* → composite* → final 全链，按名采 colortex）。
+     *
+     * <p><b>它补上的是什么</b>：旧三步链（deferred/composite/final 各一条）只喂包的
+     * 三个同名程序，BSL 的 {@code composite1..7}（光柱/动感模糊/DOF/FXAA/TAA…）
+     * 从未被执行；而 composite 的彩色输入绑的是**场景色**而不是包的 gbuffer。
+     * 本链把整包后处理序列跑起来，采样按名接进 colortex 池
+     * （「FrameApi 的 packColor 从 scene 改采 colortex」的机制化版本）。
+     *
+     * <p><b>生效前提</b>（缺一即回旧三步路径，回退有日志不自检）：
+     * {@code mrt.terrain} + {@code mrt.packTerrainShader} 开启、地形包片元已接线、
+     * 所选包产出 ≥1 个后处理程序、且**不在** {@code mrt.terrainToMain} 诊断档
+     * （那一档的语义是「让我方地形画直接进屏幕」，与链的「链输出进屏幕」互斥）。
+     *
+     * <p>默认开：关掉它 = 主动退回单程序旧链（取证 A/B 用）。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_POST_CHAIN = BUILDER
+            .comment("通用后处理链：跑完整 deferred*/composite*/final 序列并按名接 colortex"
+                    + "（默认开；关闭 = 退回旧的三步链）。前提见注释。")
+            .define("mrt.postChain", true);
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     private VkDispConfig() {

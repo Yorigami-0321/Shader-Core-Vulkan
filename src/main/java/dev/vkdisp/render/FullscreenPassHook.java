@@ -77,6 +77,9 @@ public final class FullscreenPassHook {
     /** P1.2 计数对齐断言只打一次。 */
     private static boolean countChecked;
 
+    /** 🔴 链模式「未就绪等待」的自报只打一次（首帧池未建 = 等待，不是失败）。 */
+    private static boolean chainReadyWaitLogged;
+
     /** 进程启动时刻，用于生成秒级动画相位（P1.1：改数值 → 画面实时变化）。 */
     private static final long START_NANOS = System.nanoTime();
 
@@ -184,20 +187,37 @@ public final class FullscreenPassHook {
         }
 
         try {
-            FrameApi.FrameSize size = FrameApi.drawFullscreen(PASS_LABEL, params);
-            frameCounter++;
-            if (!firstFrameLogged) {
-                firstFrameLogged = true;
-                VkDisp.LOGGER.info(
-                        "vkdisp shadow sample chain executed ({}x{}), lightMatrixPhase={} (1: 几何光空间 -> 阴影贴图, 2: 世界视图+阴影采样 -> offscreen1, 3: offscreen1 -> main)",
-                        size.width(), size.height(), phase);
-            } else if (paramLogs < 5 && frameCounter % 120 == 0
-                    && dev.vkdisp.VkDispConfig.DEBUG_LOG.get()) {
-                // 🔖 QD-02：`vkdisp.debugLog` 的**真实消费点之三**。
-                //   原为无条件输出 ⇒ 该开关对它无效。关掉开关时这行消失，**可观察**。
-                paramLogs++;
-                VkDisp.LOGGER.info(
-                        "vkdisp: uniform {} phase={} at frame {}", PipelineApi.PARAMS_UNIFORM, phase, frameCounter);
+            // 🔴 链模式（OF 语义的正确时序）：**先**把地形画进 colortex，**再**跑整条后处理链。
+            //   旧三步链时代 composite 采的是 scene，时序反了也看不出差别；接进 colortex 之后，
+            //   「链先跑」= 链永远采到**上一帧**的 gbuffer（一帧延迟），而 terrain 后画会把
+            //   链刚写进 main 的结果再盖掉一次（toMain 诊断档除外）。⇒ 这里换序。
+            boolean chainActive = FrameApi.isPostChainActive();
+            if (chainActive && MrtTerrainPass.enabled() && MrtTerrainPass.afterLevel()) {
+                MrtTerrainPass.drawAfterLevel();
+                if (FrameApi.isPostChainReady()) {
+                    FrameApi.drawPostChain(PASS_LABEL);
+                } else if (!chainReadyWaitLogged) {
+                    chainReadyWaitLogged = true;
+                    // 未就绪 = **等待**（首帧池还没建），不是失败；只自报一次避免误导（T11）。
+                    VkDisp.LOGGER.info("vkdisp: [chain] post chain active but not ready yet"
+                            + " (pool/compile warming up) —— 本帧跳过链执行，旧三步链**不**补位（避免混跑）");
+                }
+            } else {
+                FrameApi.FrameSize size = FrameApi.drawFullscreen(PASS_LABEL, params);
+                frameCounter++;
+                if (!firstFrameLogged) {
+                    firstFrameLogged = true;
+                    VkDisp.LOGGER.info(
+                            "vkdisp shadow sample chain executed ({}x{}), lightMatrixPhase={} (1: 几何光空间 -> 阴影贴图, 2: 世界视图+阴影采样 -> offscreen1, 3: offscreen1 -> main)",
+                            size.width(), size.height(), phase);
+                } else if (paramLogs < 5 && frameCounter % 120 == 0
+                        && dev.vkdisp.VkDispConfig.DEBUG_LOG.get()) {
+                    // 🔖 QD-02：`vkdisp.debugLog` 的**真实消费点之三**。
+                    //   原为无条件输出 ⇒ 该开关对它无效。关掉开关时这行消失，**可观察**。
+                    paramLogs++;
+                    VkDisp.LOGGER.info(
+                            "vkdisp: uniform {} phase={} at frame {}", PipelineApi.PARAMS_UNIFORM, phase, frameCounter);
+                }
             }
         } catch (Throwable t) {
             // 失败必须打 ERROR 原文（07 X11：禁止吞异常让它看起来能跑）。
@@ -208,7 +228,9 @@ public final class FullscreenPassHook {
         // 🔖🔖 必须放在**整条链之后**（本轮踩过）：本 mod 的 SceneCaptureApi 会把场景纹理
         //   blit 进 main —— 画在它之前会被整块覆盖掉，表现为「pass 明明跑了，屏幕却毫无变化」。
         //   「没报错 + 画面没变」会被误读成「没执行」，实际是被后写的 pass 盖掉了。
-        if (MrtTerrainPass.enabled() && MrtTerrainPass.afterLevel()) {
+        //   🔴 链模式下地形已**先画**（见上），这里不得再画一遍（画两遍 = 双重暴露 + 白白翻倍）。
+        if (!FrameApi.isPostChainActive()
+                && MrtTerrainPass.enabled() && MrtTerrainPass.afterLevel()) {
             try {
                 MrtTerrainPass.drawAfterLevel();
             } catch (Throwable t) {

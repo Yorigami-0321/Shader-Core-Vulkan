@@ -156,5 +156,17 @@ public final class FullscreenPipelineRegistrar {
             VkDisp.LOGGER.error("vkdisp: pipeline registration failed: {}",
                     PipelineApi.MRT_VIEW_LOCATION, t);
         }
+
+        // 🔴 通用后处理链的 16 条**定宽槽位**管线（24+ … total）。
+        // 无条件注册（required）：槽位 ↔ 程序的映射每次 openResources 重写片元源，
+        // 短链的尾部槽 = passthrough ⇒ 编译恒成立；纳入 registered==compiled 核对。
+        try {
+            PipelineApi.registerPostPipelines(event);
+            VkDisp.LOGGER.info(
+                    "vkdisp: [chain] post pipelines registered (total={})",
+                    PipelineApi.registeredPipelineCount());
+        } catch (Throwable t) {
+            VkDisp.LOGGER.error("vkdisp: [chain] post pipeline registration failed", t);
+        }
     }
 }

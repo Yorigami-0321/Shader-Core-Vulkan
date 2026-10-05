@@ -182,6 +182,131 @@ public final class PipelineApi {
     /** 深度可视化管线 location（P3 前置：采样深度纹理 → 灰度输出，用于验证深度附件链路）。 */
     public static final String DEPTHVIS_LOCATION = "vkdisp:pipeline/depthviz";
 
+    // ────────────────────────────────────────────────────────────────────────────────
+    // 🔴 通用多 pass 后处理链（deferred* / composite* / final 全链执行）
+    //
+    // 与旧三步（composite/deferred/final 各一条）的根本区别：
+    // ① **管线定长定宽**：MAX_POST_PASSES 条、每条 FRAME_WIDTH 个颜色目标 ——
+    //    注册期一次性完成（注册事件资源重载时**不再触发**，任何「按包注册」都会漂移）；
+    //    pass→slot 的映射与「哪些附件是真槽」全在**执行期**决定（未写的槽挂 scratch）。
+    // ② **scratch 附件**：Vulkan 要求管线颜色目标数 == pass 附件数；定宽 8 之后，
+    //    每个 pass 的附件表 = [写入槽按升序放前面] + [scratch 填满 8]。
+    //    🔖 关键安全性质：被采样的 colortex **只出现在「未写」位置 ⇒ 永远不会同时是
+    //    本 pass 的附件** —— 这正是 h26 那族「读写附件 + 采样器 = 静默 UB」的机制级封堵。
+    // ────────────────────────────────────────────────────────────────────────────────
+
+    /** 后处理槽位管线数（上界；BSL 实测链 10 步 < 16）。 */
+    public static final int MAX_POST_PASSES = 16;
+
+    /** 每个后处理管线的颜色目标数（= render pass 定宽附件数，见上方 ②）。 */
+    public static final int POST_FRAME_WIDTH = dev.vkdisp.pack.PackPostChain.FRAME_WIDTH;
+
+    /** 第 k 条后处理槽位管线的 location（k ∈ [0, MAX_POST_PASSES)）。 */
+    public static String postLocation(int slot) {
+        return "vkdisp:pipeline/post" + slot;
+    }
+
+    /** 后处理片元命名空间（= 虚拟包）。 */
+    public static final String NAMESPACE_POST = "vkdisp_pack";
+
+    /** 第 k 条后处理片元的包内路径（相对 assets/）。 */
+    public static String postPath(int slot) {
+        return "shaders/post" + slot + ".fsh";
+    }
+
+    /**
+     * 后处理绑定组的 sampler **超集** —— 单点真源在
+     * {@link dev.vkdisp.pipeline.model.PostSamplerSuperset}（编排期与绑定期读同一份，
+     * 不各抄一遍）。
+     */
+    public static final String[] POST_SAMPLER_SUPERSET =
+            dev.vkdisp.pipeline.model.PostSamplerSuperset.NAMES.toArray(new String[0]);
+
+    /** 某 sampler 名在当前帧该绑哪个视图 —— 由 bridge 内的执行器实现（业务层不实现）。 */
+    interface PostSamplerViewResolver {
+        /** 返回非 null（无真值时必须返回**显式的占位视图**，不许 null —— 同 h33 教训）。 */
+        com.mojang.renderpearl.api.textures.GpuTextureView view(String samplerName);
+    }
+
+    /**
+     * 把 {@link #POST_SAMPLER_SUPERSET} 全部 {@code setUniform}（按名经 resolver 取视图）。
+     *
+     * <p>必须在 {@code draw()} 之前逐条绑齐：STRICT_VALIDATION 下 validateDraw 按**布局**校验
+     * （同 {@link #setPackSamplerUniforms} 的实测规则）；少绑一条 = 响亮抛 Missing uniform。
+     */
+    static void setPostSamplerUniforms(
+            com.mojang.renderpearl.api.commands.RenderPass pass,
+            PostSamplerViewResolver resolver,
+            com.mojang.renderpearl.api.textures.GpuSampler sampler) {
+        for (String name : POST_SAMPLER_SUPERSET) {
+            com.mojang.renderpearl.api.textures.GpuTextureView view = resolver.view(name);
+            if (view == null) {
+                throw new IllegalStateException(
+                        "vkdisp: post sampler '" + name + "' resolver 返回 null —— 占位也必须显式（h33 同族）");
+            }
+            pass.setUniform(name, view, sampler);
+        }
+    }
+
+    /** 后处理槽位管线的绑定组：BUILTINS + InSampler + 超集 sampler。 */
+    private static BindGroupLayout postBindGroupLayout() {
+        BindGroupLayout.Builder builder = BindGroupLayout.builder()
+                .withUniform(BUILTINS_UNIFORM, UniformType.UNIFORM_BUFFER)
+                .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER);
+        for (String name : POST_SAMPLER_SUPERSET) {
+            builder = builder.withUniform(name, UniformType.COMBINED_IMAGE_SAMPLER);
+        }
+        return builder.build();
+    }
+
+    /** 已注册的后处理槽位管线（下标 = slot）。 */
+    private static final RenderPipeline[] POST_PIPELINES = new RenderPipeline[MAX_POST_PASSES];
+
+    /**
+     * 注册全部 {@link #MAX_POST_PASSES} 条后处理槽位管线。
+     *
+     * <p>每条：顶点 = 不翻转 {@code vkdisp:fullscreen}（采样源恒为引擎自身行序的目标，见
+     * {@link #MRT_VIEW_NOFLIP_LOCATION} javadoc 的取向规则）；片元 = 虚拟包第 k 槽源
+     * （无包/短链时该槽 = 内置 passthrough ⇒ required 编译恒成立）；颜色目标 = 定宽 8。
+     */
+    public static void registerPostPipelines(RegisterRenderPipelinesEvent event) {
+        for (int slot = 0; slot < MAX_POST_PASSES; slot++) {
+            RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                    .withLocation(Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/post" + slot))
+                    // 🔴 h46 首轮实测：BSL deferred1 的片元声明第 4 条输入（eastVec@location 3），
+                    //   而 vkdisp:fullscreen 只输出 0..2 ⇒ required 管线链接失败**砸整次资源重载**。
+                    //   ⇒ 顶点用**按该片元契约生成的适配层**（vkdisp_pack:postK 同 id 解析 .vsh/.fsh，
+                    //     屏幕 uv 语义 + 其余零值逐条 WARN，见 PackPostVertexAdapter）。
+                    .withVertexShader(dev.vkdisp.VkDispVirtualPack.postShaderId(slot))
+                    .withFragmentShader(dev.vkdisp.VkDispVirtualPack.postShaderId(slot))
+                    .withBindGroupLayout(postBindGroupLayout())
+                    .withColorTargetStates(0, POST_FRAME_WIDTH - 1, () -> ColorTargetState.DEFAULT)
+                    .build();
+            event.registerPipeline(pipeline);
+            POST_PIPELINES[slot] = pipeline;
+            REGISTERED_PIPELINES.add(pipeline);
+        }
+        VkDisp.LOGGER.info(
+                "vkdisp: post chain pipelines registered: {} slots x {} colorTargets (layout: builtins"
+                        + " + InSampler + superset {} samplers; fragment = vkdisp_pack:shaders/postK.fsh)",
+                MAX_POST_PASSES, POST_FRAME_WIDTH, POST_SAMPLER_SUPERSET.length);
+    }
+
+    /** 第 slot 条后处理管线（未注册时抛，与其它取用口径一致）。 */
+    static RenderPipeline postPipeline(int slot) {
+        RenderPipeline pipeline = POST_PIPELINES[slot];
+        if (pipeline == null) {
+            throw new IllegalStateException(
+                    "vkdisp: post pipeline slot " + slot + " not registered yet");
+        }
+        return pipeline;
+    }
+
+    /** 后处理管线是否已注册（就绪判据用）。 */
+    public static boolean arePostPipelinesRegistered() {
+        return POST_PIPELINES[0] != null;
+    }
+
     /**
      * GAP-003 多附件写入管线 location（能力验证件）。
      *

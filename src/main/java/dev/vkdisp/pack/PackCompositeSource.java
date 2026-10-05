@@ -124,6 +124,10 @@ public final class PackCompositeSource {
      * @param fallback           true = 使用了内置兜底（必然伴随 WARN 诊断）
      * @param profile            实际生效的 profile 名（空串 = 默认值路径）
      * @param diagnostics        本次生成的全部诊断（扫描问题 + 包装载 + profile/覆盖 + 阶段编译；不可变）
+     * @param chain              🔴 **整条后处理链**（deferred* → composite* → final，重编号后的源；
+     *                           空链 = 包没有可进链的后处理程序 ⇒ FrameApi 走旧三步）
+     * @param textureBindings    OF {@code texture.<sampler>=<path>} 指令的解析结果（GAP-009 素材线；
+     *                           空表 = 包没声明；非法条目已进诊断）
      */
     public record Result(
             String source,
@@ -134,7 +138,9 @@ public final class PackCompositeSource {
             String packName,
             boolean fallback,
             String profile,
-            List<TranslateDiagnostic> diagnostics) {
+            List<TranslateDiagnostic> diagnostics,
+            PackPostChain.Chain chain,
+            Map<String, String> textureBindings) {
 
         /** 归一构造：三源非空（空视为调用方错误直接抛），profile 归一，列表冻结。 */
         public Result {
@@ -152,6 +158,16 @@ public final class PackCompositeSource {
             }
             profile = profile == null ? "" : profile;
             diagnostics = diagnostics == null ? List.of() : List.copyOf(diagnostics);
+            chain = chain == null ? PackPostChain.Chain.EMPTY : chain;
+            textureBindings = textureBindings == null ? Map.of() : Map.copyOf(textureBindings);
+        }
+
+        /** 旧十参形态（无纹理绑定 = 空表；供既有调用点/测试渐进迁移）。 */
+        public Result(String source, String deferredSource, boolean hasDeferredProgram,
+                String finalSource, boolean hasFinalProgram, String packName, boolean fallback,
+                String profile, List<TranslateDiagnostic> diagnostics, PackPostChain.Chain chain) {
+            this(source, deferredSource, hasDeferredProgram, finalSource, hasFinalProgram,
+                    packName, fallback, profile, diagnostics, chain, Map.of());
         }
     }
 
@@ -321,8 +337,22 @@ public final class PackCompositeSource {
                                 pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
                     }
                 }
+                // 🔴 整链：同一次编译产物里选出 deferred*/composite*/final 全序列并做
+                //   location→附件下标重编号（旧三步只喂 3 个程序；BSL 实链 10 步）。
+                //   与上面三源**同源同维度**：链里混进别的维度目录的程序 = 串链（P4.1 同判据）。
+                PackPostChain.Chain chain = PackPostChain.build(pack, compiled, compositeDimension);
+                diagnostics.addAll(chain.diagnostics());
+                // GAP-009 素材线：texture.<sampler>=path 指令（BSL 的 noisetex 真值来源）。
+                dev.vkdisp.pipeline.model.PackTextureBindings.Result tex =
+                        dev.vkdisp.pipeline.model.PackTextureBindings.fromDirectives(pack.properties());
+                for (String rejection : tex.rejected()) {
+                    diagnostics.add(TranslateDiagnostic.of(
+                            TranslateDiagnostic.Severity.WARN, "vkdisp: " + rejection,
+                            pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+                }
                 return new Result(composite.source(), deferredSource, hasDeferred,
-                        finalSource, hasFinal, pack.name(), false, profile, diagnostics);
+                        finalSource, hasFinal, pack.name(), false, profile, diagnostics, chain,
+                        tex.bindings());
             }
             diagnostics.add(TranslateDiagnostic.of(
                     TranslateDiagnostic.Severity.WARN,
@@ -356,7 +386,7 @@ public final class PackCompositeSource {
     /** 统一兜底出口：三源全 passthrough、链路开关全 false、{@code packName=null}（T11 诊断由调用方先落）。 */
     private static Result fallbackResult(String profile, List<TranslateDiagnostic> diagnostics) {
         return new Result(FALLBACK_GLSL, FALLBACK_GLSL, false, FALLBACK_GLSL, false,
-                null, true, profile, diagnostics);
+                null, true, profile, diagnostics, PackPostChain.Chain.EMPTY);
     }
 
     /**

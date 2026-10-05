@@ -150,6 +150,60 @@ public final class VkDispVirtualPack {
     private static final Identifier TERRAIN_ADAPTER_ID =
             Identifier.fromNamespaceAndPath(NAMESPACE, TERRAIN_ADAPTER_PATH);
 
+    // ────────────────────────────────────────────────────────────────────────────────
+    // 🔴 通用后处理链（deferred*/composite*/final 全链）：16 个**固定槽位**片元资源。
+    //   管线在启动期一次性注册（注册事件资源重载不再触发，见 ensureTerrainProgram 的时序证据），
+    //   「槽 k ↔ 链里第 k 个程序」的映射在每次 openResources 重写这些源 —— 短链的尾部槽
+    //   落内置 passthrough（required 编译恒成立；执行期按链长跳过，不会画它）。
+    // ────────────────────────────────────────────────────────────────────────────────
+
+    /** 后处理槽位数（与 {@link dev.vkdisp.bridge.PipelineApi#MAX_POST_PASSES} 同值，单点在 PackPostChain）。 */
+    public static final int POST_SLOT_COUNT = dev.vkdisp.pack.PackPostChain.MAX_POST_PASSES;
+
+    /** 第 k 个后处理槽的包内路径。 */
+    public static String postPath(int slot) {
+        return "shaders/post" + slot + ".fsh";
+    }
+
+    /** 第 k 个后处理槽的全量资源 id（片元）。 */
+    public static Identifier postId(int slot) {
+        return Identifier.fromNamespaceAndPath(NAMESPACE, postPath(slot));
+    }
+
+    /** 第 k 个后处理槽的全量资源 id（VS 适配层）。 */
+    public static Identifier postVshId(int slot) {
+        return Identifier.fromNamespaceAndPath(NAMESPACE, "shaders/post" + slot + ".vsh");
+    }
+
+    /** 第 k 个后处理槽的管线侧着色器 id（FileToIdConverter 会分别解析到 .vsh/.fsh）。 */
+    public static Identifier postShaderId(int slot) {
+        return Identifier.fromNamespaceAndPath(NAMESPACE, "post" + slot);
+    }
+
+    /** 最近一次生成的链（空链 = 包没有可进链的后处理程序，FrameApi 走旧三步）。 */
+    private static volatile dev.vkdisp.pack.PackPostChain.Chain postChain
+            = dev.vkdisp.pack.PackPostChain.Chain.EMPTY;
+
+    /** 链的只读视图（FrameApi 执行期消费；volatile 同 {@link #terrainProgram} 口径）。 */
+    public static dev.vkdisp.pack.PackPostChain.Chain postChain() {
+        return postChain;
+    }
+
+    /** 第 slot 个后处理槽的 VkDispBuiltins 布局（短链尾部/兜底 = 空布局 → 零填充基线）。 */
+    private static final BuiltinsBlockLayout[] POST_BUILTINS_LAYOUTS =
+            new BuiltinsBlockLayout[POST_SLOT_COUNT];
+
+    static {
+        for (int i = 0; i < POST_SLOT_COUNT; i++) {
+            POST_BUILTINS_LAYOUTS[i] = BuiltinsBlockLayout.empty();
+        }
+    }
+
+    /** 第 slot 槽布局（FrameApi 只读视图）。 */
+    public static BuiltinsBlockLayout postBuiltinsLayout(int slot) {
+        return POST_BUILTINS_LAYOUTS[slot];
+    }
+
     /** GAP-003：所选包的地形片元契约；{@code null} = 保持原版 core/terrain（不接线）。 */
     public static dev.vkdisp.pipeline.model.PackTerrainProgram terrainProgram() {
         return terrainProgram;
@@ -288,7 +342,8 @@ public final class VkDispVirtualPack {
                 GeneratedSources sources = generateSources();
                 return Stream.of(new VirtualPackResources(loc,
                         sources.composite(), sources.deferred(), sources.finalSource(),
-                        sources.terrain(), sources.terrainAdapter()));
+                        sources.terrain(), sources.terrainAdapter(), sources.postSources(),
+                        sources.postVertexSources()));
             }
         };
         Pack.Metadata metadata = new Pack.Metadata(
@@ -309,11 +364,47 @@ public final class VkDispVirtualPack {
      * 「没找到地形片元」看起来像「找到了一个假的地形片元」。
      */
     private record GeneratedSources(String composite, String deferred, String finalSource, String terrain,
-            String terrainAdapter) {
+            String terrainAdapter, String[] postSources, String[] postVertexSources) {
 
-        /** 四源形态（地形源为 null = 不接线）。 */
+        /** 四源形态（地形源为 null = 不接线；post 全兜底）。 */
         GeneratedSources(String composite, String deferred, String finalSource) {
-            this(composite, deferred, finalSource, null, null);
+            this(composite, deferred, finalSource, null, null, fallbackPostSources(),
+                    fallbackPostVertices());
+        }
+
+        /** 全兜底的 post 槽源数组（长度 = {@link #POST_SLOT_COUNT}）。 */
+        static String[] fallbackPostSources() {
+            String[] out = new String[POST_SLOT_COUNT];
+            java.util.Arrays.fill(out, PackCompositeSource.FALLBACK_GLSL);
+            return out;
+        }
+
+        /** 兜底 post VS（无输入契约 = 只有 vUv 的全屏三角形）。 */
+        static String[] fallbackPostVertices() {
+            String vsh = dev.vkdisp.glsl.translate.PackPostVertexAdapter
+                    .generate(java.util.List.of()).glsl();
+            String[] out = new String[POST_SLOT_COUNT];
+            java.util.Arrays.fill(out, vsh);
+            return out;
+        }
+
+        /** 由链生成 post 槽源（尾部槽 = passthrough 兜底）。 */
+        static String[] postSourcesFrom(dev.vkdisp.pack.PackPostChain.Chain chain) {
+            String[] out = fallbackPostSources();
+            java.util.Arrays.setAll(out, i -> i < chain.passes().size()
+                    ? chain.passes().get(i).renumberedSource() : PackCompositeSource.FALLBACK_GLSL);
+            return out;
+        }
+
+        /** 由链生成 post 槽的 **VS 适配层**（h46：片元声明了第 4 条输入而 fullscreen.vsh 只有
+         *  0..2 ⇒ required 管线链接失败会砸整次资源重载 —— 按契约逐 location 生成）。 */
+        static String[] postVerticesFrom(dev.vkdisp.pack.PackPostChain.Chain chain) {
+            String[] out = fallbackPostVertices();
+            for (int i = 0; i < chain.passes().size() && i < POST_SLOT_COUNT; i++) {
+                out[i] = dev.vkdisp.glsl.translate.PackPostVertexAdapter
+                        .generate(chain.passes().get(i).inputs()).glsl();
+            }
+            return out;
         }
     }
 
@@ -335,6 +426,9 @@ public final class VkDispVirtualPack {
                 compositeBuiltinsLayout = BuiltinsBlockLayout.empty();
                 deferredBuiltinsLayout = BuiltinsBlockLayout.empty();
                 finalBuiltinsLayout = BuiltinsBlockLayout.empty();
+                postChain = dev.vkdisp.pack.PackPostChain.Chain.EMPTY;
+                java.util.Arrays.fill(POST_BUILTINS_LAYOUTS, BuiltinsBlockLayout.empty());
+                dev.vkdisp.bridge.PackTextures.setDesired(null, null, java.util.Map.of());
                 VkDisp.LOGGER.warn(
                         "vkdisp: composite source: mod disabled (vkdisp.enabled=false)"
                                 + " -> built-in passthrough fallback");
@@ -391,6 +485,33 @@ public final class VkDispVirtualPack {
             logLayout("composite", compositeBuiltinsLayout);
             logLayout("deferred", deferredBuiltinsLayout);
             logLayout("final", finalBuiltinsLayout);
+            // 🔴 整链落状态（管线槽位源 = 重编号后的链源，尾部槽 = passthrough）：
+            //   链与布局必须**同一份**——管线侧、执行侧、上传侧都从这里读，
+            //   任何一处自己再算一遍就回到「两侧不一致而日志全正常」那一族（QD-02 第四例）。
+            postChain = result.chain();
+            String[] postSources = GeneratedSources.postSourcesFrom(result.chain());
+            List<dev.vkdisp.pack.PackPostChain.Pass> chainPasses = result.chain().passes();
+            for (int i = 0; i < POST_SLOT_COUNT; i++) {
+                if (i < chainPasses.size()) {
+                    POST_BUILTINS_LAYOUTS[i] =
+                            BuiltinsBlockLayout.parse(chainPasses.get(i).renumberedSource());
+                } else {
+                    POST_BUILTINS_LAYOUTS[i] = BuiltinsBlockLayout.empty();
+                }
+            }
+            if (!chainPasses.isEmpty()) {
+                StringBuilder names = new StringBuilder();
+                for (dev.vkdisp.pack.PackPostChain.Pass pass : chainPasses) {
+                    names.append(names.length() == 0 ? "" : " → ").append(pass.programName())
+                            .append(pass.attachmentSlots());
+                }
+                VkDisp.LOGGER.info(
+                        "vkdisp: [chain] post chain active: pack={} passes={} names={}",
+                        result.packName(), chainPasses.size(), names);
+            }
+            // GAP-009 素材线：texture.<sampler> 绑定表记下（上传在渲染线程懒做，见 PackTextures）。
+            dev.vkdisp.bridge.PackTextures.setDesired(inventory, result.packName(),
+                    result.textureBindings());
             // GAP-003：包地形片元契约（**独立**一条链，失败绝不影响上面三源）。
             // 之所以不并进 PackCompositeSource.generate：那是一条「必有源」的 required 管线链，
             // 它的兜底语义是 passthrough；而地形片的正确兜底是「不接线、用原版 core/terrain」。
@@ -405,7 +526,7 @@ public final class VkDispVirtualPack {
             }
             return new GeneratedSources(
                     result.source(), result.deferredSource(), result.finalSource(), terrainSource,
-                    terrainAdapter);
+                    terrainAdapter, postSources, GeneratedSources.postVerticesFrom(result.chain()));
         } catch (Throwable t) {
             hasDeferredProgram = false;
             hasFinalProgram = false;
@@ -414,6 +535,9 @@ public final class VkDispVirtualPack {
             compositeBuiltinsLayout = BuiltinsBlockLayout.empty();
             deferredBuiltinsLayout = BuiltinsBlockLayout.empty();
             finalBuiltinsLayout = BuiltinsBlockLayout.empty();
+            postChain = dev.vkdisp.pack.PackPostChain.Chain.EMPTY;
+            java.util.Arrays.fill(POST_BUILTINS_LAYOUTS, BuiltinsBlockLayout.empty());
+            dev.vkdisp.bridge.PackTextures.setDesired(null, null, java.util.Map.of());
             VkDisp.LOGGER.error("vkdisp: composite source generation FAILED (原文如下)"
                     + " -> built-in passthrough fallback", t);
             return new GeneratedSources(PackCompositeSource.FALLBACK_GLSL,
@@ -601,10 +725,16 @@ public final class VkDispVirtualPack {
         boolean sampleFactorWas = dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceSampleEnabled();
         boolean multiplierFactorWas =
                 dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceMultiplierEnabled();
+        boolean coordOutWas = dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceCoordOutEnabled();
+        boolean lodZeroWas = dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceLodZeroEnabled();
         dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceSample(
                 VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_SAMPLE.get());
         dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceMultiplier(
                 VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_MULTIPLIER.get());
+        dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceCoordOut(
+                VkDispConfig.MRT_TERRAIN_COORD_OUT.get());
+        dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceLodZero(
+                VkDispConfig.MRT_TERRAIN_LOD_ZERO.get());
         // 🔖🔖 两侧同时开 = 两边都被换掉 = 什么都没分开。必须在这里就吵出来，
         //   而不是等跑完看画面 —— 那种「两臂都没变」会被读成「两个因子都不是原因」。
         if (VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_SAMPLE.get()
@@ -645,13 +775,16 @@ public final class VkDispVirtualPack {
             fragment = sampleFactor.text();
             VkDisp.LOGGER.info(
                     "vkdisp: [GAP-003] pack terrain fragment ready: program={} outputs={} samplers={}"
-                            + " varyings={} bytes={} sampleFactorProbe[sample={} multiplier={} hits={}]",
+                            + " varyings={} bytes={} sampleFactorProbe[sample={} multiplier={}"
+                            + " coordOut={} lodZero={} hits={}]",
                     program.qualifiedName(), program.outputCount(),
                     program.fragmentSamplers().size(), program.inputs().size(),
                     fragment.getBytes(StandardCharsets.UTF_8).length,
                     dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceSampleEnabled(),
                     dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceMultiplierEnabled(),
-                    sampleFactor.patched());
+                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceCoordOutEnabled(),
+                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceLodZeroEnabled(),
+                    sampleFactor.patchedAny());
             return fragment;
         } catch (Throwable t) {
             terrainProgram = null;
@@ -666,6 +799,8 @@ public final class VkDispVirtualPack {
             dev.vkdisp.glsl.translate.DerivativeProbeAdapter.setEnabled(probeWas);
             dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceSample(sampleFactorWas);
             dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceMultiplier(multiplierFactorWas);
+            dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceCoordOut(coordOutWas);
+            dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceLodZero(lodZeroWas);
         }
     }
 
@@ -776,6 +911,11 @@ public final class VkDispVirtualPack {
         /** GAP-003 顶点适配层字节；与 {@link #terrainBytes} 同生共死（半接线 = 链接失败）。 */
         private final byte[] terrainAdapterBytes;
 
+        /** 🔴 后处理 16 槽片元字节（每槽恒非 null —— required 管线的兜底语义同 composite）。 */
+        private final byte[][] postBytes;
+        /** 🔴 后处理 16 槽 **VS 适配层**字节（h46：按片元输入契约生成，同 id 解析到 .vsh）。 */
+        private final byte[][] postVertexBytes;
+
         VirtualPackResources(PackLocationInfo location, String compositeSource,
                 String deferredSource, String finalSource) {
             this(location, compositeSource, deferredSource, finalSource, null, null);
@@ -784,6 +924,21 @@ public final class VkDispVirtualPack {
         VirtualPackResources(PackLocationInfo location, String compositeSource,
                 String deferredSource, String finalSource, String terrainSource,
                 String terrainAdapterSource) {
+            this(location, compositeSource, deferredSource, finalSource, terrainSource,
+                    terrainAdapterSource, GeneratedSources.fallbackPostSources(),
+                    GeneratedSources.fallbackPostVertices());
+        }
+
+        VirtualPackResources(PackLocationInfo location, String compositeSource,
+                String deferredSource, String finalSource, String terrainSource,
+                String terrainAdapterSource, String[] postSources) {
+            this(location, compositeSource, deferredSource, finalSource, terrainSource,
+                    terrainAdapterSource, postSources, GeneratedSources.fallbackPostVertices());
+        }
+
+        VirtualPackResources(PackLocationInfo location, String compositeSource,
+                String deferredSource, String finalSource, String terrainSource,
+                String terrainAdapterSource, String[] postSources, String[] postVertexSources) {
             this.location = location;
             this.compositeBytes = compositeSource.getBytes(StandardCharsets.UTF_8);
             this.deferredBytes = deferredSource.getBytes(StandardCharsets.UTF_8);
@@ -791,6 +946,17 @@ public final class VkDispVirtualPack {
             this.terrainBytes = terrainSource == null ? null : terrainSource.getBytes(StandardCharsets.UTF_8);
             this.terrainAdapterBytes = terrainAdapterSource == null ? null
                     : terrainAdapterSource.getBytes(StandardCharsets.UTF_8);
+            this.postBytes = new byte[POST_SLOT_COUNT][];
+            this.postVertexBytes = new byte[POST_SLOT_COUNT][];
+            String fallbackVsh = GeneratedSources.fallbackPostVertices()[0];
+            for (int i = 0; i < POST_SLOT_COUNT; i++) {
+                String src = postSources != null && i < postSources.length && postSources[i] != null
+                        ? postSources[i] : PackCompositeSource.FALLBACK_GLSL;
+                this.postBytes[i] = src.getBytes(StandardCharsets.UTF_8);
+                String vsh = postVertexSources != null && i < postVertexSources.length
+                        && postVertexSources[i] != null ? postVertexSources[i] : fallbackVsh;
+                this.postVertexBytes[i] = vsh.getBytes(StandardCharsets.UTF_8);
+            }
         }
         @Override
         public PackLocationInfo location() {
@@ -820,6 +986,17 @@ public final class VkDispVirtualPack {
             }
             if (TERRAIN_ADAPTER_ID.equals(id) && terrainAdapterBytes != null) {
                 return () -> new ByteArrayInputStream(terrainAdapterBytes);
+            }
+            // 🔴 后处理 16 槽（每槽恒在 —— 槽位管线是 required，兜底 = passthrough）。
+            for (int i = 0; i < POST_SLOT_COUNT; i++) {
+                if (postId(i).equals(id)) {
+                    final int slot = i;
+                    return () -> new ByteArrayInputStream(postBytes[slot]);
+                }
+                if (postVshId(i).equals(id)) {
+                    final int slot = i;
+                    return () -> new ByteArrayInputStream(postVertexBytes[slot]);
+                }
             }
             return null;
         }
@@ -856,6 +1033,22 @@ public final class VkDispVirtualPack {
                     || TERRAIN_ADAPTER_PATH.startsWith(normalized + "/"))) {
                 output.accept(TERRAIN_ADAPTER_ID,
                         () -> new ByteArrayInputStream(terrainAdapterBytes));
+            }
+            for (int i = 0; i < POST_SLOT_COUNT; i++) {
+                String postPath = postPath(i);
+                if (normalized.isEmpty()
+                        || postPath.equals(normalized)
+                        || postPath.startsWith(normalized + "/")) {
+                    final int slot = i;
+                    output.accept(postId(slot), () -> new ByteArrayInputStream(postBytes[slot]));
+                }
+                String postVshPath = "shaders/post" + i + ".vsh";
+                if (normalized.isEmpty()
+                        || postVshPath.equals(normalized)
+                        || postVshPath.startsWith(normalized + "/")) {
+                    final int slot = i;
+                    output.accept(postVshId(slot), () -> new ByteArrayInputStream(postVertexBytes[slot]));
+                }
             }
         }
 

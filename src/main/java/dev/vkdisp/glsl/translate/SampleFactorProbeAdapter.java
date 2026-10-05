@@ -102,6 +102,21 @@ public final class SampleFactorProbeAdapter {
     /** 右侧强制开关（把乘子换成 {@link #PROBE_MULTIPLIER}）。 */
     private static volatile boolean forceMultiplier;
 
+    /**
+     * 🔬 h45 §七① 的「坐标数值」探针：把命中行的整个右值换成 {@code vec4(<采样坐标>, 0.0, 1.0)}。
+     * <p>colortex0 于是直接携带 texCoord 数值（×255 量化），像素回读给出「采样到底落在哪」。
+     * 判据：读数 ≈ 0 ⇒ 坐标链路坏（属性/位置错配，供进的是 (0,0) = 图集角部填充）；
+     * 读数 ≈ 图集合理值 ⇒ 坐标正常，问题在采样器/纹理侧。
+     */
+    private static volatile boolean forceCoordOut;
+
+    /**
+     * 🔬 h45 §七② 的「显式 LOD0」探针：把命中行里的两参数 {@code texture(s, c)} 改成
+     * {@code textureLod(s, c, 0.0)} —— 其余一切不动。
+     * <p>判据：改后非零 ⇒ 隐式导数在本链上选到了坏 mip（LOD 侧）；仍为零 ⇒ LOD 排除。
+     */
+    private static volatile boolean forceLodZero;
+
     private SampleFactorProbeAdapter() {
     }
 
@@ -115,9 +130,29 @@ public final class SampleFactorProbeAdapter {
         forceMultiplier = value;
     }
 
-    /** 当前是否开启了任一侧。 */
+    /** 开关「坐标数值输出」（整行右值换成采样坐标）。 */
+    public static void setForceCoordOut(boolean value) {
+        forceCoordOut = value;
+    }
+
+    /** 开关「显式 LOD0」（采样调用换 textureLod(…, 0.0)）。 */
+    public static void setForceLodZero(boolean value) {
+        forceLodZero = value;
+    }
+
+    /** 是否开启了坐标数值输出探针（供调用点自报配置）。 */
+    public static boolean forceCoordOutEnabled() {
+        return forceCoordOut;
+    }
+
+    /** 是否开启了显式 LOD0 探针。 */
+    public static boolean forceLodZeroEnabled() {
+        return forceLodZero;
+    }
+
+    /** 当前是否开启了任一探针。 */
     public static boolean anyEnabled() {
-        return forceSample || forceMultiplier;
+        return forceSample || forceMultiplier || forceCoordOut || forceLodZero;
     }
 
     /** 是否开启了左侧（供调用点自报配置）。 */
@@ -153,18 +188,29 @@ public final class SampleFactorProbeAdapter {
         return false;
     }
 
-    /** 结果（纯数据 + 文本；等行数 ⇒ 行号映射不受影响）。 */
+    /**
+     * 结果（纯数据 + 文本；等行数 ⇒ 行号映射不受影响）。
+     *
+     * <p>🔖 {@code coordOutHits} 是「整行右值被换成坐标输出」的计数 —— 它与左右探针
+     * <b>互斥</b>（同开时坐标档优先并 WARN），所以它不进 {@link #patched()} 的两侧之和。
+     */
     public record Result(String text, List<TranslateDiagnostic> diagnostics,
-            int patchedSample, int patchedMultiplier, List<String> hitLines) {
+            int patchedSample, int patchedMultiplier, int patchedCoordOut, int patchedLodZero,
+            List<String> hitLines) {
 
         public Result {
             diagnostics = diagnostics == null ? List.of() : List.copyOf(diagnostics);
             hitLines = hitLines == null ? List.of() : List.copyOf(hitLines);
         }
 
-        /** 总命中数（两侧之和）。 */
+        /** 总命中数（左右两侧之和）。 */
         public int patched() {
             return patchedSample + patchedMultiplier;
+        }
+
+        /** 任一探针的命中总数（自报行用它，漏了坐标档就会出现「开了却没数字」）。 */
+        public int patchedAny() {
+            return patchedSample + patchedMultiplier + patchedCoordOut + patchedLodZero;
         }
     }
 
@@ -177,12 +223,15 @@ public final class SampleFactorProbeAdapter {
     public static Result apply(ShaderStage stage, String text) {
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         if (!anyEnabled() || text == null || stage != ShaderStage.FRAGMENT) {
-            return new Result(text, diagnostics, 0, 0, List.of());
+            return new Result(text, diagnostics, 0, 0, 0, 0, List.of());
         }
         String[] lines = text.split("\n", -1);
         StringBuilder out = new StringBuilder(text.length() + 64);
         int sampleHits = 0;
         int multiplierHits = 0;
+        int coordOutHits = 0;
+        int lodZeroHits = 0;
+        boolean coordOutCollision = false;
         List<String> hitLines = new ArrayList<>();
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
@@ -213,19 +262,43 @@ public final class SampleFactorProbeAdapter {
                     //   ⇒ 片元编译直接抛 ShaderCompileException、地形契约掉回原版。
                     //   🔖 是「命中数自报」把它现形了：预期 1 处、实测 124 处。
                     //   ⇒ 两侧探针都锚在**同一条** albedo 乘法链上，才是真正的单变量。
-                    if (forceSample) {
-                        newLeft = PROBE_SAMPLE;
-                        sampleHits++;
-                        changed = true;
-                    }
-                    if (forceMultiplier) {
-                        newRight = PROBE_MULTIPLIER;
-                        multiplierHits++;
-                        changed = true;
+                    if (forceCoordOut) {
+                        // 坐标档换掉**整个右值** ⇒ 与左右两侧探针在同一条线上互斥。
+                        String coord = topLevelSecondArg(left);
+                        if (coord != null) {
+                            rewritten = indent + typePrefix + lhs + " = vec4(" + coord
+                                    + ", 0.0, 1.0);";
+                            coordOutHits++;
+                            changed = true;
+                            if (forceSample || forceMultiplier) {
+                                coordOutCollision = true;
+                            }
+                        }
+                    } else {
+                        if (forceLodZero) {
+                            String lodded = forceLodZeroOnSampleCall(left);
+                            if (!lodded.equals(left)) {
+                                newLeft = lodded;
+                                lodZeroHits++;
+                                changed = true;
+                            }
+                        }
+                        if (forceSample) {
+                            newLeft = PROBE_SAMPLE;
+                            sampleHits++;
+                            changed = true;
+                        }
+                        if (forceMultiplier) {
+                            newRight = PROBE_MULTIPLIER;
+                            multiplierHits++;
+                            changed = true;
+                        }
                     }
                 }
-                if (changed) {
+                if (changed && !forceCoordOut) {
                     rewritten = indent + typePrefix + lhs + " = " + newLeft + " * " + newRight + tail;
+                }
+                if (changed) {
                     // 🔖 自报命中的**那一行原文**：这是「改的到底是哪一句」的唯一直接证据。
                     //   只报「已改 N 处」不够 —— N>0 也可能改在了无关的乘法上。
                     hitLines.add("第 " + (i + 1) + " 行: " + line.strip());
@@ -237,10 +310,10 @@ public final class SampleFactorProbeAdapter {
             }
         }
         String text2 = out.toString();
-        if (sampleHits + multiplierHits == 0) {
+        if (coordOutHits + sampleHits + multiplierHits + lodZeroHits == 0) {
             // 🔖🔖 自报「没命中」并明说它意味着什么：开关生效与否，本行是唯一判据。
             diagnostics.add(TranslateDiagnostic.warn(
-                    "采样因子探针**已开启但一处都没命中** ⇒ 本次画面若与默认一致，"
+                    "采样探针**已开启但一处都没命中** ⇒ 本次画面若与默认一致，"
                             + "说明**开关没生效**（不是结论不成立）：本包的 albedo 乘法链"
                             + "形态与本段识别的「右值恰含一个顶层 *」不同。"
                             + "⚠️ 判据只认这一行，不认「画面没变」",
@@ -248,10 +321,15 @@ public final class SampleFactorProbeAdapter {
         } else {
             StringBuilder message = new StringBuilder("采样因子探针命中：左侧(采样) ")
                     .append(sampleHits).append(" 处、右侧(乘子) ").append(multiplierHits)
-                    .append(" 处");
+                    .append(" 处、坐标输出 ").append(coordOutHits)
+                    .append(" 处、显式LOD0 ").append(lodZeroHits).append(" 处");
             if (forceSample && forceMultiplier) {
                 message.append("。🔴 **两侧同时开启** ⇒ 乘法链两侧都被换掉，"
                         + "**不能**据此分出是哪一侧为 0（要分开判定必须只开一侧）");
+            }
+            if (coordOutCollision) {
+                message.append("。🔴 坐标输出档与左右探针同时开启 ⇒ 坐标档优先，"
+                        + "左右改写在那条线上**未发生**；该臂只剩坐标证据");
             }
             if (forceSample && sampleHits > 0) {
                 message.append("。左侧已强制为 ").append(PROBE_SAMPLE)
@@ -264,11 +342,130 @@ public final class SampleFactorProbeAdapter {
                                 + "注意 mrt.terrainColorProbe 是顶点侧、只排除「供值错」）；"
                                 + "若仍全黑 ⇒ 乘子不是原因");
             }
+            if (forceCoordOut && coordOutHits > 0) {
+                message.append("。坐标输出档：colortex0 现在是 vec4(texCoord,0,1)×255 —— "
+                        + "像素数字直接给出采样落点（≈0 ⇒ 坐标链路坏；图集合理值 ⇒ 采样器侧）");
+            }
+            if (forceLodZero && lodZeroHits > 0) {
+                message.append("。显式LOD0档：texture(…) → textureLod(…, 0.0) —— "
+                        + "非零 ⇒ 隐式导数选了坏 mip；仍零 ⇒ LOD 因素排除");
+            }
             diagnostics.add(TranslateDiagnostic.warn(message.toString(), null, 0));
             for (String hit : hitLines) {
                 diagnostics.add(TranslateDiagnostic.info("采样因子探针命中: " + hit, null, 0));
             }
         }
-        return new Result(text2, diagnostics, sampleHits, multiplierHits, List.copyOf(hitLines));
+        return new Result(text2, diagnostics, sampleHits, multiplierHits, coordOutHits,
+                lodZeroHits, List.copyOf(hitLines));
+    }
+
+    /**
+     * 取 {@code left} 中第一个采样调用的**顶层第二个实参**（采样坐标表达式）。
+     *
+     * <p>🔖 顶层 = 括号深度 1 处按逗号切分；{@code textureGrad(t, c, g1, g2)} 取 {@code c}。
+     * 实参数不足 2 个时返回 null（宁可不改，不误改 —— 同乘法链锚点的口径）。
+     */
+    private static String topLevelSecondArg(String expression) {
+        Matcher m = SAMPLE_CALL.matcher(expression);
+        if (!m.find()) {
+            return null;
+        }
+        int open = expression.indexOf('(', m.start());
+        int depth = 0;
+        List<String> args = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        for (int i = open + 1; i < expression.length(); i++) {
+            char c = expression.charAt(i);
+            if (c == '(') {
+                depth++;
+                current.append(c);
+            } else if (c == ')') {
+                if (depth == 0) {
+                    // 🔖 收尾括号处**最后一段实参还没入列** —— 先冲刷再判定，
+                    //   否则两参调用永远只切出 1 个实参（第一版就是这样，测试逼出来的）。
+                    if (!current.isEmpty()) {
+                        args.add(current.toString().strip());
+                    }
+                    break;
+                }
+                depth--;
+                if (depth == 0) {
+                    args.add(current.toString().strip());
+                    current.setLength(0);
+                    continue;
+                }
+                current.append(c);
+            } else if (c == ',' && depth == 0) {
+                args.add(current.toString().strip());
+                current.setLength(0);
+            } else {
+                current.append(c);
+            }
+        }
+        return args.size() >= 2 ? args.get(1) : null;
+    }
+
+    /**
+     * 把 {@code expression} 里**每个**恰好两参数的 {@code texture(}/{@code texture2D(} 调用
+     * 换成 {@code textureLod(s, c, 0.0)}；其余调用原样。
+     */
+    private static String forceLodZeroOnSampleCall(String expression) {
+        Matcher m = Pattern.compile("\\b(texture|texture2D)\\s*\\(").matcher(expression);
+        StringBuilder sb = new StringBuilder();
+        int last = 0;
+        while (m.find()) {
+            int open = expression.indexOf('(', m.start());
+            String[] split = splitTopLevelArgs(expression, open);
+            if (split == null || split.length != 2) {
+                continue;
+            }
+            sb.append(expression, last, m.start())
+                    .append(m.group(1)).append("Lod(")
+                    .append(split[0]).append(", ").append(split[1]).append(", 0.0)");
+            last = matchingClose(expression, open) + 1;
+        }
+        sb.append(expression, last, expression.length());
+        return sb.toString();
+    }
+
+    /** 顶层切分实参表；括号不配平返回 null。 */
+    private static String[] splitTopLevelArgs(String expression, int openParen) {
+        int depth = 0;
+        List<String> args = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        for (int i = openParen + 1; i < expression.length(); i++) {
+            char c = expression.charAt(i);
+            if (c == '(') {
+                depth++;
+                current.append(c);
+            } else if (c == ')') {
+                if (depth == 0) {
+                    args.add(current.toString().strip());
+                    return args.toArray(new String[0]);
+                }
+                depth--;
+                current.append(c);
+            } else if (c == ',' && depth == 0) {
+                args.add(current.toString().strip());
+                current.setLength(0);
+            } else {
+                current.append(c);
+            }
+        }
+        return null;
+    }
+
+    /** 从 {@code openParen} 起的配对 ')' 下标（假定调用语法正常）。 */
+    private static int matchingClose(String expression, int openParen) {
+        int depth = 0;
+        for (int i = openParen; i < expression.length(); i++) {
+            char c = expression.charAt(i);
+            if (c == '(') {
+                depth++;
+            } else if (c == ')' && --depth == 0) {
+                return i;
+            }
+        }
+        return expression.length() - 1;
     }
 }

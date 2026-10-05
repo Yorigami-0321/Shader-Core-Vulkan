@@ -517,7 +517,29 @@ public final class MrtTerrainPass {
 
     /** colortex / 深度目标：懒建 + 尺寸变化时 resize（不含任何可能抛的资源）。 */
     private static void ensureColortex(RenderTarget main) {
+        // 🔴 池尺寸 = max(地形 pass 的附件数, 后处理链需要的 colortex 上界)。
+        //   地形 MRT 的**附件循环**仍只挂前 actualSlots 个（管线颜色目标数与它恒等，X42）；
+        //   池里多出来的槽（BSL 的 colortex8/9 —— 后处理读写、地形不写）只是**存在**，
+        //   从不进地形 pass。两侧读同一个 MrtPlan/链状态，不各自现算。
+        //   （池是纹理个数，不受 maxColorAttachments 限制 —— 那个上限管的是**单 pass 附件数**。）
+        int pool = Math.max(MrtPlan.slotCount(),
+                Math.min(dev.vkdisp.VkDispVirtualPack.postChain().maxSlot() + 1, 16));
+        pool = Math.max(pool, actualSlots);
         if (colortex != null) {
+            if (colortex.length < pool) {
+                // 池要变大（换包/链变长）：重建整池。⚠️ 这会丢已有内容 —— 只发生在
+                // 「链第一次进到位/换包」的帧，下一帧起稳定。
+                java.util.List<TextureTarget> grown = new java.util.ArrayList<>(pool);
+                for (int slot = 0; slot < colortex.length; slot++) {
+                    grown.add(colortex[slot]);
+                }
+                for (int slot = colortex.length; slot < pool; slot++) {
+                    grown.add(new TextureTarget("vkdisp gbuffer colortex" + slot, main.width, main.height,
+                            GpuFormat.RGBA8_UNORM, null));
+                }
+                colortex = grown.toArray(new TextureTarget[0]);
+                VkDisp.LOGGER.info("vkdisp: [chain] colortex pool grown to {} slots", pool);
+            }
             if (colortex[0].width != main.width || colortex[0].height != main.height) {
                 for (TextureTarget target : colortex) {
                     target.resize(main.width, main.height);
@@ -531,8 +553,9 @@ public final class MrtTerrainPass {
         // 两侧不一致就是**静默失效**（draw 全被丢弃、日志全绿、屏幕只有清屏色）。
         actualSlots = Math.min(MrtPlan.slotCount(),
                 RenderSystem.getDevice().getDeviceInfo().limits().maxColorAttachments());
-        List<TextureTarget> targets = new ArrayList<>(actualSlots);
-        for (int slot = 0; slot < actualSlots; slot++) {
+        pool = Math.max(pool, actualSlots);
+        List<TextureTarget> targets = new ArrayList<>(pool);
+        for (int slot = 0; slot < pool; slot++) {
             targets.add(new TextureTarget("vkdisp gbuffer colortex" + slot, main.width, main.height,
                     GpuFormat.RGBA8_UNORM, null));
         }
@@ -540,8 +563,32 @@ public final class MrtTerrainPass {
         colortexDepth = new TextureTarget("vkdisp gbuffer depth", main.width, main.height,
                 null, GpuFormat.D32_FLOAT);
         // 🔖 打在建好这一刻，不是每帧（h34 修正：见 ensureTargets 末尾的说明）。
-        VkDisp.LOGGER.info("vkdisp: [GAP-003/A] gbuffer terrain targets ready: {}x{} slots={} depth=D32_FLOAT",
-                main.width, main.height, actualSlots);
+        VkDisp.LOGGER.info("vkdisp: [GAP-003/A] gbuffer terrain targets ready: {}x{} slots={} pool={} depth=D32_FLOAT",
+                main.width, main.height, actualSlots, pool);
+    }
+
+    /** 池尺寸（未建 = 0）。 */
+    public static int poolSize() {
+        return colortex == null ? 0 : colortex.length;
+    }
+
+    /**
+     * 后处理链用的 colortex 视图；越界/未建返回 {@code null}（调用方必须给出**显式占位**，
+     * 不许 null 一路传进 setUniform —— h33 同族）。
+     */
+    public static GpuTextureView poolView(int slot) {
+        if (colortex == null || slot < 0 || slot >= colortex.length || colortex[slot] == null) {
+            return null;
+        }
+        return colortex[slot].getColorTextureView();
+    }
+
+    /** gbuffer 深度视图（后处理 depthtex0/1 的真值来源）；未建返回 {@code null}。 */
+    public static GpuTextureView depthView() {
+        if (colortexDepth == null) {
+            return null;
+        }
+        return colortexDepth.getDepthTextureView();
     }
 
     /**

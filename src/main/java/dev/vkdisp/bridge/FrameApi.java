@@ -54,6 +54,7 @@ import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.commands.CommandEncoder;
 import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
 import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.textures.FilterMode;
@@ -61,6 +62,7 @@ import com.mojang.renderpearl.api.textures.GpuSampler;
 import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import org.joml.Vector4f;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
@@ -1023,5 +1025,281 @@ public final class FrameApi {
             }
         }
         return new FrameSize(width, height);
+    }
+
+    // ────────────────────────────────────────────────────────────────────────────────
+    // 🔴 通用后处理链执行器（deferred* → composite* → final；colortex 接线，用户点名
+    //    「FrameApi:952 的 packColor 从 scene 改采 colortex」的机制化版本：整链按名接，
+    //    不再是「18 个名字一律绑 scene」）。
+    //
+    // 🔖 附件布局铁律（h26 那族 UB 的机制级封堵）：
+    //   每条管线定宽 8 个颜色目标 ⇒ 附件表 = [本 pass 写入的槽按升序] + [scratch 填满]。
+    //   **被采样的 colortex 只可能出现在 scratch 侧**（它不是本 pass 的读写附件），
+    //   「既作附件又作采样器」在构造上不成立。
+    //
+    // 🔖 时序：本方法必须在**地形 MRT pass 之后**调用（colortex 必须先有内容）。
+    // ────────────────────────────────────────────────────────────────────────────────
+
+    /** 后处理链的 scratch 附件（填满定宽 8 的未写槽；每帧清 0，从不被采样）。 */
+    private static TextureTarget[] postScratch;
+
+    /** 后处理链的 builtins 环（每槽一条；环尺寸按该槽布局字节扩容，同三步口径）。 */
+    private static MappableRingBuffer[] postBuiltinsRings;
+    private static int[] postBuiltinsRingBytes;
+
+    /** 链就绪判据：注册 + 全部槽编译 + 池/深度可用。 */
+    public static boolean isPostChainReady() {
+        if (!PipelineApi.arePostPipelinesRegistered()) {
+            return false;
+        }
+        var chain = dev.vkdisp.VkDispVirtualPack.postChain();
+        if (chain.passes().isEmpty()) {
+            return false;
+        }
+        for (int i = 0; i < chain.passes().size(); i++) {
+            if (RenderSystem.getCompiledPipelineNullable(PipelineApi.postPipeline(i)) == null) {
+                return false;
+            }
+        }
+        return MrtTerrainPass.poolSize() >= chain.maxSlot() + 1
+                && MrtTerrainPass.depthView() != null;
+    }
+
+    /** 链是否应接管本帧（配置 + 地形包片元在场 + 非 toMain 诊断档）。 */
+    public static boolean isPostChainActive() {
+        return dev.vkdisp.VkDispConfig.MRT_POST_CHAIN.get()
+                && dev.vkdisp.VkDispConfig.MRT_TERRAIN_ENABLED.get()
+                && dev.vkdisp.VkDispConfig.MRT_PACK_TERRAIN_SHADER.get()
+                && !MrtTerrainPass.toMain()
+                && dev.vkdisp.VkDispVirtualPack.terrainProgram() != null
+                && !dev.vkdisp.VkDispVirtualPack.postChain().passes().isEmpty();
+    }
+
+    /**
+     * 执行整条后处理链（必须在渲染线程、地形 MRT pass 之后）。
+     *
+     * @param label render pass 标签前缀
+     * @return 主目标尺寸
+     * @throws IllegalStateException 未就绪仍被调用（就绪判据是调用方的事，这里绝不静默跳过）
+     */
+    public static FrameSize drawPostChain(String label) {
+        RenderSystem.assertOnRenderThread();
+        if (!isPostChainReady()) {
+            throw new IllegalStateException(
+                    "vkdisp: drawPostChain called while chain not ready (调用方必须先查 isPostChainReady)");
+        }
+        RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        GpuTextureView colorView = main.getColorTextureView();
+        if (colorView == null) {
+            throw new IllegalStateException("vkdisp: main target color texture view is null (can't open post chain)");
+        }
+        int width = colorView.getWidth(0);
+        int height = colorView.getHeight(0);
+
+        var chain = dev.vkdisp.VkDispVirtualPack.postChain();
+        var passes = chain.passes();
+
+        // scratch / rings 必须在开 pass 之前建好（pass 内不许新 encoder 命令，h10 实测规则）。
+        // 🔴 自定义纹理（texture.<sampler> 指令，GAP-009 素材线）同样**必须**在开 pass 之前
+        //   完成上传（上传自己新建 encoder）。
+        PackTextures.ensureReady();
+        ensurePostScratch(main);
+        ensurePostRings();
+
+        // 每帧一次采集（各槽布局不同，值集同一来源；与旧三步同款 gather）。
+        java.util.Map<String, Object> builtinsValues = OfUniformManager.gather(
+                Minecraft.getInstance(), width, height, blockAtlasSize(), lightSpaceList());
+
+        GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+        GpuTextureView sceneView = SceneCaptureApi.hasScene() ? SceneCaptureApi.sceneColorView() : null;
+        // InSampler（OF 语义 = 场景色）：链模式采不到 colortex 时才回 scene。
+        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+
+        // 采样名→视图解析器（每帧一条；「按名接 colortex」的机制所在 —— 见 chainResolver 注释）。
+        final GpuTextureView fallbackView = MrtTerrainPass.poolView(0) != null
+                ? MrtTerrainPass.poolView(0) : postScratchView(0);
+        PipelineApi.PostSamplerViewResolver resolver = chainResolver(fallbackView);
+
+        for (int slot = 0; slot < passes.size(); slot++) {
+            runPostPass(encoder, label, slot, passes.get(slot), colorView, fallbackView,
+                    sceneView, sampler, resolver, builtinsValues);
+        }
+        if (postChainLogged.compareAndSet(false, true)) {
+            dev.vkdisp.VkDisp.LOGGER.info(
+                    "vkdisp: [chain] post chain executed: passes={} first={} last={} (colortex-backed,"
+                            + " 定宽 {} 附件 + scratch；InSampler={}）",
+                    passes.size(), passes.get(0).programName(),
+                    passes.get(passes.size() - 1).programName(), PipelineApi.POST_FRAME_WIDTH,
+                    sceneView != null ? "scene" : "colortex0 fallback");
+        }
+        return new FrameSize(width, height);
+    }
+
+    /**
+     * 执行链里的一个 pass：定宽附件表 + builtins 环 + 全量 sampler 绑定 + 一次全屏 draw。
+     *
+     * <p>🔖 附件布局：写入槽按升序占 location 0..m-1（片元源已由 {@code PostOutputRenumber}
+     * 换算），剩余槽位挂 scratch 并清 0。**被采样的 colortex 只可能出现在未写位置** ⇒
+     * 「同 pass 既作附件又作采样器」（h26 那族静默 UB）在构造上不成立。
+     */
+    private static void runPostPass(CommandEncoder encoder, String label, int passSlot,
+            dev.vkdisp.pack.PackPostChain.Pass passPlan, GpuTextureView colorView,
+            GpuTextureView fallbackView, GpuTextureView sceneView, GpuSampler sampler,
+            PipelineApi.PostSamplerViewResolver resolver, Map<String, Object> builtinsValues) {
+        var compiled = RenderSystem.getCompiledPipelineNullable(PipelineApi.postPipeline(passSlot));
+        if (compiled == null) {
+            throw new IllegalStateException("vkdisp: post pipeline slot " + passSlot + " vanished mid-frame");
+        }
+        List<Integer> slots = passPlan.attachmentSlots();
+        RenderPassDescriptor.Builder descriptor =
+                RenderPassDescriptor.builder(() -> label + " post" + passSlot + " (" + passPlan.programName() + ")");
+        for (int a = 0; a < PipelineApi.POST_FRAME_WIDTH; a++) {
+            boolean written = a < slots.size();
+            GpuTextureView view = written
+                    ? writtenAttachmentView(passPlan, slots.get(a), colorView)
+                    : postScratchView(a);
+            // 写入槽 = LOAD（保留上游 pass 写进同一 colortex 的内容）；scratch = 清 0。
+            descriptor.withColorAttachment(view,
+                    written ? Optional.empty() : Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)));
+        }
+        MappableRingBuffer ring = postBuiltinsRings[passSlot];
+        BuiltinsBlockLayout layout = dev.vkdisp.VkDispVirtualPack.postBuiltinsLayout(passSlot);
+        if (!layout.isEmpty()) {
+            try (GpuBufferSlice.MappedView mapped = ring.currentBuffer().map(false, true)) {
+                OfUniformManager.logUploadOnce("post" + passSlot, layout,
+                        OfUniformManager.write(layout, builtinsValues, mapped.data()), builtinsValues);
+            }
+        }
+        try (RenderPass pass = encoder.createRenderPass(descriptor.build())) {
+            pass.setPipeline(compiled);
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform(PipelineApi.BUILTINS_UNIFORM, ring.currentBuffer());
+            pass.setUniform(PipelineApi.SAMPLER_UNIFORM,
+                    sceneView != null ? sceneView : fallbackView, sampler);
+            PipelineApi.setPostSamplerUniforms(pass, resolver, sampler);
+            pass.draw(3, 1, 0, 0);
+        }
+        ring.rotate();
+    }
+
+    /** 写入槽的视图：final 步的槽 0 = 主目标（OF：final 的输出就是屏幕）；其余 = 池视图。 */
+    private static GpuTextureView writtenAttachmentView(dev.vkdisp.pack.PackPostChain.Pass passPlan,
+            int colortexSlot, GpuTextureView colorView) {
+        GpuTextureView view = (passPlan.isFinal() && colortexSlot == 0)
+                ? colorView : MrtTerrainPass.poolView(colortexSlot);
+        if (view == null) {
+            throw new IllegalStateException(
+                    "vkdisp: post pass " + passPlan.programName() + " 附件槽 " + colortexSlot
+                            + " 无视图（池尺寸与链不符 —— 注册/生成两侧不同步，X42 同族）");
+        }
+        return view;
+    }
+
+    /**
+     * 采样名→视图解析（按名接线，替代旧「18 名一律绑 scene」）。
+     *
+     * <p>🔖 每个占位分支都返回**显式视图**而非 null —— 「绑 null 看不出根因」正是 h33 那 2702 条的来源；
+     * 还没有真值来源的名字（noisetex/lighttex/vxDepth/dhDepth）同样显式给 colortex0 占位并在此登记，
+     * 不假装接好了（noisetex = GAP-009 customImages；sampler3D 族 = GAP-014 原版能力缺失）。
+     */
+    private static PipelineApi.PostSamplerViewResolver chainResolver(GpuTextureView fallbackView) {
+        return name -> {
+            // 🔴 GAP-009 素材线：包自带的自定义纹理（BSL 的 noisetex/dirt 等）优先 ——
+            //   不接真值 = 这些效果采一张别的图，画面能亮但语义错。
+            GpuTextureView custom = PackTextures.view(name);
+            if (custom != null) {
+                return custom;
+            }
+            if (name.startsWith("colortex")) {
+                try {
+                    int slot = Integer.parseInt(name.substring("colortex".length()));
+                    GpuTextureView v = MrtTerrainPass.poolView(slot);
+                    if (v != null) {
+                        return v;
+                    }
+                } catch (NumberFormatException ignored) {
+                    // 非 colortex<数字> 形态走占位（不抛 —— 名字来自固定超集）。
+                }
+                return fallbackView;
+            }
+            // OF: gauxN = colortex(N+3)（BSL 生态里 gaux1 = colortex4 —— h44 §4.5 同源判据）。
+            if (name.startsWith("gaux")) {
+                GpuTextureView g = MrtTerrainPass.poolView(4);
+                return g != null ? g : fallbackView;
+            }
+            if (name.startsWith("depthtex")) {
+                GpuTextureView d = MrtTerrainPass.depthView();
+                return d != null ? d : fallbackView;
+            }
+            if (name.startsWith("shadowtex")) {
+                GpuTextureView s = ShadowStubs.depthView();
+                return s != null ? s : fallbackView;
+            }
+            if (name.startsWith("shadowcolor")) {
+                GpuTextureView s = ShadowStubs.colorView();
+                return s != null ? s : fallbackView;
+            }
+            return fallbackView;
+        };
+    }
+
+    /** 链执行「接管自报」只打一次（热路径日志 I/O 纪律）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean postChainLogged =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    private static void ensurePostScratch(RenderTarget main) {
+        if (postScratch == null) {
+            postScratch = new TextureTarget[PipelineApi.POST_FRAME_WIDTH];
+        }
+        for (int i = 0; i < postScratch.length; i++) {
+            if (postScratch[i] == null) {
+                postScratch[i] = new TextureTarget("vkdisp post scratch" + i,
+                        main.width, main.height, GpuFormat.RGBA8_UNORM, null);
+            } else if (postScratch[i].width != main.width || postScratch[i].height != main.height) {
+                postScratch[i].resize(main.width, main.height);
+            }
+        }
+    }
+
+    private static GpuTextureView postScratchView(int index) {
+        TextureTarget target = postScratch[index];
+        if (target == null) {
+            throw new IllegalStateException("vkdisp: post scratch " + index + " not created");
+        }
+        GpuTextureView view = target.getColorTextureView();
+        if (view == null) {
+            throw new IllegalStateException("vkdisp: post scratch " + index + " view is null");
+        }
+        return view;
+    }
+
+    private static void ensurePostRings() {
+        int n = dev.vkdisp.VkDispVirtualPack.POST_SLOT_COUNT;
+        if (postBuiltinsRings == null) {
+            postBuiltinsRings = new MappableRingBuffer[n];
+            postBuiltinsRingBytes = new int[n];
+        }
+        for (int slot = 0; slot < n; slot++) {
+            final int ringSlot = slot;
+            int want = Math.max(BUILTINS_MIN_BYTES,
+                    dev.vkdisp.VkDispVirtualPack.postBuiltinsLayout(ringSlot).byteSize());
+            if (postBuiltinsRings[ringSlot] == null || want > postBuiltinsRingBytes[ringSlot]) {
+                MappableRingBuffer stale = postBuiltinsRings[ringSlot];
+                if (stale != null) {
+                    try {
+                        stale.close();
+                    } catch (RuntimeException ex) {
+                        dev.vkdisp.VkDisp.LOGGER.warn(
+                                "vkdisp: post builtins ring close failed on resize: slot={} reason={}",
+                                ringSlot, ex);
+                    }
+                }
+                postBuiltinsRings[ringSlot] = new MappableRingBuffer(
+                        () -> "vkdisp builtins post" + ringSlot,
+                        GpuBuffer.USAGE_MAP_WRITE | GpuBuffer.USAGE_UNIFORM,
+                        want);
+                postBuiltinsRingBytes[ringSlot] = want;
+            }
+        }
     }
 }
