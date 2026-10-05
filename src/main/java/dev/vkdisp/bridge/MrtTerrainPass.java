@@ -106,6 +106,18 @@ public final class MrtTerrainPass {
     /** 埋点最多打几次（照 M-01 教训：埋点节流过密会把热路径变成 I/O 瓶颈）。 */
     private static int probeLogs;
 
+    /**
+     * 「{@code mrt.shadowStubs=false} 的 A/B 警告」是否已打过。
+     *
+     * <p>🔖 h33：旧实现把这条 WARN 放在「只跑一次的建资源路径」里，尚可；
+     * 但拆成每帧兜底的 {@link #ensureShadowStubs()} 后，<b>必须</b>自己节流，
+     * 否则每帧一条 WARN（照 M-01 埋点过密的同一课）。
+     */
+    private static boolean shadowStubsWarned;
+
+    /** 「图集采样器缺失」是否已打过（同样只打一次，见上）。 */
+    private static boolean atlasSamplerMissingNoted;
+
     private MrtTerrainPass() {
     }
 
@@ -398,6 +410,12 @@ public final class MrtTerrainPass {
                 }
             }
             GpuTextureView atlas = blockAtlas();
+            // 🔴 h33：采样器没建出来就在这里停。旧实现把 null 一路传到 setUniform，
+            //   症状是看不出根因的 'textureView and sampler must both or neither be null'
+            //   （实测 2702 条/次运行）。停在这里 + 说明原因才是可定位的失败。
+            if (!atlasSamplerReady()) {
+                return;
+            }
             // 🔖 GAP-003：包地形片元要绑的 uniform（VkDispBuiltins + 它自由声明的 sampler）。
             //   **必须在 renderGroup 之前**：STRICT_VALIDATION 下 validateDraw 按布局逐条校验，
             //   少一条即抛 Missing uniform 名（响亮失败，不是静默）。
@@ -444,8 +462,40 @@ public final class MrtTerrainPass {
         }
     }
 
-    /** 懒建 colortex + 深度 + 采样器（尺寸跟随主目标；尺寸变化时 resize，不每帧重建）。 */
+    /**
+     * 懒建 colortex + 深度 + 采样器（尺寸跟随主目标；尺寸变化时 resize，不每帧重建）。
+     *
+     * <p>🔴🔴 <b>为什么拆成四个互相独立的 ensure（h33 实测修的坑）</b>：
+     * 旧版是一个「建到一半就 return」的顺序块，而 early-return 只看 {@code colortex != null}。
+     * 于是只要<b>中途任意一步抛异常</b>（h33 里是 {@code VolumeStubs.init()}：原版 26.3
+     * 建不出 3D 纹理 ⇒ {@code UnsupportedOperationException}），就会：
+     * <pre>
+     *   colortex        已赋值 ✅
+     *   atlasSampler    永远没被赋值 ❌   ← 它在 VolumeStubs.init() 的**下一行**
+     *   下一帧          early-return 看到 colortex != null ⇒ 认为「都建好了」⇒ 永不补建
+     *   结果            每帧 setUniform(name, view, null)
+     *                  ⇒ IllegalArgumentException: textureView and sampler must both or neither be null
+     *                  ⇒ 整个地形 MRT pass 每帧死一次（h33 实测 2702 次）
+     * </pre>
+     * ⇒ <b>一个 sampler 的问题被升级成了整个 pass 不可用</b>。
+     * ⇒ 现在每个资源各管各的：某一步失败只让**它自己**缺席，其余照常。
+     * 缺席的资源在使用点有独立的、可见的失败路径（{@link #atlasSamplerReady()}）。
+     */
     private static void ensureTargets(RenderTarget main) {
+        ensureColortex(main);
+        ensureShadowStubs();
+        // 🔴 3D 桩：sampler3D（lighttex0/1、voxeltex）要有类型匹配的 3D 视图，
+        //   且必须在开 pass 之前建好（clear 走 encoder）。
+        //   🔴 h33：原版 26.3 建不出 3D 纹理 ⇒ 这里**不会**再抛（见 VolumeStubs#noteUnsupported），
+        //   它只记一次 ERROR 并让 sampler3D 走「不绑 + 报错」路径。
+        VolumeStubs.init();
+        ensureAtlasSampler();
+        VkDisp.LOGGER.info("vkdisp: [GAP-003/A] gbuffer terrain targets ready: {}x{} slots={} depth=D32_FLOAT",
+                main.width, main.height, actualSlots);
+    }
+
+    /** colortex / 深度目标：懒建 + 尺寸变化时 resize（不含任何可能抛的资源）。 */
+    private static void ensureColortex(RenderTarget main) {
         if (colortex != null) {
             if (colortex[0].width != main.width || colortex[0].height != main.height) {
                 for (TextureTarget target : colortex) {
@@ -468,24 +518,62 @@ public final class MrtTerrainPass {
         colortex = targets.toArray(new TextureTarget[0]);
         colortexDepth = new TextureTarget("vkdisp gbuffer depth", main.width, main.height,
                 null, GpuFormat.D32_FLOAT);
-        // 🔴 阴影桩纹理必须在**建 pass 之前**建好：它的 clear 需要新建 command encoder，
-        //   而 render pass 打开期间新建 encoder 会被 RenderPearl 拒绝
-        //   （"Close the existing render pass before creating a new one!"，本轮第一版踩过）。
+    }
+
+    /**
+     * 阴影桩纹理。
+     *
+     * <p>🔴 必须在**建 pass 之前**建好：它的 clear 需要新建 command encoder，
+     * 而 render pass 打开期间新建 encoder 会被 RenderPearl 拒绝
+     * （"Close the existing render pass before creating a new one!"，h10 已实测踩过）。
+     */
+    private static void ensureShadowStubs() {
         if (dev.vkdisp.VkDispConfig.MRT_SHADOW_STUBS.get()) {
             ShadowStubs.init();
-        } else {
+        } else if (!shadowStubsWarned) {
+            shadowStubsWarned = true;
             dev.vkdisp.VkDisp.LOGGER.warn("vkdisp: [GAP-003/A] mrt.shadowStubs=false —— "
                     + "**故意**把 shadowtex0/1 与 shadowcolor0 绑到本 pass 的读写附件"
                     + "（Vulkan 未定义行为），仅供 A/B 取证；画面出现闪烁是预期的");
         }
-        // 🔴 3D 桩同理：sampler3D（lighttex0/1、voxeltex）必须有类型匹配的 3D 视图，
-        //   且同样必须在开 pass 之前建好（clear 走 encoder）。
-        VolumeStubs.init();
-        atlasSampler = RenderSystem.getDevice().createSampler(
-                AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE, FilterMode.LINEAR, FilterMode.LINEAR,
-                1, OptionalDouble.empty());
-        VkDisp.LOGGER.info("vkdisp: [GAP-003/A] gbuffer terrain targets ready: {}x{} slots={} depth=D32_FLOAT",
-                main.width, main.height, actualSlots);
+    }
+
+    /**
+     * 图集采样器 —— <b>每帧兜底</b>，不是「只在首次创建时建」。
+     *
+     * <p>🔖 <b>为什么必须是每帧兜底</b>：h33 实测的故障正是
+     * 「前一步抛异常把它跳过了，而 early-return 又只看 colortex」。
+     * 只要兜底与 colortex 解耦，那类级联就再也伤不到它。
+     * {@code ShadowStubs} / {@link VolumeStubs} 自己已是幂等 ensure，这里同理。
+     */
+    private static void ensureAtlasSampler() {
+        if (atlasSampler == null) {
+            atlasSampler = RenderSystem.getDevice().createSampler(
+                    AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE,
+                    FilterMode.LINEAR, FilterMode.LINEAR, 1, OptionalDouble.empty());
+        }
+    }
+
+    /**
+     * 采样器可用吗？不可用时**只报一次** ERROR 并让调用点跳过绘制。
+     *
+     * <p>🔖 <b>为什么要这一层</b>：没有它，{@code atlasSampler == null} 会一路传到
+     * {@code setUniform}，变成一个<b>看不出根因</b>的
+     * {@code textureView and sampler must both or neither be null}（h33 实测的那 2702 条）。
+     * 在这里停下来并说明「采样器没建出来」，才是可定位的失败（01-DEV-LOOP §6 第 2 步）。
+     */
+    private static boolean atlasSamplerReady() {
+        if (atlasSampler != null) {
+            return true;
+        }
+        if (!atlasSamplerMissingNoted) {
+            atlasSamplerMissingNoted = true;
+            VkDisp.LOGGER.error("vkdisp: [GAP-003/A] 图集采样器未创建成功 —— 跳过地形 MRT 绘制。"
+                    + "**不会**用 null sampler 继续（那会让 draw 抛一个看不出根因的"
+                    + " 'textureView and sampler must both or neither be null'）；"
+                    + "本次不画的原因请看本行之前最近一条 vkdisp ERROR");
+        }
+        return false;
     }
 
     /**

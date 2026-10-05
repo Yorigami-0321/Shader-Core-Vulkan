@@ -12,6 +12,17 @@ package dev.vkdisp.bridge;
  *    → 能否并入本项目（MIT）：可以 —— 独立编写的桥接封装
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无（原版没有「包片元的 sampler3D 缺省值」这个概念）。
+ *    🔴🔴 <b>2026-10-05 实测更正（h33，MCP 驱动 runClient 抓到）</b>：
+ *    原版 26.3 <b>根本不能创建 3D / 数组纹理</b>。已逐字节核对
+ *    {@code com.mojang.renderpearl.frontend.FrontendGpuDevice#verifyTextureCreationArgs}：
+ *    {@code depthOrLayers > 1} 且非 cube 数组 ⇒ <b>无条件</b>
+ *    {@code throw new UnsupportedOperationException("Array or 3D textures are not yet supported")}；
+ *    cube 数组 {@code depthOrLayers > 6} ⇒ {@code "Array textures are not yet supported"}。
+ *    🔖 这是 <b>前端共用层</b>（{@code frontend} 包，非 opengl/vulkan 后端）⇒ <b>与后端无关</b>，
+ *    不是「本机没有 Vulkan 驱动」造成的环境现象。
+ *    ⇒ 本类的 3D 桩<b>建不出来</b>：{@link #init()} 必须**探测**而不是假设，
+ *    {@link #view()} 必须返回 {@code null} 让调用点走「不绑 + 报错」的响亮失败路径。
+ *    ⇒ 登记为 {@code GAP-014}（原版无 3D/数组纹理能力）。
  * 2. 备选：
  *    <ul>
  *      <li>① 继续喂 2D 方块图集 —— <b>否决，这就是本轮要修的 bug</b>。
@@ -65,8 +76,23 @@ final class VolumeStubs {
     /** 边长：4 而非 1（与 {@code NeutralMaterialMaps} 同理由：规避非二次幂 mip 链限制）。 */
     private static final int SIZE = 4;
 
-    /** 桩纹理视图（懒建；{@code null} = 未建）。 */
+    /** 桩纹理视图（懒建；{@code null} = 未建，或**建不出来**（见 {@link #unsupportedNoted}））。 */
     private static GpuTextureView volumeView;
+
+    /**
+     * 「原版建不出 3D 纹理」这件事**只报一次**。
+     *
+     * <p>🔖 <b>为什么必须一次性</b>：本类在渲染线程每帧被调；
+     * 若每帧打一条 ERROR，一次三分钟的取证就是几千行日志 ——
+     * 那是 M-01 埋点 600→250000 那一课的同一个失败形态（热路径变 I/O 瓶颈）。
+     */
+    private static boolean unsupportedNoted;
+
+    /** 探测失败时的异常原文（进日志，满足 X9「不猜」：原文必须能查到）。 */
+    private static String unsupportedCause;
+
+    /** 那条 ERROR 是否已打过（与 {@link #unsupportedNoted} 分开：记录 ≠ 报错）。 */
+    private static boolean unsupportedReported;
 
     private VolumeStubs() {
     }
@@ -89,6 +115,10 @@ final class VolumeStubs {
         if (volumeView != null && !volumeView.isClosed()) {
             return;
         }
+        // 🔴 已确认建不出来 ⇒ 不再重试（每帧重试 = 每帧抛 = 又回到 h33 的现场）。
+        if (unsupportedNoted) {
+            return;
+        }
         var device = RenderSystem.getDevice();
         // 🔖 用标志 **不用** RENDER_ATTACHMENT：这张图永不作 render pass 附件，
         //   少一个「同一 image 既作读写附件又作采样器」的别名 UB 机会（与 ShadowStubs 同纪律）。
@@ -96,10 +126,20 @@ final class VolumeStubs {
         //   而 writeToTexture 的 ByteBuffer 重载**只写单层**（参数含 depthOrLayer），
         //   3D 纹理要逐层调 4 次 —— 为一个「恒为 0」的内容付 4 次上传不值得，
         //   且 clear 路径没有「忘填某一层」这种静默失效的可能。
-        GpuTexture texture = device.createTexture(
-                () -> "vkdisp volume stub",
-                GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_RENDER_ATTACHMENT,
-                GpuFormat.RGBA8_UNORM, SIZE, SIZE, SIZE, 1);
+        GpuTexture texture;
+        try {
+            texture = device.createTexture(
+                    () -> "vkdisp volume stub",
+                    GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_RENDER_ATTACHMENT,
+                    GpuFormat.RGBA8_UNORM, SIZE, SIZE, SIZE, 1);
+        } catch (UnsupportedOperationException e) {
+            noteUnsupported(e);
+            return;
+        } catch (RuntimeException e) {
+            // 🔶 非「能力缺失」类异常也要按「建不出来」处理，但**原文**必须出现在日志里（X9 不猜）。
+            noteUnsupported(e);
+            return;
+        }
         // 🔖 clear 走附件路径 ⇒ 必须有 RENDER_ATTACHMENT（这也是上面带上的原因）。
         //   清成全 0 = 「无光照贡献 / 无体素数据」。
         //   🔖 CommandEncoder 的 clear* 一律返回 void（sources jar 逐行核实）⇒ 必须分两句写，
@@ -115,12 +155,61 @@ final class VolumeStubs {
                 SIZE, SIZE, SIZE);
     }
 
-    /** 3D 桩视图；未建时抛（调用点必须先 {@link #init()}）。 */
+    /**
+     * 3D 桩视图；<b>建不出来时返回 {@code null}</b>（而不是抛）。
+     *
+     * <p>🔖 <b>为什么不抛</b>：调用点（{@code bindPackTerrainUniforms}）已有
+     * 「{@code view == null} ⇒ 记 ERROR + 跳过该条绑定」的分支，那才是本项目对
+     * 「无法类型匹配」的既定处理（与 cube / 不认识的 sampler 类型同一条路）。
+     * 在这里抛会把**一个 sampler 的问题升级成整个 pass 建不起来** ——
+     * h33 实测正是这样炸的：抛穿透 {@code ensureTargets} 后，
+     * 后面创建 {@code atlasSampler} 的那一步被跳过 ⇒ 它永远为 {@code null}
+     * ⇒ 每帧 {@code setUniform(name, view, null)} ⇒ pass 彻底死掉。
+     */
     static GpuTextureView view() {
         if (volumeView == null || volumeView.isClosed()) {
-            throw new IllegalStateException(
-                    "vkdisp: volume stub 未初始化 —— 必须在 render pass 之前调 VolumeStubs.init()");
+            // 🔖 **按需求报错**，不是「探测到就报」。
+            //   h33 实测：init() 是无条件调的，于是哪怕包的地形片元**根本没声明**
+            //   sampler3D（BSL 的 3 个 3D 采样器在别的阶段用），也会打出这条 ERROR ——
+            //   那是在报一个本配置下并不存在的故障，取证者会顺着去查一个不存在的问题。
+            //   ⇒ 真正有人来要 3D 视图时才是报错的时机。
+            reportUnsupportedOnce();
+            return null;
         }
         return volumeView;
+    }
+
+    /**
+     * 记录「原版建不出 3D 纹理」并**只报一次**。
+     *
+     * <p>🔖 <b>为什么报 ERROR 而不是 WARN</b>：这不是「暂时没配好」，是
+     * 原版能力缺失 ⇒ 依赖 {@code sampler3D} 的包特性在本引擎上<b>不成立</b>。
+     * 按 T11（降级必须可见）与 X9（不猜），宁可吵也不许悄悄喂 2D 图集冒充。
+     */
+    private static void noteUnsupported(RuntimeException cause) {
+        unsupportedNoted = true;
+        unsupportedCause = cause.toString();
+    }
+
+    /**
+     * 「原版不支持 3D 纹理」这条 ERROR —— <b>只在真的有人来要 3D 视图时</b>打，且只打一次。
+     *
+     * <p>🔖 拆成「记录」与「报错」两步，是为了不报**当前配置下并不存在**的故障
+     * （见 {@link #view()} 里的说明）。
+     */
+    private static synchronized void reportUnsupportedOnce() {
+        if (!unsupportedNoted || unsupportedReported) {
+            return;
+        }
+        unsupportedReported = true;
+        dev.vkdisp.VkDisp.LOGGER.error(
+                "vkdisp: [GAP-014] 原版 26.3 **不支持 3D / 数组纹理**（FrontendGpuDevice"
+                        + "#verifyTextureCreationArgs 对 depthOrLayers>1 无条件抛"
+                        + " UnsupportedOperationException，与后端无关）"
+                        + " ⇒ 包声明的 sampler3D（BSL: lighttex0/lighttex1/voxeltex）"
+                        + " **无法绑定类型匹配的视图**，本引擎上不绑定（不喂 2D 图集："
+                        + "那是描述符类型不匹配的 Vulkan UB 且不报错）。"
+                        + " 依赖体积光照/体素数据的包特效在此引擎上不成立。原文：{}",
+                unsupportedCause);
     }
 }

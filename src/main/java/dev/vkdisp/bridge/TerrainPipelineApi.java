@@ -517,6 +517,22 @@ public final class TerrainPipelineApi {
     private static final java.util.concurrent.atomic.AtomicBoolean PACK_TERRAIN_BIND_LOGGED =
             new java.util.concurrent.atomic.AtomicBoolean();
 
+    /**
+     * 「某个 sampler 没有类型匹配的视图」这条 ERROR 的节流哨兵（h33 加）。
+     *
+     * <p>🔖 <b>为什么必须节流</b>：本方法每帧调、每个 sampler 各有一条分支。
+     * 不节流时一次三分钟的取证就是数千行完全相同的 ERROR，
+     * 既淹没真正的首行根因，又把热路径变成 I/O 瓶颈（M-01 埋点过密的同一课）。
+     */
+    private static final java.util.concurrent.atomic.AtomicBoolean PACK_TERRAIN_NULL_VIEW_WARNED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** 节流周期（帧）：首条之后每这么多帧再报一次，可见性不丢。 */
+    private static final long NULL_VIEW_LOG_EVERY = 600L;
+
+    /** 帧计数（配合 {@link #NULL_VIEW_LOG_EVERY} 节流）。 */
+    private static long nullViewFrames;
+
     /** GAP-003：每帧把 OF 内建值写进地形片元的 VkDispBuiltins 环（pass 打开前调用）。 */
     public static void updateTerrainBuiltins() {
         dev.vkdisp.glsl.translate.BuiltinsBlockLayout layout =
@@ -650,8 +666,16 @@ public final class TerrainPipelineApi {
                         case UNSUPPORTED -> null;
                     };
             if (view == null) {
-                VkDisp.LOGGER.error("vkdisp: [GAP-003] pack terrain sampler view is null: {}"
-                        + " -> 跳过该条绑定（draw 将因 Missing uniform 抛）", name);
+                // 🔴 h33：**每帧**一条 ERROR 会把日志冲垮（本轮实测同类问题一次运行 2702 行）。
+                //   节流成「首次 + 每 600 帧」—— 可见性不丢，I/O 压力可忽略。
+                if (!PACK_TERRAIN_NULL_VIEW_WARNED.getAndSet(true)
+                        || (nullViewFrames++ % NULL_VIEW_LOG_EVERY) == 0L) {
+                    VkDisp.LOGGER.error("vkdisp: [GAP-003] pack terrain sampler view is null: {}"
+                            + " -> 跳过该条绑定（draw 将因 Missing uniform 抛）。"
+                            + "常见原因见上方最近一条 ERROR：原版 26.3 不支持 3D/数组纹理"
+                            + "（GAP-014）⇒ sampler3D 无法绑定类型匹配的视图",
+                            name);
+                }
                 continue;
             }
             pass.setUniform(name, view, sampler);
