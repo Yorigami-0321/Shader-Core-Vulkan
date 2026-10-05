@@ -257,13 +257,54 @@ class SamplerDimensionPlanTest {
     }
 
     @Test
-    @DisplayName("🔖 h39：2DArray 声明走类型路径（不靠名字），行为与旧实现一致")
-    void arrayDeclarationGoesThroughTypePath() {
+    @DisplayName("🔴🔴 h40：数组纹理采样器必须**不绑**（拿 2D 图冒充数组纹理 = GAP-012/014 同族静默 UB）")
+    void arrayDeclarationMustNotBindA2DPlaceholder() {
         SamplerDimensionPlan.Plan plan = SamplerDimensionPlan.fromDeclaredTypes(
-                Map.of("texture_0", "sampler2DArray"));
-        assertEquals(SamplerDimensionPlan.ViewKind.PLACEHOLDER_2D, plan.kindOf("texture_0"),
-                "sampler2DArray 目前仍落 PLACEHOLDER_2D（与旧实现同值）；"
-                        + "是否该改成 UNSUPPORTED 属独立决策（GAP-014 已证实原版不能建数组纹理，"
-                        + "但改动会让用到它的包整条地形不渲染）");
+                Map.of("arr", "sampler2DArray", "arrShadow", "sampler2DArrayShadow"));
+        assertEquals(SamplerDimensionPlan.ViewKind.UNSUPPORTED, plan.kindOf("arr"),
+                "sampler2DArray 不得绑普通 2D 图：数组采样器要求 Arrayed=1 的图像视图，"
+                        + "喂 2D 图是描述符类型不匹配 = 静默 UB（本机无 validation layer ⇒ 不报错）");
+        assertEquals(SamplerDimensionPlan.ViewKind.UNSUPPORTED, plan.kindOf("arrShadow"),
+                "sampler2DArrayShadow 同理（且它还叠加了 GAP-015 的比较采样器问题）");
+        assertTrue(plan.warnings().stream().anyMatch(w -> w.contains("arr") && w.contains("数组纹理")),
+                "必须留下可见告警（T11：降级要可见）—— 实测：" + plan.warnings());
+    }
+
+    @Test
+    @DisplayName("🔖 h40：数组纹理与 cube / sampler3D 同等待遇（三者都不得绑）")
+    void arrayCubeAnd3DShareTheSameTreatment() {
+        SamplerDimensionPlan.Plan plan = SamplerDimensionPlan.fromDeclaredTypes(
+                Map.of("a", "sampler2DArray", "b", "samplerCube", "c", "sampler3D"));
+        assertEquals(SamplerDimensionPlan.ViewKind.UNSUPPORTED, plan.kindOf("a"));
+        assertEquals(SamplerDimensionPlan.ViewKind.UNSUPPORTED, plan.kindOf("b"));
+        // sampler3D 走 VOLUME_3D：有类型匹配的桩（虽然原版建不出 ⇒ 由 GAP-014 侧记录降级）
+        assertEquals(SamplerDimensionPlan.ViewKind.VOLUME_3D, plan.kindOf("c"),
+                "sampler3D 仍然声明 VOLUME_3D 决策，只是原版建不出来（GAP-014）"
+                        + " —— 决策层与「能不能建」是两件事，不要混为一谈");
+    }
+
+    @Test
+    @DisplayName("🔖🔖 h40：判定依据是「在本包地形程序里出现几次」，不是「类型像不像」")
+    void theCriterionIsOccurrenceCountNotTypeSimilarity() {
+        // 同一个「建不出」的家族，处置可以不同 —— 因为判据是出现次数：
+        //   shadowtex0/1 在 BSL 地形程序里 SHADOW_DEPTH_2D=2（每种配置都在）⇒ 保留绑定 + 明示
+        //   sampler2DArray 在 BSL 全部 274 个着色器源里 0 次            ⇒ 不绑
+        SamplerDimensionPlan.Plan plan = SamplerDimensionPlan.fromDeclaredTypes(
+                Map.of("shadowtex0", "sampler2DShadow", "arr", "sampler2DArray"));
+        assertEquals(SamplerDimensionPlan.ViewKind.SHADOW_DEPTH_2D, plan.kindOf("shadowtex0"),
+                "每种配置都在 ⇒ 保留绑定（GAP-015，已有一次性 WARN 明示）");
+        assertEquals(SamplerDimensionPlan.ViewKind.UNSUPPORTED, plan.kindOf("arr"),
+                "出现 0 次 ⇒ 不绑（GAP-012/014 口径）");
+    }
+
+    @Test
+    @DisplayName("🔖 h40：普通 2D 采样器的占位行为**不变**（本条只动数组）")
+    void plain2DPlaceholderUnchanged() {
+        SamplerDimensionPlan.Plan plan = SamplerDimensionPlan.fromDeclaredTypes(
+                Map.of("a", "sampler2D", "b", "sampler2DShadow"));
+        assertEquals(SamplerDimensionPlan.ViewKind.PLACEHOLDER_2D, plan.kindOf("a"));
+        assertEquals(SamplerDimensionPlan.ViewKind.PLACEHOLDER_2D, plan.kindOf("b"),
+                "sampler2DShadow 走 2D 占位分支是既有行为，本条不动它"
+                        + "（名字命中的 shadowtex* 仍绑深度桩，见 byName）");
     }
 }

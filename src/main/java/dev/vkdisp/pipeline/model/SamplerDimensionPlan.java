@@ -279,9 +279,25 @@ public final class SamplerDimensionPlan {
                     "sampler3D（OF 体积光照 / 体素贴图）⇒ 必须绑 3D 视图；"
                             + "喂 2D 视图是描述符类型不匹配 = Vulkan UB 且不报错");
         }
-        if (normalized.equals("sampler2d") || normalized.equals("sampler2dshadow")
-                || normalized.equals("sampler2darray")
-                || normalized.equals("sampler2darrayshadow")) {
+        // 🔴 h40：数组纹理从「绑 2D 占位」改成「不绑」。
+        //   旧实现把 sampler2DArray/sampler2DArrayShadow 并进上面这条 2D 分支
+        //   ⇒ 喂**一张普通 2D 图**，而数组采样器在 Vulkan 里要求数组图像视图
+        //   （Arrayed=1）⇒ 与 GAP-012「拿 2D 冒充 3D」、GAP-014「3D 纹理建不出来」
+        //   **完全同族**，且同样**一条错都不报**（本机无 validation layer）。
+        //   改成不绑的依据（与 GAP-015 相反，这里**能**不绑）：
+        //   BSL v10.1.8 的 **274 个着色器源文件里 sampler2DArray 出现 0 次**
+        //   （sampler2D 143 / sampler3D 26 / sampler2DShadow 5）
+        //   ⇒ 对本包**零代价**，与 cube / sampler3D 同等待遇。
+        //   🔖 GAP-015（shadowtex）之所以保留绑定，是因为它每种配置都在（2 次），
+        //   不绑会让地形整条不渲染；**判据是「在本包地形程序里出现几次」，不是「类型像不像」**。
+        if (normalized.equals("sampler2darray") || normalized.equals("sampler2darrayshadow")) {
+            warnings.add("sampler '" + name + "' 声明为 " + type
+                    + "（数组纹理），本引擎建不出数组图像（与 3D 纹理同一个限制，GAP-014）"
+                    + " ⇒ 未绑定（宁可响亮失败，也不拿 2D 图冒充数组纹理："
+                    + "描述符类型不匹配 = 静默 UB）");
+            return new Binding(name, type, ViewKind.UNSUPPORTED, "数组纹理采样器暂无类型匹配的桩");
+        }
+        if (normalized.equals("sampler2d") || normalized.equals("sampler2dshadow")) {
             return new Binding(name, type, ViewKind.PLACEHOLDER_2D,
                     "2D 采样器但无真值来源 ⇒ 绑方块图集占位（语义不承诺）");
         }
