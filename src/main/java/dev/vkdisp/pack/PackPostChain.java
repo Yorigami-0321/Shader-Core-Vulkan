@@ -40,12 +40,14 @@ public final class PackPostChain {
             List<Integer> attachmentSlots,
             List<String> samplerNames,
             List<PostPassContract.FragmentInput> inputs,
+            List<Integer> mipEnabledSlots,
             String renumberedSource) {
 
         public Pass {
             attachmentSlots = attachmentSlots == null ? List.of() : List.copyOf(attachmentSlots);
             samplerNames = samplerNames == null ? List.of() : List.copyOf(samplerNames);
             inputs = inputs == null ? List.of() : List.copyOf(inputs);
+            mipEnabledSlots = mipEnabledSlots == null ? List.of() : List.copyOf(mipEnabledSlots);
         }
 
         /** final 步（族序 6）—— 它的附件 0 在运行期换成主目标视图。 */
@@ -63,6 +65,15 @@ public final class PackPostChain {
         }
 
         public static final Chain EMPTY = new Chain(List.of(), List.of());
+
+        /** 全链声明需要 mip 链的 colortex 槽（GAP-017：降采样金字塔只为这些槽生成）。 */
+        public java.util.Set<Integer> mipEnabledSlots() {
+            java.util.Set<Integer> out = new java.util.LinkedHashSet<>();
+            for (Pass pass : passes) {
+                out.addAll(pass.mipEnabledSlots());
+            }
+            return out;
+        }
 
         /** 全链用到的最大 colortex 槽（colortex 池按它扩；空链 = -1）。 */
         public int maxSlot() {
@@ -173,7 +184,8 @@ public final class PackPostChain {
                 continue;
             }
             passes.add(new Pass(program.name(), selection.qualifiedName(),
-                    contract.outputSlots(), contract.samplerNames(), contract.inputs(), renumbered));
+                    contract.outputSlots(), contract.samplerNames(), contract.inputs(),
+                    contract.mipEnabledSlots(), renumbered));
         }
         if (!passes.isEmpty()) {
             StringBuilder summary = new StringBuilder("vkdisp: post chain ready: passes=[");

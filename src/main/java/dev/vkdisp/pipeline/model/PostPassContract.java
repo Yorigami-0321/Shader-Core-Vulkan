@@ -22,6 +22,7 @@ public record PostPassContract(
         List<Integer> outputSlots,
         List<String> samplerNames,
         List<FragmentInput> inputs,
+        List<Integer> mipSlots,
         int outputCount) {
 
     /** 片元声明的输入 varying（后处理 VS 适配层按此逐 location 供值）。 */
@@ -31,6 +32,7 @@ public record PostPassContract(
         outputSlots = outputSlots == null ? List.of() : List.copyOf(outputSlots);
         samplerNames = samplerNames == null ? List.of() : List.copyOf(samplerNames);
         inputs = inputs == null ? List.of() : List.copyOf(inputs);
+        mipSlots = mipSlots == null ? List.of() : List.copyOf(mipSlots);
     }
 
     /** {@code layout(location = N) out ...;}（N 允许带空格）。 */
@@ -40,6 +42,10 @@ public record PostPassContract(
     /** {@code layout(location = N) in <type> <name>;}（后处理片元的屏幕空间 varying）。 */
     private static final Pattern IN_DECL = Pattern.compile(
             "layout\\s*\\(\\s*location\\s*=\\s*(\\d+)\\s*\\)\\s+in\\s+([A-Za-z_]\\w*)\\s+([A-Za-z_]\\w*)\\s*;");
+
+    /** OF const：{@code const bool colortex0MipmapEnabled = true;}（GAP-017 的判据来源）。 */
+    private static final Pattern MIP_CONST = Pattern.compile(
+            "colortex(\\d+)MipmapEnabled\\s*=\\s*true");
 
     /** {@code uniform samplerXXX name;}（含数组声明形态不认 —— 转译终稿里不出现，X9 不猜）。 */
     private static final Pattern SAMPLER_DECL = Pattern.compile(
@@ -78,6 +84,15 @@ public record PostPassContract(
             }
         }
         inputs.sort((a, b) -> Integer.compare(a.location(), b.location()));
+        List<Integer> mipSlots = new ArrayList<>();
+        Matcher mip = MIP_CONST.matcher(source == null ? "" : source);
+        while (mip.find()) {
+            int slot = Integer.parseInt(mip.group(1));
+            if (!mipSlots.contains(slot)) {
+                mipSlots.add(slot);
+            }
+        }
+        mipSlots.sort(Integer::compareTo);
         List<String> samplers = new ArrayList<>();
         Matcher sampler = SAMPLER_DECL.matcher(source == null ? "" : source);
         while (sampler.find()) {
@@ -85,12 +100,17 @@ public record PostPassContract(
                 samplers.add(sampler.group(2));
             }
         }
-        return new PostPassContract(qualifiedName, slots, samplers, inputs,
+        return new PostPassContract(qualifiedName, slots, samplers, inputs, mipSlots,
                 slots.get(slots.size() - 1) + 1);
     }
 
     /** 最大的声明槽号（colortex 池尺寸按它扩）。 */
     public int maxSlot() {
         return outputSlots.get(outputSlots.size() - 1);
+    }
+
+    /** 该 pass 声明 `const bool colortexNMipmapEnabled=true` 的槽集合（升序）。 */
+    public java.util.List<Integer> mipEnabledSlots() {
+        return mipSlots;
     }
 }

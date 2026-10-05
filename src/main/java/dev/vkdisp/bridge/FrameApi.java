@@ -1110,16 +1110,14 @@ public final class FrameApi {
         java.util.Map<String, Object> builtinsValues = OfUniformManager.gather(
                 Minecraft.getInstance(), width, height, blockAtlasSize(), lightSpaceList());
 
-        // 🔴 GAP-017 止血：链上的采样一律钳 maxLod=0。引擎还给不出 colortex 的真实 mip 链
-        //   （CommandEncoder 无 generateMips，逐类核实过），而 BSL 有 6 个后处理程序按
-        //   `colortexNMipmapEnabled` 做高 LOD 采样 —— 不钳就是驱动未定义行为
-        //   （h46 I/J 实测：composite4 的 BloomTile 把 bloom 打成全白 251.7）。
-        //   钳后 bloom = 同图多偏移 taps 的有界近似，**不承诺观感正确**（修根判据见登记表）。
+        // 🔴 GAP-017（h46 K 臂证伪 maxLod 钳制后改为真做）：链采样保持完整 mip 范围，
+        //   高 LOD 采样由 `ColortexPool` 的**真实 mip 链** + 每帧降采样金字塔供给
+        //   （见 generateMipPyramids）。BSL 有 6 个后处理程序按 `colortexNMipmapEnabled`
+        //   按级采样 —— 钳制只是把错误从「驱动未定义」换成「八 tap 全落 mip0 的必然过曝」。
         GpuSampler sampler = RenderSystem.getDevice().createSampler(
                 com.mojang.renderpearl.api.textures.AddressMode.CLAMP_TO_EDGE,
                 com.mojang.renderpearl.api.textures.AddressMode.CLAMP_TO_EDGE,
-                FilterMode.LINEAR, FilterMode.LINEAR, 1,
-                java.util.OptionalDouble.of(0.0));
+                FilterMode.LINEAR, FilterMode.LINEAR, 1, OptionalDouble.empty());
         GpuTextureView sceneView = SceneCaptureApi.hasScene() ? SceneCaptureApi.sceneColorView() : null;
         // InSampler（OF 语义 = 场景色）：链模式采不到 colortex 时才回 scene。
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
@@ -1129,10 +1127,23 @@ public final class FrameApi {
                 ? MrtTerrainPass.poolView(0) : postScratchView(0);
         PipelineApi.PostSamplerViewResolver resolver = chainResolver(fallbackView);
 
+        // GAP-017：地形 pass 写完的 mip 声明槽先建金字塔；此后每级 pass 写完带 mip 声明的槽，
+        //   在其**被读之前**重建（脏集机制 —— 不重建就会读到上一级的陈旧/未初始化 mip）。
+        java.util.Set<Integer> mipSlots = chain.mipEnabledSlots();
+        java.util.Set<Integer> mipDirty = new java.util.LinkedHashSet<>(mipSlots);
         for (int slot = 0; slot < passes.size(); slot++) {
-            runPostPass(encoder, label, slot, passes.get(slot), colorView, fallbackView,
+            var passPlan = passes.get(slot);
+            refreshMipPyramids(encoder, label, mipSlots, mipDirty, passPlan);
+            runPostPass(encoder, label, slot, passPlan, colorView, fallbackView,
                     sceneView, sampler, resolver, builtinsValues);
         }
+        logChainExecutedOnce(passes, sceneView);
+        return new FrameSize(width, height);
+    }
+
+    /** 链「已执行」自报只打一次（热路径日志 I/O 纪律）。 */
+    private static void logChainExecutedOnce(
+            java.util.List<dev.vkdisp.pack.PackPostChain.Pass> passes, GpuTextureView sceneView) {
         if (postChainLogged.compareAndSet(false, true)) {
             dev.vkdisp.VkDisp.LOGGER.info(
                     "vkdisp: [chain] post chain executed: passes={} first={} last={} (colortex-backed,"
@@ -1141,7 +1152,6 @@ public final class FrameApi {
                     passes.get(passes.size() - 1).programName(), PipelineApi.POST_FRAME_WIDTH,
                     sceneView != null ? "scene" : "colortex0 fallback");
         }
-        return new FrameSize(width, height);
     }
 
     /**
@@ -1250,6 +1260,62 @@ public final class FrameApi {
             }
             return fallbackView;
         };
+    }
+
+    /** 读前重建 + 写后标脏（GAP-017 脏集机制）。 */
+    private static void refreshMipPyramids(CommandEncoder encoder, String label,
+            java.util.Set<Integer> mipSlots, java.util.Set<Integer> mipDirty,
+            dev.vkdisp.pack.PackPostChain.Pass passPlan) {
+        if (!mipDirty.isEmpty()) {
+            generateMipPyramids(encoder, label, mipDirty,
+                    RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
+            mipDirty.clear();
+        }
+        for (int written : passPlan.attachmentSlots()) {
+            if (mipSlots.contains(written)) {
+                mipDirty.add(written);
+            }
+        }
+    }
+
+    /**
+     * 为脏槽逐级降采样：L 级 = 采样 L−1 级视图的一次全屏 blit（LINEAR 滤波）。
+     *
+     * <p>🔖 为什么用 blit 管线：`vkdisp:pipeline/blit` = 不翻转全屏三角形 + {@code InSampler}
+     * 单附件 —— 与「采上一级、写下一级」完全同形，零新管线。视图方向恒等（同一张纹理的
+     * 相邻级），不涉及 p416 的翻转选择。
+     */
+    private static void generateMipPyramids(CommandEncoder encoder, String label,
+            java.util.Set<Integer> slots, GpuSampler linear) {
+        CompiledRenderPipeline blit =
+                RenderSystem.getCompiledPipelineNullable(PipelineApi.blitPipeline());
+        if (blit == null) {
+            dev.vkdisp.VkDisp.LOGGER.warn("vkdisp: [GAP-017] blit 管线未编译 ⇒ 本帧跳过 mip 金字塔生成");
+            return;
+        }
+        for (int slot : slots) {
+            int levels = MrtTerrainPass.poolLevels(slot);
+            for (int level = 1; level < levels; level++) {
+                GpuTextureView dst = MrtTerrainPass.poolMipView(slot, level);
+                GpuTextureView src = MrtTerrainPass.poolMipView(slot, level - 1);
+                if (dst == null || src == null) {
+                    break;
+                }
+                final int mipLevel = level;
+                final int mipSlot = slot;
+                try (RenderPass pass = encoder.createRenderPass(
+                        () -> label + " mip c" + mipSlot + " L" + mipLevel,
+                        dst,
+                        Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)),
+                        null,
+                        OptionalDouble.empty())) {
+                    pass.setPipeline(blit);
+                    RenderSystem.bindDefaultUniforms(pass);
+                    pass.setUniform(PipelineApi.SAMPLER_UNIFORM, src, linear);
+                    pass.draw(3, 1, 0, 0);
+                }
+            }
+        }
     }
 
     /** 链执行「接管自报」只打一次（热路径日志 I/O 纪律）。 */

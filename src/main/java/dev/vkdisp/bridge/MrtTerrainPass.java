@@ -84,8 +84,8 @@ import org.jspecify.annotations.Nullable;
 @EventBusSubscriber(modid = VkDisp.MOD_ID, value = Dist.CLIENT)
 public final class MrtTerrainPass {
 
-    /** 我方 colortex 目标（懒建；尺寸跟随主目标）。 */
-    private static TextureTarget[] colortex;
+    /** 我方 colortex 池（GAP-017：带真实 mip 链的多级纹理；懒建，尺寸跟随主目标）。 */
+    private static final ColortexPool POOL = new ColortexPool();
 
     /**
      * 🔖 像素回读探针要的是<b>纹理</b>（GPU→CPU 拷贝的源），不是视图。
@@ -95,10 +95,18 @@ public final class MrtTerrainPass {
      */
     @Nullable
     public static GpuTexture slotTexture(int slot) {
-        if (colortex == null || slot < 0 || slot >= colortex.length || colortex[slot] == null) {
-            return null;
-        }
-        return colortex[slot].getColorTexture();
+        return POOL.texture(slot);
+    }
+
+    /** GAP-017：第 slot 槽第 level 级的视图（降采样金字塔用）。 */
+    @Nullable
+    public static GpuTextureView poolMipView(int slot, int level) {
+        return POOL.mipView(slot, level);
+    }
+
+    /** 第 slot 槽的 mip 级数（0 = 未建）。 */
+    public static int poolLevels(int slot) {
+        return POOL.levels(slot);
     }
 
     /** 我方深度目标（地形要深度测试/写深度；与 colortex 同尺寸）。 */
@@ -515,80 +523,47 @@ public final class MrtTerrainPass {
         //   {@link #atlasSamplerReady()} 与 {@code colortex != null}。
     }
 
-    /** colortex / 深度目标：懒建 + 尺寸变化时 resize（不含任何可能抛的资源）。 */
+    /** colortex 池 / 深度目标：懒建 + 尺寸变化时 resize（池内部处理；不含任何可能抛的资源）。 */
     private static void ensureColortex(RenderTarget main) {
-        // 🔴 池尺寸 = max(地形 pass 的附件数, 后处理链需要的 colortex 上界)。
-        //   地形 MRT 的**附件循环**仍只挂前 actualSlots 个（管线颜色目标数与它恒等，X42）；
-        //   池里多出来的槽（BSL 的 colortex8/9 —— 后处理读写、地形不写）只是**存在**，
-        //   从不进地形 pass。两侧读同一个 MrtPlan/链状态，不各自现算。
-        //   （池是纹理个数，不受 maxColorAttachments 限制 —— 那个上限管的是**单 pass 附件数**。）
+        // 池尺寸 = max(地形 pass 附件数, 链需要的 colortex 上界)；地形附件循环仍只挂前
+        // actualSlots 个（管线颜色目标数与其恒等，X42）。池是纹理个数，不受 maxColorAttachments 限制。
+        actualSlots = Math.min(MrtPlan.slotCount(),
+                RenderSystem.getDevice().getDeviceInfo().limits().maxColorAttachments());
         int pool = Math.max(MrtPlan.slotCount(),
                 Math.min(dev.vkdisp.VkDispVirtualPack.postChain().maxSlot() + 1, 16));
         pool = Math.max(pool, actualSlots);
-        if (colortex != null) {
-            if (colortex.length < pool) {
-                // 池要变大（换包/链变长）：重建整池。⚠️ 这会丢已有内容 —— 只发生在
-                // 「链第一次进到位/换包」的帧，下一帧起稳定。
-                java.util.List<TextureTarget> grown = new java.util.ArrayList<>(pool);
-                for (int slot = 0; slot < colortex.length; slot++) {
-                    grown.add(colortex[slot]);
-                }
-                for (int slot = colortex.length; slot < pool; slot++) {
-                    grown.add(new TextureTarget("vkdisp gbuffer colortex" + slot, main.width, main.height,
-                            GpuFormat.RGBA8_UNORM, null));
-                }
-                colortex = grown.toArray(new TextureTarget[0]);
-                VkDisp.LOGGER.info("vkdisp: [chain] colortex pool grown to {} slots", pool);
-            }
-            if (colortex[0].width != main.width || colortex[0].height != main.height) {
-                for (TextureTarget target : colortex) {
-                    target.resize(main.width, main.height);
-                }
-                colortexDepth.resize(main.width, main.height);
-                VkDisp.LOGGER.info("vkdisp: [GAP-003/A] colortex resized to {}x{}", main.width, main.height);
-            }
-            return;
+        boolean first = POOL.size() == 0;
+        POOL.ensure(pool, main.width, main.height, RenderSystem.getDevice());
+        if (colortexDepth == null) {
+            colortexDepth = new TextureTarget("vkdisp gbuffer depth", main.width, main.height,
+                    null, GpuFormat.D32_FLOAT);
+            VkDisp.LOGGER.info("vkdisp: [GAP-003/A] gbuffer terrain targets ready: {}x{} slots={} pool={}"
+                            + " poolDepth=D32_FLOAT mipLevels={} (GAP-017 pool with real mip chain)",
+                    main.width, main.height, actualSlots, pool, POOL.levels(0));
+        } else if (colortexDepth.width != main.width || colortexDepth.height != main.height) {
+            colortexDepth.resize(main.width, main.height);
+            VkDisp.LOGGER.info("vkdisp: [GAP-003/A] colortex resized to {}x{}", main.width, main.height);
         }
-        // 🔖 与管线共用 MrtPlan.slotCount()（单点真源）：本机无 validation layer，
-        // 两侧不一致就是**静默失效**（draw 全被丢弃、日志全绿、屏幕只有清屏色）。
-        actualSlots = Math.min(MrtPlan.slotCount(),
-                RenderSystem.getDevice().getDeviceInfo().limits().maxColorAttachments());
-        pool = Math.max(pool, actualSlots);
-        List<TextureTarget> targets = new ArrayList<>(pool);
-        for (int slot = 0; slot < pool; slot++) {
-            targets.add(new TextureTarget("vkdisp gbuffer colortex" + slot, main.width, main.height,
-                    GpuFormat.RGBA8_UNORM, null));
+        if (!first && POOL.size() != pool) {
+            VkDisp.LOGGER.info("vkdisp: [chain] colortex pool grown to {} slots", pool);
         }
-        colortex = targets.toArray(new TextureTarget[0]);
-        colortexDepth = new TextureTarget("vkdisp gbuffer depth", main.width, main.height,
-                null, GpuFormat.D32_FLOAT);
-        // 🔖 打在建好这一刻，不是每帧（h34 修正：见 ensureTargets 末尾的说明）。
-        VkDisp.LOGGER.info("vkdisp: [GAP-003/A] gbuffer terrain targets ready: {}x{} slots={} pool={} depth=D32_FLOAT",
-                main.width, main.height, actualSlots, pool);
     }
 
     /** 池尺寸（未建 = 0）。 */
     public static int poolSize() {
-        return colortex == null ? 0 : colortex.length;
+        return POOL.size();
     }
 
-    /**
-     * 后处理链用的 colortex 视图；越界/未建返回 {@code null}（调用方必须给出**显式占位**，
-     * 不许 null 一路传进 setUniform —— h33 同族）。
-     */
+    /** 后处理链用的 colortex 视图；越界/未建返回 {@code null}（占位必须显式，h33 同族）。 */
+    @Nullable
     public static GpuTextureView poolView(int slot) {
-        if (colortex == null || slot < 0 || slot >= colortex.length || colortex[slot] == null) {
-            return null;
-        }
-        return colortex[slot].getColorTextureView();
+        return POOL.view(slot);
     }
 
-    /** gbuffer 深度视图（后处理 depthtex0/1 的真值来源）；未建返回 {@code null}。 */
+    /** gbuffer 深度视图（后处理 depthtex0/1/2 的真值来源）；未建返回 {@code null}。 */
+    @Nullable
     public static GpuTextureView depthView() {
-        if (colortexDepth == null) {
-            return null;
-        }
-        return colortexDepth.getDepthTextureView();
+        return colortexDepth == null ? null : colortexDepth.getDepthTextureView();
     }
 
     /**
@@ -736,16 +711,13 @@ public final class MrtTerrainPass {
     /** 我方 colortex 某一槽的视图（供调试回读）；未建 / 越界返回 {@code null}。 */
     @Nullable
     public static GpuTextureView slotView(int slot) {
-        if (colortex == null || slot < 0 || slot >= colortex.length || colortex[slot] == null) {
-            return null;
-        }
-        return colortex[slot].getColorTextureView();
+        return POOL.view(slot);
     }
 
     private static GpuTextureView view(int slot) {
-        GpuTextureView view = colortex[slot].getColorTextureView();
+        GpuTextureView view = POOL.view(slot);
         if (view == null) {
-            throw new IllegalStateException("vkdisp: gbuffer colortex" + slot + " color view is null");
+            throw new IllegalStateException("vkdisp: gbuffer colortex" + slot + " view is null");
         }
         return view;
     }

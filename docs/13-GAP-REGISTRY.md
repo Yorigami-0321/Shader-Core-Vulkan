@@ -323,7 +323,7 @@ BSL 的 blue-noise 抖动/胶片颗粒自此有真值）；**三段键**（`text
 | **原版现状（字节码级核实）** | `GpuDevice#createTexture(label, usage, format, w, h, depthOrLayers, **mipLevels**)` 可建多级纹理，但 `TextureTarget` 内部只建单级；`CommandEncoder` **没有 `generateMips`**（逐类核过，只有 writeToTexture/copyTexture* 按单 mip 操作）⇒ 引擎侧没有现成的 mip 链生成能力 |
 | **实测症状（h46 I/J 臂逐字）** | `colortex0=(45.4,36.0,19.2)` 正常而 `colortex1=(251.7,250.8,248.4)` 帧尾即白 = composite4 的 `BloomTile` 对无 mip 的 colortex0 做高 LOD 采样，驱动层饱和 ⇒ main 全白。黑前线（GAP-008）修住后浮出的同族新前线 |
 | **止血尝试（h46 K 臂，已证伪）** | 链侧采样统一 `maxLod=0`（钳到高 LOD ⇒ mip0）。K 臂实测 **无效**：`colortex1` 仍 `(251.96, 251.07, 249.0)` —— 白不是驱动未定义行为，而是 **BloomTile 的 8 个 mip taps 全部落到同一张全分辨率图** ⇒ `Σ≈8×avg`，`pow(Σ/32, 0.25)` 把暗源必然抬到 ~110/255，再被 composite5/6/7 叠加 ⇒ 饱和。钳制保留（有界性优于未定义），但**白症状归 GAP-017 本体** |
-| **修根路径（下一实现）** | 引擎无 `generateMips` 且无缩放 copy ⇒ 用**渲染金字塔**：`createTextureView(baseMipLevel,1)` 逐级采上一级 → 半尺寸 render pass 写下一级（每级一个 pass 或用一次多附件 pass），按包声明的 `colortexNMipmapEnabled` 只对涉及的槽、在被读之前生成。工作量 = 一个小 bridge 类 + 每帧若干小 pass（lavapipe 上成本可忽略）|
+| **✅ `h46` L 臂（2026-10-05）修根已落地并验证** | `ColortexPool`（每槽多级纹理 + 每级视图；原版 `RenderTarget` 逐类核实只有 mipLevels=1）+ `FrameApi` 降采样金字塔（复用 blit 管线逐级采上一级；脏集机制：写后标脏、读前重建，只按包声明的槽）。L 臂实测：`main#2 FULL = (164.5,190.1,255.0)` —— K 臂的全白 (251.96,251.07,249.0) 退场，出现天空蓝色调。**观感仍未逐像素核对**（截图通道待接），本条保持开放到「BSL 画面与 Iris 对照」完成 |
 | **修根条件（回退判据）** | 实现显式 mip 生成（降采样 blit 链或 compute），且能按 `colortexNMipmapEnabled` 精确只对声明的槽生成 ⇒ 撤 maxLod=0 钳制。在此之前不许说「bloom 生效」 |
 | **证据** | `evidence/h46-post-chain-integration.md` §I/§J |
 

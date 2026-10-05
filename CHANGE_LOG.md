@@ -6,6 +6,19 @@
 ---
 ---
 
+## 2026-10-05（六十八）— GAP-017 修根落地：colortex 真实 mip 链（池 + 降采样金字塔）⇒ K 臂全白退场
+
+> **verdict = 白前线用「按包声明槽位、读前重建」的渲染金字塔修掉**：`ColortexPool`
+> （原版 RenderTarget 逐类核实只有 mipLevels=1 ⇒ 自建多级纹理 + 每级视图）+ blit 管线逐级降采样
+> + 脏集机制（写后标脏、读前重建，只对 `colortexNMipmapEnabled` 声明的槽付费）。
+> L 臂实测 `main = (164.5,190.1,255.0)` 对比 K 臂 `(252.0,251.1,249.0)` ⇒ 全白消失、
+> 出现天空蓝梯度。**观感逐像素对照仍未做**（GAP-017 保持开放）。935 条单测全绿。
+> 证据 `evidence/h46-…` §L 臂；登记表 GAP-017 状态行已更新。
+
+- 顺带：`MethodLengthRatchet` 抓到 `drawPostChain` 过线 ⇒ 当场拆出 `logChainExecutedOnce`
+  （棘轮第一次拦到**新链自己**的长方法 —— 它是给链修路的，不是摆设）。
+- 是否已提交：见本次提交（**不带任何 trailer**）。
+
 ## 2026-10-05（六十七）— 🔴 BSL 整条后处理链接入（colortex 按名接线）+ 内置 noisetex + GAP-008 决定性探针
 
 > **verdict = 「composite 只喂 scene、只跑三步」的时代结束**：deferred*→composite*→final
