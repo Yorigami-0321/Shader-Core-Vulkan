@@ -61,7 +61,10 @@ import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.textures.GpuTexture;
 import dev.vkdisp.VkDisp;
 import dev.vkdisp.VkDispConfig;
+import dev.vkdisp.config.PackOptionStore;
+import dev.vkdisp.pack.PackOptionOverrideSwitch;
 import dev.vkdisp.pipeline.model.MrtPlan;
+import dev.vkdisp.pipeline.model.PackOptionEvidence;
 import dev.vkdisp.pipeline.model.PixelProbePlan;
 import dev.vkdisp.pipeline.model.PixelProbeVerdict;
 import dev.vkdisp.pipeline.model.PixelStats;
@@ -107,6 +110,18 @@ public final class TargetReadback {
 
     /** 「回读回调失败」只报一次（带异常原文）。 */
     private static final AtomicBoolean CALLBACK_FAILURE_NOTED = new AtomicBoolean();
+
+    /**
+ * 预热帧数下限：地形 MRT pass 画够这么多帧之前，探针**只报数字、不出对照结论**。
+ *
+ * <p>🔖 取 600（对齐 {@code MrtTerrainPass} 自己打 draw 统计的 300/1200 节奏，
+ * 取中间值）：低于它时 colortex 很可能只有清屏值。
+ * 🔖 这不是「先等等再说」，而是**明确拒绝出结论** —— 沉默与「有结论」在日志上无法区分。
+ */
+private static final long WARMUP_FRAMES = 600L;
+
+    /** 「预热期内不出结论」只报一次。 */
+    private static final AtomicBoolean WARMUP_NOTED = new AtomicBoolean();
 
     /** 「没有可回读的目标」只报一次。 */
     private static final AtomicBoolean NO_TARGET_NOTED = new AtomicBoolean();
@@ -171,6 +186,11 @@ public final class TargetReadback {
         framesUntilProbe = Math.max(1L, VkDispConfig.MRT_PIXEL_PROBE_EVERY.get());
         round++;
 
+        // 🔖🔖 取证件（2026-10-05 实测踩到后才加的）：每轮先把「**实际生效**的包选项覆盖」
+        //   打一遍，再打任何数字。理由见 PackOptionEvidence 的类注释 ——
+        //   本项目自己就因为落盘 store 里残留着前一轮的 PARALLAX=false 而带偏了一整轮结论，
+        //   而当时日志里每一行都正常。⇒ 覆盖来源必须**每轮**自报，不能只在启动时打一次
+        //   （取证过程会热加载改配置，h44 就用了热加载切档）。
         RenderTarget main = net.minecraft.client.Minecraft.getInstance().gameRenderer.mainRenderTarget();
         // 🔖 主目标先测：它是「用户看到的」那个面（h31 收尾被撤回的教训 = 判读对象必须自报）。
         boolean any = submit("main", main == null ? null : main.getColorTexture());
@@ -181,23 +201,74 @@ public final class TargetReadback {
         //   那是**假证据**：真相是「那张图没有包的输出」。
         //   （同族第五例：把「附件存在」当成「附件被写了」。）
         PixelProbePlan plan = decidePlan();
-        if (!plan.note().equals(lastPlanNote)) {
-            lastPlanNote = plan.note();
-            VkDisp.LOGGER.warn("vkdisp: [pixel-probe] 本轮测槽决策: toMain={} attachments={} 测={}"
-                            + " comparable={} truncated={} —— {}",
-                    MrtTerrainPass.toMain(), MrtTerrainPass.actualSlots(), plan.colortexSlots(),
-                    plan.comparable(), plan.truncated(), plan.note());
-        }
+        reportPlanOnce(plan);
         for (int slot : plan.colortexSlots()) {
             any |= submit("colortex" + slot, MrtTerrainPass.slotTexture(slot));
         }
-        if (!any) {
-            if (NO_TARGET_NOTED.compareAndSet(false, true)) {
-                VkDisp.LOGGER.warn("vkdisp: [pixel-probe] 本帧没有可回读的目标"
-                        + "（主目标或 colortex 未建成）⇒ 未取到任何数字。"
-                        + "⚠️ 「没有数字」与「数字是 0」是两件事，不要混读");
-            }
+        // 🔖 ③ 方块图集（texture_0 的真值）：把它也当一个源测一次。
+        //   h13 只对图集的 mip 链做过**静态**核查，从未在**运行期**取过它的数字；
+        //   而「包片元乘上去的那张图是不是黑的」正是 albedo ≡ 0 的头号候选输入。
+        if (atlasProbeEnabled()) {
+            any |= submit("blockAtlas", blockAtlasTexture());
         }
+        if (!any && NO_TARGET_NOTED.compareAndSet(false, true)) {
+            VkDisp.LOGGER.warn("vkdisp: [pixel-probe] 本帧没有可回读的目标"
+                    + "（主目标或 colortex 未建成）⇒ 未取到任何数字。"
+                    + "⚠️ 「没有数字」与「数字是 0」是两件事，不要混读");
+        }
+    }
+
+    /**
+     * 测槽决策只在<b>决策变了</b>时打一行。
+     *
+     * <p>🔖 决策说明是长文本（槽位集合 + 降级原因），探针每 300 帧算一次；
+     * 无节流就是一次三分钟几十行逐字相同的 WARN（h33 刷过 2702 行、h34 刷过 499 行）。
+     * 而「决策变了」（切档 / 切包 / 换附件数 / 换槽位集合）恰恰最该被看到。
+     */
+    private static void reportPlanOnce(PixelProbePlan plan) {
+        if (plan.note().equals(lastPlanNote)) {
+            return;
+        }
+        lastPlanNote = plan.note();
+        VkDisp.LOGGER.warn("vkdisp: [pixel-probe] 本轮测槽决策: toMain={} attachments={} 测={}"
+                        + " comparable={} truncated={} —— {}",
+                MrtTerrainPass.toMain(), MrtTerrainPass.actualSlots(), plan.colortexSlots(),
+                plan.comparable(), plan.truncated(), plan.note());
+    }
+
+    /**
+     * 方块图集是否也纳入回读（默认关：它是一个**大得多**的纹理，回读缓冲按整帧尺寸分配）。
+     *
+     * <p>🔖 为什么不默认开：图集是 mip 链纹理、尺寸远大于主目标，
+     * 每轮多一次整图 GPU→CPU 拷贝与一块同尺寸缓冲。
+     * 而它是「输入侧」的独立一条证据，取证时才需要 ⇒ 按需开启。
+     */
+    public static boolean atlasProbeEnabled() {
+        return VkDispConfig.MRT_PIXEL_PROBE_ATLAS.get();
+    }
+
+    /**
+     * 🔖 当前生效的包选项覆盖（取证件）。
+     *
+     * <p>🔖 <b>为什么这里要读两个来源</b>：① {@code config/vkdisp-pack-options.properties}
+     * （选项 GUI「完成」落盘，跨会话持久）；② {@code pack.optionOverrides} 配置串（不落盘）。
+     * 只查一个必然漏 —— 本项目 2026-10-05 就因为漏查①而把「默认档」带偏了一轮。
+     */
+    static PackOptionEvidence currentEvidence() {
+        java.util.Map<String, String> store = new java.util.LinkedHashMap<>();
+        try {
+            PackOptionStore loaded = PackOptionStore.load(PackOptionStore.pathFor(
+                    net.minecraft.client.Minecraft.getInstance().gameDirectory.toPath()));
+            for (java.util.Map.Entry<String, String> entry : loaded.entries().entrySet()) {
+                store.put(entry.getKey(), entry.getValue());
+            }
+        } catch (Throwable t) {
+            // 🔖 读不到 store **不等于**「没有覆盖」—— 必须说出来，否则又是静默空转。
+            VkDisp.LOGGER.warn("vkdisp: [pixel-probe] 读取包选项 store 失败（原文：{}）"
+                    + " ⇒ 本轮取证件**只含** pack.optionOverrides 一路；"
+                    + "若你以为 store 里有覆盖生效，这条 WARN 就是证据", t.toString());
+        }
+        return PackOptionEvidence.of(store, PackOptionOverrideSwitch.spec());
     }
 
     /**
@@ -284,7 +355,19 @@ public final class TargetReadback {
             }
             PixelStats.Stats stats = PixelStats.of(pixels, width, bytesPerPixel, region);
             LAST.put(roundTag, stats);
-            VkDisp.LOGGER.info("vkdisp: [pixel-probe] {} {}", roundTag, stats.format(label));
+            // 🔖 取证件跟在每个数字后面：单看一行数字无法判断它是哪个覆盖配置下测的。
+            VkDisp.LOGGER.info("vkdisp: [pixel-probe] {} {} {}", roundTag, stats.format(label),
+                    currentEvidence().format());
+            // 🔖④ 同一份像素再按「天空带 / 地形带 / 整屏」分区各取一次数：
+            //   单一矩形回答不了「黑的是天空还是地形」（h17 那个混淆的形态）。
+            for (PixelStats.AreaSample area : PixelStats.areas(width, height)) {
+                if (area.region().area() == 0L || area.region().equals(region)) {
+                    continue; // 空区跳过；与中心矩形同形的区不重复打
+                }
+                PixelStats.Stats sub = PixelStats.of(pixels, width, bytesPerPixel, area.region());
+                VkDisp.LOGGER.info("vkdisp: [pixel-probe] {} {} area={} {}",
+                        roundTag, label, area.label(), sub.format("[" + area.label() + "]"));
+            }
             compareSources(label, roundTag);
         } catch (Throwable t) {
             if (CALLBACK_FAILURE_NOTED.compareAndSet(false, true)) {
@@ -327,6 +410,22 @@ public final class TargetReadback {
         //   而真相是 draw **落到了**、只是 albedo ≡ 0 = GAP-008 本体。
         PixelProbeVerdict verdict =
                 PixelProbeVerdict.of(MrtTerrainPass.toMain(), main.isAllZero(), slot.isAllZero(), label);
+        // 🔖🔖 预热门闩（2026-10-05 实测踩到）：探针按帧数节流，而地形 MRT pass 头几帧
+        //   往往还没真的画出东西（区块未网格化 / 附件刚清屏）。
+        //   实测后果：同配置、同机位连跑两次，colortex0 一轮读 12.42、另一轮读 **0.0000**，
+        //   而 main 两轮**逐位相同**（13.1864）⇒ 差异只可能来自 colortex 那一路「还没画」。
+        //   若拿那一轮当基线，实验臂就会得到一个「基线是全黑、探针臂有内容」的假结论
+        //   ⇒ 比不测更坏。⇒ 预热期内**只报数字、不出对照结论**，并自报这是预热。
+        if (MrtTerrainPass.framesDrawn() < WARMUP_FRAMES) {
+            if (WARMUP_NOTED.compareAndSet(false, true)) {
+                VkDisp.LOGGER.warn("vkdisp: [pixel-probe] 地形 MRT pass 只画了 {} 帧（< {}）"
+                                + " ⇒ **预热期内不产出对照结论**，只报原始数字。"
+                                + "⚠️ 头几帧的 colortex 可能只有清屏值 —— 实测同配置两轮可读出"
+                                + " 0.0000 与 12.42 而 main 逐位相同；拿预热帧当基线会得到假结论",
+                        MrtTerrainPass.framesDrawn(), WARMUP_FRAMES);
+            }
+            return;
+        }
         // 🔖 只在该槽自己的结论变化时报告，不每轮重复。
         //   理由：verdict 是一个**状态**，不是每帧的事件。按探针间隔（默认 300 帧）重复报
         //   同一句话，一次三分钟取证就是几十行噪声（h33 的 2702 行 / h34 的 499 行同族）。
@@ -352,6 +451,34 @@ public final class TargetReadback {
      * <p>🔖 必须是按源分开的一张表：测多个槽时单一状态位会互相吃掉结论（见 compareSources）。
      */
     private static final Map<String, String> LAST_VERDICT = new HashMap<>();
+
+    /**
+     * 方块图集的<b>纹理</b>（GPU→CPU 拷贝的源；{@code null} = 取不到）。
+     *
+     * <p>🔖 它是包地形片元 {@code texture_0} 的**真值**绑（见
+     * {@code TerrainPipelineApi#bindPackTerrainUniforms} 的 {@code ATLAS_2D → atlas}），
+     * 而「乘上去的那张图是不是黑的」正是 albedo ≡ 0 的头号输入侧候选。
+     * 🔶 只取 {@code mip 0}（{@code getTexture()} 返回的就是基级）；mip 链本身属
+     * {@code h13} 已静态核查过的范围，不在本探针口径内。
+     */
+    private static @Nullable GpuTexture blockAtlasTexture() {
+        try {
+            net.minecraft.client.renderer.texture.AbstractTexture texture =
+                    net.minecraft.client.Minecraft.getInstance().getTextureManager()
+                            .getTexture(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS);
+            return texture == null ? null : texture.getTexture();
+        } catch (Throwable t) {
+            if (ATLAS_FAILURE_NOTED.compareAndSet(false, true)) {
+                VkDisp.LOGGER.warn("vkdisp: [pixel-probe] 取方块图集纹理失败（原文：{}）"
+                        + " ⇒ 本轮没有 texture_0 真值的运行期数字。"
+                        + "⚠️ 「没取到」与「取到了且是黑的」是两件事", t.toString());
+            }
+            return null;
+        }
+    }
+
+    /** 「取方块图集失败」只报一次（热路径日志 I/O 是真实开销，见 M-01 埋点教训）。 */
+    private static final AtomicBoolean ATLAS_FAILURE_NOTED = new AtomicBoolean();
 
     /** 按字节数取该源的回读缓冲（尺寸变化时重建；重建前要求该源无在途请求）。 */
     private static @Nullable GpuBuffer bufferFor(String label, long bytes,

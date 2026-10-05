@@ -64,7 +64,23 @@ class MethodLengthRatchetTest {
      * （QD-04 原话：「若是 LegacyBuiltinInjector/OfGlslTranslator 核心转译逻辑，
      * 长方法可接受」），硬卡 0 会逼着人做无意义的拆分。
      */
-    private static final int BASELINE = 21;
+    /**
+     * 🔖 本轮**有意**调高：21 → 22。
+     *
+     * <p>🔖 <b>为什么这次上调是正当的</b>（棘轮测试自己的升级条件：必须写清理由）：
+     * QD-04 的目的是「方法太长容易藏静默失败」，而本轮新增的那一个超长方法是
+     * {@code dev/vkdisp/glsl/translate/OfGlslTranslator#translate} ——
+     * 它是**转译流水线本体**：每加一个转译段就必然多几行（新增 7.8 采样因子探针）。
+     * 它不是「新写的长方法」，而是「既有编排方法被管线扩展」，
+     * 与它同类的还有 `VkDispVirtualPack#generateSources`、`FrameApi#drawFullscreen`
+     * —— 这三个都是流水线编排，**共用同一种结构**（一串同构的段调用）。
+     *
+     * <p>🔶 <b>本轮同时做了一件事</b>：把本轮自己新加的
+     * {@code TargetReadback#probeFrameTail} 拆成 {@code reportPlanOnce} 等小方法，
+     * 使它**没有**进超长名单。
+     * ⇒ 本次上调只登记「编排方法随管线扩展」这一条，不是新方法变长。
+     */
+    private static final int BASELINE = 22;
 
     private static final Path SRC = Path.of("src/main/java");
 

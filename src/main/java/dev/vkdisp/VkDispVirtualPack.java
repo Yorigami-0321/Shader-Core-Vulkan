@@ -525,8 +525,17 @@ public final class VkDispVirtualPack {
      * 两处必须用同一份算法 —— 否则「造键用 A、校验用 B」会让校验永远通过（本轮就踩过）。
      */
     private static String currentTerrainMemoKey() {
+        // 🔖🔖 QD-08 结构性守卫（`GenerationTimeSwitchInventoryTest`）枚举出的两项补齐：
+        //   `ENABLED` 与 `MRT_PACK_TERRAIN_SHADER` 在本方法所在窗口内被读取
+        //   （`ensureTerrainProgram` 用它们当生成前的闸门），却不在键里
+        //   ⇒ 改动它们不会让地形契约重算，而 openResources 侧会按新值走
+        //   ⇒ 两条链可能对同一份配置给出不同答案，而日志看起来完全正常。
+        //   🔖 本项目的 QD-08 那一族已发生四次（debugLog 零消费点 / 反射键名当字段名 /
+        //   optionOverrides 不进键 / 探针位置），所以这次是**枚举出来的**、不是想起来的。
         return VkDispConfig.PACK_PROFILE.get()
                 + "|" + VkDispConfig.SHADER_PACK.get()
+                + "|" + VkDispConfig.ENABLED.get()
+                + "|" + VkDispConfig.MRT_PACK_TERRAIN_SHADER.get()
                 + "|" + dev.vkdisp.pack.PackOptionOverrideSwitch.spec();
     }
 
@@ -586,6 +595,25 @@ public final class VkDispVirtualPack {
         boolean probeWas = dev.vkdisp.glsl.translate.DerivativeProbeAdapter.enabled();
         dev.vkdisp.glsl.translate.DerivativeProbeAdapter.setEnabled(
                 VkDispConfig.MRT_TERRAIN_DERIVATIVE_PROBE.get());
+        // 🔖 采样因子探针同样是**转译段级**总闸，且同样是「静态开关 + 生成窗口内开、finally 复位」。
+        //   不复位的后果与导数探针完全相同：合成/延迟/最终四个程序的转译也会被改写
+        //   （它们也可能声明乘法链），症状是「开了诊断之后别的画面也变了」，极难归因。
+        boolean sampleFactorWas = dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceSampleEnabled();
+        boolean multiplierFactorWas =
+                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceMultiplierEnabled();
+        dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceSample(
+                VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_SAMPLE.get());
+        dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceMultiplier(
+                VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_MULTIPLIER.get());
+        // 🔖🔖 两侧同时开 = 两边都被换掉 = 什么都没分开。必须在这里就吵出来，
+        //   而不是等跑完看画面 —— 那种「两臂都没变」会被读成「两个因子都不是原因」。
+        if (VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_SAMPLE.get()
+                && VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_MULTIPLIER.get()) {
+            VkDisp.LOGGER.error("vkdisp: [GAP-008] 🔴 采样因子探针的**左右两侧同时开启**"
+                    + "（mrt.terrainSampleFactorSample=true 且 mrt.terrainSampleFactorMultiplier=true）"
+                    + " ⇒ 乘法链两侧都被替换，**无法**分出是哪一侧为 0。"
+                    + "已按「左侧开、右侧关」继续；要做右侧那一臂请只开右侧。⚠️ 本臂的结论不可用");
+        }
         try {
             dev.vkdisp.pack.PackTerrainSource.Result terrain =
                     dev.vkdisp.pack.PackTerrainSource.generate(inventory, profile, selection, store);
@@ -603,13 +631,28 @@ public final class VkDispVirtualPack {
             terrainAdapterMemo = generateTerrainAdapter(program);
             terrainBuiltinsLayout = BuiltinsBlockLayout.parse(program.fragmentSource());
             logLayout("terrain", terrainBuiltinsLayout);
+            String fragment = program.fragmentSource();
+            // 🔖🔖 采样因子探针在此生效（**不**接进 OfGlslTranslator，理由见该类 KEEP_OUT）：
+            //   作用域天然是「地形片元源」，且不引入任何跨程序 / 跨线程的静态开关。
+            //   🔖 只改**赋值右值**，不碰任何声明 ⇒ outputCount / samplers / varyings 契约不变，
+            //      所以不必重解析 PackTerrainProgram。
+            dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.Result sampleFactor =
+                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.apply(
+                            dev.vkdisp.glsl.translate.ShaderStage.FRAGMENT, fragment);
+            for (TranslateDiagnostic diagnostic : sampleFactor.diagnostics()) {
+                logDiagnostic(diagnostic);
+            }
+            fragment = sampleFactor.text();
             VkDisp.LOGGER.info(
                     "vkdisp: [GAP-003] pack terrain fragment ready: program={} outputs={} samplers={}"
-                            + " varyings={} bytes={}",
+                            + " varyings={} bytes={} sampleFactorProbe[sample={} multiplier={} hits={}]",
                     program.qualifiedName(), program.outputCount(),
                     program.fragmentSamplers().size(), program.inputs().size(),
-                    program.fragmentSource().getBytes(StandardCharsets.UTF_8).length);
-            return program.fragmentSource();
+                    fragment.getBytes(StandardCharsets.UTF_8).length,
+                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceSampleEnabled(),
+                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceMultiplierEnabled(),
+                    sampleFactor.patched());
+            return fragment;
         } catch (Throwable t) {
             terrainProgram = null;
             terrainBuiltinsLayout = BuiltinsBlockLayout.empty();
@@ -621,6 +664,8 @@ public final class VkDispVirtualPack {
             //   合成/延迟/最终四个程序的转译也被改写（它们可能也声明 dcdx）。
             //   漏复位的症状是「开了诊断开关之后别的画面也变了」，极难归因。
             dev.vkdisp.glsl.translate.DerivativeProbeAdapter.setEnabled(probeWas);
+            dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceSample(sampleFactorWas);
+            dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceMultiplier(multiplierFactorWas);
         }
     }
 

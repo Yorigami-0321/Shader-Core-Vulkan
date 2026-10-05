@@ -104,12 +104,35 @@ class VirtualPackMemoKeyTest {
         }
         int keyBodyStart = pack.indexOf("private static String currentTerrainMemoKey()");
         assertTrue(keyBodyStart > 0);
-        String keyBody = pack.substring(keyBodyStart,
-                Math.min(pack.length(), keyBodyStart + 500));
+        // 🔖🔖 取**方法体**（花括号配平）而不是固定长度窗口：h45 在键里补两项后，
+        //   方法体变长，固定 500 字的窗口**截不到末尾**的覆盖串 ⇒ 本守卫误报。
+        //   「守卫因实现变长而误报」是把人引向改对代码的死路，必须消灭。
+        String code = pack.substring(keyBodyStart);
+        int open = code.indexOf('{');
+        int depth = 0;
+        int close = code.length();
+        for (int i = open; i < code.length(); i++) {
+            char c = code.charAt(i);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    close = i;
+                    break;
+                }
+            }
+        }
+        String keyBody = code.substring(0, close);
         assertTrue(keyBody.contains("PACK_PROFILE") && keyBody.contains("SHADER_PACK")
                         && keyBody.contains("PackOptionOverrideSwitch"),
                 "currentTerrainMemoKey 必须同时含 profile / selection / 覆盖串 —— "
                         + "键里少任何一项，那一项对应的配置改了都不会触发重算");
+        // 🔖 QD-08 收口：生成窗口内被读的另两项（当生成闸门用）也必须在键里。
+        assertTrue(keyBody.contains("ENABLED") && keyBody.contains("MRT_PACK_TERRAIN_SHADER"),
+                "ENABLED 与 MRT_PACK_TERRAIN_SHADER 在生成窗口内被读取（生成前的闸门），"
+                        + "必须在记忆键里 —— 否则改动它们不触发地形契约重算，"
+                        + "而 openResources 侧按新值走，两条链互相矛盾而日志全正常（QD-08 本体）");
     }
 
     @Test

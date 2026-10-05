@@ -166,6 +166,15 @@ public final class OfGlslTranslator {
         //     排在 7.5 之后：7.5 可能改写片元输出声明，探针只碰 dFdx 行，互不干扰。
         DerivativeProbeAdapter.Result derProbe = DerivativeProbeAdapter.apply(stage, slotMapped.text());
 
+        // 🔖🔖 采样因子探针**刻意不在本段**（h45 实测踩到，见该类的 KEEP_OUT 说明）：
+        //   它是「地形源」的诊断，而本方法**不知道**自己正在翻哪个程序
+        //   （`translate(stage, preProcessed)` 只有阶段，没有程序名）
+        //   ⇒ 用静态开关在这里生效，必然泄漏到 composite/deferred/final。
+        //   实测后果：探针改写了 composite 里的
+        //   `float cloudViewLength = texture(gaux1, screenPos.xy).r * (far * 2.0);`
+        //   ⇒ 那一臂的**最终画面**被探针改过，该臂数字作废。
+        //   ⇒ 改由 VkDispVirtualPack 在生成地形源之后直接对地形片元源调用（见 SampleFactorProbeAdapter）。
+
         // ⑧ 内建 uniform 注入：运行在 ⑦½ 的输出上，诊断行号是 ⑦ 输出坐标系（⑦½ 等行数）。
         UniformInjector.Result injected = UniformInjector.inject(derProbe.text());
 
@@ -210,6 +219,11 @@ public final class OfGlslTranslator {
         for (TranslateDiagnostic diagnostic : derProbe.diagnostics()) {
             diagnostics.add(locate(diagnostic, preInject));
         }
+        // 🔖 7.8 采样因子探针已移出本方法（见上），故此处没有它的 diagnostics 循环。
+        //   🔖 本方法的纪律由 TranslateStageDiagnosticTest 守住：
+        //   **凡是这里调用的 XxxProbeAdapter.apply，其 diagnostics 必须被并进下面那个列表**
+        //   —— h45 首版漏了采样因子探针的 diagnostics.add，改写照样生效而自报永不出现，
+        //   导致实测看到「画面没变」时无法区分「开关没生效」与「结论不成立」。
         for (TranslateDiagnostic diagnostic : injected.diagnostics()) {
             diagnostics.add(locate(diagnostic, preInject));
         }

@@ -184,7 +184,73 @@ public final class PixelStats {
         }
     }
 
+    /**
+     * 🔖 天空带与地形带的纵向分界比例（本机观测面 {@code yaw=35, pitch=-8} 下取 0.45）。
+     *
+     * <p>🔖 <b>这是一个可被读数推翻的假设，不是事实</b>：本机地平线落在画面上半部，
+     * 但换一个机位/视口/FOV 就未必如此。⇒ 若「地形带」读出全黑而「天空带」有内容，
+     * 读数本身就暴露了分界不合适，<b>不需要人去猜</b> —— 而这正是分区的价值。
+     */
+    public static final double SKY_BAND_BOTTOM = 0.45;
+
+    /**
+     * 🔖 三个**语义不同**的采样区名（同一张图上分开取数）。
+     *
+     * <p>🔖 <b>为什么要分区</b>（2026-10-05 实测）：单一中心矩形回答不了
+     * 「黑的是<b>天空</b>还是<b>地形</b>」。本项目的 GAP-011 恰恰出现过这个混淆 ——
+     * {@code h17} 的结论是「闪烁是天空、不是主目标」，而当时只有一个矩形观测面。
+     *
+     * <p>🔖 三个区<b>互不重叠</b>且合起来覆盖整幅 ⇒ 「地形带全黑 + 天空带有内容」
+     * 不会被「采样区压根没覆盖到地形」这种形态误读。
+     */
+    public enum Area {
+        /** 上带（本机机位下假设为天空）。 */
+        SKY_BAND,
+        /** 下带（本机机位下假设为地形）。 */
+        TERRAIN_BAND,
+        /** 整幅（兜底：与上面两带合起来覆盖全图）。 */
+        FULL
+    }
+
     private PixelStats() {
+    }
+
+    /** 一个命名区 + 它在纹理上的像素矩形（纯数据）。 */
+    public record AreaSample(Area area, Region region) {
+
+        public AreaSample {
+            java.util.Objects.requireNonNull(area, "area");
+            java.util.Objects.requireNonNull(region, "region");
+        }
+
+        /** 区名（证据行标签；区名是枚举常量，永不为空白）。 */
+        public String label() {
+            return area.name();
+        }
+    }
+
+    /**
+     * 按比例切出三个语义区（纯逻辑，可单测）。
+     *
+     * <p>🔖 横向沿用 {@link #centered} 的默认口径（与历史数字可比），
+     * 纵向取<b>整幅高度</b>并在 {@link #SKY_BAND_BOTTOM} 处一分为二，
+     * 再补一个覆盖整幅的 {@link Area#FULL} 兜底。
+     * ⇒ 不变式可核对：{@code SKY.area() + TERRAIN.area() == center.width × height}，
+     * 且 {@code FULL.area() == width × height}。
+     * ⇒ 「地形带全黑」若同时 FULL 也有内容，说明黑的是**一部分**画面而非全部。
+     */
+    public static java.util.List<AreaSample> areas(int textureWidth, int textureHeight) {
+        Region center = Region.centered(textureWidth, textureHeight);
+        int splitY = (int) Math.round(textureHeight * SKY_BAND_BOTTOM);
+        java.util.List<AreaSample> out = new java.util.ArrayList<>(3);
+        out.add(new AreaSample(Area.SKY_BAND,
+                new Region(center.x(), 0, center.width(), Math.max(0, splitY))));
+        out.add(new AreaSample(Area.TERRAIN_BAND,
+                new Region(center.x(), Math.min(splitY, textureHeight),
+                        center.width(), Math.max(0, textureHeight - splitY))));
+        out.add(new AreaSample(Area.FULL,
+                new Region(0, 0, textureWidth, textureHeight)));
+        return java.util.List.copyOf(out);
     }
 
     /**

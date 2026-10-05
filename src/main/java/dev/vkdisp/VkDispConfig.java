@@ -443,6 +443,63 @@ public final class VkDispConfig {
             .comment("像素回读探针的间隔帧数（默认 300）。回读要走 GPU→CPU 拷贝，不能每帧做。")
             .defineInRange("mrt.pixelProbeEvery", 300, 1, 100000);
 
+    /**
+     * 🔬 像素回读探针**额外**把方块图集（{@code texture_0} 的真值）也测一次（默认关）。
+     *
+     * <p>🔖 <b>它回答什么</b>：包地形片元的 albedo 是
+     * {@code texture(texture_0, texCoord) * vec4(color.rgb, 1.0)} 一类乘法，
+     * 而 {@code h44} 已证明「只有 albedo 那一路 ≡ 0、其余输出正常」
+     * ⇒ 乘法链的两侧就是候选：<b>采样结果</b>与<b>乘子</b>。
+     * {@code h28} 只在<b>顶点侧</b>排除过 {@code color}，而图集本身的<b>运行期</b>数字
+     * 从未被取过（{@code h13} 只做了 mip 链的静态核查）。
+     *
+     * <p>🔖 <b>为什么默认关</b>：图集是 mip 链纹理、尺寸远大于主目标，
+     * 回读缓冲按整幅分配 ⇒ 每轮多一次整图 GPU→CPU 拷贝与一块同尺寸缓冲。
+     * 它是「输入侧」的独立一条证据，取证时才需要 ⇒ 按需开启。
+     *
+     * <p>⚠️ 开它只增加一个<b>观测面</b>，不改变任何渲染行为。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_PIXEL_PROBE_ATLAS = BUILDER
+            .comment("像素回读探针额外测方块图集纹理本身（texture_0 真值，默认关；图集很大，回读更贵）。")
+            .define("mrt.pixelProbeAtlas", false);
+
+    /**
+     * 🔬 **采样因子探针·左侧**：把乘法链左侧（采样结果）强制成
+     * {@code vec4(1.0, 0.5, 0.25, 1.0)}（默认关，单变量）。
+     *
+     * <p>🔖 <b>它回答什么</b>（{@code h44} 已把 GAP-008 收窄到这一步）：
+     * albedo 是 {@code texture(texture_0, texCoord) * vec4(color.rgb, 1.0)} 这类<b>乘积</b>，
+     * 两侧都可能为 0。强制左侧为非零常量后：
+     * <ul>
+     *   <li>画面<b>变亮</b> ⇒ 原采样结果为 0 ⇒ 问题在<b>输入侧</b>（图集内容 / 采样坐标 / 采样器绑定）；</li>
+     *   <li>画面<b>仍全黑</b> ⇒ 采样不是原因，问题在右侧乘子或更下游。</li>
+     * </ul>
+     *
+     * <p>🔖 <b>与 {@link #MRT_TERRAIN_COLOR_PROBE} 的区别**（后者不因此被删）：
+     * 那个改的是<b>顶点适配层供的 varying</b>，排除的是「供值错」；
+     * 本项改的是<b>片元里采样调用的返回值</b>，排除不了前者也排除不了后者。
+     * 🔴 <b>本项与 {@link #MRT_TERRAIN_SAMPLE_FACTOR_MULTIPLIER} 不可同时开</b> ——
+     * 两侧同时换掉就等于什么都没分开（转译段会就此自报 WARN）。
+     *
+     * <p>⚠️ 默认关，且开启即自报命中数与命中行原文（X45：不自报就分不清
+     * 「开关没生效」与「结论不成立」）。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_SAMPLE_FACTOR_SAMPLE = BUILDER
+            .comment("诊断：把 albedo 乘法链左侧（纹理采样结果）强制成非零常量（默认关，单变量）。"
+                    + "变亮 ⇒ 原采样为 0；仍黑 ⇒ 采样不是原因。不可与右侧探针同时开。")
+            .define("mrt.terrainSampleFactorSample", false);
+
+    /**
+     * 🔬 **采样因子探针·右侧**：把乘法链右侧（乘子）强制成单位元 {@code vec4(1,1,1,1)}（默认关）。
+     *
+     * <p>🔖 保持乘积结构不变、只把乘子换成单位元 ⇒ 变亮即说明<b>原乘子为 0**。
+     * 🔴 同样<b>不可与左侧探针同时开</b>（两侧都换掉就分不出是哪一侧）。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_SAMPLE_FACTOR_MULTIPLIER = BUILDER
+            .comment("诊断：把 albedo 乘法链右侧（乘子）强制成 vec4(1,1,1,1)（默认关，单变量）。"
+                    + "变亮 ⇒ 原乘子为 0。不可与左侧探针同时开。")
+            .define("mrt.terrainSampleFactorMultiplier", false);
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     private VkDispConfig() {

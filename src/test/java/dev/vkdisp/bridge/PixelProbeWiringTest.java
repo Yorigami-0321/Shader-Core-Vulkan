@@ -227,8 +227,9 @@ class PixelProbeWiringTest {
         String probe = readOrSkip(PROBE);
         assertTrue(probe.contains("lastPlanNote"),
                 "必须记住上次打过的那条决策说明，只在**决策变了**时才报");
-        assertTrue(probe.contains("!plan.note().equals(lastPlanNote)"),
-                "守卫判据必须是「说明与上次不同」—— 决策变了正是最该被看到的那一刻");
+        assertTrue(probe.contains("plan.note().equals(lastPlanNote)"),
+                "守卫判据必须是「说明与上次不同」—— 决策变了正是最该被看到的那一刻。"
+                        + "（去重已从 probeFrameTail 拆到 reportPlanOnce，判据形态仍是 equals 比较）");
     }
 
     @Test

@@ -199,6 +199,14 @@ MCP 截图（854×480，最终帧含 GUI）同一采样区：`meanRGB=(0.3521,0.
 
 ---
 
+> ⚠️⚠️ **2026-10-05（h45）更正：本文件 §一 与 §五① 的「BSL 默认 `ADVANCED_MATERIALS` 是 true」是错的。**
+> 真相是扫包日志逐字写着 `option name=ADVANCED_MATERIALS type=BOOLEAN **default=false**`。
+> h43/h44 这两轮之所以看到「8 附件 / 声明写 [0,3,6,7]」，是因为
+> `config/vkdisp-pack-options.properties` 里**残留**了 `ADVANCED_MATERIALS=true; PARALLAX=false`
+> —— 那一臂**既不是包的默认档，也不是单变量臂**。
+> ⇒ 本文件关于「默认档只写槽 0 为假」的推翻**作废**；`MrtPlan` 原注释是对的，h45 已恢复。
+> 详见 `evidence/h45-sample-factor-ab.md` §五。
+
 ## 五、本轮推翻/更正的既有结论
 
 | 编号 | 既有说法 | 本轮实测 | 处置 |

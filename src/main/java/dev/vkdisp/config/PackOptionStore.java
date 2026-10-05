@@ -65,6 +65,21 @@ public final class PackOptionStore {
     /** 全键（{@code pack.option}）→ 值；插入序保存（证据行与断言要确定性）。 */
     private final LinkedHashMap<String, String> entries = new LinkedHashMap<>();
 
+    /**
+     * 全部条目（{@code <pack>.<option> → value}；插入序，确定性）。
+     *
+     * <p>🔖 <b>为什么需要这个访问器</b>（QD-08 取证件）：取证时必须能读到
+     * <b>落盘 store 里此刻实际生效的内容</b>并打进每条证据行 ——
+     * 本项目 2026-10-05 就因为 store 里残留着前一轮的 {@code PARALLAX=false}
+     * 而把「默认档」带偏了一整轮，而当时日志里每一行都正常。
+     * ⇒ 「store 是空的」与「读不到 store」必须能被区分开，这就是它存在的理由。
+     *
+     * @return 不可变视图（按插入序）
+     */
+    public Map<String, String> entries() {
+        return java.util.Collections.unmodifiableMap(entries);
+    }
+
     /** 读取时跳过的坏行说明（T11：调用方负责落 WARN 日志）。 */
     private final List<String> loadWarnings = new ArrayList<>();
 

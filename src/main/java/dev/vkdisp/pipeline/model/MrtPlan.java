@@ -58,22 +58,25 @@ public final class MrtPlan {
      * ⇒ <b>槽位数与顺序都必须由该包自己的 DRAWBUFFERS 决定</b>，
      * 按附件下标硬绑会**静默绑错槽**（画面有内容但每个通道都错，且没有一行日志会抱怨）。
      *
-     * <p>🔖🔖 <b>2026-10-05 更正：本类旧注释里「{@code ADVANCED_MATERIALS}/{@code MCBL_SS}
-     * 在 BSL 里默认注释掉 ⇒ 默认配置下地形只写 colortex0」是错的</b>，而这条错注释
-     * 已经产生了两处**实际**后果（同一族的第五例：<b>注释里的前提被当成事实往下推</b>）：
+     * <p>🔖🔖 <b>2026-10-05（h45）第二次更正：关于「默认档」的两次说法都要以实测为准。</b>
+     * 本类的旧注释（「{@code ADVANCED_MATERIALS}/{@code MCBL_SS} 在 BSL 里<b>默认注释掉</b>
+     * ⇒ 默认配置下地形只写 colortex0」）经实测是<b>对的</b>；错的不是注释，而是
+     * <b>我们一直在测的那一臂不是默认档</b>：
      * <ol>
-     *   <li>2026-10-05 实测：BSL v10.1.8 的 {@code shaders.properties} <b>没有任何
-     *       {@code option.*} 行</b>，profile 里也不含 {@code ADVANCED_MATERIALS}
-     *       ⇒ 该选项取默认 <b>true</b>；{@code MCBL_SS} 则是包自己声明
-     *       {@code option.MCBL_SS type=BOOLEAN <b>default=false</b>}。
-     *       ⇒ 默认档走的是 {@code #else} 分支里那条活标记 {@code /* DRAWBUFFERS:0367 *}{@code /}，
-     *       片元声明的输出槽实测是 <b>[0, 3, 6, 7]</b>，{@code outputs=8}（日志逐字对得上：
-     *       {@code colorTargets=8} / {@code gbuffer terrain targets ready: … slots=8}）。</li>
-     *   <li>因此「默认档只写 colortex0」为假 ⇒ 由此推出的「{@code terrainToMain} 档拿不到
-     *       第二个被写的槽、只能降级为不产出两源对照」也为假 ⇒ 该档其实<b>可以</b>做有效对照
-     *       （拿 colortex3 / 6 / 7）。旧结论据此作废。</li>
+     *   <li>实测（扫包日志逐字）：{@code option name=ADVANCED_MATERIALS type=BOOLEAN
+     *       <b>default=false</b>}、{@code MCBL_SS … <b>default=false</b>}、
+     *       {@code PARALLAX … default=true}。⇒ <b>真正的包默认</b>只写槽 0
+     *       （实测 {@code outputs=1 samplers=5 varyings=9}）。</li>
+     *   <li>而 h43/h44 那些「8 附件 / 声明写 [0,3,6,7]」的臂，是
+     *       {@code config/vkdisp-pack-options.properties} 里<b>残留</b>的
+     *       {@code ADVANCED_MATERIALS=true; PARALLAX=false} 造成的
+     *       ⇒ 那一臂<b>同时</b>不是默认档、也不是「只开了视差」的单变量臂。</li>
      * </ol>
-     * ⇒ 想知道「哪些槽被写了」只有一个入口：{@link #packDeclaredOutputSlots()}（注册期冻结）。
+     * 🔖 <b>教训（比结论更重要）</b>：我曾把「store 里 {@code ADVANCED_MATERIALS=true}」
+     * 反推成「包默认是 true」并据此<b>改掉了本注释</b>——那是<b>用残留状态反推默认值</b>，
+     * 与 h43 记录的「B 臂漏带覆盖 ⇒ 静默空转」是同一个坑的两面。
+     * ⇒ 现在由 {@code PixelProbePlan} / {@code PixelStats} / {@code PackOptionEvidence}
+     * 让「当前实际生效的覆盖」每轮打进证据行，从机制上堵掉这条路。
      *
      * <p>本常量暂留 3（Iris 口径，且是当前诊断路径的实测值），上调前先改这一处与
      * {@link #slotCount()}。
