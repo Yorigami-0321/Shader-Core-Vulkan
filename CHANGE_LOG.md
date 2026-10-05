@@ -4,6 +4,74 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-05（五十九）— 🔴 首次在 **Vulkan 后端**取证：P0.2 终于达成（本轮零 `.java` 改动）
+
+> **verdict = 本项目有史以来第一次拿到 Vulkan 产物。**
+> **`P0.2` 自此达成**（`backend=Vulkan`）；vkdisp ERROR 从「每轮必有 1 条」变成 **0 条**。
+> ⚠️ **环境解锁是并行线 env-1 的成果，不是本轮做的**；本轮做的是「发现它就绪，于是第一次用它取证」。
+> 证据：`evidence/h36-…`。
+
+- **🔴 一条此前一直存在的静默降级（本轮才被彻底堵上）**
+  - 本机 WSL2 **系统级没有 Vulkan ICD**，而 `runClient` 带着 `--graphicsBackend VULKAN`。
+    Minecraft 在 loader 缺失时**不崩也不退出**，只打两行然后
+    **静默退回 OpenGL/llvmpipe 继续跑满取证帧数**：
+    ```
+    WARN  Failed to load Vulkan loader
+    ERROR Failed to create backend Vulkan
+    INFO  Using graphics backend OpenGL, using drivers: 4.6 …
+    ```
+  - ⇒ `h33` / `h34` / `h35` **三轮取证全部踩在这条降级上**。
+    唯一征兆就是 `P0.2` 每轮断言失败那一条 ERROR —— 当时按「环境事实」记下，没有追根。
+  - 现在 `tools/vulkan-local/run-client.sh`（并行线 env-1 提供）会在启动前 preflight **硬失败**，
+    并在起跑后断言后端 ⇒ 这条降级被彻底堵上。
+
+- **✅ P0.2 达成（日志原文）**
+  ```
+  Using graphics backend Vulkan, using drivers: 1.4.354 llvmpipe Mesa 26.2.3-arch1.1 (LLVM 22.1.8)
+  Using graphics device: llvmpipe (LLVM 22.1.8, 256 bits) (0x10005)
+  vkdisp: backend=Vulkan, device=llvmpipe (LLVM 22.1.8, 256 bits)
+  ```
+
+- **✅ 前三轮的结论在 Vulkan 上全部成立（不是推断，是这次实测）**
+  | 判据 | 结果 |
+  |---|---|
+  | vkdisp ERROR 总数 | **0**（此前恒为 1，且那 1 条就是「你不是 Vulkan」） |
+  | `gbuffer terrain pass failed` | **0**（`h33` 修的级联未复发） |
+  | `textureView and sampler must both or neither be null` | **0** |
+  | `gbuffer terrain targets ready` | **1**（`h34` 修的 499 行刷屏未复发） |
+  | `terrain slot clear` | `NEUTRAL (RGBA 0,0,0,0) for 8 slot(s)` |
+  | pass 帧数 / mixin 命中 | **1800** / **x2,500,000** |
+  | 退出方式 | 正常存档（`Gathered mod list to write to world save`），非崩溃 |
+
+- **🔖 一条被拒绝的对照（与 `h34` 拒绝「75.29% 像素差」同一纪律）**
+  本轮顺手做了「同存档、同机位、`dayTime=6000`、仅后端不同」的跨后端像素对照，
+  原始数字 58.10% 像素差 >2、平均差 12.33。**但按屏幕分带看，这个对照不成立**：
+
+  | 屏幕带 | 平均差 | >8 的像素 |
+  |---|---|---|
+  | **HUD（原版 UI，根本不经过 vkdisp）** | 5.937 | **30.62%** |
+  | 地形 | 19.722 | 73.58% |
+  | 天空 | 4.415 | 16.88% |
+
+  连原版 HUD 都有 30% 的像素差 ⇒ 主导因素是**两次独立会话之间的运行期差异**
+  （in-game time 仍在推进、云层在动），**不是后端语义差异**。
+  ⇒ **不据此下任何判断**；并如实登记：要做真正成立的跨后端对照，
+  需要可复现世界状态（固定 time **且** weather **且** 坐标/朝向）+ 确定性静物参照，两者目前都没有。
+
+- **⚠️ 两件必须说清的边界**
+  - **设备是 lavapipe（CPU 软件 Vulkan）**，不是独显（WSL2 的 GPU 直通只覆盖 CUDA/D3D12，
+    NVIDIA 不投放 Vulkan ICD）⇒ **Vulkan 语义是真的，但帧率毫无参考价值**，
+    支柱③ B1–B7 **仍然无结论**。
+  - **validation layer 仍然没有**：设备支持 `VK_EXT_debug_utils (I)`，
+    但 vkdisp 的 drain 仍报 `channel unavailable or empty`
+    ⇒ 按 `07` X35 禁令，**不得**据此说「无 validation error」。
+
+- **⚠️ 工作区并行改动**：env-1 的 `build.gradle` 与 `tools/vulkan-local/` **至今未提交**，
+  本轮 0 个提交都不含它们。已在 `01-DEV-LOOP` §1.2 写明「后续任何一轮都应走
+  `run-client.sh` 而不是裸 `./gradlew runClient`」。
+
+- **是否已提交**：见本次提交（纯文档轮，无 `.java` 改动；**不带任何 trailer**）。
+
 ## 2026-10-05（五十八）— QD-04 定位与更正（登记的「3 个」实为 21 个）＋ QD-05 全仓 catch 审计
 
 > **verdict = 两条登记在案的债都在本轮**第一次被真正查**。
