@@ -535,6 +535,16 @@ public final class TerrainPipelineApi {
     /** 帧计数（配合 {@link #NULL_VIEW_LOG_EVERY} 节流）。 */
     private static long nullViewFrames;
 
+    /**
+     * 「取方块图集尺寸失败」只报一次（h35 / QD-05）。
+     *
+     * <p>🔖 <b>为什么必须一次性</b>：{@code blockAtlasSizeOrEmpty()} <b>每帧</b>被调两次
+     * （{@code updateTerrainBuiltins} 的两个调用点）。不节流就是每帧两条 ERROR ——
+     * 与 `h34` 刚修掉的 499 行刷屏是同一类错误，不能重犯。
+     */
+    private static final java.util.concurrent.atomic.AtomicBoolean ATLAS_SIZE_FAILURE_NOTED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
     /** GAP-003：每帧把 OF 内建值写进地形片元的 VkDispBuiltins 环（pass 打开前调用）。 */
     public static void updateTerrainBuiltins() {
         dev.vkdisp.glsl.translate.BuiltinsBlockLayout layout =
@@ -707,7 +717,18 @@ public final class TerrainPipelineApi {
         return target == null ? 0 : target.height;
     }
 
-    /** 方块图集尺寸（OfUniformManager.gather 需要）；取不到时给 {0,0}，由 gather 侧承担零值语义。 */
+    /**
+     * 方块图集尺寸（{@code OfUniformManager.gather} 需要）；取不到时给 {@code {0,0}}。
+     *
+     * <p>🔖 <b>零值语义由 gather 侧承担，但「为什么取不到」不能悄悄消失</b>（h35 / QD-05）。
+     * 旧实现是 {@code catch (Throwable t) { return new int[]{0,0}; }} —— 异常对象整个被丢掉，
+     * 于是「纹理真的没加载好」与「这里就是没有图集」<b>在日志里完全一样</b>。
+     * 而这个值<b>每帧</b>喂进 uniform（{@code updateTerrainBuiltins} 的两个调用点），
+     * 尺寸错了会让整条 OF uniform 静默走偏。
+     *
+     * <p>🔖 这正是 {@code h33}「能力门控死开关」那一族：<b>真错误伪装成默认值</b>。
+     * 本处按 `T11`（降级必须可见）改为**一次性**报错并带上异常原文（`X9` 不猜）。
+     */
     private static int[] blockAtlasSizeOrEmpty() {
         try {
             net.minecraft.client.renderer.texture.AbstractTexture texture =
@@ -722,6 +743,13 @@ public final class TerrainPipelineApi {
             }
             return new int[] {gpu.getWidth(0), gpu.getHeight(0)};
         } catch (Throwable t) {
+            if (ATLAS_SIZE_FAILURE_NOTED.compareAndSet(false, true)) {
+                VkDisp.LOGGER.error(
+                        "vkdisp: 取方块图集尺寸失败 —— 本次按 {0,0} 继续，"
+                                + "这会让本帧的 OF uniform 全部走偏（尺寸错了不会报错，只会画面不对）。"
+                                + "原文：{}",
+                        t.toString());
+            }
             return new int[] {0, 0};
         }
     }
