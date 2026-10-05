@@ -241,6 +241,7 @@ IllegalStateException: Close the existing render pass before performing addition
 | **状态** | 🟡 **已登记并按「不绑定 + 响亮失败」处理**（`h33`；runClient 三组取证，C 组该分支未被触发 ⇒ 因包未声明） |
 | **⚠️ 明确不承诺** | 依赖体积光照 / 体素数据的**包特效在本引擎上不成立**。BSL v10.1.8 全包实测有 **3 个** `sampler3D`（`lighttex0` / `lighttex1` / `voxeltex`，**没有**无下标的 `lighttex` —— 更正 GAP-012 条目里的「4 个」），且它们**不在 `gbuffers_terrain` 的采样器里**（该文件自身 `uniform samplerXX` 数为 0）⇒ 本条在 BSL 地形路径上**不会**被触发 |
 | **🔖 连带更正** | GAP-012 `h32` §6.1 写的验收判据「应出现 `VOLUME_3D=4`」**不可达且前提错误**（假定原版能建 3D 纹理）。实际 `by dimension` 里 `VOLUME_3D` 为 **0** —— 这本身就是本条的结论，不是「没跑到」 |
+| **⚠️ 同族第三例（✅ `h40` 已修）** | `sampler2DArray` / `sampler2DArrayShadow` 曾落进普通 2D 占位分支 ⇒ **拿一张 2D 图冒充数组纹理**（Vulkan 要求 Arrayed=1），与本条、GAP-014 **完全同族**且同样不报错。`h40` 已改为 `UNSUPPORTED` + 可见告警。**判据不是「类型像不像 UB」，而是「它在本包地形程序里出现几次」**：BSL 全部 **274 个着色器源里 0 次** ⇒ 零代价；`shadowtex0/1` 每种配置都在 ⇒ 只能保留绑定 + 明示（见 GAP-015）。证据 `evidence/h40-…` |
 
 ---
 
