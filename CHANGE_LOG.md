@@ -68,7 +68,12 @@
   - H 臂（止血开、探针全关）：`colortex0` 非零（止血与 G 臂逐字同形）；
     🔴 新症状：`main` 变**近全白（254.8）** —— 黑前线换成了白前线（链上某级过曝，下一刀逐级二分）。
 
-- **🔴 本轮没做 / 不承诺**：**链输出近全白的逐级二分**（H 臂新前线；黑→白只是前线的移动）；
+- **✅ I/J 臂（同轮续）：白前线定位到级** —— `colortex1` 帧尾即白而 `colortex0` 正常
+  ⇒ 白进入于 composite4（bloom），其 `colortex0MipmapEnabled` 要求**真实 mip 链**、
+  我方池只有 mip0 ⇒ 下一个自行补充项 = colortex 池 mip 链（GAP-017 候选，未动手不登记完成）。
+  产品级修复：地形片元 albedo 行随 `mrt.terrainAtlasLod0` 转正为显式 mip0（守卫：只动一行，否则 ERROR 自报）。
+
+- **🔴 本轮没做 / 不承诺**：colortex mip 链（上条新登记）；
   GAP-016 的根因（图集 mip 链内容 vs lavapipe 导数路径 —— 按 mip 回读判据已备好）；
   shadow 真贴图进链（GAP-015 语义不变）；非地形的 gbuffers_*（water/entities/sky/hand…）；
   三段 texture 键；TAA 需要的 `gbufferPrevious*`；validation layer 仍无 ⇒ 按 X35 不说

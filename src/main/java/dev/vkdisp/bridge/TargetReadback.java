@@ -279,11 +279,29 @@ private static final long WARMUP_FRAMES = 600L;
      * 空集合 = 未知（未接包片元）⇒ 决策会明确降级为「只报原始数字，不产出对照结论」。
      */
     private static PixelProbePlan decidePlan() {
-        return PixelProbePlan.decide(
+        PixelProbePlan base = PixelProbePlan.decide(
                 MrtTerrainPass.actualSlots(),
                 MrtTerrainPass.toMain(),
                 MrtPlan.packDeclaredOutputSlots(),
                 MrtProbe.viewSlot());
+        // 🔴 链模式（h46 新前线「白从哪级来」的逐槽判据）：把**全链写过的槽**并进测集。
+        //   旧测集只来自地形片元声明槽 [0,3,6,7]；链里 composite 的工作槽（1/2/4/5…）
+        //   不在其中 ⇒ 帧尾数字看不出过曝发生在哪一级。截断按 MAX_COLORTEX_PROBES 自报。
+        var chain = dev.vkdisp.VkDispVirtualPack.postChain();
+        if (chain.passes().isEmpty() || !FrameApi.isPostChainActive()) {
+            return base;
+        }
+        java.util.LinkedHashSet<Integer> slots = new java.util.LinkedHashSet<>(base.colortexSlots());
+        for (var pass : chain.passes()) {
+            slots.addAll(pass.attachmentSlots());
+        }
+        java.util.List<Integer> merged = slots.stream().sorted().toList();
+        boolean truncated = merged.size() > PixelProbePlan.MAX_COLORTEX_PROBES;
+        if (truncated) {
+            merged = merged.subList(0, PixelProbePlan.MAX_COLORTEX_PROBES);
+        }
+        return new PixelProbePlan(merged, base.declaredSlotsKnown(), base.comparable(), truncated,
+                base.note() + " [chain] 测集并入全链声明写过的槽（h46 逐槽定位过曝级）");
     }
 
     /**

@@ -97,3 +97,17 @@ vs **适配层→片元的 location 衔接把值丢了**。下一臂：coordOut 
   不是链的错误。链侧验收判据 = passes=11 执行、40/40 编译对齐、无 Missing uniform/链接错误。
 - ⚠️ 本机无 validation layer ⇒ 本文**不含**「无 validation error」式断言。
 - ⚠️ 按取证铁律：不做任何性能结论（lavapipe）。
+
+
+### I / J 臂（全链槽位探针 + 产品级 LOD0）—— 白前线的定位推进
+
+- I 臂：测集并入链槽后 `colortex1#2 FULL = (251.7,250.7,248.2)` 与 main 同白，
+  而 `colortex0 = (45.4,36.0,19.2)`（正常图集色调）⇒ **白进入于写 colortex1 的第一级 = composite4（bloom）**。
+- 静态对质（BSL `program/composite4.glsl`）：`const bool colortex0MipmapEnabled = true` +
+  `BloomTile` 按 mip 层级采样 ⇒ **OF 语义要求 colortex 带真实 mip 链**；
+  我方池纹理只有 mip0 ⇒ 高 LOD 采样行为由驱动决定（本机表现即过曝成白）。
+  ⇒ 登记为下一个自行补充项：**colortex 池的 mip 链（GAP-017 候选）**。
+- J 臂（产品级 LOD0 转正后）：main 仍 251 —— 与上判读一致（白在 composite4，不依赖 albedo 那行）。
+  产品级 LOD0 段自身守卫生效（命中 1 行，未触发 ERROR）。
+
+（本轮到此收线：止血 + 白前线定位完成，修根两项进入登记表。）

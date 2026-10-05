@@ -119,11 +119,14 @@ public final class SampleFactorProbeAdapter {
     private static volatile boolean forceCoordOutFinal;
 
     /**
-     * 🔬 h45 §七② 的「显式 LOD0」探针：把命中行里的两参数 {@code texture(s, c)} 改成
+     * 🔬 h45 §七② 的「显式 LOD0」探针 / h46 转正的**产品修复路径**：把命中行里的两参数 {@code texture(s, c)} 改成
      * {@code textureLod(s, c, 0.0)} —— 其余一切不动。
      * <p>判据：改后非零 ⇒ 隐式导数在本链上选到了坏 mip（LOD 侧）；仍为零 ⇒ LOD 排除。
      */
     private static volatile boolean forceLodZero;
+
+    /** LOD0 档的命中行原文（供调用方做「只改了一行」的守卫断言）。 */
+    private static volatile java.util.List<String> lastLodHitLines = List.of();
 
     private SampleFactorProbeAdapter() {
     }
@@ -267,6 +270,7 @@ public final class SampleFactorProbeAdapter {
                             + "本档未生效（开关没生效 ≠ 结论不成立，X45）", null, 0));
         }
         List<String> hitLines = new ArrayList<>();
+        lastLodHitLines = List.of();
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
             String rewritten = line;
@@ -411,6 +415,7 @@ public final class SampleFactorProbeAdapter {
             for (String hit : hitLines) {
                 diagnostics.add(TranslateDiagnostic.info("采样因子探针命中: " + hit, null, 0));
             }
+            lastLodHitLines = List.copyOf(hitLines);
         }
         return new Result(text2, diagnostics, sampleHits, multiplierHits, coordOutHits,
                 lodZeroHits, coordFinalHits, List.copyOf(hitLines));
@@ -447,6 +452,11 @@ public final class SampleFactorProbeAdapter {
             return "texCoord";
         }
         return candidates.get(0);
+    }
+
+    /** 上一次 apply() 里 LOD0 档命中的行（空 = 没命中；调用方据此自证「只改了一行」）。 */
+    public static List<String> lastLodHitLines() {
+        return lastLodHitLines;
     }
 
     /**

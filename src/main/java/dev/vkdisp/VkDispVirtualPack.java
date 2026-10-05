@@ -777,6 +777,30 @@ public final class VkDispVirtualPack {
                 logDiagnostic(diagnostic);
             }
             fragment = sampleFactor.text();
+            // 🔴 GAP-016 **产品级修复**（由 h46 G 臂实测坐实，探针档转正）：
+            //   本引擎里包地形片元对图集的隐式导数 LOD 会选到坏 mip ⇒ texture() 恒 0。
+            //   ⇒ 把**albedo 乘法链那一行**的两参采样钉到显式 mip0（锚点与 h45 探针同一条线；
+            //     其余采样行不在此段范围 —— 视差/材质细节若仍受坏 mip 影响，归 GAP-016 修根）。
+            //   守卫：非诊断窗口里本段**必须只动一行**（h45 的 124 处教训 —— 自报命中行）。
+            if (!VkDispConfig.MRT_TERRAIN_LOD_ZERO.get()
+                    && VkDispConfig.MRT_TERRAIN_ATLAS_LOD0.get()
+                    && dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceLodZeroEnabled() == false) {
+                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceLodZero(true);
+                try {
+                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.Result productLod =
+                            dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.apply(
+                                    dev.vkdisp.glsl.translate.ShaderStage.FRAGMENT, fragment);
+                    if (productLod.patchedLodZero() != 1) {
+                        VkDisp.LOGGER.error("vkdisp: [GAP-016] 产品级 LOD0 段命中 {} 处（预期 1）"
+                                        + " —— 只改一行是 h45 立的铁律，请人工核对：{}",
+                                productLod.patchedLodZero(),
+                                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.lastLodHitLines());
+                    }
+                    fragment = productLod.text();
+                } finally {
+                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceLodZero(false);
+                }
+            }
             VkDisp.LOGGER.info(
                     "vkdisp: [GAP-003] pack terrain fragment ready: program={} outputs={} samplers={}"
                             + " varyings={} bytes={} sampleFactorProbe[sample={} multiplier={}"
