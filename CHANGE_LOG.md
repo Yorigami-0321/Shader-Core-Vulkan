@@ -4,6 +4,60 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-05（五十七）— 闭环 QD-01（连续七轮）＋ 抓住并修掉自己上一轮引入的日志刷屏
+
+> **verdict = 把「规范写了、执行没跟上」这条债真正闭环（`.java` + 构建期守卫），
+> 并靠 runClient 取证抓到**上一轮自己引入的一个新缺陷**（每帧 499 行 INFO）。**
+> 787 条单测全绿 + runClient 复验：**vkdisp ERROR 仅剩环境事实 1 条**。
+
+- **🔴 一处自我纠正（本轮最有价值的部分）：上一轮把日志改坏了**
+  `h33` 拆 `ensureTargets` 时，把「`gbuffer terrain targets ready`」这条 INFO
+  从「首次创建分支」挪到了 `ensureTargets` 末尾 —— 而 `ensureTargets` **每帧都跑**。
+  ⇒ 本轮 runClient 实测：**一次运行刷了 499 行**完全相同的 INFO。
+  这与 `h25` 的 M-01 埋点 600→250000、以及本文件自己注释里写的节流纪律，
+  **是同一课**；上一轮刚把它写进注释，下一轮自己就犯了。
+  ⇒ 已把该日志移回 `ensureColortex` 的「建好那一刻」，并新增守卫
+  `MrtTerrainPassWiringTest#ensureTargetsHasNoUnconditionalInfoLog`：
+  **`ensureTargets` 里出现无条件 `LOGGER.info` 直接让构建失败**。
+  🔖 守卫同时反向断言「这条可诊断性不得为了不刷屏被删掉」——
+  `h27` 记过 `MrtPlan` 槽 0 指纹恰好是黑、删掉诊断色就丢了区分能力那个坑。
+
+- **轮一 · QD-01 闭环（连续七轮未动）**
+  - 🔖 **先核实「欠债到底欠多少」**：`QUALITY-DEBT` 写「全主源码仅 2 处 `@Nullable`」——
+    实测那 2 处**只是 javadoc 里引用原版签名**，`org.jspecify` **从未被 import 过**
+    ⇒ 真实注解数为 **0**。债比登记的还多一点，但病根不是「漏标」，是**规范没有守卫**。
+  - `bridge/` 全部 **10 处**可空返回值补 `@Nullable`：
+    `MrtProbe#slotView` / `MrtTerrainPass#slotView` / `TerrainDrawCapture#current` /
+    `TerrainDrawCapture#capturedFrom` / `TerrainPipelineApi#packTerrainForMrt` /
+    `TerrainPipelineApi#derivedTerrainPipeline` / `VolumeStubs#view` /
+    `DeviceApi#deviceInfoOrNull` + `ShaderCompileApi` 的 **2 个原版接口覆写**。
+  - 🔖 **那 2 个覆写是本轮的额外发现**：已从 jar 反汇编核实，
+    原版 `com.mojang.renderpearl.api.pipeline.ShaderSource` 的
+    `getShader` / `getInclude` 在 class 文件里就带
+    `RuntimeVisibleTypeAnnotations: org/jspecify/annotations/Nullable`
+    ⇒ 我们的覆写**原本违反了自己的契约**，现已对齐。
+  - 🔖 **不靠「写完就算」**：新增 `BridgeNullableContractTest`，扫描 `bridge/` 每个
+    `return null;` 并要求其所在方法带 `@Nullable` ⇒ 新写一个会返回 null 的方法而忘了标注，
+    `./gradlew test` 直接挂。**这才是「闭环」而不是「又写了一遍规范」。**
+  - 🔖 **守卫自带 2 条元测试**：用「故意漏标注」的样本证明它抓得到，
+    用「javadoc 里写 `return null;`」证明它不误报 ——
+    **第一版守卫其实一条都不报**（正则误用 `matches()` 而非 `find()`，
+    又把「类体深度」错当成「文件深度」），是元测试把它抓出来的。
+
+- **🔴 剩余部分如实拆分**：`bridge/` 之外的内部 `return null` 仍有 **60 余处**，
+  本轮**未做**（逐个核对调用点语义是另一轮的工作量）⇒ 登记为 **QD-06**，
+  优先级下调的理由写进表里：守卫已建，规范不会再失效。
+
+- **同步的文档**：`QUALITY-DEBT` 的 QD-01 移入「已闭环」并引用本条；
+  新增 **QD-06**（剩余内部 `return null`）。**`CHANGE_LOG.md` 本条。**
+
+- **一轮内的一次测试失败，是本轮引入的，已修掉**
+  | 失败 | 根因 | 性质 |
+  |---|---|---|
+  | 元测试「守卫抓不到漏标注」 | 正则用 `matches()` + 类体深度判错 ⇒ 守卫形同虚设 | 🔴 **真 bug**（守卫本身无效） |
+
+- **是否已提交**：见本次提交（一个功能一个 commit；**不带任何 trailer**）。
+
 ## 2026-10-05（五十六）— 🔴🔴 MCP 驱动 runClient：抓到 1 个 P0 回归 + 2 个真缺陷，全部修掉
 
 > **verdict = 上一轮（`h32`）的三个 commit 里有一个让整条地形 MRT pass 每帧死掉的回归；
