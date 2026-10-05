@@ -126,3 +126,23 @@ python3 /tmp/abdiff.py
 - [x] 顺带用 HUD 差异（0.000 vs 30.62%）**验证了两组对照的成立性差异**
 - [x] 用户指令「只验功能、不考虑性能」已落成 `00-INDEX` 的取证铁律 + 构建期守卫
 - [x] 如实列出本轮**没做的事**（§五）
+
+
+---
+
+## 八、补充核实：全盘搜到的 validation layer 是 **Windows 版**
+
+`h37` 提交后补了一次**全盘** `find`（此前只搜了 prefix 与系统路径）：
+
+```
+$ find / -iname 'VkLayer_khronos_validation*' -not -path '/proc/*'
+/mnt/d/APP/steam/bin/cef/cef.win64/VkLayer_khronos_validation.dll
+/mnt/d/APP/steam/bin/cef/cef.win7/VkLayer_khronos_validation.dll
+/mnt/d/APP/steam/bin/cef/cef.win7x64/VkLayer_khronos_validation.dll
+```
+
+🔖 **全是 Windows `.dll`**（Steam 自带 CEF 的），**Linux 的 Vulkan loader 加载不了 `.dll`**
+⇒ 本机**没有任何可用的 validation layer**（prefix 与系统路径都没有 Linux 版 `.so`）。
+
+记录这一点是因为：否则将来有人搜到这三个文件会以为「本机是有 validation layer 的」，
+从而据此对 UB 下「跑过了没报错」的错误结论。
