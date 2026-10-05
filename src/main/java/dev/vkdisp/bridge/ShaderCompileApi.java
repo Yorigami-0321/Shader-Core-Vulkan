@@ -36,6 +36,7 @@ import com.mojang.renderpearl.util.ShaderCompileException;
 import java.util.Objects;
 import net.minecraft.client.renderer.ShaderDefines;
 import net.minecraft.resources.Identifier;
+import org.jspecify.annotations.Nullable;
 
 /**
  * 阶段级着色器编译入口（06-MIGRATION §2.1 的 bridge 红线：业务包零 {@code com.mojang.renderpearl} import）。
@@ -62,11 +63,13 @@ public final class ShaderCompileApi {
     /** 空 include 桩：转译产物不应残留 #include；残留时 shaderc 回调拿到 null → 显式 "not found"。 */
     private static final ShaderSource NO_INCLUDES = new ShaderSource() {
         @Override
+        @Nullable
         public String getShader(Identifier id, ShaderType type) {
             return null;
         }
 
         @Override
+        @Nullable
         public CachedIncludeSource getInclude(Identifier id) {
             return null;
         }

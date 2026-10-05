@@ -25,6 +25,7 @@ package dev.vkdisp.bridge;
 import dev.vkdisp.VkDisp;
 import dev.vkdisp.VkDispConfig;
 import java.util.concurrent.atomic.AtomicLong;
+import org.jspecify.annotations.Nullable;
 
 /**
  * M-05 捕获侧：保存 {@code LevelRenderer#prepareChunkRenders*} 的返回值引用 + 埋点。
@@ -88,12 +89,19 @@ public final class TerrainDrawCapture {
         }
     }
 
-    /** 本帧捕获到的地形 draw 数据；未启用 / 未捕获 → {@code null}。 */
+    /**
+     * 本帧捕获到的地形 draw 数据；未启用 / 未捕获 → {@code null}。
+     *
+     * <p>🔖 调用点（{@code MrtTerrainPass#drawTerrain}）必须显式判 {@code null} ——
+     * 「M-05 未开启」与「已开启但本帧没捕获」都会走到这里。
+     */
+    @Nullable
     public static Object current() {
         return captured;
     }
 
     /** 命中的注入方法名；未捕获 → {@code null}。 */
+    @Nullable
     public static String capturedFrom() {
         return capturedFrom;
     }

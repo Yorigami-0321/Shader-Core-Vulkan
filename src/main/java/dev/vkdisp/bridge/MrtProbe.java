@@ -42,6 +42,7 @@ import java.util.Optional;
 import java.util.OptionalDouble;
 import net.minecraft.client.Minecraft;
 import org.joml.Vector4f;
+import org.jspecify.annotations.Nullable;
 
 /**
  * GAP-003 的**能力验证件**：在 vkdisp 自己的 pass 里把多附件（MRT）原语跑通并量化。
@@ -142,6 +143,7 @@ public final class MrtProbe {
     }
 
     /** 某一槽的颜色视图；越界或未建返回 {@code null}（调用方必须显式处理）。 */
+    @Nullable
     public static GpuTextureView slotView(int slot) {
         if (colortex == null || slot < 0 || slot >= colortex.length || colortex[slot] == null) {
             return null;

@@ -18,6 +18,7 @@ package dev.vkdisp.bridge;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.device.DeviceInfo;
 import com.mojang.renderpearl.api.device.GpuDevice;
+import org.jspecify.annotations.Nullable;
 
 /**
  * 原版渲染 API 唯一入口（06-MIGRATION.md §2.1）。
@@ -54,6 +55,7 @@ public final class DeviceApi {
         return view;
     }
 
+    @Nullable
     private static DeviceInfoView deviceInfoOrNull() {
         GpuDevice device = RenderSystem.tryGetDevice();
         if (device == null) {

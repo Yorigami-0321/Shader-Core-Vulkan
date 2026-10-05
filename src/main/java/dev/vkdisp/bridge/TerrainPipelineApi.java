@@ -44,6 +44,7 @@ import net.minecraft.client.renderer.MappableRingBuffer;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.resources.Identifier;
 import net.neoforged.neoforge.client.event.RegisterRenderPipelinesEvent;
+import org.jspecify.annotations.Nullable;
 
 /**
  * H 线 M-01：把**派生地形管线**接到地形 draw 上（GAP-003 的通道 + GAP-004 的自定义 uniform 块）。
@@ -265,6 +266,7 @@ public final class TerrainPipelineApi {
             new java.util.concurrent.atomic.AtomicBoolean();
 
     /** 本次 MRT 地形管线是否改用包自己的片元；不接时返回 {@code null}（沿用原版 core/terrain）。 */
+    @Nullable
     static PackTerrainProgram packTerrainForMrt() {
         // 🔖 注册期早于 openResources 约 4.5 秒（runClient 实测），且切包重载时本事件不再触发
         //   ⇒ 必须在**这里**先把契约算出来，否则这条路径永远拿不到包片元、且不报错。

@@ -59,6 +59,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
+import org.jspecify.annotations.Nullable;
 
 /**
  * 一张 4×4×4 的 3D 桩纹理，供包的 {@code sampler3D} 使用。
@@ -166,6 +167,7 @@ final class VolumeStubs {
      * 后面创建 {@code atlasSampler} 的那一步被跳过 ⇒ 它永远为 {@code null}
      * ⇒ 每帧 {@code setUniform(name, view, null)} ⇒ pass 彻底死掉。
      */
+    @Nullable
     static GpuTextureView view() {
         if (volumeView == null || volumeView.isClosed()) {
             // 🔖 **按需求报错**，不是「探测到就报」。
