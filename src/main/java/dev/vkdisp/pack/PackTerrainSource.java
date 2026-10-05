@@ -315,6 +315,19 @@ public final class PackTerrainSource {
                     "选项 [" + diagnostic.code() + "] " + diagnostic.message(),
                     pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
         }
+        // 🔴 h33：门控开关的反射若失败，开关会**静默恒为默认关** —— 用户写进配置、日志照打、
+        //   就是不生效，且毫无异常。必须在这里把它变成一条**看得到的**诊断（T11 / X9）。
+        String gateSwitchFailure = PackCapabilityGateSwitch.reflectionFailure();
+        if (gateSwitchFailure != null) {
+            produced.add(TranslateDiagnostic.of(
+                    TranslateDiagnostic.Severity.ERROR,
+                    "选项 [CAPABILITY_GATE_SWITCH_UNREADABLE] 能力门控开关读取失败："
+                            + gateSwitchFailure
+                            + " ⇒ " + PackCapabilityGateSwitch.CONFIG_KEY
+                            + " 将**恒为 " + PackCapabilityGateSwitch.DEFAULT_ENABLED
+                            + "（默认关）**，即该开关写了也不生效。这是真错误不是正常状态。",
+                    pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+        }
         return produced;
     }
 
