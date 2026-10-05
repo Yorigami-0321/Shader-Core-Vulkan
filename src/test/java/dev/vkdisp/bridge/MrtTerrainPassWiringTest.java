@@ -249,6 +249,30 @@ class MrtTerrainPassWiringTest {
                 "`U0001f50d 守卫命中必须自报，否则无法区分「没触发」与「触发了但没生效」");
     }
 
+    @Test
+    @DisplayName("`U0001f534 h34：`ensureTargets` 每帧都跑 ⇒ 里面不得有无条件 INFO 日志")
+    void ensureTargetsHasNoUnconditionalInfoLog() {
+        // `U0001f534 h34 实测：`h33` 拆 ensure 时把「targets ready」这条 INFO 从
+        // 「首次创建分支」挪到了 `ensureTargets` 末尾 ⇒ 变成每帧一条
+        // ⇒ 一次运行刷了 **499 行**。与 `h25` 的 M-01 埋点 600→250000、
+        // 以及本文件上面「守卫命中必须去重告警（热路径上不能刷日志）」是同一条纪律。
+        String pass = readOrSkip(PASS);
+        int start = pass.indexOf("private static void ensureTargets(");
+        int end = pass.indexOf("private static void ensureColortex(");
+        assertTrue(start > 0 && end > start, "定位不到 ensureTargets / ensureColortex");
+        String ensureTargets = pass.substring(start, end);
+
+        // `ensureTargets` 里出现的 INFO 必须是**带条件**的（inside an if / one-shot flag）。
+        int idx = ensureTargets.indexOf("LOGGER.info(");
+        assertTrue(idx < 0,
+                "`U0001f534 ensureTargets` 每帧都会执行，里面不得有无条件 LOGGER.info"
+                        + "（h34 实测刷了 499 行）。请把它移到真正建好资源的那一刻，"
+                        + "或加一次性/节流哨兵");
+        // 反向确认：这条日志确实还在，且挂在创建路径上（不能为了不刷屏把可诊断性删掉）。
+        assertTrue(pass.contains("gbuffer terrain targets ready"),
+                "`U0001f534 「targets ready」这条可诊断性不得为了不刷屏而删掉");
+    }
+
     private static String readBridgeSource(String file) {
         try {
             return Files.readString(java.nio.file.Path.of(

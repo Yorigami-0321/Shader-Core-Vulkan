@@ -62,6 +62,7 @@ import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.FrameGraphSetupEvent;
+import org.jspecify.annotations.Nullable;
 
 /**
  * GAP-003 方案 A 第 2 步：在我方自己的帧图 pass 里，把地形画进**多附件**（MRT）render pass。
@@ -490,8 +491,13 @@ public final class MrtTerrainPass {
         //   它只记一次 ERROR 并让 sampler3D 走「不绑 + 报错」路径。
         VolumeStubs.init();
         ensureAtlasSampler();
-        VkDisp.LOGGER.info("vkdisp: [GAP-003/A] gbuffer terrain targets ready: {}x{} slots={} depth=D32_FLOAT",
-                main.width, main.height, actualSlots);
+        // 🔴 h34 修正：这条「targets ready」**原来挂在首次创建分支里**（只打一次），
+        //   h33 拆 ensure 时把它挪到了 ensureTargets 末尾 ⇒ 变成**每帧一条 INFO**。
+        //   实测一次运行刷了 **499 行** —— 与 h25 的 M-01 埋点 600→250000、
+        //   以及本文件自己注释里写的节流纪律，**是同一课**。
+        //   ⇒ 它描述的是「colortex 建好了」，归 ensureColortex 建好时打一次；
+        //   resize 路径有它自己那一条（见下）。资源是否就绪的判据不是日志，是
+        //   {@link #atlasSamplerReady()} 与 {@code colortex != null}。
     }
 
     /** colortex / 深度目标：懒建 + 尺寸变化时 resize（不含任何可能抛的资源）。 */
@@ -518,6 +524,9 @@ public final class MrtTerrainPass {
         colortex = targets.toArray(new TextureTarget[0]);
         colortexDepth = new TextureTarget("vkdisp gbuffer depth", main.width, main.height,
                 null, GpuFormat.D32_FLOAT);
+        // 🔖 打在建好这一刻，不是每帧（h34 修正：见 ensureTargets 末尾的说明）。
+        VkDisp.LOGGER.info("vkdisp: [GAP-003/A] gbuffer terrain targets ready: {}x{} slots={} depth=D32_FLOAT",
+                main.width, main.height, actualSlots);
     }
 
     /**
@@ -650,6 +659,7 @@ public final class MrtTerrainPass {
             new java.util.concurrent.atomic.AtomicBoolean();
 
     /** 我方 colortex 某一槽的视图（供调试回读）；未建 / 越界返回 {@code null}。 */
+    @Nullable
     public static GpuTextureView slotView(int slot) {
         if (colortex == null || slot < 0 || slot >= colortex.length || colortex[slot] == null) {
             return null;
