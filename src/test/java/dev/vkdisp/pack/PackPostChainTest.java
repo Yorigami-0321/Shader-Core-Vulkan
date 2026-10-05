@@ -131,6 +131,27 @@ class PackPostChainTest {
     }
 
     @Test
+    @DisplayName("🔴 mip 声明必须穿透转译活到契约（BSL 的 bloom 判据来源；解析断=金字塔永不跑）")
+    void mipEnabledConstSurvivesIntoContract() throws IOException {
+        write("composite.fsh", POST_FSH);
+        write("composite4.fsh", """
+                #version 150
+                const bool colortex0MipmapEnabled = true;
+                uniform sampler2D colortex0;
+                layout(location = 0) out vec4 fragColor;
+                void main() { fragColor = texture(colortex0, vec2(0.5)); }
+                """);
+
+        PackCompositeSource.Result result = PackCompositeSource.generate(inventory, "");
+        PackPostChain.Pass bloom = result.chain().passes().stream()
+                .filter(p -> p.programName().equals("composite4")).findFirst().orElseThrow();
+        assertEquals(java.util.List.of(0), bloom.mipEnabledSlots(),
+                () -> "const 必须被契约解析出来；pass: " + bloom.samplerNames());
+        assertEquals(java.util.Set.of(0), result.chain().mipEnabledSlots(),
+                "Chain 聚合出的声明槽 = 金字塔只对这些槽生成的依据");
+    }
+
+    @Test
     @DisplayName("🔖 池上界：maxSlot() 报告全链最大 colortex 槽（池按它扩）")
     void maxSlotCoversWholeChain() throws IOException {
         write("composite.fsh", """

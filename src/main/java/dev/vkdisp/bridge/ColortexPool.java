@@ -59,10 +59,12 @@ final class ColortexPool {
 
     private Slot[] slots = new Slot[0];
 
-    /** 级别数 = floor(log2(max(w,h))) + 1。纯函数，可单测。 */
+    /** 级别数 = floor(log2(max(w,h))) + 1（= max 的 bit 长度；与引擎校验同式）。
+     *  h46 M 臂实测：曾经差一（854×480 算出 11 > 上限 10 ⇒ createTexture 每帧抛
+     *  IllegalArgumentException、整条链静默停摆只剩全屏 pass failed 刷 ERROR）。 */
     static int levelCount(int width, int height) {
         int m = Math.max(1, Math.max(width, height));
-        return 32 - Integer.numberOfLeadingZeros(m - 1 == 0 ? 1 : m - 1) + 1;
+        return 32 - Integer.numberOfLeadingZeros(m);
     }
 
     int size() {

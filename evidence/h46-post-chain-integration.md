@@ -121,3 +121,29 @@ main#2 main area=FULL meanRGB=(164.4542,190.1090,255.0000) mean_luma=189.3399
 对比 K 臂 `main=(251.96,251.07,249.0)` ⇒ **全白退场**，B/G/B 通道出现天空蓝梯度。
 判据边界：这是「白消失 + 色调方向正确」的数字证据，不是「画面与 Iris 逐像素一致」——
 后者需要截图对照轮（MCP/允许后）。GAP-017 保持开放至此。
+
+### M 臂（给金字塔加自报后重跑）—— **L 臂判读被证伪并撤回**
+
+M 臂第一次启动：链根本没跑 —— `ColortexPool.levelCount` 差一（854×480 给 11 级，引擎校验
+`mipLevels ≤ floor(log2(max))+1 = 10`）⇒ `createTexture` 每帧抛、`ensureColortex` 崩在半路，
+`fullscreen pass failed` ×每帧。**L 臂的「白退场」= main 根本没被链重写的假象**
+（数字 (164,190,255) 来自陈旧画面/旧路径，不是金字塔效果）。⇒ L 臂判读撤回。
+
+修掉差一（`bitlen(max)` + `ColortexPoolLevelTest` 钉住三档）后 M3 臂：
+
+```
+vkdisp: [GAP-017] mip pyramid generating: slot=0 levels=10
+vkdisp: [chain] post chain executed: passes=11 …
+main#2      TERRAIN_BAND meanRGB=(254.93,254.93,254.93)
+colortex0#2 TERRAIN_BAND meanRGB=(7.30,6.99,3.04)   ← albedo 正常偏暗（GAP-016 止血稳）
+colortex1#2 TERRAIN_BAND meanRGB=(254.93,254.93,254.93)  ← bloom 仍全白
+colortex2#2 全零
+```
+
+⇒ **真实 mip 链 + 金字塔已运行，bloom 仍饱和** ⇒ 白的成因不在「缺 mip 数据」这一层，
+收窄到 `BloomTile` 的采样/表达式侧（候选：`texture2DLod` 转译的 lod 参数处理、
+或 tap 权重求和在本配置下的量级）。GAP-017 保持开放；下一步 = 把 composite4 单独跑一臂
+（`postChainMaxPasses` 类判据或 coordOut 式探针打到 BloomTile 上）拿中间量数字。
+
+🔖 本轮的元教训（写进纪律）：**「症状消失」必须与「机制在跑」互相印证** ——
+L 臂两臂之隔才靠自报戳破：没有 `mip pyramid generating` 这行，数字越好越危险。

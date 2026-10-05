@@ -1129,7 +1129,7 @@ public final class FrameApi {
 
         // GAP-017：地形 pass 写完的 mip 声明槽先建金字塔；此后每级 pass 写完带 mip 声明的槽，
         //   在其**被读之前**重建（脏集机制 —— 不重建就会读到上一级的陈旧/未初始化 mip）。
-        java.util.Set<Integer> mipSlots = chain.mipEnabledSlots();
+        java.util.Set<Integer> mipSlots = chainMipSlotsOrComplain(chain);
         java.util.Set<Integer> mipDirty = new java.util.LinkedHashSet<>(mipSlots);
         for (int slot = 0; slot < passes.size(); slot++) {
             var passPlan = passes.get(slot);
@@ -1295,6 +1295,15 @@ public final class FrameApi {
         }
         for (int slot : slots) {
             int levels = MrtTerrainPass.poolLevels(slot);
+            if (mipGenLogged.compareAndSet(false, true)) {
+                // 🔖 一次性自报：金字塔**真的在跑**与「mip 恰好是未初始化的黑」必须能在日志里分开
+                //   （L 臂教训：白消失了，但消失的原因可能是真金字塔，也可能是黑 mip ——
+                //    没有自报就没有判据，两个假象长得一模一样）。
+                dev.vkdisp.VkDisp.LOGGER.info(
+                        "vkdisp: [GAP-017] mip pyramid generating: slot={} levels={}"
+                                + " (declared mip slots are regenerated before their first read)",
+                        slot, levels);
+            }
             for (int level = 1; level < levels; level++) {
                 GpuTextureView dst = MrtTerrainPass.poolMipView(slot, level);
                 GpuTextureView src = MrtTerrainPass.poolMipView(slot, level - 1);
@@ -1316,6 +1325,25 @@ public final class FrameApi {
                 }
             }
         }
+    }
+
+    /** 「声明集为空」的告警只打一次。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean mipSlotsChecked =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** 金字塔生成自报只打一次（同上纪律）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean mipGenLogged =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** 声明集提取 + 「解析断了」告警（空集对 BSL = 异常，不是不需要）。 */
+    private static java.util.Set<Integer> chainMipSlotsOrComplain(
+            dev.vkdisp.pack.PackPostChain.Chain chain) {
+        java.util.Set<Integer> mipSlots = chain.mipEnabledSlots();
+        if (mipSlots.isEmpty() && mipSlotsChecked.compareAndSet(false, true)) {
+            dev.vkdisp.VkDisp.LOGGER.warn("vkdisp: [GAP-017] 全链没有任何 `colortexNMipmapEnabled` 声明"
+                    + " —— 若当前包确有 bloom/TAA（BSL 有 6 个），是 const 解析断了，不是不需要");
+        }
+        return mipSlots;
     }
 
     /** 链执行「接管自报」只打一次（热路径日志 I/O 纪律）。 */
