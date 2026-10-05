@@ -1,9 +1,11 @@
 package dev.vkdisp.glsl.translate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.vkdisp.pipeline.model.PackTerrainProgram;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -193,5 +195,65 @@ class PackVertexAdapterGeneratorTest {
         }
         assertEquals(1, differing,
                 "`U0001f50e 单变量实验必须只改一行");
+    }
+
+    // ── h41：供值分三档，「部分真值」不得混进「纯常量」 ────────────────────
+
+    @Test
+    @DisplayName("🔖🔖 h41：vTexCoord/vTexCoordAM 必须算**部分真值**，不能算纯常量")
+    void texCoordVaryingsArePartialNotPureConstant() {
+        // 这两条的 .xy 就是真实的 UV0 —— BLOCK 格式确实有该属性（字节码核实）。
+        // 缺的只是图集重映射（mat）与 z/w。若把它们记成「无对应属性」，
+        // 诊断就会误导后来人以为它们完全没有数据源（X9：诊断不许说假话）。
+        PackVertexAdapterGenerator.Result r = generateWith("vTexCoord", "vTexCoordAM");
+        assertEquals(List.of(), r.constantSupplies(),
+                "vTexCoord/vTexCoordAM 不得进纯常量档：实参 " + r.constantSupplies());
+        assertTrue(r.partialSupplies().containsAll(List.of("vTexCoord", "vTexCoordAM")),
+                "两条都应在部分真值档，实参 " + r.partialSupplies());
+    }
+
+    @Test
+    @DisplayName("🔖🔖 h41：诊断文本必须说清「.xy 取自真实 UV0」，不得说「无对应属性」")
+    void partialDiagnosticMustNotClaimMissingAttribute() {
+        PackVertexAdapterGenerator.Result r = generateWith("vTexCoord");
+        String joined = String.valueOf(r.diagnostics());
+        assertFalse(joined.contains("无对应属性"),
+                "部分真值档的诊断**不得**沿用「原版地形顶点缓冲无对应属性」这句话 —— "
+                        + "那是假的：UV0 确实存在。实参：" + joined);
+        assertTrue(joined.contains("UV0"),
+                "诊断必须点名真实来源 UV0，让读者知道它不是纯编的");
+        assertTrue(joined.contains("图集重映射"),
+                "诊断必须说清缺的是图集重映射（依赖 mat，GAP-007）而不是坐标本身");
+    }
+
+    @Test
+    @DisplayName("🔖 h41：纯常量档（normal/tangent/binormal/mat/recolor）仍照旧")
+    void pureConstantsStayPure() {
+        // BLOCK = Position/Color/UV0/UV2，**确实没有**这些属性 ⇒ 仍是纯常量。
+        PackVertexAdapterGenerator.Result r =
+                generateWith("normal", "tangent", "binormal", "mat", "recolor");
+        assertEquals(List.of("normal", "tangent", "binormal", "mat", "recolor"),
+                r.constantSupplies());
+        assertEquals(List.of(), r.partialSupplies(),
+                "这五条没有任何真实来源，不属部分真值");
+        assertTrue(String.valueOf(r.diagnostics()).contains("GAP-007"),
+                "纯常量档必须继续指向 GAP-007 登记");
+    }
+
+    @Test
+    @DisplayName("🔖 h41：摘要行必须**分别**报两档条数（合并就又看不出区别了）")
+    void summaryReportsBothTiersSeparately() {
+        PackVertexAdapterGenerator.Result r = generateWith("normal", "vTexCoord");
+        String joined = String.valueOf(r.diagnostics());
+        assertTrue(joined.contains("纯常量供值 1 条"), joined);
+        assertTrue(joined.contains("部分真值供值 1 条"), joined);
+    }
+
+    private static PackVertexAdapterGenerator.Result generateWith(String... names) {
+        List<PackTerrainProgram.Input> inputs = new ArrayList<>();
+        for (int i = 0; i < names.length; i++) {
+            inputs.add(new PackTerrainProgram.Input(i, "float", names[i]));
+        }
+        return PackVertexAdapterGenerator.generate(inputs, false, false, false);
     }
 }

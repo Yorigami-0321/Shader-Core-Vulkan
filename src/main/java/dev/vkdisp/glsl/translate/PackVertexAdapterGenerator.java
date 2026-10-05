@@ -59,11 +59,13 @@ public final class PackVertexAdapterGenerator {
     private PackVertexAdapterGenerator() {}
 
     /** 生成结果（纯数据 + GLSL 文本，无原版类型）。 */
-    public record Result(String glsl, List<TranslateDiagnostic> diagnostics, List<String> constantSupplies) {
+    public record Result(String glsl, List<TranslateDiagnostic> diagnostics, List<String> constantSupplies,
+            List<String> partialSupplies) {
 
         public Result {
             diagnostics = diagnostics == null ? List.of() : List.copyOf(diagnostics);
             constantSupplies = constantSupplies == null ? List.of() : List.copyOf(constantSupplies);
+            partialSupplies = partialSupplies == null ? List.of() : List.copyOf(partialSupplies);
         }
     }
 
@@ -86,10 +88,12 @@ public final class PackVertexAdapterGenerator {
             boolean parallaxSkipProbe, boolean colorProbe) {
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         Set<String> constants = new LinkedHashSet<>();
+        Set<String> partial = new LinkedHashSet<>();
         StringBuilder decls = new StringBuilder();
         StringBuilder body = new StringBuilder();
         for (PackTerrainProgram.Input input : inputs) {
-            String assignment = supply(input, constants, fullLightProbe, parallaxSkipProbe, colorProbe);
+            String assignment = supply(input, constants, partial, fullLightProbe, parallaxSkipProbe,
+                    colorProbe);
             if (assignment == null) {
                 diagnostics.add(TranslateDiagnostic.warn(
                         "适配层不认识 varying '" + input.name() + "'（类型 " + input.type()
@@ -97,6 +101,18 @@ public final class PackVertexAdapterGenerator {
                         null, 0));
                 assignment = input.name() + " = " + zeroValue(input.type());
                 constants.add(input.name());
+            } else if (partial.contains(input.name())) {
+                // 🔖 h41：这一档必须与「纯常量」**分开说**，否则诊断会误导人。
+                //   vTexCoord / vTexCoordAM 的 .xy 就是真实的 UV0（BLOCK 格式确有该属性），
+                //   缺的只是**图集重映射**（依赖 GAP-007 的 mat）与 z/w 分量。
+                //   旧诊断统一说「原版顶点缓冲无对应属性」⇒ 读者会以为这两个
+                //   varying 完全没有数据源，与事实不符（X9：不许让文档/诊断说假话）。
+                diagnostics.add(TranslateDiagnostic.warn(
+                        "varying '" + input.name() + "' 只能**部分**供值：.xy 取自真实的 "
+                                + "UV0（BLOCK 格式确有该属性），但缺图集重映射矩阵"
+                                + "（依赖 mat，同样是 GAP-007）与 z/w 分量"
+                                + " ⇒ 该通道的坐标**不是图集坐标**，相关视差/材质细节不成立",
+                        null, 0));
             } else if (constants.contains(input.name())) {
                 diagnostics.add(TranslateDiagnostic.warn(
                         "varying '" + input.name() + "' 只能按常量供值（原版地形顶点缓冲无对应属性，"
@@ -113,8 +129,10 @@ public final class PackVertexAdapterGenerator {
         //   否则「开关没生效」与「结论不成立」无法区分 ⇒ 实验结论不可信（h11 笈的被该榁则挡住了）。
         diagnostics.add(TranslateDiagnostic.info(
                 "顶点适配层已生成：varyings=" + inputs.size()
-                        + "（常量供值 " + constants.size() + " 条："
-                        + (constants.isEmpty() ? "无" : String.join(", ", constants)) + "）"
+                        + "（纯常量供值 " + constants.size() + " 条："
+                        + (constants.isEmpty() ? "无" : String.join(", ", constants))
+                        + "；部分真值供值 " + partial.size() + " 条："
+                        + (partial.isEmpty() ? "无" : String.join(", ", partial)) + "）"
                         + (fullLightProbe ? " **lmCoord=满光照诊断开关=已开启**"
                                   : " lmCoord=满光照诊断开关=关")
                         + (parallaxSkipProbe ? " **dist=视差跳过诊断开关=已开启**"
@@ -141,12 +159,13 @@ public final class PackVertexAdapterGenerator {
                             + "若仍黑 ⇒ 候选 3/4/5 全部否定，须换切分方向",
                     null, 0));
         }
-        return new Result(glsl, diagnostics, List.copyOf(constants));
+        return new Result(glsl, diagnostics, List.copyOf(constants), List.copyOf(partial));
     }
 
     /** 三档供值表；返回 {@code null} 表示「不认识这个名字」。 */
     private static String supply(PackTerrainProgram.Input input, Set<String> constants,
-            boolean fullLightProbe, boolean parallaxSkipProbe, boolean colorProbe) {
+            Set<String> partial, boolean fullLightProbe, boolean parallaxSkipProbe,
+            boolean colorProbe) {
         String name = input.name();
         return switch (name) {
             case "texCoord" -> "texCoord = UV0";
@@ -182,12 +201,18 @@ public final class PackVertexAdapterGenerator {
             case "normal" -> mark(constants, name) + name + " = vec3(0.0, 1.0, 0.0)";
             case "binormal" -> mark(constants, name) + name + " = vec3(1.0, 0.0, 0.0)";
             case "tangent" -> mark(constants, name) + name + " = vec3(0.0, 0.0, 1.0)";
-            case "vTexCoord" -> mark(constants, name)
+            case "vTexCoord" -> markPartial(partial, name)
                     + name + " = vec4(UV0, 0.0, 0.0)";
-            case "vTexCoordAM" -> mark(constants, name)
+            case "vTexCoordAM" -> markPartial(partial, name)
                     + name + " = vec4(UV0, 0.0, 1.0)";
             default -> null;
         };
+    }
+
+    /** 记为「部分真值」：.xy 来自真实属性，缺的是图集重映射与 z/w（h41）。 */
+    private static String markPartial(Set<String> partial, String name) {
+        partial.add(name);
+        return "";
     }
 
     private static String mark(Set<String> constants, String name) {
