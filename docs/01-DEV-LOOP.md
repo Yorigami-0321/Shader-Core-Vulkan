@@ -93,6 +93,36 @@ JDK 升级/重装覆盖了 `cacerts`、或构建再次报 `PKIX` / `SSLHandshake
 > **正确做法永远是 `fix-java-proxy-ca`（导入 JDK 信任库），不是改 Gradle 配置。**
 > 这个改动还会污染仓库 —— 代理 CA 的信任路径是本机特有的，提交上去对别人只有害处。
 
+### 1.2 🔴 取证必须走 `run-client.sh`，不要裸跑 `./gradlew runClient`（2026-10-05）
+
+> **背景（实测，`h36`）**：本机（WSL2）**系统级没有 Vulkan ICD**。
+> 而 `runClient` 带了 `--graphicsBackend VULKAN` 时，Minecraft 在 loader 缺失时
+> **不会崩也不会退出** —— 它只打两行
+> ```
+> WARN  NativeLibrariesBootstrap: Failed to load Vulkan loader
+> ERROR Minecraft: Failed to create backend Vulkan
+> ```
+> 然后 `Using graphics backend OpenGL, using drivers: 4.6 …` **静默退回 OpenGL 继续跑满取证帧数**。
+> ⇒ 采到的帧与截图**全是 OpenGL 产物**，而日志里除那两行外一切正常
+> ⇒ `h33` / `h34` / `h35` **三轮取证都踩在这条静默降级上**（`P0.2` 每轮断言失败就是唯一的征兆）。
+
+**正确入口**：
+
+```bash
+bash tools/vulkan-local/preflight.sh        # 自检：Vulkan 可用 → 退出码 0
+bash tools/vulkan-local/run-client.sh -PquickPlay   # 主车道；会硬失败而不是静默降级
+bash tools/vulkan-local/run-client.sh iso -PquickPlay  # 隔离车道（run/h27）
+```
+
+`run-client.sh` 做四件裸跑不会做的事：① 启动前 preflight 硬失败；
+② 查残留客户端（两会话共享 `run/` 会互相顶掉，见 `build.gradle` 隔离车道注释②）；
+③ 接上 prefix 环境（免 root loader + lavapipe ICD）；④ 起跑后**断言后端**。
+
+**P0.2 当前状态（2026-10-05）**：✅ **已达成**
+（`vkdisp: backend=Vulkan, device=llvmpipe (LLVM 22.1.8, 256 bits)`，证据 `evidence/h36-…`）。
+⚠️ 设备是 **lavapipe（CPU 软件 Vulkan）**，不是独显 ⇒
+**Vulkan 语义是真的，但帧率不代表任何真实硬件**（支柱③ B1–B7 仍无结论）。
+
 ---
 
 ## 2. 每次改动的执行顺序
@@ -103,7 +133,7 @@ JDK 升级/重装覆盖了 `cacerts`、或构建再次报 `PKIX` / `SSLHandshake
 ③ 改代码
 ④ 构建：./gradlew build
 ⑤ 检查构建产物（§3）
-⑥ 跑真实产物：./gradlew runClient（§4）
+⑥ 跑真实产物：bash tools/vulkan-local/run-client.sh（§1.2 / §4）
 ⑦ 观察真实输出：日志 + 画面（§5）
 ⑧ 有错误 → 定位（§6）→ 回到 ③
 ⑨ 全部通过 → 交证据（§7）→ 写变更记录 → commit
@@ -354,7 +384,7 @@ grep -nE "ERROR|Exception|Mixin apply failed|validation error" run/logs/latest.l
 | 阶段 | 任务 | 完成标准 |
 |---|---|---|
 | **P0.1** | 空模组能构建能跑 | `./gradlew build` 退出码 0；`./gradlew runClient` 进主菜单；日志无 `Mixin apply failed` |
-| **P0.2** | 确认跑在 Vulkan 后端 | 日志打印出后端类型与设备名，且不是 OPENGL |
+| **P0.2** | 确认跑在 Vulkan 后端 | 日志打印出后端类型与设备名，且不是 OPENGL | ✅ **2026-10-05 达成**（`evidence/h36-…`；设备为 lavapipe CPU 软件 Vulkan，见 §1.2） |
 | **P0.3** | **首个可见产物** | 屏幕上出现自定义全屏 pass 画出的图案（非黑屏、非崩） |
 | **P0.4** | bridge 包隔离落地 | 业务包 grep 不到 `com.mojang.renderpearl.` |
 | **P1.1** | uniform 传递 | 改数值后画面实时变化 |
