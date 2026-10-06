@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -87,5 +88,42 @@ class PostChainBslTest {
                                 + "；实际声明: " + pass.attachmentSlots());
             }
         }
+    }
+
+    @Test
+    @DisplayName("🔴 每个被声明的附件输出都必须真的被赋值 —— 「附件存在 ≠ 附件被写」在单测层拦住")
+    void everyDeclaredOutputIsActuallyAssigned() {
+        Assumptions.assumeTrue(Files.isDirectory(INVENTORY), "库存目录不在本地（run/shaderpacks/）");
+        String bslName = ShaderPackScanner.scan(INVENTORY).packs().stream()
+                .map(ShaderPackScanner.DiscoveredPack::name)
+                .filter(n -> n.startsWith("BSL_v10.1.8"))
+                .findFirst().orElse(null);
+        assertNotNull(bslName);
+        PackCompositeSource.Result result =
+                PackCompositeSource.generate(INVENTORY, "", bslName, null);
+
+        List<String> orphan = new ArrayList<>();
+        for (PackPostChain.Pass pass : result.chain().passes()) {
+            Matcher decl = OUT_DECL.matcher(pass.renumberedSource());
+            while (decl.find()) {
+                String name = decl.group(2);
+                if (!assignFor(name).matcher(pass.renumberedSource()).find()) {
+                    orphan.add(pass.programName() + " 附件下标 " + decl.group(1)
+                            + "（声明名 " + name + "）在源里一处赋值都没有");
+                }
+            }
+        }
+        assertTrue(orphan.isEmpty(), () -> "有附件永远没人写 ⇒ 该槽只会停在清屏值上，"
+                + "而包后面的步骤按 OF 语义把它当「上一步的输出」读（读回 0 ⇒ 依赖它的"
+                + "自动曝光/时序量归零）。\n" + String.join("\n", orphan));
+    }
+
+    private static final java.util.regex.Pattern OUT_DECL = java.util.regex.Pattern.compile(
+            "layout\\(\\s*location\\s*=\\s*(\\d+)\\s*\\)\\s+out\\s+\\w+\\s+([A-Za-z_]\\w*)\\s*;");
+
+    /** 赋值形态：整份写 / 分量写 / 下标写（`name =`、`name.rgb =`、`name[0] =`）。 */
+    private static java.util.regex.Pattern assignFor(String name) {
+        return java.util.regex.Pattern.compile("\\b" + java.util.regex.Pattern.quote(name)
+                + "\\s*(?:\\.[A-Za-z]{1,4}|\\[[^]]*\\])?\\s*=[^=]");
     }
 }

@@ -1,0 +1,80 @@
+package dev.vkdisp.render;
+/**
+ * 【参考调研】渲染路径接线纪律守卫（h48）
+ * 0. 合规核对（第 0 步闸门）：参考对象 = 本仓库自有 `evidence/h48-flicker-and-readback.md`
+ *    （一条 gate 把「链是否启用」与「地形何时画」捆在一起 ⇒ 一臂以为在测链、实际在跑旧三步链）。
+ *    无第三方代码，许可证：本项目 MIT。
+ * 1. 官方/主实现：无（这是本项目自己的接线纪律）。
+ * 2. 备选：无。
+ * 3. 差异点：把两件「静默错判」做成构建期红灯 ——
+ *    ① 链的执行路径被无关开关（`afterLevel`）连带关掉；
+ *    ② 每帧走哪条路在日志里不自报（判读对象不声明自己是谁）。
+ * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 5. 性能基线：❄️ 单测（扫源码）。
+ */
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+/**
+ * 「跑的是哪条渲染路径」必须有接线级保证。
+ *
+ * <p>🔖 守的全是**静默错判**：不崩、不报错、画面也像回事，但那一臂测的根本不是你以为的东西。
+ */
+class RenderRouteWiringTest {
+
+    private static final Path HOOK = Path.of("src/main/java/dev/vkdisp/render/FullscreenPassHook.java");
+    private static final Path UNIFORMS = Path.of("src/main/java/dev/vkdisp/render/OfUniformManager.java");
+
+    private static String readOrSkip(Path path) {
+        assumeTrue(Files.exists(path), "工程文件缺失: " + path);
+        try {
+            return Files.readString(path);
+        } catch (java.io.IOException e) {
+            throw new AssertionError("读取失败: " + path, e);
+        }
+    }
+
+    @Test
+    @DisplayName("🔴 链的执行不得被 afterLevel 连带关掉（两个轴各自独立）")
+    void chainDispatchIsNotGatedOnAfterLevel() {
+        String hook = readOrSkip(HOOK);
+        int gate = hook.indexOf("if (chainActive) {");
+        assertTrue(gate > 0, "链的执行必须只看 chainActive（`if (chainActive) {`）——"
+                + "h48 实测：gate 里带 afterLevel() ⇒ 关诊断档会连带把整条链关掉，"
+                + "那一臂跑的是旧三步链，却被当成「链生效」下了结论");
+        int call = hook.indexOf("FrameApi.drawPostChain(", gate);
+        assertTrue(call > gate, "chainActive 分支里必须真的调用 drawPostChain");
+        assertFalse(hook.substring(gate, call).contains("afterLevel"),
+                "从 `if (chainActive)` 到 drawPostChain 之间不得再出现 afterLevel —— "
+                        + "地形何时画是另一个轴（它只决定 MrtTerrainPass 的挂点）");
+    }
+
+    @Test
+    @DisplayName("🔖 每帧走哪条路必须自报（且只在变了时打）")
+    void routeIsSelfReported() {
+        String hook = readOrSkip(HOOK);
+        assertTrue(hook.contains("[route]"), "渲染路径必须在日志里自报（chain=true/false + 走哪条路）");
+        assertTrue(hook.contains("if (!route.equals(lastRoute))"),
+                "自报必须按「决策变了」去重 —— 否则就是 h33 那 2702 行的形状");
+    }
+
+    @Test
+    @DisplayName("🔴 gbufferPrevious* / previousCameraPosition 必须有真值来源（不许再恒 0）")
+    void previousFrameBuiltinsAreSupplied() {
+        String src = readOrSkip(UNIFORMS);
+        for (String name : new String[] {"gbufferPreviousModelView", "gbufferPreviousProjection",
+                "previousCameraPosition"}) {
+            assertTrue(src.contains("values.put(\"" + name + "\""),
+                    name + " 必须由 gather() 供上一帧值 —— 恒 0 会让包把「上一帧」当成"
+                            + "「相机在原点 + 单位矩阵」，运动向量 = 整屏假位移");
+        }
+        assertTrue(src.contains("worldSwitch || previousView == null"),
+                "换世界时历史必须与当帧对齐（跨世界的旧相机当历史没有意义）");
+    }
+}

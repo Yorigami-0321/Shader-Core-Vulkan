@@ -93,14 +93,80 @@ import org.jspecify.annotations.Nullable;
  */
 public final class TargetReadback {
 
-    /** 每源一个回读缓冲（源标签 → 缓冲；尺寸变化时重建）。 */
-    private static final Map<String, GpuBuffer> BUFFERS = new HashMap<>();
+    /**
+     * 每源**两个**回读槽（源标签 → 槽数组）。
+     *
+     * <p>🔴 为什么单槽会产出假数字（h48 实测）：回读是**异步**的 —— 提交后回调要等 GPU 完成，
+     *   lavapipe 上这个延迟可以超过一整个探针周期。旧实现每源一个缓冲，下一轮直接往**同一块**
+     *   缓冲再拷一次 ⇒ 上一轮还没落地 / 这一轮被上一轮覆盖 ⇒ 读回**整轮全 0**，
+     *   而日志里 0 与「画面真的是黑的」长得一模一样（R4/S1 两臂 7 轮里 4 轮全 0 的根因）。
+     * <p>两槽轮转 + 「两槽都在途就跳过并自报」：宁可少一轮数字，也不要一轮假的。
+     */
+    private static final Map<String, Slot[]> SLOTS = new HashMap<>();
+
+    /** 一个回读槽：缓冲 + 它在不在途 + 它的字节数。 */
+    private static final class Slot {
+        GpuBuffer buffer;
+        long bytes;
+        boolean busy;
+        /** 引擎的回读回调是否已回来（🔴 它**不**等于「GPU 已写完」—— 见 {@link #READ_DELAY_TICKS}）。 */
+        volatile boolean copyReturned;
+        /** 提交时所在的**探针节拍**（不是帧号，见 {@link #tailCalls}）。 */
+        long submittedAtTail;
+        String label;
+        String roundTag;
+        int width;
+        int height;
+        int bytesPerPixel;
+        PixelStats.Region region;
+    }
+
+    /** 把一个空闲槽登记为「本帧提交出去的这次拷贝」的目标。 */
+    private static void claim(Slot slot, String label, String roundTag,
+            int width, int height, int bytesPerPixel, PixelStats.Region region) {
+        slot.busy = true;
+        slot.copyReturned = false;
+        slot.submittedAtTail = tailCalls;
+        slot.label = label;
+        slot.roundTag = roundTag;
+        slot.width = width;
+        slot.height = height;
+        slot.bytesPerPixel = bytesPerPixel;
+        slot.region = region;
+    }
+
+    /**
+     * 回读落地余量（**探针节拍**数，1 = 上一轮提交的那一份）。
+     *
+     * <p>🔴 原版 {@code VulkanCommandEncoder#copyTextureToBuffer} 的回调走
+     * {@code queueForDestroy(callback::run)} —— 进的是**销毁队列**，不是 fence 完成的回调，
+     * 所以「回调回来了」并不保证「拷贝真的落进了缓冲」。
+     * <p>实测轨迹（h48）：每帧收割 + 只等 2 帧 ⇒ 7 轮里 5 轮整轮（连主目标）读 0；
+     * 0 与「画面真的是黑的」在日志里长得一模一样 ⇒ 那是**假证据生成器**，宁可改成
+     * 「读一个完整探针间隔之前提交的那一份」（软件栈 lavapipe 上那就是几秒的余量）。
+     */
+    private static final long READ_DELAY_TICKS = 1L;
+
+    /** 回调迟迟不回来的上限（节拍数；超过就自报并释放槽，不静默卡死）。 */
+    private static final long COPY_STALL_TICKS = 20L;
 
     /** 每源在途请求数（重建缓冲前必须归零，否则旧回调会 map 到已关闭的缓冲）。 */
     private static final Map<String, Integer> PENDING = new HashMap<>();
 
-    /** 每源缓冲对应的字节数。 */
-    private static final Map<String, Long> BYTES = new HashMap<>();
+    /** 「两槽都在途 ⇒ 本轮该源跳过」的累计次数（探针健康度自报用）。 */
+    private static long skippedSubmits;
+
+    /** 「回读缓冲就绪」每源只报一次（建槽是每帧可能触发的动作，日志不能跟着刷）。 */
+    private static final java.util.Set<String> BUFFER_LOGGED = new java.util.HashSet<>();
+
+    /** 「mip 级越界」只报一次。 */
+    private static final AtomicBoolean BAD_LEVEL_NOTED = new AtomicBoolean();
+
+    /** 「拷贝回调迟迟不回来」只报一次。 */
+    private static final AtomicBoolean STALL_NOTED = new AtomicBoolean();
+
+    /** 已经走过的**探针节拍**数（回读落地延迟的时基；一个节拍 = 一个探针间隔）。 */
+    private static long tailCalls;
 
     /** 「源纹理缺 USAGE_COPY_SRC」只报一次（不每帧刷屏）。 */
     private static final AtomicBoolean NOT_COPY_SRC_NOTED = new AtomicBoolean();
@@ -135,6 +201,105 @@ private static final long WARMUP_FRAMES = 600L;
      * 而「决策变了」（切档 / 切包 / 换附件数 / 换槽位集合）正是最该被看到的那一刻。
      */
     private static String lastPlanNote;
+
+    /**
+     * 🔬 地形 MRT pass **刚画完**时打一次 colortex0（标签 {@code c0@afterTerrain}）。
+     *
+     * <p>为什么需要第二个观测点（GAP-019）：帧尾那一槽早被链覆写，「帧尾为 0」分不清是
+     * 「地形没画进池」还是「链把它打没了」—— 这两个要修的不是同一个东西。
+     * 同一轮里两个标签一比就知道黑在哪一侧。开关 {@code mrt.pixelProbeAfterTerrain} 默认关
+     * （它每帧多一次全屏回读，只在定位时用）。
+     */
+    public static void probeAfterTerrain() {
+        if (samplingFrame && VkDispConfig.MRT_PIXEL_PROBE_AFTER_TERRAIN.get()) {
+            submit("c0@afterTerrain", MrtTerrainPass.slotTexture(0));
+        }
+    }
+
+    /**
+     * 每帧开头调用一次：决定**本帧是否取样**，并收割上一轮已落地的回读。
+     *
+     * <p>🔖 为什么取样判定必须在帧首：链里的逐 pass 追踪（{@link #probeChainPass}）与
+     *   地形后的 {@link #probeAfterTerrain} 都发生在 {@link #probeFrameTail} **之前**，
+     *   若各自按帧数倒计时，取到的就不是同一帧 ⇒ 一条「曲线」里混着不同帧的数字，
+     *   比不测更坏（h48 实测：同一标签同一轮出现 186.2 与 0.0 两个读数）。
+     */
+    public static void beginFrame() {
+        if (!enabled()) {
+            samplingFrame = false;
+            return;
+        }
+        // 🔖 一帧只决定一次：本方法可能从两处进来（地形 pass 在帧图内 ⇒ 早于 AfterLevel 钩子），
+        //   而「第几帧」的现成计数就是捕获计数 —— 它每帧恰好推进一次（GAP-019 自报实测 1:1）。
+        long token = TerrainDrawCapture.captureCount();
+        if (token == beginFrameToken) {
+            return;
+        }
+        beginFrameToken = token;
+        tailCalls++;
+        collectReady();
+        if (framesUntilProbe > 0L) {
+            framesUntilProbe--;
+            samplingFrame = false;
+            return;
+        }
+        samplingFrame = true;
+        framesUntilProbe = Math.max(1L, VkDispConfig.MRT_PIXEL_PROBE_EVERY.get());
+        round++;
+    }
+
+    /** 本帧是否取样（帧首定，帧内各取点共用）。 */
+    private static boolean samplingFrame;
+
+    /** 上一次 {@link #beginFrame()} 见到的帧令牌（= 捕获计数），用于一帧只决定一次。 */
+    private static long beginFrameToken = -1L;
+
+    /**
+     * 🔬 逐 pass 追踪（GAP-020 判据）：一级跑完后回读它写过的槽，标签 {@code traceK<name>:cN}。
+     *
+     * <p>必须在**该 pass 已关闭、翻代之后**调用（FrameApi 里就是那个位置）——
+     * 读的是这一级刚写进的那一代，且不在 render pass 内（原版编码器在 pass 内会抛）。
+     */
+    public static void probeChainPass(int passSlot, String programName,
+            java.util.Collection<Integer> writtenSlots) {
+        if (!samplingFrame || !VkDispConfig.MRT_POST_CHAIN_TRACE.get()) {
+            return;
+        }
+        java.util.List<Integer> wanted = parseSlots(VkDispConfig.MRT_POST_CHAIN_TRACE_SLOTS.get());
+        java.util.List<Integer> levels = mipLevelsToProbe();
+        for (int slot : writtenSlots) {
+            if (wanted.contains(slot)) {
+                submit("trace" + passSlot + programName + ":c" + slot,
+                        MrtTerrainPass.slotTexture(slot));
+                // 🔖 同一级的**金字塔内容**也要跟着看：GAP-020 的怀疑是「包用隐式导数取级，
+                //   而取到的那一级是空的/陈的」—— 只看 mip0 无法证伪。
+                for (int level : levels) {
+                    submit("trace" + passSlot + programName + ":c" + slot + "@m" + level,
+                            MrtTerrainPass.slotTexture(slot), level);
+                }
+            }
+        }
+    }
+
+    /** 逗号分隔的槽位表（非法项丢掉，不猜）。 */
+    static java.util.List<Integer> parseSlots(String raw) {
+        java.util.List<Integer> out = new java.util.ArrayList<>();
+        if (raw == null) {
+            return out;
+        }
+        for (String token : raw.split(",")) {
+            String t = token.strip();
+            if (t.isEmpty()) {
+                continue;
+            }
+            try {
+                out.add(Integer.parseInt(t));
+            } catch (NumberFormatException ignored) {
+                // 非法项丢掉（X9 不猜）
+            }
+        }
+        return out;
+    }
 
     /** 提交成功次数（诊断视图：探针有没有真跑过）。 */
     private static long submitted;
@@ -176,15 +341,9 @@ private static final long WARMUP_FRAMES = 600L;
      * 本方法只被 {@link FrameApi#drawFullscreen} 尾部调用，那里整条链的 pass 都已关闭。
      */
     public static void probeFrameTail() {
-        if (!enabled()) {
+        if (!enabled() || !samplingFrame) {
             return;
         }
-        if (framesUntilProbe > 0L) {
-            framesUntilProbe--;
-            return;
-        }
-        framesUntilProbe = Math.max(1L, VkDispConfig.MRT_PIXEL_PROBE_EVERY.get());
-        round++;
 
         // 🔖🔖 取证件（2026-10-05 实测踩到后才加的）：每轮先把「**实际生效**的包选项覆盖」
         //   打一遍，再打任何数字。理由见 PackOptionEvidence 的类注释 ——
@@ -202,9 +361,7 @@ private static final long WARMUP_FRAMES = 600L;
         //   （同族第五例：把「附件存在」当成「附件被写了」。）
         PixelProbePlan plan = decidePlan();
         reportPlanOnce(plan);
-        for (int slot : plan.colortexSlots()) {
-            any |= submit("colortex" + slot, MrtTerrainPass.slotTexture(slot));
-        }
+        any |= submitSlots(plan);
         // 🔖 ③ 方块图集（texture_0 的真值）：把它也当一个源测一次。
         //   h13 只对图集的 mip 链做过**静态**核查，从未在**运行期**取过它的数字；
         //   而「包片元乘上去的那张图是不是黑的」正是 albedo ≡ 0 的头号候选输入。
@@ -216,6 +373,37 @@ private static final long WARMUP_FRAMES = 600L;
                     + "（主目标或 colortex 未建成）⇒ 未取到任何数字。"
                     + "⚠️ 「没有数字」与「数字是 0」是两件事，不要混读");
         }
+        // 🔖 探针健康度自报（h48）：跳过的源**这轮就没有数字**。不打这行，读日志的人会把
+        //   「上一轮的 0」或「别的槽的 0」当成本轮该槽的测量值 —— 这正是假证据的形态。
+        if (skippedSubmits > lastSkipsLogged) {
+            lastSkipsLogged = skippedSubmits;
+            VkDisp.LOGGER.warn("vkdisp: [pixel-probe] 健康度: 累计提交={} 累计跳过={}（跳过 = 该源两个"
+                    + "回读槽都还在途 ⇒ **本轮该源没有数字**，不是画面为 0）",
+                    submitted, skippedSubmits);
+        }
+    }
+
+    /** 上一次打健康度时的累计跳过数。 */
+    private static long lastSkipsLogged;
+
+    /**
+     * 提交计划里每个 colortex 槽（mip0），外加配置点名的**高 LOD**各一次。
+     *
+     * <p>🔖🔖 为什么高 LOD 也要有数字（h48）：GAP-017 的生成自报只证明「金字塔在跑」，
+     *   证明不了「高 LOD 里真的是降采样平均值」。BSL 的 bloom / 自动曝光按
+     *   {@code colortexNMipmapEnabled} 采 LOD 8~9 —— 那一级若是黑或等于 mip0，
+     *   后果是**必然过曝**，而 mip0 的数字完全看不出来。
+     */
+    private static boolean submitSlots(PixelProbePlan plan) {
+        boolean any = false;
+        for (int slot : plan.colortexSlots()) {
+            any |= submit("colortex" + slot, MrtTerrainPass.slotTexture(slot));
+            for (int level : mipLevelsToProbe()) {
+                any |= submit("colortex" + slot + "@m" + level,
+                        MrtTerrainPass.slotTexture(slot), level);
+            }
+        }
+        return any;
     }
 
     /**
@@ -291,17 +479,28 @@ private static final long WARMUP_FRAMES = 600L;
         if (chain.passes().isEmpty() || !FrameApi.isPostChainActive()) {
             return base;
         }
-        java.util.LinkedHashSet<Integer> slots = new java.util.LinkedHashSet<>(base.colortexSlots());
-        for (var pass : chain.passes()) {
-            slots.addAll(pass.attachmentSlots());
+        // 链模式测哪些槽 = **配置点名**（h47c：按数字序截断曾把判读槽 1 挤出预算外，
+        //   「探针恰好没测到出问题的那张图」= 又一个假绿形状）。默认 0,1,2。
+        java.util.LinkedHashSet<Integer> wanted = new java.util.LinkedHashSet<>();
+        for (String tok : dev.vkdisp.VkDispConfig.MRT_PIXEL_PROBE_CHAIN_SLOTS.get().split(",")) {
+            String t = tok.strip();
+            if (!t.isEmpty()) {
+                try {
+                    wanted.add(Integer.parseInt(t));
+                } catch (NumberFormatException ignored) {
+                    // 非法项由 base 槽集兜底（不猜）
+                }
+            }
         }
+        java.util.LinkedHashSet<Integer> slots = new java.util.LinkedHashSet<>(wanted);
+        base.colortexSlots().stream().filter(slots::contains).forEach(slots::add);
         java.util.List<Integer> merged = slots.stream().sorted().toList();
         boolean truncated = merged.size() > PixelProbePlan.MAX_COLORTEX_PROBES;
         if (truncated) {
             merged = merged.subList(0, PixelProbePlan.MAX_COLORTEX_PROBES);
         }
         return new PixelProbePlan(merged, base.declaredSlotsKnown(), base.comparable(), truncated,
-                base.note() + " [chain] 测集并入全链声明写过的槽（h46 逐槽定位过曝级）");
+                base.note() + " [chain] 测集=配置点名槽 " + wanted + "（mrt.pixelProbeChainSlots）");
     }
 
     /**
@@ -311,12 +510,52 @@ private static final long WARMUP_FRAMES = 600L;
      * @param texture 源纹理（null / 未建成 → 返回 false，**不是**「全黑」）
      * @return 是否成功提交
      */
+    /** 配置点名的「也要测哪几级 mip」（逗号分隔；空 = 不测）。 */
+    static java.util.List<Integer> mipLevelsToProbe() {
+        String raw = VkDispConfig.MRT_PIXEL_PROBE_MIP_LEVELS.get();
+        if (raw == null || raw.isBlank()) {
+            return java.util.List.of();
+        }
+        java.util.List<Integer> levels = new java.util.ArrayList<>();
+        for (String token : raw.split(",")) {
+            String t = token.strip();
+            if (t.isEmpty()) {
+                continue;
+            }
+            try {
+                levels.add(Integer.parseInt(t));
+            } catch (NumberFormatException ignored) {
+                // 非法项不猜（X9）：整项丢掉，缺什么由下面的自报行显示
+            }
+        }
+        return levels;
+    }
+
     private static boolean submit(String label, @Nullable GpuTexture texture) {
+        return submit(label, texture, 0);
+    }
+
+    /**
+     * 提交一次回读。
+     *
+     * @param level 取哪一级（原版
+     *              {@code CommandEncoder#copyTextureToBuffer(source, dst, offset, callback, mipLevel)}
+     *              的第 5 参 = mipLevel，源码核实；宽高也按该级取）
+     */
+    private static boolean submit(String label, @Nullable GpuTexture texture, int level) {
         if (texture == null || texture.isClosed()) {
             return false;
         }
-        int width = texture.getWidth(0);
-        int height = texture.getHeight(0);
+        if (level < 0 || level >= texture.getMipLevels()) {
+            if (BAD_LEVEL_NOTED.compareAndSet(false, true)) {
+                VkDisp.LOGGER.warn("vkdisp: [pixel-probe] 要求的 mip 级 {} 超出源纹理 {} 的级数 {}"
+                                + " ⇒ 该级不测（越界去问 = 原版会直接抛，不猜）",
+                        level, label, texture.getMipLevels());
+            }
+            return false;
+        }
+        int width = texture.getWidth(level);
+        int height = texture.getHeight(level);
         int bytesPerPixel = texture.getFormat().blockSize();
         // 🔖 前置条件（源码级核实，见【参考调研】②）：源纹理必须带 USAGE_COPY_SRC，
         //   否则 FrontendCommandEncoder 抛 "Texture needs USAGE_COPY_SRC to be a source for a copy"。
@@ -333,20 +572,24 @@ private static final long WARMUP_FRAMES = 600L;
             return false;
         }
         long needed = (long) width * height * bytesPerPixel;
-        GpuBuffer target = bufferFor(label, needed, width, height, bytesPerPixel);
-        if (target == null) {
+        Slot slot = slotFor(label, needed, width, height, bytesPerPixel);
+        if (slot == null) {
+            // 🔖 两槽都在途 = GPU 回读还没落地。这里**跳过而不是复用**：复用的后果不是少一轮
+            //   数字，而是产出一轮「全 0」的假数字（h48：与「画面真的黑」在日志里不可区分）。
+            skippedSubmits++;
             return false;
         }
+        GpuBuffer target = slot.buffer;
         String roundTag = label + "#" + round;
+        claim(slot, label, roundTag, width, height, bytesPerPixel, region);
         PENDING.merge(label, 1, Integer::sum);
         try {
             RenderSystem.getDevice().createCommandEncoder().copyTextureToBuffer(
-                    texture, target, 0L,
-                    () -> finish(label, roundTag, target, width, height, bytesPerPixel, region),
-                    0);
+                    texture, target, 0L, () -> slot.copyReturned = true, level);
             submitted++;
             return true;
         } catch (Throwable t) {
+            slot.busy = false;
             PENDING.merge(label, -1, Integer::sum);
             if (SUBMIT_FAILURE_NOTED.compareAndSet(false, true)) {
                 VkDisp.LOGGER.error("vkdisp: [pixel-probe] 提交回读失败（{}，原文）：{}",
@@ -357,17 +600,53 @@ private static final long WARMUP_FRAMES = 600L;
     }
 
     /**
-     * 回调：GPU 已完成 ⇒ 映射内存、统计、打日志、必要时做两源对照。
+     * 收割已落地的回读：回调回来、且距提交至少过了一个完整探针节拍的槽才读。
      *
-     * <p>🔖 <b>为什么不在这里重新校验缓冲</b>：{@code bufferFor} 只在「该源无在途请求」时
-     * 才重建，所以只要本请求还在途，{@code buffer} 就不可能被换掉或关闭
-     * ⇒ 回调里的 {@code target} 必然仍有效。这条不变式是 {@code PENDING} 计数的全部作用。
+     * <p>🔖 读的是**上一轮提交的那一份**拷贝 —— 打印时刻晚于 {@code roundTag} 里的轮次一轮，
+     *   数字本身仍属于那一轮（这就是延迟余量的来源，见 {@link #READ_DELAY_TICKS}）。
      */
-    private static void finish(String label, String roundTag, GpuBuffer target,
-            int width, int height, int bytesPerPixel, PixelStats.Region region) {
+    private static void collectReady() {
+        for (Slot[] slots : SLOTS.values()) {
+            for (Slot slot : slots) {
+                if (!slot.busy) {
+                    continue;
+                }
+                long waited = tailCalls - slot.submittedAtTail;
+                if (!slot.copyReturned) {
+                    if (waited > COPY_STALL_TICKS && STALL_NOTED.compareAndSet(false, true)) {
+                        VkDisp.LOGGER.warn("vkdisp: [pixel-probe] 源 {} 的拷贝回调 {} 个节拍没回来"
+                                        + " ⇒ 释放该槽（**这轮该源没有数字**，不是画面为 0）",
+                                slot.roundTag, waited);
+                        slot.busy = false;
+                        PENDING.merge(slot.label, -1, Integer::sum);
+                    }
+                    continue;
+                }
+                if (waited < READ_DELAY_TICKS) {
+                    continue;
+                }
+                finish(slot);
+            }
+        }
+    }
+
+    /**
+     * 读一个已落地的槽：映射内存、统计、打日志、必要时做两源对照。
+     *
+     * <p>🔖 <b>为什么不在这里重新校验缓冲</b>：{@link #slotFor} 只在槽**空闲**时才复用/重建，
+     * 所以只要本请求还在途，它的缓冲就不可能被换掉或关闭
+     * ⇒ {@code PENDING} 计数 + 槽的 busy 位共同构成这条不变式。
+     */
+    private static void finish(Slot slot) {
+        String label = slot.label;
+        String roundTag = slot.roundTag;
+        int width = slot.width;
+        int height = slot.height;
+        int bytesPerPixel = slot.bytesPerPixel;
+        PixelStats.Region region = slot.region;
         try {
             byte[] pixels;
-            try (GpuBufferSlice.MappedView view = target.map(true, false)) {
+            try (GpuBufferSlice.MappedView view = slot.buffer.map(true, false)) {
                 pixels = new byte[view.data().remaining()];
                 view.data().get(pixels);
             }
@@ -393,6 +672,7 @@ private static final long WARMUP_FRAMES = 600L;
                         roundTag, t.toString());
             }
         } finally {
+            slot.busy = false;
             PENDING.merge(label, -1, Integer::sum);
         }
     }
@@ -499,27 +779,38 @@ private static final long WARMUP_FRAMES = 600L;
     private static final AtomicBoolean ATLAS_FAILURE_NOTED = new AtomicBoolean();
 
     /** 按字节数取该源的回读缓冲（尺寸变化时重建；重建前要求该源无在途请求）。 */
-    private static @Nullable GpuBuffer bufferFor(String label, long bytes,
+    /**
+     * 取一个**空闲**回读槽（没有就按需要建缓冲；两槽都在途 → 返回 null，调用方跳过本轮）。
+     *
+     * <p>🔖 本方法是唯一改动 {@link #SLOTS} 的地方 ⇒ 「在途槽的缓冲不会被重建」这条不变式
+     *   由它自己保证（旧实现把「在途不许重建」写在 bufferFor 里，却允许**复用**在途缓冲 ——
+     *   于是真正的破口留在了复用那条路上，h48 的全 0 假数字就是从那里进来的）。
+     */
+    private static @Nullable Slot slotFor(String label, long bytes,
             int width, int height, int bytesPerPixel) {
-        GpuBuffer existing = BUFFERS.get(label);
-        if (existing != null && !existing.isClosed() && Long.valueOf(bytes).equals(BYTES.get(label))) {
-            return existing;
+        Slot[] slots = SLOTS.computeIfAbsent(label, k -> new Slot[]{new Slot(), new Slot()});
+        for (Slot slot : slots) {
+            if (slot.busy) {
+                continue;
+            }
+            GpuBuffer existing = slot.buffer;
+            if (existing != null && !existing.isClosed() && slot.bytes == bytes) {
+                return slot;
+            }
+            if (existing != null && !existing.isClosed()) {
+                existing.close();
+            }
+            int usage = GpuBuffer.USAGE_COPY_DST | GpuBuffer.USAGE_MAP_READ;
+            slot.buffer = RenderSystem.getDevice().createBuffer(
+                    () -> "vkdisp pixel probe readback " + label, usage, bytes);
+            slot.bytes = bytes;
+            if (BUFFER_LOGGED.add(label)) {
+                VkDisp.LOGGER.info("vkdisp: [pixel-probe] 回读缓冲就绪（每源 2 槽轮转）:"
+                        + " source={} {}x{} blockSize={} bytes={}",
+                        label, width, height, bytesPerPixel, bytes);
+            }
+            return slot;
         }
-        // 🔖 在途请求未归零时不重建：旧请求的回调还要 map 这个缓冲
-        //   （bufferFor 是本类唯一改动 BUFFERS 的地方 ⇒ 这个不变式由它自己保证）。
-        if (PENDING.getOrDefault(label, 0) > 0) {
-            return null;
-        }
-        if (existing != null) {
-            existing.close();
-        }
-        int usage = GpuBuffer.USAGE_COPY_DST | GpuBuffer.USAGE_MAP_READ;
-        GpuBuffer created = RenderSystem.getDevice().createBuffer(
-                () -> "vkdisp pixel probe readback " + label, usage, bytes);
-        BUFFERS.put(label, created);
-        BYTES.put(label, bytes);
-        VkDisp.LOGGER.info("vkdisp: [pixel-probe] 回读缓冲就绪: source={} {}x{} blockSize={} bytes={}",
-                label, width, height, bytesPerPixel, bytes);
-        return created;
+        return null;
     }
 }

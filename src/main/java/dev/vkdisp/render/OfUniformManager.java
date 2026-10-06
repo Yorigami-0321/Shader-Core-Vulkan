@@ -76,10 +76,19 @@ public final class OfUniformManager {
     /** frameTimeCounter 累加器（换世界重置；单帧截断防切窗尖峰）。 */
     private static long lastFrameNanos = -1L;
     private static float frameSeconds;
+    /** {@code frameTime} 的供值：最近一次**有效**帧间隔（秒）；尖峰帧沿用旧值。 */
+    private static float frameDeltaSeconds;
     private static Object lastLevelKey;
 
     /** frameCounter 自增（跨世界持续）。 */
     private static int frameCounter;
+
+    /** gbufferPrevious* / previousCameraPosition 的历史槽（上一次 gather 的当帧值；首帧前为 null）。 */
+    private static org.joml.Matrix4f previousView;
+    private static org.joml.Matrix4f previousProjection;
+    private static Vector3f previousCamera;
+    /** 上一次供值时的世界引用（换世界 ⇒ 历史与当帧对齐；null = 菜单/尚未进世界）。 */
+    private static Object previousMatrixLevel;
 
     private OfUniformManager() {}
 
@@ -132,9 +141,27 @@ public final class OfUniformManager {
         values.put("gbufferProjection", projection);
         values.put("gbufferModelViewInverse", inverted(view));
         values.put("gbufferProjectionInverse", inverted(projection));
-        values.put("cameraPosition", inWorld
+        Vector3f cameraPos = inWorld
                 ? new Vector3f((float) camera.pos.x, (float) camera.pos.y, (float) camera.pos.z)
-                : new Vector3f());
+                : new Vector3f();
+        values.put("cameraPosition", cameraPos);
+        // ---- 上一帧相机（TAA / 运动模糊 / DOF 聚焦的输入）----
+        // 🔖 此前这三项在 builtins 上传自报里长期是 `unfilled`（恒 0）⇒ 包把「上一帧」当成
+        //   「相机在原点、矩阵是单位阵」⇒ 运动向量 = 整屏假位移 ⇒ 时序混合把画面往错误的
+        //   历史帧上抹（h48 判读暗帧时的候选之一，先按公开语义把值供上，再按画面判）。
+        // 🔖 「上一帧」= **上一次 gather**（链模式每帧一次）。换世界时对齐成当帧：
+        //   跨维度/重载之后的旧相机没有意义，喂它 = 让包拿上一张地图的相机当历史。
+        boolean worldSwitch = mc.level != previousMatrixLevel;
+        previousMatrixLevel = mc.level;
+        values.put("gbufferPreviousModelView",
+                worldSwitch || previousView == null ? view : previousView);
+        values.put("gbufferPreviousProjection",
+                worldSwitch || previousProjection == null ? projection : previousProjection);
+        values.put("previousCameraPosition",
+                worldSwitch || previousCamera == null ? cameraPos : previousCamera);
+        previousView = view;
+        previousProjection = projection;
+        previousCamera = cameraPos;
         values.put("near", inWorld ? Camera.PROJECTION_Z_NEAR : 0.1F);
         values.put("far", inWorld ? camera.depthFar : 32.0F);
         values.put("viewWidth", (float) width);
@@ -178,6 +205,12 @@ public final class OfUniformManager {
         values.put("timeAngle", worldTime / 24000.0F);
         values.put("aspectRatio", width / (float) height);
         values.put("frameTimeCounter", tickFrameTime(mc, inWorld));
+        // frameTime = 上一帧耗时（OF 公开语义）。🔖 这条是 BSL 白屏前线的机制位：
+        //   包里 `exp2(-frameTime * SPEED)` 是**时序混合系数**，恒 0 ⇒ 混合系数恒 1 ⇒
+        //   混合永远返回「旧值」，而旧值就是缓冲初始 0 ⇒ 自动曝光 colortex2.r 卡在 0 ⇒
+        //   `color /= 2*0 + 0.125` = 固定 ×8 增益 ⇒ 整屏削顶（evidence/h47）。
+        //   尖峰帧（>0.5s，切窗/暂停）不更新 ⇒ 沿用上一次的有效步长，而不是回 0 卡死。
+        values.put("frameTime", frameDeltaSeconds);
         int frameNo = ++frameCounter;
         values.put("frameCounter", frameNo);
         // 🔖 QD-02：`vkdisp.debugLog` 的**真实消费点之一**。此前该开关只有定义与热重载快照、
@@ -326,17 +359,20 @@ public final class OfUniformManager {
             return;
         }
         List<String> missing = stats.missingNames();
-        String shown = missing.size() <= 8
+        // 🔖 截断阈值 16（原 8）：h47 的 `frameTime` 恰好落在被截掉的后半段，
+        //   于是「哪个内置量没供值」这个**决定性的问题**在日志里看不见 —— 判读面被截断 = 假证据。
+        String shown = missing.size() <= 16
                 ? missing.toString()
-                : missing.subList(0, 8) + " …+" + (missing.size() - 8);
+                : missing.subList(0, 16) + " …+" + (missing.size() - 16);
         dev.vkdisp.VkDisp.LOGGER.info(
                 "vkdisp: builtins uploaded: slot={} members={} bytes={} written={} unfilled={}"
                         + " mismatched={} overflow={} sample={{far={}, worldTime={},"
-                        + " frameTimeCounter={}, rainStrength={}}} unfilledNames={}",
+                        + " frameTimeCounter={}, frameTime={}, rainStrength={}}} unfilledNames={}",
                 slot, layout.members().size(), layout.byteSize(),
                 stats.written(), stats.missing(), stats.mismatched(), stats.overflow(),
                 values.get("far"), values.get("worldTime"),
-                values.get("frameTimeCounter"), values.get("rainStrength"), shown);
+                values.get("frameTimeCounter"), values.get("frameTime"),
+                values.get("rainStrength"), shown);
     }
 
     // ----------------------------------------------------------------------------------
@@ -393,6 +429,7 @@ public final class OfUniformManager {
             float delta = (now - lastFrameNanos) / 1.0e9F;
             if (delta > 0.0F && delta < 0.5F) {
                 frameSeconds += delta;
+                frameDeltaSeconds = delta;
             }
         }
         lastFrameNanos = now;

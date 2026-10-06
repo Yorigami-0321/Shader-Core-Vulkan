@@ -80,6 +80,9 @@ public final class FullscreenPassHook {
     /** 🔴 链模式「未就绪等待」的自报只打一次（首帧池未建 = 等待，不是失败）。 */
     private static boolean chainReadyWaitLogged;
 
+    /** 上一次自报的渲染路径（变了才打一行，见 [route] 自报）。 */
+    private static String lastRoute = "";
+
     /** 进程启动时刻，用于生成秒级动画相位（P1.1：改数值 → 画面实时变化）。 */
     private static final long START_NANOS = System.nanoTime();
 
@@ -187,13 +190,33 @@ public final class FullscreenPassHook {
         }
 
         try {
+            // 🔖 取样判定在**帧首**做（地形后的取点与逐 pass 追踪都读同一个判定），
+            //   否则一条曲线里会混着不同帧的数字（h48 实测过这个形状）。
+            dev.vkdisp.bridge.TargetReadback.beginFrame();
             // 🔴 链模式（OF 语义的正确时序）：**先**把地形画进 colortex，**再**跑整条后处理链。
             //   旧三步链时代 composite 采的是 scene，时序反了也看不出差别；接进 colortex 之后，
             //   「链先跑」= 链永远采到**上一帧**的 gbuffer（一帧延迟），而 terrain 后画会把
             //   链刚写进 main 的结果再盖掉一次（toMain 诊断档除外）。⇒ 这里换序。
             boolean chainActive = FrameApi.isPostChainActive();
+            // 🔖 走哪条路必须**在决策处自报**（只在变了时打一行）：h48 就是缺这条 ——
+            //   gate 把「链」与「afterLevel」捆在一起，于是一臂以为在测链、实际在跑旧三步链，
+            //   而画面与日志其它行都看起来正常。判读对象不声明自己是谁 = 假证据。
+            String route = "chain=" + chainActive + " afterLevel=" + MrtTerrainPass.afterLevel()
+                    + " toMain=" + MrtTerrainPass.toMain();
+            if (!route.equals(lastRoute)) {
+                lastRoute = route;
+                VkDisp.LOGGER.info("vkdisp: [route] 本帧渲染路径 = {} ⇒ {}", route,
+                        chainActive ? "整条后处理链（colortex 按名接线）" : "旧三步链（scene 采样）");
+            }
+            // 🔴 h48 修正（这条 gate 曾经把两个**独立**的轴捆在一起）：条件里带 afterLevel()
+            //   ⇒ 关诊断档 `mrt.terrainAfterLevel=false` 会**连带把整条链关掉**，
+            //   于是那一臂跑的是旧三步链，画面却是「链生效」的样子 —— 我据此下过一次错结论
+            //   （evidence/h48 §五 已按此更正）。链要不要跑只取决于链本身；
+            //   `afterLevel` 只决定**地形何时画**。
             if (chainActive && MrtTerrainPass.enabled() && MrtTerrainPass.afterLevel()) {
                 MrtTerrainPass.drawAfterLevel();
+            }
+            if (chainActive) {
                 if (FrameApi.isPostChainReady()) {
                     FrameApi.drawPostChain(PASS_LABEL);
                 } else if (!chainReadyWaitLogged) {

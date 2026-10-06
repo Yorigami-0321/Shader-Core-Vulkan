@@ -197,15 +197,24 @@ class PixelProbeWiringTest {
     }
 
     @Test
-    @DisplayName("🔖🔖 每个源必须一个独立缓冲（两个源回读进同一个缓冲会互相覆盖）")
+    @DisplayName("🔖🔖 每个源两个回读槽，且**在途槽绝不复用**（复用会产出整轮全 0 的假数字）")
     void oneBufferPerSource() {
         String probe = readOrSkip(PROBE);
-        assertTrue(probe.contains("BUFFERS.get(label)"),
-                "缓冲必须按源标签分别持有 —— 同一帧要回读主目标与 colortex 两个源，"
+        assertTrue(probe.contains("SLOTS.computeIfAbsent(label"),
+                "缓冲必须按源标签分别持有 —— 同一帧要回读主目标与 colortex 多个源，"
                         + "共用一个缓冲会让「两个数字」变成「同一个数字的两份解读」");
         assertTrue(probe.contains("PENDING"),
                 "必须有在途计数：回调是异步的，重建缓冲前必须确认该源没有在途请求，"
                         + "否则旧回调会去 map 已关闭的缓冲（GPU 对象生命周期 bug）");
+        // 🔴 h48 实测的第二条、也是更阴的一条：单槽 + 「在途就复用同一块缓冲」。
+        //   回读落地要等 GPU，lavapipe 上可以超过一个探针周期 ⇒ 下一轮往**同一块**缓冲再拷一次
+        //   ⇒ 读回整轮全 0，而日志里「0」与「画面真的是黑的」长得一样（R4/S1 七轮里四轮全 0）。
+        assertTrue(probe.contains("if (slot.busy)"),
+                "取槽必须先跳过在途槽 —— 复用正在被异步写入的缓冲 = 产出一轮假数字");
+        assertTrue(countCode(probe, "new Slot[]{new Slot(), new Slot()}") == 1,
+                "每源必须恰好两个槽（1 槽会复用在途缓冲，>2 只是多占显存，不增加判据）");
+        assertTrue(probe.contains("skippedSubmits++") && probe.contains("健康度"),
+                "两槽都在途时必须**跳过并自报**：宁可该源这轮没有数字，也不能有一轮假的");
     }
 
     @Test

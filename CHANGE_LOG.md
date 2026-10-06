@@ -6,6 +6,89 @@
 ---
 ---
 
+## 2026-10-06（六十九）— 🔴 黑白闪屏定位链：`frameTime` 供值 + GAP-018 双代轮转 + 帧图外重放的坑
+
+> **verdict = 闪屏有两个独立成因，都已处理；BSL 画面从「恒定白屏」变成可辨认的着色世界**
+> 证据：`evidence/h48-flicker-and-readback.md`（逐臂数字 + F2 截图判据工具）
+
+**做了什么**
+
+1. **补 `frameTime` 供值**（`OfUniformManager` 取最近一次有效帧间隔，尖峰帧沿用旧值）。
+   BSL `composite3:196` / `composite5:371,378` 用 `exp2(-frameTime × SPEED)` 当逐帧混合系数，
+   恒 0 ⇒ 混合永远返回旧值 ⇒ 时序量（自动曝光/DOF/太阳可见度）卡在附件初始 0 ⇒
+   `color /= 2×0 + 0.125` = 固定 ×8 ⇒ **此前那张「恒定白屏」的真身**。
+2. **GAP-018：colortex 每槽双代轮转**（`ColortexPool` 两代纹理 + `poolWriteView` /
+   `advanceWrittenSlots`；地形 pass 与链的每个 pass 写完翻代）。BSL 11 步里 **8 步读写集重叠**，
+   旧实现把同一张图同时当颜色附件和采样器 = Vulkan UB。修后亮帧 **199.7 → 45.3**，画面内容出来。
+3. **GAP-017 的机制数字**：新增 `mrt.pixelProbeMipLevels`（`copyTextureToBuffer` 第 5 参 =
+   mipLevel）⇒ 直接读 `colortex0@m8 = (67,53,32)` vs mip0 均值 34.5 ⇒ **金字塔顶部真的是降采样平均值**。
+4. **回读卫生**：每源两槽轮转 + 「两槽都在途 ⇒ 跳过并自报」+ 「收割延迟一个探针节拍」。
+5. **闪屏判据换通道**：`tools/vulkan-local/h48_flicker_capture.sh` 用**游戏自己的 F2 截图**
+   （+ 纯 stdlib PNG 解码算亮度）—— 不用异步回读自证回读。`x11_input.py` 加 `chat` 子命令
+   注入 `/time set 6000`、`/weather clear` 钉死观测面（用户指出夜晚会误判）。
+6. **GAP-019 逐帧自报**（`MrtTerrainPass` 每 120 帧一行：见过几个不同 draw 对象 / 捕获与重放是否 1:1）
+   ⇒ 实测 `不同 draw 对象=120 个, 代次错配=0` ⇒ 「捕获对象被回收复用」这条假设**证伪**。
+
+**为什么改**：目标要求 BSL 全部功能生效，而画面是黑白闪屏；先要能判读，再谈修。
+
+**🔴 本轮内自我更正（写在这里而不是悄悄改掉）**：`FullscreenPassHook` 的链分派带了
+`MrtTerrainPass.afterLevel()` 条件 ⇒ `terrainAfterLevel=false` 会连带把**整条链**关掉、
+退回旧三步链。因此「闪屏消失」「45 luma 稳定画面」两条判据其实测的是**旧三步链**，
+不代表链生效。已拆 gate（链是否跑只看 `chainActive`）并加 `[route]` 自报 +
+`RenderRouteWiringTest` 接线守卫；更正后的链内实测是 `colortex0 28.5 → 5.6 → 0.0`
+逐轮塌掉 ⇒  intermittency 在链内部，GAP-019 重新开放（详见 `evidence/h48-…` §五½/§五¾）。
+
+**同轮补的供值**：`gbufferPreviousModelView` / `gbufferPreviousProjection` /
+`previousCameraPosition` 从「恒 0」改为供上一帧真值（换世界时与当帧对齐），
+04-SPEC §3.2 相应行从「不填充」挪到「填充」，并有 `RenderRouteWiringTest` 钉住不许回退。
+
+**影响的文档**：`docs/13-GAP-REGISTRY.md`（GAP-017 收口数字、GAP-018 新增+部分关闭、GAP-019 新增并降级为观察项）、
+`docs/04-SPEC.md` §3.2（`frameTime` 进「非目录填充」行，含白屏机制出处）、
+`evidence/h48-flicker-and-readback.md`（新）。
+
+**踩到并写进纪律的两件事**：① 为关聊天框盲打 Escape ⇒ 打开了**暂停菜单**，
+拍出 10 张「Game Menu + 模糊世界」亮度稳定得像修好了 —— 整臂作废（自证不能污染被测量）；
+② 定长 sleep 不是「进世界」的判据 ⇒ 改为轮询日志真信号 + 空结果显式报错。
+
+**测试**：`./gradlew build` 绿（含新增 `PostChainBslTest.everyDeclaredOutputIsActuallyAssigned`
+与改写后的 `PixelProbeWiringTest.oneBufferPerSource`）。运行期判据见上面截图序列。
+
+**未做/下一步**：天空全黑（非地形 gbuffers 程序未接 = GAP-003/015 线）；`gbufferPrevious*`
+与 `shadowFade/nightVision/timeBrightness` 等仍恒 0（已在 unfilled 自报里点名）；
+提交待用户流程走到提交步（本轮按「先让 BSL 生效再测提交」执行）。
+
+### 追加（同日第二轮）：NeoForge 升版 + 黑帧责任侧钉死（GAP-020）
+
+- **版本**：`neo_version` 26.3.0.41-beta → **26.3.0.51-beta**，`net.neoforged.moddev`
+  2.0.147 → **2.0.148**（官方 maven metadata 当时 26.3 线最新）。`./gradlew build` 全绿；
+  客户端在新版上真起跑（V1/T8/Y1 三臂：`backend=Vulkan` + `[route] chain=true` +
+  `post chain executed: passes=11`），除本机固有 `flite`/`OpenAL` 缺失外无新增异常。
+  `docs/05-VERSION.md` §2 已同步。
+- **新增判据开关**：`mrt.pixelProbeAfterTerrain`（链跑之前先取一次 colortex0）、
+  `mrt.chainSamplerLod0`（链采样器钉 mip0）。
+- **责任侧钉死**：`c0@afterTerrain` 每帧 40~130 有内容，而同轮帧尾 `colortex0 = main = 0`
+  ⇒ **地形没问题，是链把内容打没了**（GAP-019 的旧表述作废并改写）。
+- **单变量判据**：钉 mip0 后 `main = 163.9 / 78.2 / 135.6 / 186.2`，**无一帧为 0**；
+  完整 mip 范围时 `main = 0 / 122.5 / 0 / 122.5 / 122.5 / 0` ⇒ 黑帧由 **mip 选择**决定，
+  登记 **GAP-020**（与 GAP-016 同族）。
+- **为什么不能就此交付**：BSL `BloomTile` 故意用「坐标 ×2^lod 借导数取级」，钉 mip0 会把它
+  一起压平（= GAP-017 K 臂的必然过曝）⇒ 产品档要么按调用点区分（未缩放坐标的 `texture2D`
+  显式改 LOD0，缩放坐标的保留导数），要么查清本后端隐式 LOD 为何落到高 mip。
+- **同轮修掉的接线缺陷**：`FullscreenPassHook` 的链分派不再带 `afterLevel()`（两个轴拆开），
+  并加 `[route]` 自报 + `RenderRouteWiringTest` 三条守卫。
+- **🟢 黑白闪屏修根（GAP-020 关闭）**：逐 pass 追踪（`mrt.postChainTrace`）把黑帧钉到
+  「链里第一个写 colortex0 的 pass」，而地形侧取点（`c0@afterTerrain`）证明地形每帧都有内容；
+  真因 = **GAP-018 双代轮转 + 惰性金字塔重建** ⇒ 读者采到的 mip1..N 与它同时读的 mip0 不同源。
+  修法：删掉 `refreshMipPyramids`/脏集，改为**每级 pass 写完立刻重建**（`regeneratePyramidsForWritten`）。
+  判据：`chainSamplerLod0` 保持默认 false 时，逐帧 190 帧里仅开局 3 帧为 0，其余 **185 帧恒 93.1338**；
+  独立通道（F2 截图，探针全关）`59.6 / 59.3 / 58.9 / 58.4 / 58.2 / 58.2 / 58.1` —— **闪屏消失**。
+- **配套修的取样判定**：`TargetReadback.beginFrame()` 在帧首决定「本帧是否取样」
+  （地形后取点与逐 pass 追踪共用同一判定），否则一条曲线里会混着不同帧的数字
+  （h48 实测：同一标签同一轮出现 186.2 与 0.0 两个读数）。
+
+---
+
+
 ## 2026-10-05（六十八）— GAP-017 修根落地：colortex 真实 mip 链（池 + 降采样金字塔）⇒ K 臂全白退场
 
 > **verdict = 白前线用「按包声明槽位、读前重建」的渲染金字塔修掉**：`ColortexPool`

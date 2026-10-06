@@ -1114,10 +1114,7 @@ public final class FrameApi {
         //   高 LOD 采样由 `ColortexPool` 的**真实 mip 链** + 每帧降采样金字塔供给
         //   （见 generateMipPyramids）。BSL 有 6 个后处理程序按 `colortexNMipmapEnabled`
         //   按级采样 —— 钳制只是把错误从「驱动未定义」换成「八 tap 全落 mip0 的必然过曝」。
-        GpuSampler sampler = RenderSystem.getDevice().createSampler(
-                com.mojang.renderpearl.api.textures.AddressMode.CLAMP_TO_EDGE,
-                com.mojang.renderpearl.api.textures.AddressMode.CLAMP_TO_EDGE,
-                FilterMode.LINEAR, FilterMode.LINEAR, 1, OptionalDouble.empty());
+        GpuSampler sampler = chainSampler();
         GpuTextureView sceneView = SceneCaptureApi.hasScene() ? SceneCaptureApi.sceneColorView() : null;
         // InSampler（OF 语义 = 场景色）：链模式采不到 colortex 时才回 scene。
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
@@ -1127,17 +1124,21 @@ public final class FrameApi {
                 ? MrtTerrainPass.poolView(0) : postScratchView(0);
         PipelineApi.PostSamplerViewResolver resolver = chainResolver(fallbackView);
 
-        // GAP-017：地形 pass 写完的 mip 声明槽先建金字塔；此后每级 pass 写完带 mip 声明的槽，
-        //   在其**被读之前**重建（脏集机制 —— 不重建就会读到上一级的陈旧/未初始化 mip）。
+        // GAP-017/020：地形写完的那一代先建一次金字塔；此后**每级写完立刻重建**
+        //   （见循环内 regenerate —— 不再是「下一个读者之前」的惰性重建）。
         java.util.Set<Integer> mipSlots = chainMipSlotsOrComplain(chain);
-        java.util.Set<Integer> mipDirty = new java.util.LinkedHashSet<>(mipSlots);
-        for (int slot = 0; slot < passes.size(); slot++) {
+        GpuSampler pyramidSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
+        if (!mipSlots.isEmpty()) {
+            generateMipPyramids(encoder, label, mipSlots, pyramidSampler);
+        }
+        for (int slot = 0; slot < chainPassLimit(passes); slot++) {
             var passPlan = passes.get(slot);
-            refreshMipPyramids(encoder, label, mipSlots, mipDirty, passPlan);
             runPostPass(encoder, label, slot, passPlan, colorView, fallbackView,
                     sceneView, sampler, resolver, builtinsValues);
+            // 🔴 GAP-020：金字塔必须与「同一个读者同时会读到的 mip0」同源 ⇒ 写完立刻重建。
+            regeneratePyramidsForWritten(encoder, label, passPlan, mipSlots, pyramidSampler);
         }
-        logChainExecutedOnce(passes, sceneView);
+        logChainExecutedOnce(passes.subList(0, chainPassLimit(passes)), sceneView);
         return new FrameSize(width, height);
     }
 
@@ -1180,6 +1181,7 @@ public final class FrameApi {
             // 写入槽 = LOAD（保留上游 pass 写进同一 colortex 的内容）；scratch = 清 0。
             descriptor.withColorAttachment(view,
                     written ? Optional.empty() : Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)));
+            // （scratch 已是 alpha=1，见上；这里注释的是「为什么必须 1」——见 ensureColortex 同源说明）
         }
         MappableRingBuffer ring = postBuiltinsRings[passSlot];
         BuiltinsBlockLayout layout = dev.vkdisp.VkDispVirtualPack.postBuiltinsLayout(passSlot);
@@ -1199,13 +1201,25 @@ public final class FrameApi {
             pass.draw(3, 1, 0, 0);
         }
         ring.rotate();
+        // 🔴 GAP-018：本 pass 写过的池槽翻代 ⇒ 下一级的采样器看见刚写的内容，
+        //   而任何时刻「被采样的那张图」都不会同时是「正在被写的那张图」。
+        //   final 步的槽 0 打的是主目标（不在池里）⇒ 不参与翻代。
+        java.util.List<Integer> wrotePoolSlots = new java.util.ArrayList<>();
+        for (int writtenSlot : passPlan.attachmentSlots()) {
+            if (!(passPlan.isFinal() && writtenSlot == 0)) {
+                wrotePoolSlots.add(writtenSlot);
+            }
+        }
+        MrtTerrainPass.advanceWrittenSlots(wrotePoolSlots);
+        // 🔬 GAP-020 判据：这一级写完之后立刻取一次 ⇒ 同一臂、同一机位拿到整条链的亮度曲线。
+        TargetReadback.probeChainPass(passSlot, passPlan.programName(), wrotePoolSlots);
     }
 
-    /** 写入槽的视图：final 步的槽 0 = 主目标（OF：final 的输出就是屏幕）；其余 = 池视图。 */
+    /** 写入槽的视图：final 步的槽 0 = 主目标（OF：final 的输出就是屏幕）；其余 = 池的**待写那一代**（GAP-018）。 */
     private static GpuTextureView writtenAttachmentView(dev.vkdisp.pack.PackPostChain.Pass passPlan,
             int colortexSlot, GpuTextureView colorView) {
         GpuTextureView view = (passPlan.isFinal() && colortexSlot == 0)
-                ? colorView : MrtTerrainPass.poolView(colortexSlot);
+                ? colorView : MrtTerrainPass.poolWriteView(colortexSlot);
         if (view == null) {
             throw new IllegalStateException(
                     "vkdisp: post pass " + passPlan.programName() + " 附件槽 " + colortexSlot
@@ -1263,18 +1277,21 @@ public final class FrameApi {
     }
 
     /** 读前重建 + 写后标脏（GAP-017 脏集机制）。 */
-    private static void refreshMipPyramids(CommandEncoder encoder, String label,
-            java.util.Set<Integer> mipSlots, java.util.Set<Integer> mipDirty,
-            dev.vkdisp.pack.PackPostChain.Pass passPlan) {
-        if (!mipDirty.isEmpty()) {
-            generateMipPyramids(encoder, label, mipDirty,
-                    RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
-            mipDirty.clear();
-        }
-        for (int written : passPlan.attachmentSlots()) {
-            if (mipSlots.contains(written)) {
-                mipDirty.add(written);
-            }
+    /**
+     * 一级 pass 写完之后的**即时**金字塔重建（GAP-020）。
+     *
+     * <p>惰性重建（「下一个读者之前才建」）在 GAP-018 的双代轮转下必然滞后一次写：
+     * 包用隐式导数取级时读到的是**上一代**的金字塔 ⇒ 与它同时读到的 mip0 不同源 ⇒
+     * 整帧算成黑（h48 Z3 臂：黑帧上 `deferred1` 的 c0=0，而同一个 pass 的 c4/c5 有内容）。
+     */
+    private static void regeneratePyramidsForWritten(CommandEncoder encoder, String label,
+            dev.vkdisp.pack.PackPostChain.Pass passPlan, java.util.Set<Integer> mipSlots,
+            GpuSampler pyramidSampler) {
+        java.util.Set<Integer> wroteMipSlots =
+                new java.util.LinkedHashSet<>(passPlan.attachmentSlots());
+        wroteMipSlots.retainAll(mipSlots);
+        if (!wroteMipSlots.isEmpty()) {
+            generateMipPyramids(encoder, label, wroteMipSlots, pyramidSampler);
         }
     }
 
@@ -1327,6 +1344,10 @@ public final class FrameApi {
         }
     }
 
+    /** 「二分上限生效」自报只打一次。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean chainCapLogged =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
     /** 「声明集为空」的告警只打一次。 */
     private static final java.util.concurrent.atomic.AtomicBoolean mipSlotsChecked =
             new java.util.concurrent.atomic.AtomicBoolean();
@@ -1335,7 +1356,35 @@ public final class FrameApi {
     private static final java.util.concurrent.atomic.AtomicBoolean mipGenLogged =
             new java.util.concurrent.atomic.AtomicBoolean();
 
-    /** 声明集提取 + 「解析断了」告警（空集对 BSL = 异常，不是不需要）。 */
+    /**
+     * 链的采样器（所有 colortex 采样名共用）。
+     *
+     * <p>🔬 {@code mrt.chainSamplerLod0} 是 **GAP-016 同族判据**：钉 mip0 ⇒ 包里的
+     *   **隐式导数** `texture2D` 不再有机会选到坏 mip（显式 `texture2DLod(…,0)` 不受影响）。
+     *   开了它黑帧消失 ⇒ 黑因 = 导数选 mip（BSL 的 `composite` 正是纯 texture2D 读 colortex0）；
+     *   代价是包**故意**的高 LOD tap（bloom / 自动曝光计量）全落到 mip0 ⇒ 判据档，不是产品档。
+     */
+    private static GpuSampler chainSampler() {
+        return RenderSystem.getDevice().createSampler(
+                com.mojang.renderpearl.api.textures.AddressMode.CLAMP_TO_EDGE,
+                com.mojang.renderpearl.api.textures.AddressMode.CLAMP_TO_EDGE,
+                FilterMode.LINEAR, FilterMode.LINEAR, 1,
+                dev.vkdisp.VkDispConfig.MRT_CHAIN_SAMPLER_LOD0.get()
+                        ? OptionalDouble.of(0.0) : OptionalDouble.empty());
+    }
+
+    /** 🔬 二分判据：只跑前 N 级（帧尾探针读「最后被跑级」的输出槽 ⇒ 谁抬亮一目了然）。 */    private static int chainPassLimit(java.util.List<dev.vkdisp.pack.PackPostChain.Pass> passes) {
+        int maxPasses = Math.min(passes.size(),
+                dev.vkdisp.VkDispConfig.MRT_POST_CHAIN_MAX_PASSES.get());
+        if (maxPasses != passes.size() && chainCapLogged.compareAndSet(false, true)) {
+            dev.vkdisp.VkDisp.LOGGER.warn("vkdisp: [chain] mrt.postChainMaxPasses 生效：只跑 {}/{} 级"
+                    + "（**main 此时不被链写** —— 判读对象是最后被跑级的输出槽，不是 main）",
+                    maxPasses, passes.size());
+        }
+        return maxPasses;
+    }
+
+    /** 声明集提取 + 「解析断了」告警（空集对 BSL = 异常，不需要）。 */
     private static java.util.Set<Integer> chainMipSlotsOrComplain(
             dev.vkdisp.pack.PackPostChain.Chain chain) {
         java.util.Set<Integer> mipSlots = chain.mipEnabledSlots();

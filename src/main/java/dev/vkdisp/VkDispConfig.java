@@ -568,13 +568,72 @@ public final class VkDispConfig {
             .define("mrt.postChain", true);
 
     /**
-     * 🔴 **GAP-016 止血开关**（默认开）：包地形链的方块图集采样器钉 `maxLod = 0`。
-     *
-     * <p>依据（h45/h46 三臂交叉）：{@code texture()} 的隐式导数 LOD 对本链选了坏 mip ⇒
-     * albedo ≡ 0；{@code textureLod(…,0.0)} / {@code textureGrad} 均非零；
-     * {@code texCoord} 数值本身正常（F3 臂）。钉 mip0 = 止血，**不是修根**，
-     * 代价与回退条件见 {@code 13-GAP-REGISTRY.md} GAP-016。
+     * 🔬 **链级二分判据**（h47 N 臂后续）：只执行链的前 N 步（0 = 不跑链）。
+     * 用途：bloom 级（BSL 第 5 步）之前的 deferred/composite1..3 谁把画面抬亮，
+     * 一臂一个 N、帧尾探针给数 —— 与 h45 单变量 A/B 同一族手段，为 GAP-017 收口服务。
+     * ⚠️ N < 全链时 final 不跑 ⇒ main 不被链写，判读对象是**被允许跑的最后一级的输出槽**。
      */
+    public static final ModConfigSpec.IntValue MRT_POST_CHAIN_MAX_PASSES = BUILDER
+            .comment("取证二分：只跑链的前 N 步（默认 64 = 全链；0=不跑）。判读看最后被跑级的输出槽探针。")
+            .defineInRange("mrt.postChainMaxPasses", 64, 0, 64);
+
+    /** 探针在链模式下额外测哪些槽（逗号分隔；默认 0,1,2 —— bloom 前线三判点）。 */    public static final ModConfigSpec.ConfigValue<String> MRT_PIXEL_PROBE_CHAIN_SLOTS = BUILDER
+            .comment("链模式探针槽位（逗号分隔，默认 \"0,1,2\"；scratch 槽永远是 0 不占预算）。")
+            .define("mrt.pixelProbeChainSlots", "0,1,2");
+
+    /**
+     * 🔬 GAP-017 的**机制**判据：把 colortex 的指定 mip 级也各测一次（逗号分隔；空 = 不测）。
+     *
+     * <p>为什么需要它：金字塔生成自报只证明「在生成」，证明不了「高 LOD 里真的是降采样平均值」。
+     * BSL 的 bloom / 自动曝光按 {@code colortexNMipmapEnabled} 采 LOD 8~9，那一级若是黑或
+     * 等于 mip0 ⇒ 必然过曝，而 mip0 的数字完全看不出来（h48）。
+     */
+    public static final ModConfigSpec.ConfigValue<String> MRT_PIXEL_PROBE_MIP_LEVELS = BUILDER
+            .comment("把 colortex 的指定 mip 级也各测一次（逗号分隔，默认 \"\"=不测；"
+                    + "例 \"8,9\" 读金字塔顶部）。")
+            .define("mrt.pixelProbeMipLevels", "");
+
+    /**
+     * 🔬 GAP-019 判据：在**地形 MRT pass 刚画完**时额外打一次 colortex0。
+     *
+     * <p>帧尾那一槽早被链覆写 ⇒ 「帧尾为 0」分不清是「地形没画进池」还是「链把它打没了」，
+     * 而这两个要修的不是同一个东西。默认关（每帧多一次全屏回读），只在定位时开。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_PIXEL_PROBE_AFTER_TERRAIN = BUILDER
+            .comment("定位用：地形 MRT pass 刚画完时额外测一次 colortex0（标签 c0@afterTerrain，默认关）。")
+            .define("mrt.pixelProbeAfterTerrain", false);
+
+    /**
+     * 🔬 **GAP-016 同族判据**（默认关）：把后处理链的采样器钉 `maxLod = 0`。
+     *
+     * <p>用途：链里 `composite` 这类**纯 `texture2D`（隐式导数）**读 colortex 的步骤，
+     * 与地形图集当年「导数选坏 mip ⇒ albedo ≡ 0」是同一族风险（GAP-016）。
+     * 开了它黑帧消失 ⇒ 黑因就是导数选 mip；代价是包**故意**的高 LOD tap（bloom/曝光计量）
+     * 全部落到 mip0（已知会过曝，见 GAP-017 K 臂）⇒ 这是判据档，不是产品档。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_CHAIN_SAMPLER_LOD0 = BUILDER
+            .comment("取证判据：后处理链采样器钉 maxLod=0（默认关 = 完整 mip 范围）。"
+                    + "开 = 检验「隐式导数选坏 mip」这一族是否就是黑帧成因。")
+            .define("mrt.chainSamplerLod0", false);
+
+    /**
+     * 🔬 **链级逐 pass 追踪**（默认关）：每跑完一级就把「这一级写过的槽」回读一次。
+     *
+     * <p>为什么需要它：帧尾只有最终态，「哪一级把内容打没」只能靠二分（一臂一个 N）反复重启，
+     *   而重启之间相机/时刻还会漂。逐 pass 追踪把整条曲线放进**同一臂、同一机位**里，
+     *   黑在哪一级一目了然。标签形如 {@code trace2composite:c0}。
+     * <p>代价（明写）：每个被追踪的槽每帧一次全屏回读 ⇒ 只在定位时开；
+     *   槽集由 {@code mrt.postChainTraceSlots} 限定（默认 0,1,2）。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_POST_CHAIN_TRACE = BUILDER
+            .comment("取证：每级后处理 pass 跑完就回读它写过的槽（标签 traceK<name>:cN，默认关）。")
+            .define("mrt.postChainTrace", false);
+
+    /** 逐 pass 追踪要盯哪些槽（逗号分隔）。 */
+    public static final ModConfigSpec.ConfigValue<String> MRT_POST_CHAIN_TRACE_SLOTS = BUILDER
+            .comment("逐 pass 追踪的槽位（逗号分隔，默认 \"0,1,2\"；只在 mrt.postChainTrace 开时生效）。")
+            .define("mrt.postChainTraceSlots", "0,1,2");
+
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_ATLAS_LOD0 = BUILDER
             .comment("GAP-016 止血：包地形图集采样器 maxLod=0（默认开；关闭即回到实测恒 0 的"
                     + "隐式导数 LOD 路径，仅用于复现/修根对照）。")

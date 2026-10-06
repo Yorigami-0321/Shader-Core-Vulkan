@@ -325,7 +325,50 @@ BSL 的 blue-noise 抖动/胶片颗粒自此有真值）；**三段键**（`text
 | **止血尝试（h46 K 臂，已证伪）** | 链侧采样统一 `maxLod=0`（钳到高 LOD ⇒ mip0）。K 臂实测 **无效**：`colortex1` 仍 `(251.96, 251.07, 249.0)` —— 白不是驱动未定义行为，而是 **BloomTile 的 8 个 mip taps 全部落到同一张全分辨率图** ⇒ `Σ≈8×avg`，`pow(Σ/32, 0.25)` 把暗源必然抬到 ~110/255，再被 composite5/6/7 叠加 ⇒ 饱和。钳制保留（有界性优于未定义），但**白症状归 GAP-017 本体** |
 | **⚠️ `h46` M 臂更正（L 臂判读已撤回）** | `ColortexPool`（每槽多级纹理 + 每级视图；原版 `RenderTarget` 逐类核实只有 mipLevels=1）+ `FrameApi` 降采样金字塔（复用 blit 管线逐级采上一级；脏集机制：写后标脏、读前重建，只按包声明的槽）。L 臂的「白退场」被 M 臂证伪（当时金字塔根本没跑：`levelCount` 差一 ⇒ createTexture 每帧抛、链停摆，数字来自陈旧画面）。修差一后 M3 臂：金字塔真跑（`mip pyramid generating: slot=0 levels=10`）而 **bloom 仍全白** ⇒ 白因收窄到 `BloomTile` 采样/表达式侧（texture2DLod 转译的 lod 处理是头号候选），不再是缺 mip 数据。本条保持开放；元纪律：**症状消失必须与机制自报互相印证** |
 | **修根条件（回退判据）** | 实现显式 mip 生成（降采样 blit 链或 compute），且能按 `colortexNMipmapEnabled` 精确只对声明的槽生成 ⇒ 撤 maxLod=0 钳制。在此之前不许说「bloom 生效」 |
-| **证据** | `evidence/h46-post-chain-integration.md` §I/§J |
+| **h48 机制数字（金字塔内容已被直接量到）** | 新增 `mrt.pixelProbeMipLevels`（`copyTextureToBuffer` 的第 5 参就是 mipLevel，源码核实）⇒ 直接读 `colortex0@m8`：实测 `(33,25,13)/255`，而同帧 mip0 全屏均值 `mean_luma=34.5` ⇒ **顶部确实是降采样平均值**（不是黑、也不等于 mip0）。GAP-017 的「修根」这一半成立；剩下的白/黑归 GAP-018 |
+| **证据** | `evidence/h46-post-chain-integration.md` §I/§J；`evidence/h48-flicker-and-readback.md` |
+
+### GAP-018 · 🔴 后处理链里同一 colortex 槽**同时是采样器和颜色附件** = Vulkan 未定义行为（h48 定位；2026-10-06 登记）
+
+| 字段 | 内容 |
+|---|---|
+| **需求来源** | OF/Iris 语义允许一个程序「读自己上一步写进同一张图的内容」（BSL 的 bloom 反馈、TAA/曝光的时序缓冲都靠它）。GL 侧的实际行为 = 读到**本次 draw 之前**的内容 |
+| **代码级事实（不是猜）** | `FrameApi#runPostPass` 的写槽视图与 `chainResolver` 的采样视图**同为** `MrtTerrainPass.poolView(slot)`。BSL 实测重叠：`composite`（读 c0 写 c0）、`composite1/2/3`（读 c0 写 c0）、`composite5/7`（读 c2 写 c2）、`composite6`（读 c1 写 c1）⇒ **11 步里 8 步在自己的读写集里重叠** |
+| **症状（h48 逐字）** | 画面按帧**黑白交替**并逐步收敛全黑。判据用**游戏自己的 F2 截图**（`Util`→`Window` 帧缓冲截图，绕开我方回读）：探针全关时仍 `200.0 / 6.2 / 199.3 / 6.2 / 199.7 …`，周期 3 帧；`AUTO_EXPOSURE=false` 时仍 `199.5×3 / 6.2 / 199.6 / 6.2 / 199.9×3` ⇒ **不是时序选项、不是自动曝光除数**，是结构性的每帧状态翻转 |
+| **为什么不能继续用现状** | 无 validation layer（X35）⇒ 不报错、不崩，只产出「看起来偶尔对」的画面；这正是本项目反复踩过的「静默错画」形状（h26/h33 同族） |
+| **修法（本轮实现）** | **每槽双代轮转**：`ColortexPool` 每槽两张纹理（各带完整 mip 链），采样器绑「当前代」，写附件绑「另一代」，pass 结束后翻代 ⇒ 读到的就是本次 draw 之前的内容（与 GL 实际语义一致），且**结构上不可能**同子通道读写同图 |
+| **代价（明写）** | colortex 池显存 ×2（854×480 RGBA8×10 级×6 槽×2 ≈ 9.5 MB，可忽略）；金字塔要按「被读的那一代」重建（脏集机制已支持） |
+| **回退/收口条件** | 双代轮转后重跑 `h48_flicker_capture.sh`：截图亮度序列不再出现 6.2 级黑帧 ⇒ 本条关闭；若仍交替 ⇒ 本条证伪，回到「链输入太亮/缺 gbuffer 程序」那条线（GAP-015 + 非地形 gbuffers） |
+| **h48 实测（部分成立）** | 修完（每槽双代 + `poolWriteView`/`advanceWrittenSlots`）后亮帧 **199.7 → 45.3**，且画面内容可辨认（雪面/树/阴影/手）⇒ 别名确实在破坏链，修根有效。但黑帧仍在（10 张里 2 张 ≈9.2）⇒ **本条不是闪屏的全部原因**，剩下的归 GAP-019 |
+| **证据** | `evidence/h48-flicker-and-readback.md` §四 |
+
+### GAP-019 · 🔴 帧尾 colortex 为 0 的**责任侧**：地形输出每帧都在，是链把它打没的（h48 定位；2026-10-06 登记）
+
+| 字段 | 内容 |
+|---|---|
+| **症状（逐帧数字，非画面推断）** | 探针 every=1（T4 臂）：黑帧上 `colortex0` 自身 `mean_luma=0 / allZero=true`、`colortex0@m8=0`，亮帧 `colortex0 mean_luma=34.5`、`@m8=(67,53,32)` ⇒ **黑起源于链的输入**，不是链的着色 |
+| **已排除** | ① 回读缓冲在途复用（T2 双槽 + T3 延迟一个节拍收割 ⇒ 交替比例不变，那些 0 是真黑帧）；② 自动曝光/TAA 等时序选项（`AUTO_EXPOSURE=false`、`AUTO_EXPOSURE_RADIUS=0.002` 两臂仍交替）；③ GAP-018 别名（修完仍剩 2/10 黑帧） |
+| **第一个已确认的独立变量** | `mrt.terrainAfterLevel=true`（**帧图外重放**）时黑帧占 2/3；改 `false` 后 `colortex0 mean_luma=91.7 nonBlack=99.99%` 每帧都有 ⇒ 捕获得到的 `ChunkSectionsToRender` 是帧图**瞬态资源**，隔在帧图外重放会拿到被回收/清空的内容。取证车道长期开着这一档，是此前所有「输入时有时无」结论的来源 |
+| **仍未解** | 即使 `terrainAfterLevel=false`，仍有约 1/5 帧地形内容为空。缺的是**逐帧自报**：本帧地形 pass 实际重放了几个 section / 有没有产生片元。不测这一条就只能继续在「顺序 vs 生命周期」之间猜 |
+| **h48 收口尝试 → 🔴 撤回（判据臂其实没在测链）** | 上面那条「不同 draw 对象=120 个, 代次错配=0」仍然成立：**「捕获对象被回收复用」这条假设证伪**。但同臂另两条结论**作废**：`FullscreenPassHook` 的链 gate 里带了 `MrtTerrainPass.afterLevel()` ⇒ `mrt.terrainAfterLevel=false` 会**连带把整条链关掉**、退回旧三步链。于是「45 luma 稳定画面」「闪屏消失」两张判据都来自**旧三步链**，不是链。gate 已拆开（链是否跑只取决于链；afterLevel 只决定地形何时画），并加 `[route]` 自报把每帧走哪条路打在日志里。 |
+| **h48 更正后的链内实测（route 自报 = chain=true afterLevel=false）** | 帧尾 `colortex0`（链里最后写它的是 composite3）逐轮：`28.53 → 5.64 → 0.00`，`colortex1`（链输出）`110.45 → 45.96 → 0.00`，`main` 跟着走 ⇒ ** intermittency 在链内部**，不是地形没画（此前我把「帧尾 colortex0=0」读成「地形没进池」也是错的：帧尾那一槽早被链覆写了，地形内容要看链**开跑前**的槽）。⇒ 本条重新开放，判据换成「链级二分」（`mrt.postChainMaxPasses` + `mrt.pixelProbeChainSlots`） |
+| **修根条件（回退判据）** | 用链级二分定位到「从哪一级开始把内容打没」，修到：连续 6 个探针轮 `colortex1` 与 `main` 都稳定非零且亮度不塌。判据必须带 `[route] chain=true` 自报行，否则该臂无效 |
+| **剩余未收口的画面问题（另案）** | 天空仍是黑的 = 非地形 gbuffers 程序（skybasic/skytextured/water/entities/clouds）未接 ⇒ 归 GAP-003/GAP-015 那条线，与闪屏不是同一件事 |
+| **证据** | `evidence/h48-flicker-and-readback.md` §二/§五/§六/§七 |
+
+### GAP-020 · 🔴 链内隐式导数选到坏 mip ⇒ **整帧黑**（与 GAP-016 同族；h48 Y1 臂定位；2026-10-06 登记）
+
+| 字段 | 内容 |
+|---|---|
+| **症状** | 视野里世界**整帧变黑**再变正常（用户 2026-10-06 描述：「黑一下正常一下，但物品栏和手一直正常」——手/HUD 由原版在链之后画，所以不受链影响，这条描述本身就是判据） |
+| **两个观测点钉住责任侧** | 新增 `mrt.pixelProbeAfterTerrain`（标签 `c0@afterTerrain`，链跑之前就取）：T8 臂 `40.8 / 95.5 / 113.2` **每帧都有内容**，而同轮帧尾 `colortex0 = 0.0000`、`main = 0.0000` ⇒ **地形没问题，是链把内容打没了**（此前 GAP-019 的「地形没进池」表述作废） |
+| **单变量判据（Y1 臂）** | `mrt.chainSamplerLod0=true`（链采样器钉 `maxLod=0`）⇒ `main = 163.9 / 78.2 / 135.6 / 186.2`，**没有一帧是 0**；对照 T8/X1（完整 mip 范围）`main = 0 / 122.5 / 0 / 122.5 / 122.5 / 0` ⇒ 黑帧由**mip 选择**决定 |
+| **为什么不能拿「钉 mip0」当修根** | BSL 的 `BloomTile` 是**故意**用导数取级的：`coord = (coord - offset) * exp2(lod)` ⇒ 坐标梯度 ×2^lod ⇒ 隐式 LOD 自动变成 `lod`。把链采样器钉死 mip0 会连带把这套 tap 全压到 0 级 ⇒ 就是 GAP-017 K 臂量到的「八 tap 同图 ⇒ 必然过曝」。所以钉 mip0 只是**判据档**，产品档必须让导数本身正确 |
+| **待查的两条候选机制** | ① 我方池纹理的**高 LOD 未初始化**（blit 金字塔只在被声明的槽上跑；未跑的那些级在 Vulkan 里是未定义内容，采到就是黑）；② 全屏三角形的 `texCoord` 梯度在本后端被放大（导数 × 视口比例算错 ⇒ LOD 落到 8~9）。二者在画面上的形状相同，需要「链级 + 槽级」双探针才能分开 |
+| **回退/修根条件** | 关掉 `mrt.chainSamplerLod0` 仍**连续 6 轮**无 0 值帧，且 bloom 的高 LOD tap 仍按级采样（`colortex0@m8` 与 mip0 均值不同）⇒ 本条关闭 |
+| **🟢 h48 收口（Z6 臂 = 修根，判据达成）** | 真因不是「导数选错级」本身，而是**金字塔与 mip0 不同源**：GAP-018 的双代轮转下，惰性重建（「下一个读者之前才建」）永远滞后一次写 ⇒ 读者采到**上一代**的金字塔。修法 = `FrameApi` 改成**每级 pass 写完立刻重建**（`regeneratePyramidsForWritten`），并删掉 `refreshMipPyramids`/脏集。判据实测（`chainSamplerLod0` 保持默认 **false** = 完整 mip 范围）：逐帧探针 190 帧里只有开局 3 帧（未进世界）为 0，其余 **185 帧恒 93.1338**；`[route] chain=true afterLevel=false` 自证在场。独立通道（游戏 F2 截图，探针全关）10 张 = `59.6 / 59.3 / 58.9 / 58.4 / 58.2 / 58.2 / 58.1`（另有 3 张 23~27 是注入按键误开**成就界面**，不是渲染态）⇒ **黑白闪屏消失**。 |
+| **元纪律（本轮新增）** | 亮度表单独看会把「GUI 打开」读成「画面变暗」——判据必须**看图**，不能只看数字（本项目第 N 次踩「判读对象没自报自己是什么」）。 |
+| **证据** | `evidence/h48-flicker-and-readback.md` §十～§十二 |
 
 ---
 

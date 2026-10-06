@@ -342,6 +342,9 @@ public final class MrtTerrainPass {
 
     /** pass 体：真正画地形（跑在帧图**执行期**，即 M-05 捕获之后 ⇒ 拿到的是本帧数据）。 */
     private static void drawTerrain() {
+        // 🔖 帧图内模式下本方法**早于** AfterLevel 钩子 ⇒ 取样判定要在这里也走一次
+        //   （beginFrame 内部按捕获计数去重，一帧只决定一次）。
+        TargetReadback.beginFrame();
         Object captured = TerrainDrawCapture.current();
         if (captured == null) {
             // M-05 未开启或尚未捕获 ⇒ 无从画地形。**这不是错误**（是「未启用」），
@@ -355,6 +358,7 @@ public final class MrtTerrainPass {
             return;
         }
         RenderSystem.assertOnRenderThread();
+        gap019NoteReplay(captured);
         RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         ensureTargets(main);
         // 🔖 逐槽清屏色的决策（诊断 vs 生产）在建 pass 前定一次（纯逻辑、可单测）。
@@ -395,8 +399,15 @@ public final class MrtTerrainPass {
             //      而 MrtPlan 给槽 0 的指纹恰好是 0.0=黑，去掉它就丢了这项区分能力）；
             //   非调试视图一律零值清屏 ⇒ 天空那片是**黑**而不是绿。
             //   🔶 零值同样不含假信息：真正的天空要由包的 gbuffer 程序画，那属于 M-04（未做）。
+            float[] clearComponents = clearDecision.rgba(slot);
+            // 🔴 h47c：alpha 通道清到 **1.0**，不许 alpha=0。
+            //   机制证据（h47 M3→N 臂对照）：BloomTile 的 6×6 高斯在 alpha=0 的零区上
+            //   权重和塌缩（WG=1.0-wg… 之类补项）⇒ Σ=1 ⇒ 全白；alpha 归一后同臂 bloom
+            //   直接落到内容均值量级。**GL 的 (0,0,0,0) 清屏在这条链上不是「黑」是「premultiplied 黑」**。
+            float[] clearArray = new float[]{
+                    clearComponents[0], clearComponents[1], clearComponents[2], 1.0F};
             descriptor.withColorAttachment(views.get(slot),
-                    Optional.of(new Vector4f(clearDecision.rgba(slot))));
+                    Optional.of(new org.joml.Vector4f(clearArray)));
         }
         // 🔖🔖 深度必须清到 **0.0**，不是惯例上的 1.0 —— 本引擎是**反向 Z**：
         //   原版的 clear pass 就是 `clearColorAndDepthTextures(..., 0.0)`（LevelRenderer:255），
@@ -444,7 +455,7 @@ public final class MrtTerrainPass {
             //   **必须在 renderGroup 之前**：STRICT_VALIDATION 下 validateDraw 按布局逐条校验，
             //   少一条即抛 Missing uniform 名（响亮失败，不是静默）。
             TerrainPipelineApi.bindPackTerrainUniforms(renderPass, atlasSampler, atlas,
-                    colortexDepth.getDepthTextureView(), view(0));
+                    colortexDepth.getDepthTextureView(), slotView(0));
             if (fullscreenProbe()) {
                 drawFullscreenProbe(renderPass);
             }
@@ -454,6 +465,19 @@ public final class MrtTerrainPass {
             // 🔖 必须在 finally 清：漏清会让后续**原版** pass 也拿到多附件管线 ⇒ 立刻 validation error。
             inMrtPass = false;
         }
+
+        // 🔴 GAP-018：本 pass 写过的池槽**翻代** ⇒ 之后第一个读者（链的第一步）看到的就是刚写的内容。
+        //   toMain 档的槽 0 打的是主目标（不是池）⇒ 不参与翻代。
+        java.util.List<Integer> terrainWritten = new ArrayList<>();
+        for (int slot = 0; slot < actualSlots; slot++) {
+            if (!(toMain() && slot == 0)) {
+                terrainWritten.add(slot);
+            }
+        }
+        POOL.advanceWritten(terrainWritten);
+        // 🔬 GAP-019 定位档：链跑之前就取一次 ⇒ 与帧尾的 `colortex0` 对比即可分辨
+        //   「地形没画进池」与「链把内容打没了」（开关默认关，见 mrt.pixelProbeAfterTerrain）。
+        TargetReadback.probeAfterTerrain();
 
         framesDrawn++;
         if (!orderMarkerLogged) {
@@ -558,6 +582,17 @@ public final class MrtTerrainPass {
     @Nullable
     public static GpuTextureView poolView(int slot) {
         return POOL.view(slot);
+    }
+
+    /** GAP-018：某槽的**待写那一代**视图（颜色附件用；与 {@link #poolView(int)} 不同图）。 */
+    @Nullable
+    public static GpuTextureView poolWriteView(int slot) {
+        return POOL.writeView(slot);
+    }
+
+    /** GAP-018：一个 pass 写完这些槽之后翻代。 */
+    public static void advanceWrittenSlots(java.util.Collection<Integer> written) {
+        POOL.advanceWritten(written);
     }
 
     /** gbuffer 深度视图（后处理 depthtex0/1/2 的真值来源）；未建返回 {@code null}。 */
@@ -708,6 +743,46 @@ public final class MrtTerrainPass {
     private static final java.util.concurrent.atomic.AtomicBoolean CLEAR_OVERRIDE_LOGGED =
             new java.util.concurrent.atomic.AtomicBoolean();
 
+    /** 🔴 GAP-019 自报窗口（帧）：每这么多帧打一行「本窗口见过几个不同的 draw 对象」。 */
+    private static final int GAP019_WINDOW = 120;
+    private static final java.util.Set<Integer> GAP019_IDENTITIES = new java.util.HashSet<>();
+    private static int gap019Seen;
+    private static int gap019Stale;
+    private static long gap019LastCapture;
+
+    /**
+     * 记录「本帧我方重放用的是哪一个 draw 对象」，每 {@link #GAP019_WINDOW} 帧聚合成一行。
+     *
+     * <p>🔖 为什么需要它：黑帧已经量到「{@code colortex0} 整帧为 0」（evidence/h48 §二 T4 臂），
+     *   但「捕获到的 {@code ChunkSectionsToRender} 是帧图瞬态资源、被回收后重放出空」与
+     *   「我方 pass 排在数据就绪之前」这两种原因在画面上长得一模一样。
+     *   区分它们的判据 = **一个窗口里见过几个不同对象**：
+     *   {@code identities≈window} ⇒ 原版每帧新对象（那黑帧就不是「引用过期」，指向顺序问题）；
+     *   {@code identities≪window} ⇒ 对象在轮转复用（引用生命周期就是嫌疑）。
+     *   另外记「本帧的 capture# 与我方 framesDrawn 是否同代」：不同代 = 我方 pass 每帧被走多次。
+     */
+    private static void gap019NoteReplay(Object captured) {
+        GAP019_IDENTITIES.add(System.identityHashCode(captured));
+        gap019Seen++;
+        // 🔖 比**增量**不比绝对值：两者起点不同（捕获在加载期就可能先跑），绝对差是常数、
+        //   没有信息量；「本帧我方跑了一次，但捕获没前进（或前进了多次）」才是代次错配。
+        long captureNow = TerrainDrawCapture.captureCount();
+        long delta = captureNow - gap019LastCapture;
+        gap019LastCapture = captureNow;
+        if (delta != 1L) {
+            gap019Stale++;
+        }
+        if (gap019Seen < GAP019_WINDOW) {
+            return;
+        }
+        VkDisp.LOGGER.info("vkdisp: [GAP-019] 地形重放自报: 窗口={} 帧, 不同 draw 对象={} 个,"
+                        + " capture#={} framesDrawn={} 代次错配的帧={}（0=每帧恰好推进一次捕获）",
+                gap019Seen, GAP019_IDENTITIES.size(), captureNow, framesDrawn, gap019Stale);
+        GAP019_IDENTITIES.clear();
+        gap019Seen = 0;
+        gap019Stale = 0;
+    }
+
     /** 我方 colortex 某一槽的视图（供调试回读）；未建 / 越界返回 {@code null}。 */
     @Nullable
     public static GpuTextureView slotView(int slot) {
@@ -715,7 +790,8 @@ public final class MrtTerrainPass {
     }
 
     private static GpuTextureView view(int slot) {
-        GpuTextureView view = POOL.view(slot);
+        // 🔴 GAP-018：附件必须打**待写那一代**（采样器打被读那一代）⇒ 同图读写别名结构上不可能。
+        GpuTextureView view = POOL.writeView(slot);
         if (view == null) {
             throw new IllegalStateException("vkdisp: gbuffer colortex" + slot + " view is null");
         }
