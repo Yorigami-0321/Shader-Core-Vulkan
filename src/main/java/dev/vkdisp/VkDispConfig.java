@@ -634,6 +634,18 @@ public final class VkDispConfig {
             .comment("逐 pass 追踪的槽位（逗号分隔，默认 \"0,1,2\"；只在 mrt.postChainTrace 开时生效）。")
             .define("mrt.postChainTraceSlots", "0,1,2");
 
+    /**
+     * GAP-003 非地形 gbuffer 线 · 第一步：把**天空**重放进 colortex0（默认关）。
+     *
+     * <p>机制：原版 {@code SkyRenderer} 自建 pass 且颜色附件是 LOAD 语义 ⇒ 给它一个指向
+     * 我方 colortex0 的 {@code RenderTarget} 薄壳即可，零 mixin、不需要 M-04。
+     * 判据（未测的三点写在 GAP-003 登记行）：天空进画面、且地形深度不被抹掉
+     * （若深度被清 ⇒ 链会把全屏当天空，画面会整体变成一种颜色）。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_SKY_PASS = BUILDER
+            .comment("GAP-003：把原版天空重放进 colortex0（链之前，默认关 = 不介入）。")
+            .define("mrt.skyPass", false);
+
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_ATLAS_LOD0 = BUILDER
             .comment("GAP-016 止血：包地形图集采样器 maxLod=0（默认开；关闭即回到实测恒 0 的"
                     + "隐式导数 LOD 路径，仅用于复现/修根对照）。")

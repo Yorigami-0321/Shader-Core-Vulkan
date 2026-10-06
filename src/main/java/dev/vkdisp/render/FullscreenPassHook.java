@@ -216,6 +216,11 @@ public final class FullscreenPassHook {
             if (chainActive && MrtTerrainPass.enabled() && MrtTerrainPass.afterLevel()) {
                 MrtTerrainPass.drawAfterLevel();
             }
+            // GAP-003 非地形 gbuffer 线：天空必须在**链之前**进 colortex0（链里没人画天空，
+            //   BSL 的 composite1 只是把 colortex0 透传 ⇒ 天空不先进 gbuffer 就永远是黑的）。
+            if (chainActive) {
+                dev.vkdisp.bridge.SkyIntoGbuffer.render();
+            }
             if (chainActive) {
                 if (FrameApi.isPostChainReady()) {
                     FrameApi.drawPostChain(PASS_LABEL);

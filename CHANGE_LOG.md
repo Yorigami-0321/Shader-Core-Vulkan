@@ -59,6 +59,21 @@
 
 ### 追加（同日第二轮）：NeoForge 升版 + 黑帧责任侧钉死（GAP-020）
 
+### 追加（同日第三轮）：黑天空的入口打通（`mrt.skyPass`，默认仍关）
+
+- **新增**（零 mixin、不需要 M-04）：`GbufferTarget`（`RenderTarget` 公开构造器不建纹理 + protected
+  视图字段 ⇒ 薄壳指向我方 colortex0/深度）+ `SkyIntoGbuffer`（公开 `SkyRenderer` 自建 pass、
+  颜色 LOAD 语义 ⇒ 天空落在 gbuffer 里，正是 OF `gbuffers_skybasic` 的落点）。
+- **踩到并修**：首臂 `SkyRenderer.renderSkyDisc:165` NPE（`"v" is null`）——原因是借用了原版
+  **共享**的 `skyRenderState`（我们在 AfterLevel 才跑，那份没被填）。改为自己持 state 并调公开的
+  `extractRenderState(level, partialTicks, camera, state)`。
+- **机制判据达成**：同帧两个取点 `c0@afterTerrain = 71.0910` → `c0@afterSky = 64.1701`
+  ⇒ 天空 pass 真的写进了 colortex0。
+- **但黑帧回来了**（S2 臂 round #12 全 0，#10/#11 正常）⇒ 「天空 pass 的深度附件语义」这条未知
+  从待测升为**已确认有害**：它覆盖我方 gbuffer 深度后，链按 `depthtex0` 把内容判成天空。
+  下一步 = 给它只读深度或另建一张深度。**因此 `mrt.skyPass` 保持默认关**（不产出回归）。
+- 配套取点：`c0@afterSky`（与 `c0@afterTerrain` 同一开关门控）。
+
 - **版本**：`neo_version` 26.3.0.41-beta → **26.3.0.51-beta**，`net.neoforged.moddev`
   2.0.147 → **2.0.148**（官方 maven metadata 当时 26.3 线最新）。`./gradlew build` 全绿；
   客户端在新版上真起跑（V1/T8/Y1 三臂：`backend=Vulkan` + `[route] chain=true` +

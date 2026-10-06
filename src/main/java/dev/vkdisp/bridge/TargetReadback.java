@@ -216,6 +216,13 @@ private static final long WARMUP_FRAMES = 600L;
         }
     }
 
+    /** 天空重放之后、链之前再取一次（GAP-003/sky 判据：地形内容有没有被天空 pass 抹掉）。 */
+    public static void probeAfterSky() {
+        if (samplingFrame && VkDispConfig.MRT_PIXEL_PROBE_AFTER_TERRAIN.get()) {
+            submit("c0@afterSky", MrtTerrainPass.slotTexture(0));
+        }
+    }
+
     /**
      * 每帧开头调用一次：决定**本帧是否取样**，并收割上一轮已落地的回读。
      *
