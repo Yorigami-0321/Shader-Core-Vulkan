@@ -57,6 +57,8 @@ public final class SkyIntoGbuffer {
     private static @Nullable SkyRenderer renderer;
     private static int targetWidth;
     private static int targetHeight;
+    /** 真正跑过多少次天空重放（观测面自报的节流基准）。 */
+    private static long renders;
     private static boolean readyLogged;
     private static java.util.Set<String> skipLogged = new java.util.HashSet<>();
 
@@ -121,7 +123,33 @@ public final class SkyIntoGbuffer {
         renderer.extractRenderState(mc.level, levelState.worldPartialTicks,
                 mc.gameRenderer.mainCamera(), skyState);
         renderer.render(fog, skyState);
+        reportObservationFace(mc, levelState.worldPartialTicks);
         TargetReadback.probeAfterSky();
+    }
+
+    /**
+     * 观测面自报（每 300 帧一行）。
+     *
+     * <p>🔖 为什么必须有：h48k 量到 {@code c0@afterSky = 0.53~0.91}（近黑），而「夜空本来就黑」
+     * 与「天空没画进这一代」这两种原因在**同一个数字**上长得一样 —— 那轮的 F2 又没落地，
+     * 画面侧也没判据。判读对象必须自己声明此刻的世界时刻与它要写进 colortex 的颜色，
+     * 否则下一轮还是只能猜（07-CONSTRAINTS X9 / 08-TESTING 的观测面纪律）。
+     */
+    private static void reportObservationFace(Minecraft mc, float partialTicks) {
+        renders++;
+        if (renders % 300L != 0L) {
+            return;
+        }
+        long clock = mc.level.getDefaultClockTime();
+        var color = skyState.skyColor;
+        VkDisp.LOGGER.info("vkdisp: [GAP-003/sky] 观测面自报: clockTime={}（当地时 {}）,"
+                        + " skyColor=({}, {}, {}) 这是天空片元要写进 colortex0 的值,"
+                        + " rain={} render#={}",
+                clock, Math.floorMod(clock, 24000L),
+                color == null ? "null" : String.format("%.3f", color.x()),
+                color == null ? "null" : String.format("%.3f", color.y()),
+                color == null ? "null" : String.format("%.3f", color.z()),
+                String.format("%.3f", mc.level.getRainLevel(partialTicks)), renders);
     }
 
     /**
