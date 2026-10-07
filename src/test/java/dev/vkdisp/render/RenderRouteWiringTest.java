@@ -29,6 +29,7 @@ import org.junit.jupiter.api.Test;
 class RenderRouteWiringTest {
 
     private static final Path HOOK = Path.of("src/main/java/dev/vkdisp/render/FullscreenPassHook.java");
+    private static final Path MRT = Path.of("src/main/java/dev/vkdisp/bridge/MrtTerrainPass.java");
     private static final Path UNIFORMS = Path.of("src/main/java/dev/vkdisp/render/OfUniformManager.java");
 
     private static String readOrSkip(Path path) {
@@ -51,8 +52,46 @@ class RenderRouteWiringTest {
         int call = hook.indexOf("FrameApi.drawPostChain(", gate);
         assertTrue(call > gate, "chainActive 分支里必须真的调用 drawPostChain");
         assertFalse(hook.substring(gate, call).contains("afterLevel"),
-                "从 `if (chainActive)` 到 drawPostChain 之间不得再出现 afterLevel —— "
-                        + "地形何时画是另一个轴（它只决定 MrtTerrainPass 的挂点）");
+                "从 `if (chainActive)` 到 drawPostChain 之间不得再出现 afterLevel —— 地形何时画是"
+                        + "另一个轴（它只决定挂点，而挂点已抽成 paintGbufferAndTerrain()，"
+                        + "结构上就与链的条件分开了）");
+        assertTrue(hook.contains("private static void paintGbufferAndTerrain()"),
+                "gbuffer 挂点必须是独立方法；把 afterLevel 写回链的条件里就是 h48 的那次错判");
+    }
+
+    @Test
+    @DisplayName("🔖 天空必须排在地形之前（h48e：地形深度裁不住原版天空）")
+    void skyIsDispatchedBeforeTerrain() {
+        String hook = readOrSkip(HOOK);
+        // 只看 helper **体内**的次序：onAfterLevel 末尾还有一条「旧三步链档的地形兜底」，
+        // 全文 indexOf 会先撞上它，于是这条守卫会在与顺序无关的改动上误红（本轮实踩过）。
+        int helper = hook.indexOf("private static void paintGbufferAndTerrain() {");
+        assertTrue(helper > 0, "gbuffer 挂点必须是独立方法（链的条件里不许掺 afterLevel）");
+        String body = hook.substring(helper);
+        int sky = body.indexOf("SkyIntoGbuffer.render()");
+        int terrain = body.indexOf("MrtTerrainPass.drawAfterLevel()");
+        assertTrue(sky > 0 && terrain > 0, "AfterLevel 档里天空重放与地形重放都要出现");
+        assertTrue(sky < terrain,
+                "AfterLevel 档的顺序必须是「天空先铺满 colortex0 → 地形 LOAD 盖上去」。h48e 实测："
+                        + "反过来的话原版天空盘把刚画好的地形整片盖掉（gbuffer 深度与空白私有深度"
+                        + "两臂的 c0@afterSky 逐位相同 = 全屏覆盖），链读到的就是纯天空色");
+        int chainCall = hook.indexOf("FrameApi.drawPostChain(");
+        int callSite = hook.indexOf("paintGbufferAndTerrain();");
+        assertTrue(callSite > 0 && chainCall > callSite,
+                "天空不许排在链**之后**：链跑完 colortex0 就是输出图了，之后画进去的东西没人读"
+                        + "（判据 = 挂点的**调用点**在 drawPostChain 之前）");
+        assertTrue(body.contains("if (!MrtTerrainPass.afterLevel())"),
+                "AfterLevel 档的天空挂点必须由 helper 自己判档：帧图档的天空已经在帧图里排好了，"
+                        + "钩子里再画一次就是每帧两遍天空 + 多翻一代（GAP-018 的代次账会算错）");
+
+        String mrt = readOrSkip(MRT);
+        int skyInsert = mrt.indexOf("addPass(\"vkdisp_gbuffer_sky\")");
+        int terrainInsert = mrt.indexOf("addPass(\"vkdisp_gbuffer_terrain\")");
+        assertTrue(skyInsert > 0 && terrainInsert > 0, "帧图档两条 pass 都要在");
+        assertTrue(mrt.indexOf("pass.requires(skyPass)") > terrainInsert,
+                "帧图档的顺序**必须靠 requires 声明**，不能靠插入序。h48g 实测：执行序由 "
+                        + "FrameGraphBuilder#resolvePassOrder 按资源依赖解析，插入序不是依赖 "
+                        + "⇒ 只按顺序 addPass 时天空跑到地形之后，又被盖回去（c0@afterSky=0.0611）");
     }
 
     @Test

@@ -75,7 +75,7 @@ private void hook(FrameGraphBuilder builder, /* ... */ CallbackInfo ci) {
 
 ## 3. 26.3 已知的易变点清单
 
-升级时**优先复查**这 4 类（按 26.3 的实际变动推断，风险从高到低）：
+升级时**优先复查**这 5 类（按 26.3 的实际变动推断，风险从高到低）：
 
 | # | 易变点 | 26.3 的事实 | 复查方法 |
 |---|---|---|---|
@@ -83,6 +83,7 @@ private void hook(FrameGraphBuilder builder, /* ... */ CallbackInfo ci) {
 | V2 | **后端 SPI 签名** | `BackendRenderPipeline$CreateInfo`、`SpvModule$Reflection` 等 | `javap -p` 对比新旧签名 |
 | V3 | **`LevelRenderer` 渲染方法签名** | 本方案帧图插入点依赖 `render(...)` / `addMainPass(...)` | `javap -p` 看参数列表 |
 | V4 | **`RenderPipeline.Builder` 链式 API** | `.withVertexShader` / `.withBindGroupLayout` / `.withShaderDefine` | 编译报错会直接指出 |
+| V5 | **帧图 pass 的**执行序**** | 执行序由 `FrameGraphBuilder#resolvePassOrder` 按**资源依赖**解析；**插入序不是依赖**，`FramePass#disableCulling()` 只保证「不被剔除」、不保证顺序。🔴 实测踩过（h48g）：先插 sky 再插 terrain，结果 sky 排在 terrain **之后**执行 ⇒ 天空又被地形盖回去（`c0@afterSky` 0.0611） | 用**同帧两个取点**验序（本项目的做法：`c0@afterSky` vs `c0@chainStart`）；不要读 API 猜。若要真正控序，先核实 `FramePass` 有没有声明依赖的公开入口（**未核实**，别当成存在） |
 
 **快速对比新旧 API 的手段**（本工作区已验证可用）：
 

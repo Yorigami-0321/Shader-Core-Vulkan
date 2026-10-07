@@ -12,18 +12,33 @@ package dev.vkdisp.bridge;
  *   <li>{@code Minecraft#getTextureManager()} / {@code #getAtlasManager()} 都是 public。</li>
  * </ul>
  *
- * <p>🔖 <b>为什么天空写「被读那一代」而不是待写那一代</b>（GAP-018 的边界）：
- * 双代轮转只服务于「同一个 pass 既读又写同一张图」的情形。天空 pass 不采 colortex0，
- * 它是**叠加**在刚画好的地形上（LOAD 语义），所以必须打在**当前被读的那一代**上，
- * 并且**不翻代** —— 打错代 = 天空叠在两帧前的陈旧内容上。
+ * <p>🔴 <b>时序：天空在地形之前</b>（h48e 改的，理由全是实测）：
+ * 原本「地形后补天空」指望 {@code colortexDepth} 里的地形深度把天空裁成「只有空的
+ * 那片」。两臂交叉否掉了这个指望 —— 挂 gbuffer 深度与挂**私有空白深度**的
+ * {@code c0@afterSky} 读数<b>逐位相同</b>（都是 81.3139），而空白深度下天空必然铺满全屏
+ * ⇒ 挂 gbuffer 深度那一臂<b>也</b>铺满了全屏 ⇒ 天空把刚画好的地形整片盖掉。
+ * 原版自己就是「天空先画、地形后盖」（{@code LevelRenderer} 的序列），OF/Iris 的
+ * gbuffer 顺序同样是 skybasic → terrain ⇒ 现在照这个来：
+ * <b>先</b>清 colortex0 的待写代并让天空铺满，<b>再</b>让地形 pass 以 LOAD 语义盖上去。
  *
- * <p>⚠️ 本轮仍未实测的三点（打开 {@code mrt.skyPass} 后按判据逐条量，见 GAP-003 登记行）：
- * ① 深度附件的第 5 参 {@code OptionalDouble.empty()} 是「不清」还是「清成 1.0」
- *    （若清深度 ⇒ 地形深度被抹 ⇒ 链把全屏当天空）；② {@code RenderSystem.getShaderFog()}
- *    在本调用点是否是原版那一份雾切片；③ 换世界 / 换尺寸时实例重建。
+ * <p>🔖 <b>为什么写「待写那一代」</b>：GAP-018 的双代轮转里，地形 pass 写 {@code 1 - cur}
+ * 然后翻代。天空必须写<b>同一代</b>，否则翻代后地形一盖，天空就被丢进上一代作废。
+ *
+ * <p>🔴 挂点有两个，<b>两档都必须排在地形之前</b>，而且顺序靠<b>声明</b>不靠插入序：
+ * <ul>
+ *   <li>帧图档（取证一直用的那一档，{@code terrainAfterLevel=false}）=
+ *       {@code MrtTerrainPass#onFrameGraphSetup} 插 {@code vkdisp_gbuffer_sky}，
+ *       并让地形 pass {@code requires(skyPass)}；</li>
+ *   <li>AfterLevel 档 = {@code FullscreenPassHook#paintGbufferAndTerrain} 先本类、后地形重放。</li>
+ * </ul>
+ * 🔖 为什么必须显式 {@code requires}：h48g 实测「先插 sky 再插 terrain」<b>不保证执行序</b> ——
+ * 帧图按资源依赖解析，插入序不是依赖 ⇒ sky 跑到 terrain <b>之后</b>，天空又被地形盖回去
+ * （{@code c0@afterSky} 只剩 0.0611，而正确顺序下是 72.85~84.50）。
+ * ✅ {@code FramePass#requires(FramePass)} 是公开接口方法（本轮源码级核实，见 {@code 06-MIGRATION} V5）。
  */
-import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.vkdisp.VkDisp;
@@ -33,16 +48,26 @@ import net.minecraft.client.renderer.SkyRenderer;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
 import org.jspecify.annotations.Nullable;
+import org.joml.Vector4f;
 
 /** 天空 → colortex0 的重放器（渲染线程独占，无锁）。 */
 public final class SkyIntoGbuffer {
 
-    private static @Nullable RenderTarget target;
+    private static @Nullable GbufferTarget target;
     private static @Nullable SkyRenderer renderer;
     private static int targetWidth;
     private static int targetHeight;
     private static boolean readyLogged;
     private static java.util.Set<String> skipLogged = new java.util.HashSet<>();
+
+    /**
+     * 天空**自己**的深度。
+     *
+     * <p>🔖 不用 gbuffer 深度：地形在天空**之后**画，天空不需要被地形遮挡（它要铺满，
+     * 再由地形盖掉），而共用一张深度只会把「天空片元的深度值」写进地形要用的那张图里
+     * （h48e 实测：那条通道对包的 {@code depthtex0} 分支是干扰源，见 evidence §15.3/15.4）。
+     */
+    private static @Nullable TextureTarget skyDepth;
 
     /** 自己持有的天空状态（不去改原版那一份共享状态）。 */
     private static final SkyRenderState skyState = new SkyRenderState();
@@ -50,7 +75,7 @@ public final class SkyIntoGbuffer {
     private SkyIntoGbuffer() {
     }
 
-    /** 链跑之前调用一次（开关关 / 前提不满足 ⇒ 静默跳过，但每种原因自报一次）。 */
+    /** 链跑之前、地形之前调用一次（开关关 / 前提不满足 ⇒ 跳过，但每种原因自报一次）。 */
     public static void render() {
         if (!VkDispConfig.MRT_SKY_PASS.get()) {
             return;
@@ -60,10 +85,16 @@ public final class SkyIntoGbuffer {
             skipOnce("not-in-world");
             return;
         }
-        GpuTextureView color = MrtTerrainPass.poolView(0);
-        GpuTextureView depth = MrtTerrainPass.depthView();
-        if (color == null || depth == null) {
+        GpuTextureView color = MrtTerrainPass.poolWriteView(0);
+        if (color == null) {
             skipOnce("gbuffer-view-null");
+            return;
+        }
+        int width = color.getWidth(0);
+        int height = color.getHeight(0);
+        GpuTextureView depth = ensureSkyDepth(width, height);
+        if (depth == null) {
+            skipOnce("sky-depth-null");
             return;
         }
         GpuBufferSlice fog = RenderSystem.getShaderFog();
@@ -71,11 +102,16 @@ public final class SkyIntoGbuffer {
             skipOnce("fog-slice-null");
             return;
         }
-        int width = color.getWidth(0);
-        int height = color.getHeight(0);
+        clearWriteGeneration();
         if (renderer == null || targetWidth != width || targetHeight != height) {
             rebuild(mc, color, depth, width, height);
         }
+        // 🔴🔖 **每帧**重指视图：双代轮转下「待写那一代」是交替的（GAP-018），
+        //   只在 rebuild 时设一次 = 天空永远画进第一次看到的那一代 ⇒ 地形写另一代并翻代，
+        //   链读到「只有地形」。h48i 实测就是这个形状（`c0@afterSky=0.0000`、
+        //   `c0@afterTerrain=82.7168`）。`SkyRenderer` 每帧现取 `getColorTextureView()`
+        //   （源码第 134 行）⇒ 改视图即可，不必重建渲染器。
+        target.repoint(color, depth);
         LevelRenderState levelState = mc.gameRenderer.gameRenderState().levelRenderState;
         // 🔖 状态必须**自己抽**：原版是在帧图装配期对它自己的 `skyRenderer` 调
         //   `extractRenderState(...)` 填 `skyRenderState`，而我们在 AfterLevel 才跑 ——
@@ -86,6 +122,33 @@ public final class SkyIntoGbuffer {
                 mc.gameRenderer.mainCamera(), skyState);
         renderer.render(fog, skyState);
         TargetReadback.probeAfterSky();
+    }
+
+    /**
+     * 天空**之前**的那一步：把待写代清成天空的底色。
+     *
+     * <p>为什么必须自己清：天空 pass 的颜色是 **LOAD** 语义（原版 {@code SkyRenderer} 写死），
+     * 而地形 pass 在这一代改为 LOAD 后**不再清**槽 0 ⇒ 没人清的话槽 0 会留着
+     * **两帧前**的内容（天空只覆盖它真画到的地方）。alpha 清成 1.0 的理由与
+     * {@code MrtTerrainPass} 里 h47c 那条相同（premultiplied 黑会让 bloom 权重塌缩）。
+     */
+    private static void clearWriteGeneration() {
+        var texture = MrtTerrainPass.poolWriteTexture(0);
+        if (texture == null) {
+            skipOnce("write-texture-null");
+            return;
+        }
+        RenderSystem.getDevice().createCommandEncoder()
+                .clearColorTexture(texture, new Vector4f(0.0F, 0.0F, 0.0F, 1.0F));
+    }
+
+    private static @Nullable GpuTextureView ensureSkyDepth(int width, int height) {
+        if (skyDepth == null) {
+            skyDepth = new TextureTarget("vkdisp sky depth", width, height, null, GpuFormat.D32_FLOAT);
+        } else if (skyDepth.width != width || skyDepth.height != height) {
+            skyDepth.resize(width, height);
+        }
+        return skyDepth.getDepthTextureView();
     }
 
     private static void rebuild(Minecraft mc, GpuTextureView color, GpuTextureView depth,
@@ -99,10 +162,10 @@ public final class SkyIntoGbuffer {
         targetHeight = height;
         if (!readyLogged) {
             readyLogged = true;
-            VkDisp.LOGGER.info("vkdisp: [GAP-003/sky] 天空重放器就绪：目标 = colortex0 {}x{}（LOAD 语义，"
-                    + "不翻代）；开关 mrt.skyPass", width, height);
+            VkDisp.LOGGER.info("vkdisp: [GAP-003/sky] 天空重放器就绪：目标 = colortex0 **待写代** {}x{}"
+                    + "（LOAD 语义、先于地形、不翻代）；深度 = 天空私有", width, height);
         } else {
-            VkDisp.LOGGER.info("vkdisp: [GAP-003/sky] 天空重放器重建（换尺寸或换世界）：{}x{}", width, height);
+            VkDisp.LOGGER.info("vkdisp: [GAP-003/sky] 天空重放器重建（换尺寸/换世界）：{}x{}", width, height);
         }
     }
 

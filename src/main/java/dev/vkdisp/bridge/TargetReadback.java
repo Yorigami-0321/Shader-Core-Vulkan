@@ -219,7 +219,22 @@ private static final long WARMUP_FRAMES = 600L;
     /** 天空重放之后、链之前再取一次（GAP-003/sky 判据：地形内容有没有被天空 pass 抹掉）。 */
     public static void probeAfterSky() {
         if (samplingFrame && VkDispConfig.MRT_PIXEL_PROBE_AFTER_TERRAIN.get()) {
-            submit("c0@afterSky", MrtTerrainPass.slotTexture(0));
+            // 🔖 天空写的是**待写那一代**（地形接着 LOAD 同一代）⇒ 取点必须跟着代次走，
+            //   读「被读那一代」会取到上一帧，然后拿「天空臂 vs 对照臂」的差分下错结论。
+            submit("c0@afterSky", MrtTerrainPass.poolWriteTexture(0));
+        }
+    }
+
+    /**
+     * GAP-003 天空线判据（h48e）：链**开跑前**的 colortex0。
+     *
+     * <p>它切的是一句「天空确实写进了 colortex0，但链恒 0」里剩下的两种解释：
+     * ① 天空写的内容到链的采样器眼里已经不存在（附件→采样器的布局/屏障问题）；
+     * ② 内容在，恒 0 是包那一级自己算出来的。①/② 的修法完全不同，所以必须在链首取这一刀。
+     */
+    public static void probeChainStart() {
+        if (samplingFrame && VkDispConfig.MRT_PIXEL_PROBE_AFTER_TERRAIN.get()) {
+            submit("c0@chainStart", MrtTerrainPass.slotTexture(0));
         }
     }
 

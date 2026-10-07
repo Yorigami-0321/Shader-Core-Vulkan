@@ -639,11 +639,14 @@ public final class VkDispConfig {
      *
      * <p>机制：原版 {@code SkyRenderer} 自建 pass 且颜色附件是 LOAD 语义 ⇒ 给它一个指向
      * 我方 colortex0 的 {@code RenderTarget} 薄壳即可，零 mixin、不需要 M-04。
-     * 判据（未测的三点写在 GAP-003 登记行）：天空进画面、且地形深度不被抹掉
-     * （若深度被清 ⇒ 链会把全屏当天空，画面会整体变成一种颜色）。
+     * 🔖 <b>顺序 = 天空先、地形后盖</b>（h48e 实测改的：地形深度裁不住原版天空，
+     * 「后补天空」会把刚画好的地形整片盖掉；原版与 OF/Iris 的 gbuffer 顺序都是 skybasic → terrain）。
+     * ⇒ 两档（帧图 / AfterLevel）都接：帧图档用 {@code FramePass#requires} 显式声明依赖，
+     * AfterLevel 档用调用序（{@code FullscreenPassHook#paintGbufferAndTerrain}）。
+     * 🔴 靠<b>插入序</b>排帧图 pass 是无效的 —— h48g 实测，见 {@code 06-MIGRATION.md} V5。
      */
     public static final ModConfigSpec.BooleanValue MRT_SKY_PASS = BUILDER
-            .comment("GAP-003：把原版天空重放进 colortex0（链之前，默认关 = 不介入）。")
+            .comment("GAP-003：把原版天空重放进 colortex0（地形之前、链之前；需 terrainAfterLevel=true，默认关）。")
             .define("mrt.skyPass", false);
 
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_ATLAS_LOD0 = BUILDER

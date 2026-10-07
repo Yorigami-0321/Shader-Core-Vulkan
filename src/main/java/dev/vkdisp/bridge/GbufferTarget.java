@@ -28,6 +28,22 @@ final class GbufferTarget extends RenderTarget {
 
     GbufferTarget(@Nullable String label, GpuTextureView color, @Nullable GpuTextureView depth) {
         super(label, null, null);
+        repoint(color, depth);
+    }
+
+    /**
+     * 🔴 每帧把壳指向**本帧该写的那一代**视图。
+     *
+     * <p>为什么必须有这个方法（h48i 实测的定位）：GAP-018 的双代轮转下
+     * {@code ColortexPool} 的「待写那一代」**每帧交替**，而 {@code SkyRenderer} 每帧都从
+     * {@code renderTarget.getColorTextureView()} 现取附件（源码 {@code SkyRenderer:134}）。
+     * 只在重建实例时设一次视图 ⇒ 天空会一直画进**第一次看到的那一代**，
+     * 地形却写另一代并翻代 ⇒ 链读到「只有地形」，天空每一帧都被丢在没人读的那一代里。
+     * 实测形状：{@code c0@afterSky = 0.0000 allZero=true} 而 {@code c0@afterTerrain = 82.72}。
+     *
+     * <p>🔖 为什么改视图就够、不必重建 {@code SkyRenderer}：它每帧现取视图，不缓存附件。
+     */
+    void repoint(GpuTextureView color, @Nullable GpuTextureView depth) {
         this.colorTextureView = color;
         this.depthTextureView = depth;
         this.width = color.getWidth(0);

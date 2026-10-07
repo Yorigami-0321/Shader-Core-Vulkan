@@ -213,13 +213,11 @@ public final class FullscreenPassHook {
             //   于是那一臂跑的是旧三步链，画面却是「链生效」的样子 —— 我据此下过一次错结论
             //   （evidence/h48 §五 已按此更正）。链要不要跑只取决于链本身；
             //   `afterLevel` 只决定**地形何时画**。
-            if (chainActive && MrtTerrainPass.enabled() && MrtTerrainPass.afterLevel()) {
-                MrtTerrainPass.drawAfterLevel();
-            }
-            // GAP-003 非地形 gbuffer 线：天空必须在**链之前**进 colortex0（链里没人画天空，
-            //   BSL 的 composite1 只是把 colortex0 透传 ⇒ 天空不先进 gbuffer 就永远是黑的）。
+            // GAP-003 非地形 gbuffer 线：天空先铺、地形后盖、然后才轮到链（h48e 改序，
+            //   实测理由见 evidence/h48 §15.4）。两个轴都收进同一个 helper，链的条件仍只看
+            //   chainActive —— 见 RenderRouteWiringTest。
             if (chainActive) {
-                dev.vkdisp.bridge.SkyIntoGbuffer.render();
+                paintGbufferAndTerrain();
             }
             if (chainActive) {
                 if (FrameApi.isPostChainReady()) {
@@ -278,5 +276,28 @@ public final class FullscreenPassHook {
         //     两源对照静默失效。
         //  ⇒ 「链尾」之后、「地形 pass」之后、「诊断 blit」之前 = 只能是本方法末尾。
         TargetReadback.probeFrameTail();
+    }
+
+    /**
+     * 链模式下的 gbuffer 挂点：天空 → 地形（顺序不可换，理由见 {@code SkyIntoGbuffer} 类注释）。
+     *
+     * <p>🔖 它单独成方法是为了让两件本该独立的事**在源码结构上就是分开的**（h48 的成因就是
+     * 把「链跑不跑」和「地形何时画」写进了同一个条件）：链的分支只看 {@code chainActive}。
+     *
+     * <p>🔴 只在 **AfterLevel 档**动手：帧图档（{@code terrainAfterLevel=false}）时天空与地形
+     * 都已经作为帧图 pass 存在（{@code MrtTerrainPass#onFrameGraphSetup} 先插 sky 再插 terrain），
+     * 这里再调一次就是**每帧画两遍天空 + 两遍地形**（GAP-018 之后还会多翻一次代）。
+     * 两个挂点互斥，所以天空每帧恰好一次。
+     */
+    private static void paintGbufferAndTerrain() {
+        if (!MrtTerrainPass.afterLevel()) {
+            return;
+        }
+        if (VkDispConfig.MRT_SKY_PASS.get()) {
+            dev.vkdisp.bridge.SkyIntoGbuffer.render();
+        }
+        if (MrtTerrainPass.enabled()) {
+            MrtTerrainPass.drawAfterLevel();
+        }
     }
 }

@@ -1124,13 +1124,13 @@ public final class FrameApi {
                 ? MrtTerrainPass.poolView(0) : postScratchView(0);
         PipelineApi.PostSamplerViewResolver resolver = chainResolver(fallbackView);
 
-        // GAP-017/020：地形写完的那一代先建一次金字塔；此后**每级写完立刻重建**
-        //   （见循环内 regenerate —— 不再是「下一个读者之前」的惰性重建）。
-        java.util.Set<Integer> mipSlots = chainMipSlotsOrComplain(chain);
-        GpuSampler pyramidSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
-        if (!mipSlots.isEmpty()) {
-            generateMipPyramids(encoder, label, mipSlots, pyramidSampler);
-        }
+        // GAP-003 天空线判据（h48e）：链**开跑前**再读一次 colortex0。
+        //   它切的是最后两种可能：`c0@afterSky` 有内容而这个取点没内容 ⇒ 天空写进去的东西
+        //   到链的采样器眼里已经不存在（布局/屏障问题）；两个取点都有内容 ⇒ 恒 0 是
+        //   包那一级**自己算出来的**（那就去查它读的 uniform 与分支）。
+        TargetReadback.probeChainStart();
+        java.util.Set<Integer> mipSlots = primeChainPyramids(encoder, label, chain);
+        GpuSampler pyramidSampler = pyramidSampler();
         for (int slot = 0; slot < chainPassLimit(passes); slot++) {
             var passPlan = passes.get(slot);
             runPostPass(encoder, label, slot, passPlan, colorView, fallbackView,
@@ -1302,6 +1302,26 @@ public final class FrameApi {
      * 单附件 —— 与「采上一级、写下一级」完全同形，零新管线。视图方向恒等（同一张纹理的
      * 相邻级），不涉及 p416 的翻转选择。
      */
+    /** 金字塔 blit 用的采样器：ClampToEdge + LINEAR（与链采样器是两件事，别混用）。 */
+    private static GpuSampler pyramidSampler() {
+        return RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
+    }
+
+    /**
+     * GAP-017/020：链**开跑前**给「刚被写的那一代」建一次降采样金字塔。
+     *
+     * <p>返回需要金字塔的槽集 —— 循环里每级写完立刻重建（{@code regeneratePyramidsForWritten}）
+     * 用的就是同一个集合；两边必须同源，否则链中段读到的 mip 是上一次的残留（GAP-020 的成因）。
+     */
+    private static java.util.Set<Integer> primeChainPyramids(CommandEncoder encoder, String label,
+            dev.vkdisp.pack.PackPostChain.Chain chain) {
+        java.util.Set<Integer> mipSlots = chainMipSlotsOrComplain(chain);
+        if (!mipSlots.isEmpty()) {
+            generateMipPyramids(encoder, label, mipSlots, pyramidSampler());
+        }
+        return mipSlots;
+    }
+
     private static void generateMipPyramids(CommandEncoder encoder, String label,
             java.util.Set<Integer> slots, GpuSampler linear) {
         CompiledRenderPipeline blit =

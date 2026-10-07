@@ -89,6 +89,16 @@ final class ColortexPool {
         return inRange(slot) ? slots[slot].texture[slots[slot].cur] : null;
     }
 
+    /**
+     * 某槽**待写那一代**的纹理（GAP-003 天空先画线用）。
+     *
+     * <p>天空在地形**之前**进 colortex0 时，它写的是地形 pass 即将 LOAD 的那一代；
+     * 探针若去读「被读那一代」会读到上一帧 ⇒ 取点必须跟着代次走。
+     */
+    @Nullable GpuTexture writeTexture(int slot) {
+        return inRange(slot) ? slots[slot].texture[1 - slots[slot].cur] : null;
+    }
+
     /** 被读那一代的整图视图（= 采样器绑定用）。 */
     @Nullable GpuTextureView view(int slot) {
         return inRange(slot) ? slots[slot].fullView[slots[slot].cur] : null;

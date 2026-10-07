@@ -190,8 +190,26 @@ public final class MrtTerrainPass {
             // A/B 模式：不在帧图里插 pass，改在 AfterLevel 画（见 drawAfterLevel）。
             return;
         }
+        // 🔖🔖 天空 pass 必须**显式声明**成地形的先决条件。h48g 实测：只按顺序 addPass 时
+        //   sky 被排到 terrain **之后**执行（执行序由 `FrameGraphBuilder#resolvePassOrder`
+        //   按 `requiredPassIds` 与「写→读」边解析，**插入序不是依赖**），于是天空又被
+        //   地形盖回去 —— `c0@afterSky` 只剩 0.0611（AfterLevel 档同取点 72.85~84.50）。
+        // ✅ 公开入口本轮源码级核实（26.3.0.51-beta `com/mojang/blaze3d/framegraph/FramePass.java`）：
+        //   `void requires(FramePass)` / `<T> void reads(ResourceHandle<T>)` /
+        //   `<T> ResourceHandle<T> readsAndWrites(ResourceHandle<T>)` / `void disableCulling()`。
+        //   `requires` 的语义核实自 `resolvePassOrder`：先递归解析 `requiredPassIds`，
+        //   **再** `output.add(pass)` ⇒ 被要求的一方一定排在前面。
+        FramePass skyPass = null;
+        if (VkDispConfig.MRT_SKY_PASS.get()) {
+            skyPass = event.getFrameGrapBuilder().addPass("vkdisp_gbuffer_sky");
+            skyPass.disableCulling();
+            skyPass.executes(dev.vkdisp.bridge.SkyIntoGbuffer::render);
+        }
         FramePass pass = event.getFrameGrapBuilder().addPass("vkdisp_gbuffer_terrain");
         pass.disableCulling();
+        if (skyPass != null) {
+            pass.requires(skyPass);
+        }
         // 🔖🔖 **必须在 pass 体里读捕获，不能在这里读**（本轮真踩过，症状极具欺骗性）：
         //   帧图「装配」发生在 LevelRenderer#render 第 249 行（官方事件处），
         //   而 M-05 的捕获发生在第 271-275 行的 prepareChunkRenders —— **装配早于捕获**。
@@ -328,6 +346,20 @@ public final class MrtTerrainPass {
         return VkDispConfig.MRT_TERRAIN_AFTER_LEVEL.get();
     }
 
+    /** 「天空先画 ⇒ 槽 0 走 LOAD」这条自报是否已打过。 */
+    private static boolean slot0LoadLogged;
+
+    /**
+     * 这一槽本轮是不是**已经被天空写过**（⇒ 地形必须以 LOAD 打开它，不能再清）。
+     *
+     * <p>两个条件：天空开关开着（两档挂点都保证天空先跑 —— 帧图档靠 {@code requires(skyPass)}，
+     * AfterLevel 档靠 {@code FullscreenPassHook#paintGbufferAndTerrain} 的调用序），
+     * 且这一槽确实打向池而不是主目标（{@code toMain} 档槽 0 打的是主目标，天空没写它）。
+     */
+    private static boolean skyPrePainted(int slot) {
+        return slot == 0 && VkDispConfig.MRT_SKY_PASS.get() && !toMain();
+    }
+
     /**
      * 【诊断 A/B】在帧图**执行完之后**（AfterLevel）画同一批地形到同一批 colortex。
      *
@@ -400,6 +432,18 @@ public final class MrtTerrainPass {
             //   非调试视图一律零值清屏 ⇒ 天空那片是**黑**而不是绿。
             //   🔶 零值同样不含假信息：真正的天空要由包的 gbuffer 程序画，那属于 M-04（未做）。
             float[] clearComponents = clearDecision.rgba(slot);
+            // 🔴 h48e（GAP-003 天空先画线）：天空已经在这张图上铺满了整屏，地形是**盖**上去的
+            //   ⇒ 槽 0 必须 LOAD，不能再清（清了就把天空抹掉，等于天空永远进不了画面）。
+            //   其余附件与深度照旧清：它们没有先写者，且地形必须从干净深度开始。
+            if (skyPrePainted(slot)) {
+                descriptor.withColorAttachment(views.get(slot), Optional.empty());
+                if (!slot0LoadLogged && framesDrawn % 600L == 0L) {
+                    slot0LoadLogged = true;
+                    VkDisp.LOGGER.info("vkdisp: [GAP-003/sky] 地形 pass 的 colortex0 附件 = **LOAD**"
+                            + "（天空已先铺；本 pass 只清 1..{} 号附件与深度）", actualSlots - 1);
+                }
+                continue;
+            }
             // 🔴 h47c：alpha 通道清到 **1.0**，不许 alpha=0。
             //   机制证据（h47 M3→N 臂对照）：BloomTile 的 6×6 高斯在 alpha=0 的零区上
             //   权重和塌缩（WG=1.0-wg… 之类补项）⇒ Σ=1 ⇒ 全白；alpha 归一后同臂 bloom
@@ -588,6 +632,12 @@ public final class MrtTerrainPass {
     @Nullable
     public static GpuTextureView poolWriteView(int slot) {
         return POOL.writeView(slot);
+    }
+
+    /** 某槽**待写那一代**的纹理（天空先画时，探针要读的就是这一代）。 */
+    @Nullable
+    public static GpuTexture poolWriteTexture(int slot) {
+        return POOL.writeTexture(slot);
     }
 
     /** GAP-018：一个 pass 写完这些槽之后翻代。 */

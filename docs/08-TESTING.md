@@ -387,3 +387,11 @@ LOGGER.info("vkdisp: stage timing: scan={}ms parse={}ms preprocess={}ms translat
 > 判为「BSL 视觉基线达成」，后来被复核推翻 —— 182 个 program 只接线 3 个、18 个 sampler
 > 有 17 个绑到同一张图，这些**都不影响 `ok=190`**，但画面是错的。
 > **编译通过 ≠ 渲染正确；luma 有差异 ≠ 渲染正确。**
+
+> 🔴 **2026-10-06 教训（h48f：A/B 只改一个开关，但那个开关不是你以为的变量）**
+> 「开天空 ⇒ 链输出塌 0」这条结论是拿 `skyPass=true` 对 `skyPass=false` 量的，
+> 但**两臂共用的 `mrt.terrainAfterLevel` 档位本身**就让链输出为 0 —— 对照臂也全 0，
+> 只是我第一轮没去读对照臂的那三个取点。⇒ 规矩：
+> **判据必须是「同一档位下只差被测开关」，且对照臂的同一批取点要一起进表**。
+> 只报「实验臂变了」不报「对照臂本来是什么」，等于没做对照。
+> 详见 `evidence/h48-flicker-and-readback.md` §十六。

@@ -243,3 +243,285 @@ D32 若是 0.0f 应当**全字节 0**、若是 1.0f 应当是 `00 00 80 3F`（R=
 取到未定义内容，不是深度值。⇒ 该取点与 `depthTexture()` 已删除。
 **结论**：本机判深度语义不能走回读，只能走「包侧行为的差分」（例如同一机位下
 `z >= 1.0` 分支进/出画面的对照臂）。
+
+## 十五、天空线：A/B 把责任**从深度**上切下来之前，先撤回一个我自己在登记表里写下的错机制
+
+### 15.1 深度语义：源码级解决（不需要再猜，也不需要回读）
+
+上一节刚说过「本机判深度语义只能走包侧差分」。但这一条**根本不用测** —— 后端源码就在
+`build/moddev/artifacts/minecraft-patched-26.3.0.51-beta-sources.jar` 里：
+
+`com/mojang/renderpearl/backend/vulkan/VulkanCommandEncoder.java` 第 307-321 行：
+
+```java
+if (depthAttachment != null) {
+    depthAttachmentInfo.imageLayout(1);              // GENERAL
+    depthAttachmentInfo.storeOp(0);                  // STORE（恒置）
+    OptionalDouble clearValue = depthAttachment.clearValue();
+    if (clearValue.isPresent()) { ... depthAttachmentInfo.loadOp(1); }   // CLEAR
+    else                        { depthAttachmentInfo.loadOp(0); }       // LOAD
+}
+```
+
+`VK_ATTACHMENT_LOAD_OP_LOAD=0 / CLEAR=1 / DONT_CARE=2`。原版天空 pass 传的是
+`OptionalDouble.empty()`（`SkyRenderer:139`）⇒ **天空 pass 不清深度**，它是 LOAD + STORE。
+⇒ 登记表 GAP-003 行里我写的「深度附件清/覆盖了 gbuffer 深度 ⇒ 已确认有害」**撤回**：
+那是从症状倒推的机制，深度一次都没测过，而后端源码直接否证了它。
+（仍然成立的部分：STORE 恒置 ⇒ 天空那批片元的深度值会**写进**我方 gbuffer 深度。）
+
+### 15.2 同一份代码的两臂 A/B：天空开 = 链输出恒 0（不是「闪」，是**每帧都塌**）
+
+两臂只差 `mrt.skyPass`，其余档位与代码逐字相同（`pixelProbe=true every=20`、
+`postChainTrace=true slots=0,1`、`terrainAfterLevel=false`、`enabled=false`），
+观测面都用 `/gamerule doDaylightCycle false` + `/time set 6000` + `/weather clear` 钉住。
+
+| 取点（同一 round 内） | `skyPass=false`（对照） | `skyPass=true` |
+|---|---|---|
+| `c0@afterTerrain` | 有内容 | **14.4170** luma、nonBlack 55.9% |
+| `c0@afterSky` | （不跑） | **81.3139** luma、nonBlack 82.3%、meanRGB=(73.3, 81.4, **104.6**) ⇒ **蓝主导 = 天空真的画进去了** |
+| `trace1deferred1:c0` | 未命中（该臂无 trace 行） | **0.0000** `allZero=true`，每轮都是 |
+| `colortex0`（帧尾） | 2.3169 | **0.0000** `allZero=true` |
+| `colortex1`（帧尾） | 34.5901 | **0.0000** `allZero=true` |
+| `main`（帧尾） | **34.5630** | **0.0000** `allZero=true` |
+| F2 截图 | 10 张 44.18~45.22（自检「白天注入生效」） | 10 张 7.82~7.83（自检 ❌「疑似仍在夜晚」⇒ **画面这一侧不能当判据**，故本表全用探针数字） |
+| 日志 `ERROR` 条数 | 0 | **0**（所以「链被异常打断」这条也否掉了） |
+
+🔖 **三条当时踩到的判读陷阱，都记下来**：
+1. **数字逐轮相同 ≠ 回读卡住**。对照臂 `main#188/189/190` 在 h47-lane-Z6 里也是同一串
+   `91.6478…` 重复 —— 静止世界 + 不动相机本来就该给重复数字。判定要看**同一轮内的跨取点差分**，
+   不是跨轮差分。
+2. **链级 trace 标签不是 `colortex0@pass`，而是 `trace<序号><程序名>:c<槽>`**（`TargetReadback#probeChainPass`）。
+   我一开始按前者 grep，得到「trace 一条都没有」，差点把「追踪没生效」当成一个结论。
+3. **截图自检必须留在判据链里**：这一臂的 F2 全是夜晚亮度，画面侧完全不可用；
+   没有自检行的话，「7.8 luma」会被误读成「天空臂把画面弄黑了」。
+   ⇒ 天空臂的结论**只**由探针数字支撑。
+
+### 15.3 天空臂的 0 是**真 0**，不是回读没落地（先证明探针有资格说话）
+
+在拿「帧尾全 0」下任何结论之前，先确认这条通道不会自己造 0。`TargetReadback#collectReady`：
+
+```java
+if (!slot.copyReturned) {
+    if (waited > COPY_STALL_TICKS && STALL_NOTED.compareAndSet(false, true)) {
+        LOGGER.warn("… 拷贝回调 {} 个节拍没回来 ⇒ 释放该槽（**这轮该源没有数字**，不是画面为 0）");
+    }
+    continue;                       // ← 没回来的槽**绝不** finish
+}
+if (waited < READ_DELAY_TICKS) continue;
+finish(slot);                       // ← 只有 copyReturned 才会读数
+```
+
+⇒ 读数只可能来自「拷贝已完成」的槽；而未完成的拷贝会打一条**带原文的 WARN**。
+天空两臂的日志里 `ERROR` 0 条、`拷贝回调` 0 条 ⇒ **那些 0.0000 是纹理真值**，
+不是缓冲没填。（这一条必须写下来：它同时也是「为什么 15.2 敢用探针数字当判据」的凭据。）
+
+### 15.4 `mrt.skyOwnDepth` 臂：深度这条线**否掉了**，顺带掉出一个更要紧的事实
+
+第三臂把天空挂到一张**私有深度**（每帧清到远平面 0.0）上，gbuffer 深度一个 bit 都不被天空碰
+（自报行逐字：`深度 = 私有(每帧清)`）。结果：
+
+| 取点 | `skyPass=true` + gbuffer 深度 | `skyPass=true` + 私有深度 | `skyPass=false` |
+|---|---|---|---|
+| `c0@afterTerrain` | 14.4170 / 39.0164 / 5.9607 / 25.8884（四个值轮转） | **同左，逐位相同** | **同左，逐位相同** |
+| `c0@afterSky` | **81.3139**（每轮同一个数） | **81.3139**（每轮同一个数） | 不跑 |
+| `colortex0` / `colortex1` / `main`（帧尾） | 0.0000 `allZero=true` | **0.0000 `allZero=true`** | 2.3169 / 34.5901 / **34.5630** |
+| 日志 `ERROR` / 「拷贝回调没回来」WARN | 0 / 0 | 0 / 0 | 0 / 0 |
+
+⇒ **结论 1（本臂的判据）**：天空写进深度的值**不是**链塌成 0 的原因。私有深度下 gbuffer 深度
+   完全干净，帧尾照样全 0。⇒ 「给天空一张只读/独立深度」这个原计划方案**当场作废**，
+   不用做了（它修不了任何东西）。
+⇒ **结论 2（没打算掉出来的，但比结论 1 值钱）**：`c0@afterSky` 在**两种深度档下同值**，
+   而且**不随地形内容变化**（`afterTerrain` 在四个值之间轮转，它恒 81.3139）。
+   私有深度里没有地形 ⇒ 那一臂的天空必然画满全屏；两臂同值说明
+   **gbuffer 深度那一臂的天空也画满了全屏** ⇒ 原版天空**根本没有被地形遮挡**。
+   机制方向（未核实，下一步测）：`RenderPipelines.SKY` 用默认深度状态 + `core/sky.vsh`
+   直接 `ProjMat * ModelViewMat * Position`（天空盘 z 在最远/最近那一端），
+   与本引擎**反向 Z**（远 = 0.0）对不上 ⇒ 深度比较处处通过。
+   ⚠️ 这条改变了「天空进 gbuffer」的语义：现在进的不是「补上天没被地形挡住的那片」，
+   而是**把地形整片盖掉** —— 所以 15.2/15.4 的「天空臂」不能读成「天空画对了但链不给力」，
+   至少要先承认「天空把 gbuffer 覆盖干了」。
+
+## 十六、把天空排到地形**之前**之后发生的事（h48f/h48g 两批四臂）
+
+### 16.1 `terrainAfterLevel=true` 批：链输出从恒 0 变成 `main=108`，但对照臂暴露了一个更大的坑
+
+档位：`terrain=true`、`terrainAfterLevel=true`、`pixelProbe every=20`、白天钉死（两臂自检都是
+「白天注入生效」），两臂只差 `mrt.skyPass`。
+
+| 取点 | `skyPass=true`（新顺序） | `skyPass=false`（对照） |
+|---|---|---|
+| `c0@afterSky` | **每轮不同**：72.85 / 75.24 / 77.97 / 81.41 / 84.50 / 84.06 / 83.19 | 不跑 |
+| `c0@chainStart` | 63.36 → 61.34（**低于** afterSky ⇒ 地形确实盖在天空之上） | 14.0059（与 afterTerrain 逐位相同） |
+| `c0@afterTerrain` | — | **恒 14.0059**（新顺序前它在帧图档是 5.96~39.02 四个值轮转） |
+| 帧尾 `colortex0` | 37.02 → 31.22 | **0.0000 `allZero=true`（每轮）** |
+| 帧尾 `colortex1` | 108.04 → 108.56 | **0.0000** |
+| 帧尾 `main` | **107.92 → 108.46** | **0.0000** |
+| F2 亮度 | 84.94 / 7.80 / 85.96 / 93.83 / 8.49 / 10.43 / 93.80 | 4.86 / 4.85 / 4.82 / 34.34 / 5.37 / 4.80 / 4.80 / 4.79 / 4.78 / 34.30 |
+| `ERROR` | 0 | 0 |
+
+🔴 **本批最重要的读法不是「天空臂好了」，而是「对照臂也全 0」**：
+`terrainAfterLevel=true` 且**不开天空**时，帧尾三源同样是 `0.0000` 每一轮。
+⇒ 之前 15.2/15.4 里「天空开 = 链塌 0」这条**归因不成立**：那个 0 是
+**地形在帧图外重放**这件事自己的后果（正是登记表 GAP-019 行第 351 条量过的
+「`terrainAfterLevel=true` ⇒ 黑帧」形状，这次量到的是「几乎每帧」）。
+我差点把「天空把内容盖光」和「地形重放本来就不出内容」两件事混成一件 ——
+差别只在**对照臂有没有跟着改档位**。加了天空就必须同时把对照臂也搬到同一档位，
+否则测的是档位而不是天空（这条写进 `08-TESTING.md` 的判据边界）。
+⇒ 于是新顺序的真正成绩只有一个是干净的：**天空臂的帧尾从 0 变成了 108**，
+说明天空先铺 + 地形 LOAD 这条路径**确实把内容送进了链**；而它到底是不是产品档能用的，
+必须在 `terrainAfterLevel=false`（帧图档，地形可靠落池的那一档）里重测 —— 见 16.2。
+
+### 16.2 帧图档接天空：**失败，且失败原因是「插入序 ≠ 执行序」**
+
+把天空改成帧图 pass（`onFrameGraphSetup` 里先插 `vkdisp_gbuffer_sky` 再插 `vkdisp_gbuffer_terrain`），
+档位回到取证一直用的那一档 `terrainAfterLevel=false`，白天注入两臂都成立。
+
+| 取点 | 帧图档 + 天空（h48g fgSkyOn） | AfterLevel 档 + 天空（h48f skyOrderOn） |
+|---|---|---|
+| `c0@afterSky`（天空刚铺完） | **0.0611 / 0.0715 / 0.0780 / 0.0832** | 72.85 / 75.24 / 77.97 / 81.41 / 84.50 |
+| `c0@chainStart`（链开跑前） | **14.03** | 63.36 → 61.34 |
+| `c0@afterTerrain` | **14.03**（与 chainStart **逐位相同**） | — |
+| 帧尾 `main` | 34.79 | 107.92 |
+| `ERROR` | 0 | 0 |
+| 天空自报 | 「地形 pass 的 colortex0 附件 = LOAD」也打了 ⇒ **配置生效、代码路径走到了** | 同 |
+
+读法：`afterSky` 只有 0.06（≈ 黑），而 `chainStart` 已是 14.03 = 地形内容 ⇒ **天空铺完之后地形又画了一遍**
+⇒ 天空在地形**之后**执行。而 LOAD 附件的语义是「地形不清槽 0」，所以地形那一片盖掉了天空的
+那一片 —— 顺序完全反了。
+⇒ 机制：帧图的执行序由**资源依赖**解析（`FrameGraphBuilder#resolvePassOrder`），
+**插入序不是依赖**。我方两个 pass 都不声明「我要先读/写 colortex0」⇒ sky 被排到 terrain 之后。
+`disableCulling()` 只保证 pass 不被剔除，**不保证顺序**（这一点此前被我当成顺序保证，是错的）。
+⇒ 处理：**帧图档的天空挂点撤掉**（代码留在注释里说明为什么不能这么做），天空只挂 AfterLevel 档；
+`skyPrePainted()`（地形槽 0 改 LOAD 的判据）同步要求 `afterLevel()`，
+守卫测试 `RenderRouteWiringTest#skyIsDispatchedBeforeTerrain` 直接把这条写成断言。
+⇒ 未核实的前置（下一轮如果要在帧图档接，先做这条）：原版 `FramePass` 到底有没有
+「声明本 pass 读/写某个 `GpuTextureView`」的公开入口。**没核实就不做**（X9）。
+
+### 16.3 补上「未核实」那一步：`FramePass` 确实有声明顺序的公开入口（源码逐字）
+
+16.2 结尾留的「未核实」不能留着猜（X9）。`com/mojang/blaze3d/framegraph/FramePass.java` 全文：
+
+```java
+public interface FramePass {
+    <T> ResourceHandle<T> createsInternal(String name, ResourceDescriptor<T> descriptor);
+    <T> void reads(ResourceHandle<T> handle);
+    <T> ResourceHandle<T> readsAndWrites(ResourceHandle<T> handle);
+    void requires(FramePass pass);          // ← 显式的 pass 间顺序依赖
+    void disableCulling();
+    void executes(Runnable task);
+}
+```
+
+`FrameGraphBuilder#resolvePassOrder` 的实现决定了 `requires` 的方向语义：
+
+```java
+for (int id = pass.requiredPassIds.nextSetBit(0); ...) {
+    this.resolvePassOrder(this.passes.get(id), ..., output);   // 先递归解析被要求方
+}
+for (Handle<?> handle : pass.writesFrom) { ... 写→读 边同样先解析 ... }
+output.add(pass);                                             // 最后才把自己放进序列
+```
+
+⇒ **被 `requires` 的一方一定排在前面**（后序插入）。⇒ 帧图档的天空可以接，写法是
+`terrainPass.requires(skyPass)`，而不是「先 addPass」。
+🔖 顺带把 16.2 那条误读钉死：`disableCulling()` 只出现在 `identifyPassesToKeep`
+（管**剔除**），与执行序无关 —— 我之前把它当成了顺序保证的一部分。
+⇒ 落到代码 + 守卫：`MrtTerrainPass#onFrameGraphSetup` 里 `pass.requires(skyPass)`，
+`RenderRouteWiringTest` 直接断言这行存在且位于 terrain `addPass` 之后
+（「靠插入序排帧图」这种写法以后一进 diff 就红）。
+
+## 十七、h48i/h48j：帧图档接天空「不生效」的真根因 —— **代次视图被缓存了**
+
+### 17.1 现象（h48i，`terrainAfterLevel=false` + `skyPass=true`，`requires` 已生效）
+
+| 取点 | 读数 |
+|---|---|
+| `c0@afterSky`（天空刚铺完，读**待写代**） | **0.0000 `allZero=true`**（每轮） |
+| `c0@afterTerrain`（地形翻代后，读新的被读代） | **82.7168**（每轮同一个值） |
+| `c0@chainStart` | **82.7168**（与 afterTerrain 逐位相同） |
+| 帧尾 `colortex0` / `colortex1` / `main` | 0.0000 / 0.0000 / 0.0000 |
+| 自报 | 「地形 pass 的 colortex0 附件 = **LOAD**」+「天空重放器就绪：目标 = colortex0 **待写代**」都打了 |
+| `ERROR` | 0 |
+
+⇒ 天空 pass 跑了、地形也在 LOAD 同一槽，但天空那一片是**空的**：连 `prepareGbuffer`
+清出来的 `alpha=1.0` 都不在（`allZero=true` 是四通道全 0）⇒ 探针读的那张图**根本不是天空写的那张**。
+
+### 17.2 根因（一行代码的形状，但症状完全不像它）
+
+`GbufferTarget` 的视图只在 **rebuild 时**设过一次，而 GAP-018 的双代轮转里
+「待写那一代」**每帧交替**（`ColortexPool.advanceWritten` 翻 `cur`）。于是：
+
+```
+帧2：cur=A → 天空画进 B；地形写 B、翻代 → cur=B        （这一帧对）
+帧3：cur=B → 天空仍画进 B（缓存的视图）；地形写 A、翻代 → cur=A  （天空被丢在上一代）
+帧4：cur=A → 天空又画进 B …
+```
+
+⇒ 从第二帧起，天空画进的**不是本帧地形要写的那一代** ⇒ 链永远读到「只有地形」，
+而探针读的是「本帧待写代」⇒ 拿到的是那张**从没被写过的初生纹理** = 全 0。
+`SkyRenderer` 每帧现取 `renderTarget.getColorTextureView()`（源码第 134 行）⇒ 修法就是
+每帧重指视图，不必重建渲染器：新增 `GbufferTarget#repoint(color, depth)`，
+在 `SkyIntoGbuffer.render()` 里**每次**调用。
+
+🔖 **为什么这条值得单独一节**：它同时是 15.2/15.4/16.1 那几张表的**共同污染源**。
+「`c0@afterSky` 恒 81.3139 不随地形变」「AfterLevel 档帧尾 `main=107.9`」这些读数
+都出自**同一个 bug 尚未修掉的构建**，它们里的**代次相关结论一律待重测**：
+本节的 h48j 两臂（帧图档、`requires` + `repoint`，只差 `skyPass`）才是干净的对照。
+⇒ 规矩：**A/B 之前先确认取点读的是哪一代**。探针跟着代次走、绘图对象不跟着走，
+量出来的就是「两个不同纹理之间的差分」，而不是「同一纹理的前后差分」。
+
+### 17.4 但先别用 17.1 那批数字 —— **两臂全都落在探针自己声明的预热窗里**
+
+h48j 两臂（帧图档，`repoint` 前 / 后）都打了这一条：
+
+```
+vkdisp: [pixel-probe] 地形 MRT pass 只画了 2 帧（< 600） ⇒ **预热期内不产出对照结论**，只报原始数字。
+        ⚠️ 头几帧的 colortex 可能只有清屏值 —— 实测同配置两轮可读出 0.0000 与 12.42 而 main 逐位相同
+```
+
+而取点落在 `round #9 ~ #14`、`every=20` ⇒ 那只是**第 180~300 帧**。lavapipe 上跑到 600 帧
+要更久，脚本里那个定长 `sleep 20` 根本不够 ⇒ **两臂的读数全在预热窗内**。
+⇒ 所以 17.1 那张表（以及 15.2/15.4/16.1 里凡是每 20 帧、round < 30 的读数）**不能当对照用**：
+「一臂 `main=0.0000`、另一臂 `main=140.5`」这个差异，与「两臂 `c0@afterTerrain` 逐位相同」
+放在一起，最合理的解释就是**取样窗口本身**，不是渲染。
+⇒ 处理（工具侧，不是判据侧）：`h48_flicker_capture.sh` 加了**预热闸门** ——
+不在定长 sleep 后拍，而是**等探针自己的 round 号**过 `H48_MIN_ROUND`（本轮设 60，
+配 `every=10` ⇒ ≥600 帧）才注入命令与连拍，并把预热末态打出来。
+判据不变：`skyPass` 单变量、两臂同档位、同 round 区间跨取点对照。
+⇒ 🔖 顺带说明为什么 17.2 那条**机制**推理不受影响：它不来自数字，来自代码级事实 ——
+`ColortexPool.advanceWritten` 每帧翻 `cur`，而 `GbufferTarget` 的视图原来只在 rebuild 时
+设一次，`SkyRenderer` 每帧现取 `getColorTextureView()`。⇒ 「天空从第二帧起写错代」
+是结构结论，h48k 只是去量它修没修好。
+
+### 17.5 预热窗后的干净对照：**「链输出恒 0」在两臂都不成立**
+
+同一档位（`terrainAfterLevel=false` 帧图档）、同一构建、只差 `mrt.skyPass`、
+都过了预热闸门（`every=10`，等到 round≥60 ⇒ ≥600 帧才采）：
+
+| 取点 | `skyPass=true` | `skyPass=false`（对照） |
+|---|---|---|
+| `c0@afterSky` | 0.5270 → 0.9066（缓慢抬升，`allZero=false`） | 不跑 |
+| `c0@afterTerrain` | **71.2899** | **73.2414** |
+| `c0@chainStart` | 71.2899（与 afterTerrain 同） | 73.2414（同） |
+| 帧尾 `colortex0` | 20.3347（round #110 有一次 **0.0000**） | **32.3517**（六轮全同） |
+| 帧尾 `colortex1` | 137.0620（同轮一次 0.0000） | **123.5937**（六轮全同） |
+| 帧尾 `main` | 137.0773（同轮一次 0.0000） | **123.5968**（六轮全同） |
+| `ERROR` | 0 | 0 |
+| 截图 | ❌ 没落地（本臂无画面判据） | ❌ 没落地 |
+
+三条结论，按证据强度排：
+1. ✅ **「链输出塌成 0」这条整体撤销** —— 预热窗之后两臂帧尾都是稳定非零（137.1 / 123.6）。
+   此前所有「恒 0」判读（15.2 的表、15.4、16.1、17.1）都是**同一份测量偏差**：
+   取点落在第 180~300 帧，而探针自己写了「< 600 帧不产出对照结论」。
+   🔖 教训的通用形式：**判据窗口必须由被测系统自己声明的「预热结束」信号界定**，
+   不能由脚本里的一个定长 `sleep` 代替。
+2. 🔴 **天空还没有真的进到链的输入里**：开天空臂 `c0@chainStart=71.2899` 与对照臂 73.2414
+   几乎一样（差 1.95），而 `c0@afterSky` 只有 0.53~0.91 ⇒ 天空那一层铺上去的是**近黑**，
+   随后被地形盖住。两种可能未切开：① 世界此时是**夜**（本臂聊天注入没落地，夜空本来就黑）；
+   ② 天空确实没画进这代。⇒ 下一刀必须是**白天钉住**的臂（注入要真落地，判据 =
+   `c0@afterSky` 应显著高于 0.5，且与 `afterTerrain` 的差可读）。
+   🔖 这里不再重犯 15.4 的错：那次我用「两臂 afterSky 逐位相同」推出「天空铺满全屏」，
+   而那批数字同样在预热窗内 —— 那条推断**降回未证**。
+3. ⚠️ **开天空臂仍有间歇 0**（5 轮里 1 轮 colortex0/colortex1/main 同时为 0），对照臂 6 轮没有。
+   样本 1/5 vs 0/6，**不足以定责**；但方向上它和 GAP-019「重放有时不出内容」是同一形状，
+   下一轮把 `every=1` 连续 200 帧跑一次两臂对照，才有资格说是不是天空带来的。
