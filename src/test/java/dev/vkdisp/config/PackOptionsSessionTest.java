@@ -4,6 +4,7 @@ import dev.vkdisp.pack.Option;
 import dev.vkdisp.pack.ShaderPack;
 import dev.vkdisp.pack.ShaderPackService;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -15,6 +16,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -140,6 +142,42 @@ class PackOptionsSessionTest {
         assertEquals(1, session.changedCount());
         PackOptionsSession.CommitResult commit = session.commit(store);
         assertEquals(List.of("ENABLE_FOG=false"), commit.changedEntries());
+    }
+
+    @Test
+    @DisplayName("GAP-026：store 残留必须自报成「哪一档」，且必须带默认值对照")
+    void storeResidueIsSelfReportedWithDefaults() {
+        PackOptionStore store = PackOptionStore.empty();
+        store.put("fixture", "ENABLE_FOG", "false"); // 包默认 true
+        ShaderPack pack = loadPack();
+
+        PackOptionsSession session = PackOptionsSession.create(pack, "", store);
+
+        String report = session.buildDiagnostics().stream()
+                .filter(d -> "STORE_RESIDUE".equals(d.code()))
+                .findFirst()
+                .map(d -> d.severity() + "|" + d.message())
+                .orElse(null);
+        assertNotNull(report, "store 里有非默认值时必须打 STORE_RESIDUE（GAP-026 的闸门），"
+                + "实际诊断: " + session.buildDiagnostics());
+        assertTrue(report.contains("ENABLE_FOG=false"), "自报必须点名是哪个键，实际: " + report);
+        assertTrue(report.contains("默认 true"), "自报必须给出默认值，否则读不出「差多少」，实际: " + report);
+        assertTrue(report.startsWith("WARN"), "有残留必须是 WARN 不是 INFO，实际: " + report);
+    }
+
+    @Test
+    @DisplayName("GAP-026：无残留时也要打一行（否则「没打」与「没有」不可区分）")
+    void cleanStoreStillSelfReportsZero() {
+        ShaderPack pack = loadPack();
+        PackOptionsSession session = PackOptionsSession.create(pack, "", PackOptionStore.empty());
+        assertTrue(session.buildDiagnostics().stream()
+                        .anyMatch(d -> "STORE_RESIDUE_NONE".equals(d.code())),
+                "残留为 0 也必须自报，实际: " + session.buildDiagnostics());
+        // store==null 的那条路同样要出这行（GUI 之外的调用方会传 null）
+        PackOptionsSession nullStore = PackOptionsSession.create(pack, "", null);
+        assertTrue(nullStore.buildDiagnostics().stream()
+                        .anyMatch(d -> "STORE_RESIDUE_NONE".equals(d.code())),
+                "store 为 null 时不许静默跳过自报（「没有数字 ≠ 数字是 0」）");
     }
 
     @Test

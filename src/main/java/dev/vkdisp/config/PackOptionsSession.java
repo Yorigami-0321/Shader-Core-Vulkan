@@ -94,7 +94,43 @@ public final class PackOptionsSession {
         if (store != null) {
             applyStore(store, pack.name(), options, diagnostics);
         }
+        // 无条件出这行（store==null 也要出）：否则「没打这行」与「这行说没有残留」不可区分。
+        diagnostics.add(residueReport(pack.name(), baseline, options.values()));
         return new PackOptionsSession(pack, profile, options, baseline, diagnostics);
+    }
+
+    /**
+     * GAP-026：把「本次生效的到底是哪一档」变成一条**每次加载都必须在日志里**的自报。
+     *
+     * <p>为什么必须有它（实测依据，{@code evidence/h48-flicker-and-readback.md} §二十二/§二十三）：
+     * 存储回放与用户主动改选项走<b>同一条路</b>、<b>没有任何标记区分</b>，所以
+     * 「上一次取证留下的键」会被当成「包默认」读进所有后续臂 —— 我方因此把
+     * {@code ADVANCED_MATERIALS=true}（8 附件、每 3 帧空一次）当成了 BSL 默认档整整一轮，
+     * 连登记表都据它推翻了一条本来正确的注释。
+     *
+     * <p>🔖 <b>无残留时也必须打</b>（INFO，计数 0）：否则「日志里没有这行」与「这行说没有残留」
+     * 不可区分 —— 那是本项目反复踩的「没有数字 ≠ 数字是 0」。
+     */
+    private static OptionDiagnostic residueReport(
+            String packName, Map<String, String> baseline, Map<String, String> working) {
+        List<String> differing = new ArrayList<>();
+        for (Map.Entry<String, String> entry : working.entrySet()) {
+            String base = baseline.get(entry.getKey());
+            if (base != null && !base.equals(entry.getValue())) {
+                differing.add(entry.getKey() + "=" + entry.getValue() + "（默认 " + base + "）");
+            }
+        }
+        if (differing.isEmpty()) {
+            return OptionDiagnostic.info("STORE_RESIDUE_NONE",
+                    "包 '" + packName + "' 的持久化选项与基线完全一致（残留 0 项）"
+                            + " ⇒ 本次生效的就是包默认档");
+        }
+        return OptionDiagnostic.warn("STORE_RESIDUE",
+                "包 '" + packName + "' 有 " + differing.size() + " 项选项不等于包默认/基线："
+                        + String.join("、", differing)
+                        + " —— 来源可能是选项 GUI，也可能是上一次取证留下的残留。"
+                        + "🔖 判读任何画面/探针数字之前先确认这一档是不是你要测的那一档"
+                        + "（GAP-026；见 evidence/h48-flicker-and-readback.md §二十二）");
     }
 
     /** 存储回放：本包条目 → {@link PackOptions#set}（归一化与诊断走原通道）；未知选项保留不动 + WARN。 */

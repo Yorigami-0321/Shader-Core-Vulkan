@@ -136,6 +136,13 @@ IllegalStateException: Close the existing render pass before performing addition
 `vTexCoord = vec4(UV0, 0.0, 0.0)`），而包的高级材质路径里 `GetParallaxCoord()` **从 `vTexCoord.st` 起步**
 并 `ReadNormal(coord)` 去采**材质贴图集**（`lib/surface/parallax.glsl:7,20`）⇒ **两套 UV 空间错配**
 ⇒ 采样落进透明黑区 ⇒ `albedo ≡ 0`（= GAP-008 的正面定位，见该条目）。
+🟢 **`h48s`（2026-10-08）把这条收紧到「绑 `ADVANCED_MATERIALS` 一项，不是门控闭包整体」**：
+真默认档 + `pack.capabilityGate=false`（⇒ `PARALLAX`/`SSS`/`REFLECTION_*`/`SELF_SHADOW` 全按包默认为真、
+门控不干预）实测地形**照样有画面且更亮**（240 帧 0 空帧，luma `min 62.74 / med 143.21 / max 150.16`）
+⇒ 压零的开关是 `ADVANCED_MATERIALS` 那一条 `GetMaterials` 路径，闭包里其余项在这台后端上**不产生黑**。
+⇒ 两个实际后果：① 门控的**默认值不是闪屏的成因**（h48r/h48s 两臂都是 0 空帧），故本轮**不动**它；
+   ② 登记表此前把「8 附件 + albedo≡0」当成 BSL 默认档，其实是**残留档**（GAP-026），
+      默认档只有 1 个输出、不走 `GetMaterials` ⇒ 与 `:132` 那句「默认配置路径不经过 `GetMaterials`」重新对上。
 🔧 **`h46-dev` 素材线第一步**：`texture.<sampler>=path` **两段键**已能按名加载真纹理
 （`bridge/PackTextures`：冷路径记绑定、渲染线程开 pass 前上传、失败逐条可见）；
 `noisetex` 补上**内置 64×64 确定性噪声**（OptiFine 公开 API 事实：该采样器由引擎供给 ——
@@ -446,6 +453,11 @@ BSL 的 blue-noise 抖动/胶片颗粒自此有真值）；**三段键**（`text
 | **代价（本轮实测）** | ① 登记表 GAP-008 `h44` 那一行把「8 附件 `[0,3,6,7]`」写成了「BSL **默认**配置」，并据此**推翻了一条本来正确的注释**（`MrtPlan`），错判了整整一轮；② §二十一/二十三 证明它同时**改变了被测量的症状本身**（8 附件档每 3 帧空一次；真默认档 240 帧 0 空帧）⇒ 用那一档推出来的「空帧机制」**全部作废** |
 | **信息一直在，缺的是把它变成判据** | `PackOptionEvidence` / `PixelProbePlan` **每条探针行**都打了 `effective={…}`，转译期也打了 `选项覆盖已改写进源: 命中 3/3 [ADVANCED_MATERIALS=true, …]` ——本轮是靠**读这两行**才发现的。⇒ 修法不是再加一行日志，而是**让「档」成为臂的通过条件之一** |
 | **候选修法（未实现，先登记；T12：不自作主张补产品行为）** | ① 包加载时若 store 里存在**与该包默认值不同**的键 ⇒ 打**一条 WARN 列出键名 + 与默认的差异**（把「我测的是哪一档」变成每次运行都必须读的行）；② 车道具（`tools/vulkan-local/`，注意 `.gitignore:80` 不收它 ⇒ 只能靠文档存形）在起臂**前**检查 store 是否含被测包的键，含且本轮没显式声明 ⇒ **直接判该臂无效并退出**（现在的 `h45_arm.sh:44-51` 只是「警告」，不拦）；③ 给取证用覆盖加**一次性**语义（跑完即失效），从机制上取消「残留」这个概念 —— 这条会改产品行为，需要单独裁决 |
+| **状态（h48t 追加，2026-10-08）** | 🟡 **修法 ① 已落地（单测 + 运行侧各半）**：`PackOptionsSession.residueReport(...)` 在生效链的 store 回放之后做**工作值 vs 基线**差分 ⇒ 有差异出 `WARN STORE_RESIDUE`（**点名每个键 + 给出默认值**），无差异出 `INFO STORE_RESIDUE_NONE`（**计数 0 也要打**，否则「没打这行」与「这行说没有」不可区分）。`store == null` 那条路也照打。单测：`PackOptionsSessionTest` 两条（残留分支逐字含 `ENABLE_FOG=false` 与 `默认 true`；干净分支两种入参都要有 `NONE`）。
+✅ **运行侧已在产品链路里看到这一行**（`h48t`，`mrt.pixelProbe=false` 的纯加载臂，逐字）：
+`composite source diagnostic: INFO: BSL_v10.1.8: 选项 [STORE_RESIDUE_NONE] 包 'BSL_v10.1.8' 的持久化选项与基线完全一致（残留 0 项） ⇒ 本次生效的就是包默认档`，
+同臂契约行 `colorTargets=1 declaredOutputSlots=[0] samplers=5 varyings=9 unwrittenAttachments=[]`
+⇒ 「档」从此是**每次运行都会自报的一行**，不再需要事后 grep `effective={…}`。🔖 **覆盖范围要划清**：本行只管**store 这一路**；配置档 `pack.optionOverrides` 由既有的 `选项覆盖已改写进源: 命中 N/N` 自报 —— **两条通道合起来才完整**，任缺一条都会「以为有闸门其实没有」。修法 ②（车具起臂前判无效）与 ③（一次性覆盖）未做 |
 | **关闭条件** | ①②落地，且一次真实臂的运行日志里出现「store 含 N 个非默认键」这条自报（N=0 时也要打出来，否则「没打」与「没有」不可区分 —— 本项目老坑）|
 | **证据** | `evidence/h48-flicker-and-readback.md` §二十二（含逐字日志与 mtime）、§二十三（换档后空帧归零的对照） |
 

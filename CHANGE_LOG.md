@@ -6,6 +6,59 @@
 ---
 ---
 
+## 2026-10-08（七十）— 🔴 黑白闪屏的自变量查清：不是链、不是仪器，是**store 残留把 BSL 编成了 8 附件档**
+
+> **verdict = 周期 3 的空帧只在「`ADVANCED_MATERIALS=true` ⇒ 8 附件」那一档出现；真默认档两臂各 240 帧 0 空帧**
+> 证据：`evidence/h48-flicker-and-readback.md` §二十一～§二十四
+
+**做了什么**
+
+1. **h48q `readDelay` A/B 定量了仪器贡献**：`delay=1` ⇒ 空帧 **66.7%**（形态 `00N`，间隔 `{1,2}`）；
+   `delay=3` ⇒ **33.3%**（`N0N`，间隔 `{3:79}`）。⇒ §十八那条「回调排空 ≠ GPU 完成」确实每个周期
+   **多造一个零**，但**周期 3 的基体加余量加不掉**。🔖 两臂观测面其实不同
+   （自报：d1 夜+雨、d3 拂晓+晴）⇒ **luma 不许跨臂比**，反过来也证明周期与画面内容无关。
+2. **顺文档矛盾挖出真根因**：登记表一处说「BSL 默认只写 colortex0」、另一处说「8 附件因 `ADVANCED_MATERIALS`
+   默认为真」。核实到底：`DefineProcessor.java:87-88` 只在 `strip().startsWith("#")` 时进指令分支 ⇒
+   `//#define` **复活不了**；生产链路单测 `TerrainProductionOutputCountTest` 断言默认档**只 1 个输出**并跑绿。
+   ⇒ 分歧不在预处理器，在**本地状态**：`config/vkdisp-pack-options.properties` 里残留
+   `BSL_v10.1.8.ADVANCED_MATERIALS=true`，被 `ShaderPackCompiler` 正常改写进源
+   （`选项覆盖已改写进源: 命中 3/3`）。取证脚本传 `pack.optionOverrides=""` 只清**配置档通道**、
+   `capabilityGate=false` 让门控**不干预**，门控按裁决又**不碰 store** ⇒ 残留从 h45 起穿过所有 BSL 臂。
+3. **两臂互证并收窄 GAP-020**：清残留后 `capabilityGate` **开**（h48r）与**关**（h48s）两臂
+   都是 `colorTargets=1 declaredOutputSlots=[0]` + **0 空帧**（h48s luma `min 62.74 / med 143.21`）。
+   ⇒ ① 闪屏与**门控默认值无关** ⇒ **不改** `pack.capabilityGate` 默认（无依据不动产品行为）；
+      ② GAP-009 的「albedo≡0」**绑的是 `ADVANCED_MATERIALS` 那一条 `GetMaterials` 路径**，
+         闭包里 `PARALLAX`/`SSS`/`REFLECTION_*` 在这台后端上不产生黑（此前两件事在登记表里混写）。
+4. **GAP-026 登记 + 修 ①**：`PackOptionsSession.residueReport(...)` 在 store 回放后做**工作值 vs 基线**差分，
+   有差异 ⇒ `WARN STORE_RESIDUE`（点名每键 + 给默认值），无差异 ⇒ `INFO STORE_RESIDUE_NONE`
+   （**计数 0 也要打**；`store==null` 也打）。运行侧已看到该行（h48t 逐字：
+   `选项 [STORE_RESIDUE_NONE] 包 'BSL_v10.1.8' 的持久化选项与基线完全一致（残留 0 项）`）。
+5. **撤回到处标注**：登记表 GAP-008 `h44` 行「BSL 默认 8 附件」**作废**（②③④ 数字改挂「`ADVANCED_MATERIALS=on` 档」名下）；
+   `evidence/h44` §五两行就地标 ⛔；代码/测试注释与断言文案把 `[0,3,6,7]/8` 一律改称**残留档**
+   （`PixelProbePlanTest` 常量 `BSL_DEFAULT` → `RESIDUE_AM`，就是为了不许再把它读成默认）。
+
+**影响的文档**：`docs/13-GAP-REGISTRY.md`（GAP-020 加 h48q/h48r/h48s 三行与「先自报档位」的关闭前提、
+GAP-009 收紧、GAP-008 `h44` 行作废、新增 **GAP-026**）、`evidence/h48-flicker-and-readback.md` §二十一～二十四、
+`evidence/h44-declared-slots-and-lane-aware-verdict.md`、`MrtPlan`/`PixelProbePlan`/`PackTerrainProgram`/
+`TerrainPipelineApi`/`TargetReadback` 注释。
+
+**测试结果**：`./gradlew test -PquickPlay` 全绿（含新增 2 条 GAP-026 断言）；
+运行侧三臂各自报档位（h48r `命中 8/8 …=false`、h48s `CAPABILITY_GATE_OFF`、h48t `STORE_RESIDUE_NONE`），
+契约行与单测值**逐项相同** ⇒ 运行期与单测第一次对上。
+
+**⛔ 仍未完成**：① 「8 附件档为何每 3 帧空一次」机制**未定位**（`ADVANCED_MATERIALS` 是包内合法开关，
+用户开了就该能用 ⇒ GAP-020 **不收口**，候选收窄为 GAP-018 多槽兑现 / 未写槽清屏×双代轮转，
+下一刀 = 残留档下只差 `mrt.attachments 1 vs 8` 的 A/B）；② GAP-026 修法 ②（车具起臂前判无效）与
+③（一次性覆盖，改产品行为需裁决）未做；③ **F2 注入连续第三轮没落地**（`run/h27/screenshots/` 空，
+键盘注入在合成器抢焦点后静默失效；`/gamerule doDaylightCycle false` 同样没执行 ⇒ 「时刻被钉住」
+仍是未证实前提）⇒ 「用户眼前的闪屏是否消失」**尚未由独立通道判定**；④ 实体/水/云/shadow 等
+`gbuffers_*` 仍未进 colortex（GAP-003/015）；⑤ GAP-022 矩阵那一半、GAP-023 分槽、GAP-024 门控链未动。
+
+**是否已提交**：是（本轮两条：`docs+forensics(h48q/r/s)` 与 `feat(h48t/GAP-026)`）。
+本地领先远端，**推送被网络挡住**（`Failed to connect to github.com:443`），提交不丢，待网络恢复补推。
+
+---
+
 ## 2026-10-06（六十九）— 🔴 黑白闪屏定位链：`frameTime` 供值 + GAP-018 双代轮转 + 帧图外重放的坑
 
 > **verdict = 闪屏有两个独立成因，都已处理；BSL 画面从「恒定白屏」变成可辨认的着色世界**
