@@ -46,6 +46,7 @@ import dev.vkdisp.glsl.translate.BuiltinsBlockLayout;
 import dev.vkdisp.pack.PackCompileCache;
 import dev.vkdisp.pack.PackCompositeSource;
 import dev.vkdisp.pack.PackPrecompileScheduler;
+import dev.vkdisp.pipeline.model.GbufferProgramPlan;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -113,28 +114,127 @@ public final class VkDispVirtualPack {
             Identifier.fromNamespaceAndPath(NAMESPACE, FINAL_PATH);
 
     /**
+     * 🔴 <b>GAP-027：gbuffer 程序表</b> —— 「有哪几条包 {@code gbuffers_*} 程序被接进 MRT pass」的
+     * <b>唯一真源</b>。
+     *
+     * <p><b>为什么是一张表而不是十个硬编码点</b>（本轮的收口点）：GAP-003 之前，
+     * 「地形」这一条程序的名字散在<b>路径 / 资源 id / 契约位 / 块布局 / 记忆键 / 取走校验 /
+     * 生成链 / 片元资源服务</b>各处；接第二条程序（水）时若照着复制一遍，
+     * 就得到两套会各自漂移的状态（本项目反复吃过：「造键用 A、校验用 B」「附件按新契约、
+     * 槽位按旧契约」，X42）。现在<b>每一条程序只有一个 {@link GbufferArtifacts} 实例</b>，
+     * 路径与 id 都是程序名的纯函数（{@code pipeline.model.GbufferProgramPlan}），
+     * 记忆键 / 取走校验 / 生成链 / 资源服务全部按名字索引。
+     *
+     * <p>🔖 表<b>顺序</b>有语义：生成顺序 = 冻结顺序 = 自报顺序（{@code terrain} 在前，
+     * 与 GAP-003 的历史日志口径逐字一致）。
+     */
+    static final class GbufferArtifacts {
+
+        /** 包里的程序名（= 表的键，如 {@code gbuffers_terrain} / {@code gbuffers_water}）。 */
+        final String program;
+
+        /** 片元源在包内的路径（由程序名派生）。 */
+        final String fragmentPath;
+
+        /** 顶点适配层源在包内的路径（由程序名派生；<b>逐条程序各一份</b>，绝不复用）。 */
+        final String adapterPath;
+
+        /** 片元的资源 id（{@code assets/vkdisp_pack/<fragmentPath>}）。 */
+        final Identifier fragmentResourceId;
+
+        /** 适配层的资源 id（{@code assets/vkdisp_pack/<adapterPath>}）。 */
+        final Identifier adapterResourceId;
+
+        /** 片元的<b>管线侧</b>着色器 id（FileToIdConverter 分别解析到 .fsh/.vsh）。 */
+        final Identifier fragmentShaderId;
+
+        /** 适配层的管线侧着色器 id。 */
+        final Identifier adapterShaderId;
+
+        /**
+         * 本条程序「生成期该不该跑」的闸门（各条各有自己的配置键）。
+         *
+         * <p>🔴 闸门读的<b>每一个</b>配置项都必须出现在
+         * {@link VkDispVirtualPack#currentTerrainMemoKey()} 里 —— 由
+         * {@code GenerationTimeSwitchInventoryTest} 当场兜住（QD-08 那一族已发生四次）。
+         */
+        final java.util.function.BooleanSupplier generationGate;
+
+        /** 冻结的渲染契约（{@code null} = 本条不接线；volatile：资源线程写、渲染线程读）。 */
+        volatile dev.vkdisp.pipeline.model.PackTerrainProgram contract;
+
+        /** 本条程序片元里 VkDispBuiltins 块的 std140 布局（<b>逐条各解析各的</b>，X39）。 */
+        volatile BuiltinsBlockLayout builtinsLayout = BuiltinsBlockLayout.empty();
+
+        /** 记忆键（{@code null} = 尚未生成过）；键 = 基础键 + 程序名，见 {@link #memoKeyFor}。 */
+        volatile String memoKey;
+
+        /** 提前生成的片元源（{@code openResources} 直接复用，不重编）。 */
+        volatile String sourceMemo;
+
+        /** 与片元源<b>同批</b>生成的适配层源；{@code null} = 不接线（半接线 = 链接失败）。 */
+        volatile String adapterMemo;
+
+        GbufferArtifacts(String program, java.util.function.BooleanSupplier generationGate) {
+            this.program = program;
+            this.generationGate = generationGate;
+            this.fragmentPath = dev.vkdisp.pipeline.model.GbufferProgramPlan.fragmentPath(program);
+            this.adapterPath = dev.vkdisp.pipeline.model.GbufferProgramPlan.adapterPath(program);
+            this.fragmentResourceId = Identifier.fromNamespaceAndPath(NAMESPACE, this.fragmentPath);
+            this.adapterResourceId = Identifier.fromNamespaceAndPath(NAMESPACE, this.adapterPath);
+            this.fragmentShaderId = Identifier.fromNamespaceAndPath(NAMESPACE,
+                    dev.vkdisp.pipeline.model.GbufferProgramPlan.fragmentShaderPath(program));
+            this.adapterShaderId = Identifier.fromNamespaceAndPath(NAMESPACE,
+                    dev.vkdisp.pipeline.model.GbufferProgramPlan.adapterShaderPath(program));
+        }
+
+        /** 本条程序在当前配置下的记忆键（<b>造键与校验同一份算法</b>，X42）。 */
+        String memoKeyFor() {
+            return currentTerrainMemoKey() + "|" + program;
+        }
+
+        /** 是否接线（契约在且输出数 &gt; 0）。 */
+        boolean wired() {
+            dev.vkdisp.pipeline.model.PackTerrainProgram current = contract;
+            return current != null && current.outputCount() > 0;
+        }
+    }
+
+    /** 表（顺序 = 生成 / 冻结 / 自报顺序）。 */
+    private static final java.util.LinkedHashMap<String, GbufferArtifacts> GBUFFER_PROGRAMS =
+            buildGbufferPrograms();
+
+    private static java.util.LinkedHashMap<String, GbufferArtifacts> buildGbufferPrograms() {
+        java.util.LinkedHashMap<String, GbufferArtifacts> table = new java.util.LinkedHashMap<>();
+        // GAP-003：地形（既有那条，闸门 = mrt.packTerrainShader）。
+        table.put(dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM, new GbufferArtifacts(
+                dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM,
+                () -> VkDispConfig.MRT_PACK_TERRAIN_SHADER.get()));
+        // GAP-027：水（默认关，闸门 = mrt.packWater）。
+        table.put(dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM, new GbufferArtifacts(
+                dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM,
+                () -> VkDispConfig.MRT_PACK_WATER_SHADER.get()));
+        return table;
+    }
+
+    /**
      * GAP-003：包内资源（包自己的地形片元，相对 assets/ 的路径）。
      *
      * <p>🔖 <b>与前三者语义不同</b>：composite / deferred / final 是 <b>required 管线</b>，
-     * 源必须永远存在（缺失会砸启动）；地形片元是<b>可选接线</b> ——
-     * 没有就沿用原版 {@code core/terrain}，所以 {@link #terrainProgram()} 允许为 null，
+     * 源必须永远存在（缺失会砸启动）；gbuffer 片元是<b>可选接线</b> ——
+     * 没有就沿用原版 {@code core/terrain}，所以本条程序的产物<b>允许为 null</b>，
      * 且 null 时本资源<b>根本不提供</b>（没有任何管线引用它）。
+     *
+     * <p>🔖 GAP-027 之后它是<b>表里地形那一条的视图</b>（保留常量是为了日志对账与既有引用，
+     * 值由 {@code GbufferProgramPlan.fragmentPath} 派生，不再手写第二遍）。
      */
-    public static final String TERRAIN_PATH = "shaders/gbuffers_terrain.fsh";
+    public static final String TERRAIN_PATH =
+            dev.vkdisp.pipeline.model.GbufferProgramPlan.fragmentPath(
+                    dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM);
 
     /** 全量资源 id：assets/vkdisp_pack/shaders/gbuffers_terrain.fsh。 */
     private static final Identifier TERRAIN_ID =
             Identifier.fromNamespaceAndPath(NAMESPACE, TERRAIN_PATH);
-
-    /**
-     * GAP-003：最近一次 {@code openResources} 生成时选中的包地形片元契约（{@code null} = 不接线）。
-     *
-     * <p>🔖 <b>为什么是契约对象而不是裸字符串</b>：管线注册要用它的输出数、绑定组要用它的
-     * sampler 名、顶点适配层要用它的 varying 签名 —— 三处都从同一个对象读，才不会出现
-     * 「附件数 3、颜色目标 1」那种<b>崩客户端</b>的错配（X42）。
-     * volatile：生成在资源加载线程写、渲染线程读（与 {@link #hasDeferredProgram} 同款）。
-     */
-    private static volatile dev.vkdisp.pipeline.model.PackTerrainProgram terrainProgram;
 
     /**
      * GAP-003：包内资源（按包地形片元 varying 契约**生成**的顶点适配层）。
@@ -143,8 +243,11 @@ public final class VkDispVirtualPack {
      * {@code ADVANCED_MATERIALS} 后要 15 条；写死一份对另一个配置就是「少供」⇒
      * 驱动层在资源加载期抛 {@code ShaderCompileException: missing output at location 14}
      * ⇒ <b>客户端起不来</b>。详见 {@code glsl.translate.PackVertexAdapterGenerator}。
+     * 🔴 并且<b>逐条程序各一份</b>：水的 14 条与地形的 9 条不是同一个签名（GAP-027）。
      */
-    public static final String TERRAIN_ADAPTER_PATH = "shaders/terrain_pack_adapter.vsh";
+    public static final String TERRAIN_ADAPTER_PATH =
+            dev.vkdisp.pipeline.model.GbufferProgramPlan.adapterPath(
+                    dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM);
 
     /** 全量资源 id：assets/vkdisp_pack/shaders/terrain_pack_adapter.vsh。 */
     private static final Identifier TERRAIN_ADAPTER_ID =
@@ -204,22 +307,82 @@ public final class VkDispVirtualPack {
         return POST_BUILTINS_LAYOUTS[slot];
     }
 
-    /** GAP-003：所选包的地形片元契约；{@code null} = 保持原版 core/terrain（不接线）。 */
+    /**
+     * GAP-003：所选包的地形片元契约；{@code null} = 保持原版 core/terrain（不接线）。
+     *
+     * <p>🔖 <b>为什么是契约对象而不是裸字符串</b>：管线注册要用它的输出数、绑定组要用它的
+     * sampler 名、顶点适配层要用它的 varying 签名 —— 三处都从同一个对象读，才不会出现
+     * 「附件数 3、颜色目标 1」那种<b>崩客户端</b>的错配（X42）。
+     * 🔴 GAP-027 之后它是<b>表里地形那一条</b>的视图（{@link #packContract(String)}），
+     * 存储只有一个：{@code GbufferArtifacts.contract}（volatile：资源线程写、渲染线程读）。
+     */
     public static dev.vkdisp.pipeline.model.PackTerrainProgram terrainProgram() {
-        return terrainProgram;
+        return packContract(dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM);
+    }
+
+    /** GAP-027：所选包的水片元契约；{@code null} = 水不接线（TRANSLUCENT 层保持地形/原版）。 */
+    public static dev.vkdisp.pipeline.model.PackTerrainProgram waterProgram() {
+        return packContract(dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM);
     }
 
     /**
-     * GAP-003：地形片元里 VkDispBuiltins 块的 std140 布局（收编集与 composite/deferred **不同**，各解析各的）。
+     * 表里某条程序的契约（{@code null} = 这条不接线）；名字不在表里时<b>显式报错</b>并按不接线处理
+     * （不猜：拼错程序名的后果是「接了个不存在的东西」，本项目已为此立过红灯）。
+     */
+    public static dev.vkdisp.pipeline.model.PackTerrainProgram packContract(String program) {
+        GbufferArtifacts entry = GBUFFER_PROGRAMS.get(program);
+        if (entry == null) {
+            VkDisp.LOGGER.error("vkdisp: [GAP-027] 请求了不在 gbuffer 程序表里的程序 '{}'（表={}）"
+                    + " -> 按**不接线**处理（绝不拿别条程序的契约凑数，X39）", program, GBUFFER_PROGRAMS.keySet());
+            return null;
+        }
+        return entry.contract;
+    }
+
+    /** 表里所有程序名（顺序 = 生成 / 冻结 / 自报顺序）。 */
+    public static java.util.List<String> gbufferProgramNames() {
+        return java.util.List.copyOf(GBUFFER_PROGRAMS.keySet());
+    }
+
+    /** 管线的片元着色器 id（由程序名派生）；名字不在表里返回 {@code null} + ERROR（不猜）。 */
+    public static Identifier packFragmentShaderId(String program) {
+        GbufferArtifacts entry = GBUFFER_PROGRAMS.get(program);
+        if (entry == null) {
+            VkDisp.LOGGER.error("vkdisp: [GAP-027] packFragmentShaderId('{}') 不在程序表里 -> null", program);
+            return null;
+        }
+        return entry.fragmentShaderId;
+    }
+
+    /** 管线的顶点适配层着色器 id（由程序名派生，<b>逐条程序各一份</b>）。 */
+    public static Identifier packAdapterShaderId(String program) {
+        GbufferArtifacts entry = GBUFFER_PROGRAMS.get(program);
+        if (entry == null) {
+            VkDisp.LOGGER.error("vkdisp: [GAP-027] packAdapterShaderId('{}') 不在程序表里 -> null", program);
+            return null;
+        }
+        return entry.adapterShaderId;
+    }
+
+    /**
+     * 某条程序片元里 VkDispBuiltins 块的 std140 布局（<b>逐条各解析各的</b>，X39）。
      *
      * <p>🔖 与前三套布局同一份理由（P4.1.3）：转译终稿 = 驱动编译的真源，Injector 内部的
      * 收编结果不外传 ⇒ 只能从终稿再解析一次。空布局 = 兜底/未接线 ⇒ 绑零填充缓冲。
      */
-    private static volatile BuiltinsBlockLayout terrainBuiltinsLayout = BuiltinsBlockLayout.empty();
+    public static BuiltinsBlockLayout packBuiltinsLayout(String program) {
+        GbufferArtifacts entry = GBUFFER_PROGRAMS.get(program);
+        return entry == null ? BuiltinsBlockLayout.empty() : entry.builtinsLayout;
+    }
 
     /** 地形片元块布局（只读视图；空 = 零填充）。 */
     public static BuiltinsBlockLayout terrainBuiltinsLayout() {
-        return terrainBuiltinsLayout;
+        return packBuiltinsLayout(dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM);
+    }
+
+    /** 表里某条程序当前的产物快照（bridge 侧只读；{@code null} = 程序名不在表里）。 */
+    static GbufferArtifacts gbufferEntry(String program) {
+        return GBUFFER_PROGRAMS.get(program);
     }
 
     /**
@@ -342,7 +505,7 @@ public final class VkDispVirtualPack {
                 GeneratedSources sources = generateSources();
                 return Stream.of(new VirtualPackResources(loc,
                         sources.composite(), sources.deferred(), sources.finalSource(),
-                        sources.terrain(), sources.terrainAdapter(), sources.postSources(),
+                        sources.gbufferFragments(), sources.gbufferAdapters(), sources.postSources(),
                         sources.postVertexSources()));
             }
         };
@@ -356,20 +519,41 @@ public final class VkDispVirtualPack {
     }
 
     /**
-     * 一次生成的四个源（P3.3 deferred / P4.1.4 final / GAP-003 地形片元）。
+     * 一次生成的全部源（P3.3 deferred / P4.1.4 final / GAP-003 地形片元 / GAP-027 逐程序 gbuffer 片元表）。
      *
-     * <p>🔖 {@code terrain} <b>允许为 null</b>，且这不是「失败」而是「按设计不接线」：
-     * 前三个源服务 required 管线（缺失 = 启动失败），地形片元服务可选的派生 MRT 地形管线
-     * （缺失 = 沿用原版 core/terrain，画面照常）。两者混成同一个兜底口径就会让
-     * 「没找到地形片元」看起来像「找到了一个假的地形片元」。
+     * <p>🔖 {@code gbufferFragments} 与 {@code gbufferAdapters} 里的值<b>允许为 null</b>，
+     * 且这不是「失败」而是「按设计不接线」：前三者服务 required 管线（缺失 = 启动失败），
+     * gbuffer 程序服务可选的派生 MRT 管线（缺失 = 沿用原版 core/terrain，画面照常）。
+     * 两者混成同一个兜底口径就会让「没找到水的片元」看起来像「找到了一个假的水片元」。
+     *
+     * <p>🔴 两个表的<b>键</b>都是程序名，且「片元有、适配层没有」这种半接线状态由
+     * {@link #putGbuffer} 一处保证不会出现（半接线 = 驱动层链接失败，GAP-010 同族）。
      */
-    private record GeneratedSources(String composite, String deferred, String finalSource, String terrain,
-            String terrainAdapter, String[] postSources, String[] postVertexSources) {
+    private record GeneratedSources(String composite, String deferred, String finalSource,
+            java.util.Map<String, String> gbufferFragments,
+            java.util.Map<String, String> gbufferAdapters,
+            String[] postSources, String[] postVertexSources) {
 
-        /** 四源形态（地形源为 null = 不接线；post 全兜底）。 */
+        /** 四源形态（一条 gbuffer 程序都不接；post 全兜底）。 */
         GeneratedSources(String composite, String deferred, String finalSource) {
-            this(composite, deferred, finalSource, null, null, fallbackPostSources(),
-                    fallbackPostVertices());
+            this(composite, deferred, finalSource, java.util.Map.of(), java.util.Map.of(),
+                    fallbackPostSources(), fallbackPostVertices());
+        }
+
+        /**
+         * 逐程序落源（<b>同生共死</b>）：片元为 null 时适配层一定也不进表。
+         *
+         * <p>🔖 之所以做成一个方法而不是两个 put：两处分开写，早晚会有一处忘了配平，
+         * 而症状是「片元是包的、顶点还是原版」= 直接链接失败（GAP-010 实测过的形状）。
+         */
+        static void putGbuffer(java.util.Map<String, String> fragments,
+                java.util.Map<String, String> adapters, String program,
+                String fragmentSource, String adapterSource) {
+            if (fragmentSource == null || adapterSource == null) {
+                return;
+            }
+            fragments.put(program, fragmentSource);
+            adapters.put(program, adapterSource);
         }
 
         /** 全兜底的 post 槽源数组（长度 = {@link #POST_SLOT_COUNT}）。 */
@@ -530,14 +714,26 @@ public final class VkDispVirtualPack {
                 terrainSource = generateTerrainSource(inventory, profile, selection, store);
                 terrainAdapter = takeTerrainAdapterMemo();
             }
+            // 🔴 GAP-027：第二条（及以后）gbuffer 程序走**同一条**通用取用/生成链 ——
+            //   这里没有「再复制一遍上面五行」，因为逻辑本来就在 takeSourceMemo /
+            //   generateGbufferSource 这两个逐程序参数化的方法里（地形那两行是既有形状的特例）。
+            java.util.Map<String, String> fragments = new java.util.LinkedHashMap<>();
+            java.util.Map<String, String> adapters = new java.util.LinkedHashMap<>();
+            GeneratedSources.putGbuffer(fragments, adapters,
+                    dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM, terrainSource, terrainAdapter);
+            for (GbufferArtifacts entry : GBUFFER_PROGRAMS.values()) {
+                if (entry.program.equals(dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM)) {
+                    continue; // 上面已按既有形状取过（同一份 memo，不是第二套状态）
+                }
+                takeOrGenerateGbuffer(entry, inventory, profile, selection, store, fragments, adapters);
+            }
             return new GeneratedSources(
-                    result.source(), result.deferredSource(), result.finalSource(), terrainSource,
-                    terrainAdapter, postSources, GeneratedSources.postVerticesFrom(result.chain()));
+                    result.source(), result.deferredSource(), result.finalSource(), fragments,
+                    adapters, postSources, GeneratedSources.postVerticesFrom(result.chain()));
         } catch (Throwable t) {
             hasDeferredProgram = false;
             hasFinalProgram = false;
-            terrainProgram = null;
-            terrainBuiltinsLayout = BuiltinsBlockLayout.empty();
+            resetGbufferPrograms();
             compositeBuiltinsLayout = BuiltinsBlockLayout.empty();
             deferredBuiltinsLayout = BuiltinsBlockLayout.empty();
             finalBuiltinsLayout = BuiltinsBlockLayout.empty();
@@ -587,73 +783,219 @@ public final class VkDispVirtualPack {
         String profile = VkDispConfig.PACK_PROFILE.get();
         String selection = VkDispConfig.SHADER_PACK.get();
         // 🔖🔖 键由 {@link #currentTerrainMemoKey()} 造 —— 它是**单一真源**，
-        //   取走时校验（{@link #takeTerrainSourceMemo}）用的是同一个算法。
+        //   取走时校验（{@link #takeSourceMemo}）用的是同一个算法。
         //   🔖 「造键用 A、校验用 B」会让校验永远通过；本轮首版就是这么写的，
-        //   随后实测到 memo 与配置不符却仍被复用（见 takeTerrainSourceMemo 的注释）。
+        //   随后实测到 memo 与配置不符却仍被复用（见 takeSourceMemo 的注释）。
         // 🔖 键必须含**包选项覆盖串**：凡是「在生成期被读一次」的配置项都得进键
         //   （原键只有 profile|selection ⇒ 改覆盖串时 composite 侧按新配置、地形侧按旧配置，
         //   两条链互相矛盾而日志看起来完全正常 —— 与 h33 死开关同族）。
         String key = currentTerrainMemoKey();
-        if (key.equals(terrainMemoKey)) {
+        if (!VkDispConfig.ENABLED.get()) {
+            // 总开关关掉时不提前编译（默认路径零额外冷路径开销，支柱③ B3/B4）。
+            // 🔖 仍然要把每条程序的 memoKey 落下来：否则「关了总开关 → 开回来」这一步
+            //   会因为键位仍是旧值而错误地命中上一轮的 memo。
+            clearGbufferMemosWhenKeyChanges(key);
             return;
         }
-        terrainMemoKey = key;
-        terrainSourceMemo = null;
-        if (!VkDispConfig.ENABLED.get() || !VkDispConfig.MRT_PACK_TERRAIN_SHADER.get()) {
-            // 总开关或本开关关掉时不提前编译（默认路径零额外冷路径开销，支柱③ B3/B4）。
-            return;
+        PackOptionStore store = null;
+        for (GbufferArtifacts entry : GBUFFER_PROGRAMS.values()) {
+            String programKey = entry.memoKeyFor();
+            if (programKey.equals(entry.memoKey)) {
+                continue; // 同键重复调用直接复用（注册与 openResources 各调一次，只付一次钱）
+            }
+            entry.memoKey = programKey;
+            entry.sourceMemo = null;
+            entry.adapterMemo = null;
+            if (!entry.generationGate.getAsBoolean()) {
+                continue; // 本条自己的开关关着 ⇒ 不编译（水关着时零额外冷路径开销）
+            }
+            if (store == null) {
+                store = PackOptionStore.load(PackOptionStore.pathFor(gameDir()));
+            }
+            long started = System.nanoTime();
+            entry.sourceMemo = generateGbufferSource(entry, inventoryDir(), profile, selection, store);
+            VkDisp.LOGGER.info("vkdisp: [GAP-027] early gbuffer contract ready: program={} in {} ms (key={})",
+                    entry.program, (System.nanoTime() - started) / 1_000_000L, programKey);
         }
-        long started = System.nanoTime();
-        terrainSourceMemo = generateTerrainSource(inventoryDir(), profile, selection,
-                PackOptionStore.load(PackOptionStore.pathFor(gameDir())));
-        VkDisp.LOGGER.info("vkdisp: [GAP-003] early terrain contract ready in {} ms (key={})",
-                (System.nanoTime() - started) / 1_000_000L, key);
     }
 
-    /** 地形契约的记忆键（profile|selection）；null = 尚未生成过。 */
-    private static String terrainMemoKey;
+    /**
+     * 总开关关闭时的键位维护：逐条把「与当前键不符」的 memo 清掉。
+     *
+     * <p>🔖 为什么不能整段 return（首版就是）：{@code enabled=false} 期间不更新键位 ⇒
+     * 用户在关着的状态下切了包，再开回来时键位还是**两轮之前**的那一份 ⇒
+     * {@link #takeSourceMemo} 的核对会被一份过期 memo 通过（症状 = 换了包但画面没换）。
+     */
+    private static void clearGbufferMemosWhenKeyChanges(String key) {
+        for (GbufferArtifacts entry : GBUFFER_PROGRAMS.values()) {
+            String programKey = key + "|" + entry.program;
+            if (!programKey.equals(entry.memoKey)) {
+                entry.memoKey = programKey;
+                entry.sourceMemo = null;
+                entry.adapterMemo = null;
+            }
+        }
+    }
 
-    /** 提前生成时的源文本（openResources 直接复用，不重编）。 */
-    private static String terrainSourceMemo;
-
-    /** 与地形源同批生成的适配层源；{@code null} = 不接线。 */
-    private static String terrainAdapterMemo;
+    /**
+     * 把<b>所有</b> gbuffer 程序的产物一次复位（异常/总开关关闭路径用）。
+     *
+     * <p>🔴 必须逐条清且只在这一处清：残留的契约会让派生管线在下一轮注册里挂上
+     * 一份「上一张包的」片元（画面错且日志全绿，X42）。
+     */
+    static synchronized void resetGbufferPrograms() {
+        for (GbufferArtifacts entry : GBUFFER_PROGRAMS.values()) {
+            entry.contract = null;
+            entry.builtinsLayout = BuiltinsBlockLayout.empty();
+            entry.memoKey = null;
+            entry.sourceMemo = null;
+            entry.adapterMemo = null;
+        }
+    }
 
     /**
      * 取走提前生成的源（{@code openResources} 用；无缓存返回 {@code null}）。
      *
      * <p>取走即清空 + 清键：这样下一次 {@link #ensureTerrainProgram} 看到「键为空」会重算，
      * 不会拿一份**上一轮**的契约去注册新一轮的管线（切包后拿到旧包片元 = 画面错且难归因）。
-     */
-    /**
-     * 按地形片元的 varying 契约生成顶点适配层（失败 → {@code null} = 不接线）。
      *
-     * <p>🔖 与 {@link #takeTerrainSourceMemo()} 同批取走：两者要么都给、要么都不给，
-     * 免得出现「片元是包的、顶点还是原版」的半接线状态（那正是链接失败的直接来源）。
+     * <p>🔴🔶 GAP-010 根因（h16 定位）：取片元时<b>不得</b>顺手清适配层 memo。
+     * 原实现清了它，而调用点是「先取片元、再取适配层」⇒ 适配层永远拿到 null
+     * ⇒ 资源加载期找不到 {@code vkdisp_pack:terrain_pack_adapter} 的 VERTEX 源
+     * ⇒ <b>12 条</b> resourceLoad/ERROR，且只能靠第二次资源重载自愈（用户在 UI 上看得见）。
+     * 🔬 唯一的例外是 A/B 取证开关 {@code mrt.gap010Regression}（默认 false），见下面那处。
      */
-    private static String generateTerrainAdapter(dev.vkdisp.pipeline.model.PackTerrainProgram program) {
+    private static String takeTerrainSourceMemo() {
+        return takeSourceMemo(dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM);
+    }
+
+    /** 取走提前生成的适配层源（无缓存返回 {@code null}）。 */
+    private static String takeTerrainAdapterMemo() {
+        return takeAdapterMemo(dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM);
+    }
+
+    /**
+     * 逐程序取走片元 memo（GAP-003 的地形与 GAP-027 的水<b>共用这一份</b>校验逻辑）。
+     *
+     * <p>🔴🔖 **键不符就丢弃 memo**（GAP-003 那轮实测修的真缺陷，今天逐条程序都要吃到它）：
+     * {@code ensureTerrainProgram} 只在**管线注册期**调一次，而注册事件在资源重载时**不再触发**
+     * （原版 RenderPipelines 只初始化一次）。⇒ 重载后 memo 若还在，它就是**按上一轮配置**
+     * 生成的那一份。实测症状：{@code pack.optionOverrides} 改成 {@code PARALLAX=true} 后，
+     * 日志同时出现「composite 侧覆盖表已变」与「terrain source reused from early contract」
+     * ⇒ 两条链对同一份配置给出**互相矛盾**的答案，而没有任何一行说「memo 是旧的」。
+     * ⇒ 取走时必须核对键；不符就返回 null，让调用点走同步重生成（冷路径，慢但正确）。
+     */
+    private static String takeSourceMemo(String program) {
+        GbufferArtifacts entry = GBUFFER_PROGRAMS.get(program);
+        if (entry == null) {
+            VkDisp.LOGGER.error("vkdisp: [GAP-027] takeSourceMemo('{}') 不在程序表里（表={}）"
+                    + " -> 返回 null（按不接线处理，绝不拿别条程序的 memo 凑数）",
+                    program, GBUFFER_PROGRAMS.keySet());
+            return null;
+        }
+        String currentKey = entry.memoKeyFor();
+        if (entry.sourceMemo != null && !currentKey.equals(entry.memoKey)) {
+            VkDisp.LOGGER.warn("vkdisp: [GAP-027] {} 契约 memo 与当前配置不符（生成于 key={}，"
+                    + "当前 key={}）⇒ **丢弃**并同步重生成。"
+                    + "⚠️ 不丢弃的后果：composite 侧按新配置、本条程序按旧配置，"
+                    + "两条链互相矛盾而日志看起来完全正常", program, entry.memoKey, currentKey);
+            entry.sourceMemo = null;
+            entry.adapterMemo = null;
+        }
+        String memo = entry.sourceMemo;
+        entry.sourceMemo = null;
+        // 🔬 A/B 用：mrt.gap010Regression=true 时**故意**丢掉适配层 memo = 复现 7206d6d 之前的状态
+        //   （适配层元永远为 null ⇒ 资源加载期拿不到 VERTEX 源）。默认关，且开启即 WARN 自报。
+        if (dev.vkdisp.VkDispConfig.MRT_GAP010_REGRESSION.get()) {
+            entry.adapterMemo = null;
+            VkDisp.LOGGER.warn("vkdisp: [GAP-010/AB] mrt.gap010Regression=true —— "
+                    + "**故意**丢弃 {} 的适配层 memo，复现 7206d6d 之前的状态（仅供 A/B 取证）", program);
+        }
+        // 🔗 语义不变：两者仍然「同生共死」（片元为 null 时适配层也不进表，见 putGbuffer），
+        //   而 takeAdapterMemo() 本身就会清自己，不需要这里多一手。
+        entry.memoKey = null;
+        return memo;
+    }
+
+    /** 逐程序取走适配层 memo（自己清自己，GAP-010 的那条纪律就在这里）。 */
+    private static String takeAdapterMemo(String program) {
+        GbufferArtifacts entry = GBUFFER_PROGRAMS.get(program);
+        if (entry == null) {
+            return null;
+        }
+        String memo = entry.adapterMemo;
+        entry.adapterMemo = null;
+        return memo;
+    }
+
+    /**
+     * GAP-027：逐程序「取 memo，取不到就当场同步生成」的通用一步（水的源就走这里）。
+     *
+     * <p>🔖 地形那段既有形状（先 take、null 再 generate、然后重取适配层）与本方法是同一语义；
+     * 之所以不复制第二遍逻辑：生成/校验/落表这三件事只要有一份实现，
+     * 「半接线」（片元换了、适配层没换）就只可能出现在一个地方，而不是两个地方各自漂移。
+     */
+    private static void takeOrGenerateGbuffer(GbufferArtifacts entry, Path inventory, String profile,
+            String selection, PackOptionStore store, java.util.Map<String, String> fragments,
+            java.util.Map<String, String> adapters) {
+        String source = takeSourceMemo(entry.program);
+        String adapter = takeAdapterMemo(entry.program);
+        if (source == null) {
+            if (!entry.generationGate.getAsBoolean() || !VkDispConfig.ENABLED.get()) {
+                return; // 这条本来就不该接（开关关着）⇒ 不编译、不落表
+            }
+            source = generateGbufferSource(entry, inventory, profile, selection, store);
+            adapter = takeAdapterMemo(entry.program);
+        }
+        GeneratedSources.putGbuffer(fragments, adapters, entry.program, source, adapter);
+    }
+
+    /**
+     * 按<b>本条程序</b>的 varying 契约生成顶点适配层（失败 → {@code null} = 不接线）。
+     *
+     * <p>🔖 与片元源同批生成：两者要么都给、要么都不给，
+     * 免得出现「片元是包的、顶点还是原版」的半接线状态（那正是链接失败的直接来源）。
+     *
+     * <p>🔖 三个 {@code mrt.terrain*Probe} 是**地形那条单变量实验**的档位（GAP-008 取证线），
+     * 只喂地形程序；别条程序一律按 {@code false} 生成中性适配层并自报一行。
+     * 理由：那些档位的全部判据（h10~h15）都是在地形上取的，把它们静默加到水上，
+     * 下一臂的「地形变亮/没变」就说不清了。
+     */
+    private static String generateGbufferAdapter(GbufferArtifacts entry,
+            dev.vkdisp.pipeline.model.PackTerrainProgram program) {
+        boolean terrainProgram = dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM.equals(entry.program);
+        boolean fullLight = terrainProgram && VkDispConfig.MRT_TERRAIN_FULL_LIGHT_PROBE.get();
+        boolean parallaxSkip = terrainProgram && VkDispConfig.MRT_TERRAIN_PARALLAX_SKIP_PROBE.get();
+        boolean colorProbe = terrainProgram && VkDispConfig.MRT_TERRAIN_COLOR_PROBE.get();
+        if (!terrainProgram && (VkDispConfig.MRT_TERRAIN_FULL_LIGHT_PROBE.get()
+                || VkDispConfig.MRT_TERRAIN_PARALLAX_SKIP_PROBE.get()
+                || VkDispConfig.MRT_TERRAIN_COLOR_PROBE.get())) {
+            VkDisp.LOGGER.warn("vkdisp: [GAP-027] {} 的适配层**不**应用 mrt.terrain*Probe 档"
+                    + "（那些是地形单变量实验的判据，静默加到别条程序会让两臂不可比）", entry.program);
+        }
         try {
             dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.Result adapter =
                     dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.generate(
-                            program.inputs(), VkDispConfig.MRT_TERRAIN_FULL_LIGHT_PROBE.get(),
-                            VkDispConfig.MRT_TERRAIN_PARALLAX_SKIP_PROBE.get(),
-                            VkDispConfig.MRT_TERRAIN_COLOR_PROBE.get());
+                            program.inputs(), fullLight, parallaxSkip, colorProbe);
             for (TranslateDiagnostic diagnostic : adapter.diagnostics()) {
                 logDiagnostic(diagnostic);
             }
             return adapter.glsl();
         } catch (Throwable t) {
             VkDisp.LOGGER.error("vkdisp: [GAP-003] 顶点适配层生成 FAILED（原文如下）"
-                    + " -> 地形片元不接线（沿用原版 core/terrain）", t);
+                    + " -> 本条 gbuffer 程序不接线（沿用原版 core/terrain）: program="
+                    + entry.program, t);
             return null;
         }
     }
 
     /**
-     * 当前配置下应使用的记忆键（{@code profile|selection|overrides}）。
+     * 当前配置下应使用的<b>基础</b>记忆键（{@code profile|selection|包地形开关|包水开关|overrides}）。
      *
-     * <p>🔖 单一真源：{@link #ensureTerrainProgram} 造键、{@link #takeTerrainSourceMemo} 校验键，
+     * <p>🔖 单一真源：{@link #ensureTerrainProgram} 造键、{@link #takeSourceMemo} 校验键，
      * 两处必须用同一份算法 —— 否则「造键用 A、校验用 B」会让校验永远通过（本轮就踩过）。
+     * 🔴 逐条程序的键 = 本方法 + {@code |<程序名>}（{@link GbufferArtifacts#memoKeyFor}），
+     * 每条程序各有一份 memo，但<b>键的算法只有一个</b>。
      */
     private static String currentTerrainMemoKey() {
         // 🔖🔖 QD-08 结构性守卫（`GenerationTimeSwitchInventoryTest`）枚举出的两项补齐：
@@ -667,65 +1009,49 @@ public final class VkDispVirtualPack {
                 + "|" + VkDispConfig.SHADER_PACK.get()
                 + "|" + VkDispConfig.ENABLED.get()
                 + "|" + VkDispConfig.MRT_PACK_TERRAIN_SHADER.get()
+                // 🔴 GAP-027：`mrt.packWater` 同样在本窗口内被读（水那条的生成闸门），
+                //   ⇒ 它**必须**进键，否则改水开关不会让任何契约重算，而 openResources 侧
+                //   会按新值走（QD-08 第五例）。副作用（有意的、保守的）：改水开关时地形那条
+                //   也会重算一次 —— 过度失效是安全的，不足才是要命的那一类。
+                + "|" + VkDispConfig.MRT_PACK_WATER_SHADER.get()
                 + "|" + dev.vkdisp.pack.PackOptionOverrideSwitch.spec();
-    }
-
-    private static String takeTerrainSourceMemo() {
-        // 🔴🔖 **键不符就丢弃 memo**（本轮实测修的真缺陷）：
-        //   `ensureTerrainProgram` 只在**管线注册期**调一次，而注册事件在资源重载时**不再触发**
-        //   （原版 RenderPipelines 只初始化一次，见本方法上方「为什么必须提前」的说明）。
-        //   ⇒ 重载后 memo 若还在，它就是**按上一轮配置**生成的那一份。
-        //   实测症状：`pack.optionOverrides` 改成 `PARALLAX=true` 后，
-        //   日志同时出现「composite 侧覆盖表已变」与「terrain source reused from early contract」
-        //   ⇒ 两条链对同一份配置给出**互相矛盾**的答案，而没有任何一行说「memo 是旧的」。
-        //   ⇒ 取走时必须核对键；不符就返回 null，让调用点走同步重生成（冷路径，慢但正确）。
-        if (terrainSourceMemo != null && !currentTerrainMemoKey().equals(terrainMemoKey)) {
-            VkDisp.LOGGER.warn("vkdisp: [GAP-003] 地形契约 memo 与当前配置不符（生成于 key={}，"
-                    + "当前 key={}）⇒ **丢弃**并同步重生成。"
-                    + "⚠️ 不丢弃的后果：composite 侧按新配置、地形侧按旧配置，"
-                    + "两条链互相矛盾而日志看起来完全正常",
-                    terrainMemoKey, currentTerrainMemoKey());
-            terrainSourceMemo = null;
-            terrainAdapterMemo = null;
-        }
-        String memo = terrainSourceMemo;
-        terrainSourceMemo = null;
-        // 🔴🔶 GAP-010 根因（h16 定位）：**不要在这里清** 
-
-        //   terrainAdapterMemo 。😶 原实现清了它，而调用点是**先 takeTerrainSourceMemo() 再 takeTerrainAdapterMemo()**
-        //   ⇒ 适配层元永远拿到 null ⇒ 资源加载期找不到 vkdisp_pack:terrain_pack_adapter 的 VERTEX 源
-        //   ⇒ **12 条** resourceLoad/ERROR，且只能靠第二次资源重载自愈（用户在 UI 上看得见）。
-        // 🔬 A/B 用：mrt.gap010Regression=true 时**故意**恢复这行 = 复现 7206d6d 之前的状态
-        //   （适配层元永远为 null ⇒ 资源加载期 terrain_pack_adapter 拿不到 VERTEX 源）。
-        //   🔶 用途：GAP-011「闪烁」到底是不是随这个修复一起消失的 —— h24 的「单变量对照」被它混淆了
-        //   （h21 有闪烁 → 7206d6d → h24 无闪烁，中间代码变过）。默认关，且开启即 WARN 自报。
-        if (dev.vkdisp.VkDispConfig.MRT_GAP010_REGRESSION.get()) {
-            terrainAdapterMemo = null;
-            VkDisp.LOGGER.warn("vkdisp: [GAP-010/AB] mrt.gap010Regression=true —— "
-                    + "**故意**丢弃适配层 memo，复现 7206d6d 之前的状态（仅供 A/B 取证）");
-        }
-        // 🔗 语义不变：两者仍然“同生共死”（片元为 null 时适配层也是 null），
-        //   而 takeTerrainAdapterMemo() 本身就会清自己，不需要这里多一手。
-        terrainMemoKey = null;
-        return memo;
-    }
-
-    /** 取走提前生成的适配层源（无缓存返回 {@code null}）。 */
-    private static String takeTerrainAdapterMemo() {
-        String memo = terrainAdapterMemo;
-        terrainAdapterMemo = null;
-        return memo;
     }
 
     private static String generateTerrainSource(Path inventory, String profile, String selection,
             PackOptionStore store) {
-        terrainProgram = null;
+        // GAP-003 的既有形状：地形就是表里的**一条**，逻辑与水的完全同一份。
+        return generateGbufferSource(GBUFFER_PROGRAMS.get(
+                        dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM),
+                inventory, profile, selection, store);
+    }
+
+    /**
+     * 逐程序生成 gbuffer 片元源并把契约 / 适配层 / 块布局落进<b>该条程序自己的</b>表项。
+     *
+     * <p>🔴 与 GAP-003 的两处**刻意不同**（都在「静默错」那一族里，见每条的理由）：
+     * <ol>
+     *   <li><b>转译段级探针只对地形生效</b>：{@code mrt.terrainDerivativeProbe} /
+     *       {@code mrt.terrain*SampleFactor} 那一组是 GAP-008 的<b>地形</b>单变量实验档位，
+     *       静默把它们套到水上会让「地形那一臂变亮/没变」不再可比。
+     *       ⇒ 非地形程序走中性窗口，并在此自报。</li>
+     *   <li><b>失败只影响本条</b>：抛异常时只复位<b>本条</b>的契约/布局，
+     *       地形那条不受影响（GAP-027 的判据 (c)：包没有水 ⇒ 水不接、地形照常）。</li>
+     * </ol>
+     */
+    private static String generateGbufferSource(GbufferArtifacts entry, Path inventory,
+            String profile, String selection, PackOptionStore store) {
+        if (entry == null) {
+            VkDisp.LOGGER.error("vkdisp: [GAP-027] generateGbufferSource 收到空表项 -> 不接线");
+            return null;
+        }
+        boolean terrainProgram = dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM.equals(entry.program);
+        entry.contract = null;
         // U0001f534 派生导数探针是**转译段级**的总闸（dcdx/dcdy 声明在片元里，顶点侧够不着）。
         //   只在生成地形源这段窗口里打开，并在 finally 复位：
         //   否则合成/延迟/最终四个程序的转译也会被它波及（它们可能也声明 dcdx）。
         boolean probeWas = dev.vkdisp.glsl.translate.DerivativeProbeAdapter.enabled();
         dev.vkdisp.glsl.translate.DerivativeProbeAdapter.setEnabled(
-                VkDispConfig.MRT_TERRAIN_DERIVATIVE_PROBE.get());
+                terrainProgram && VkDispConfig.MRT_TERRAIN_DERIVATIVE_PROBE.get());
         // 🔖 采样因子探针同样是**转译段级**总闸，且同样是「静态开关 + 生成窗口内开、finally 复位」。
         //   不复位的后果与导数探针完全相同：合成/延迟/最终四个程序的转译也会被改写
         //   （它们也可能声明乘法链），症状是「开了诊断之后别的画面也变了」，极难归因。
@@ -737,18 +1063,18 @@ public final class VkDispVirtualPack {
                 dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceCoordOutFinalEnabled();
         boolean lodZeroWas = dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceLodZeroEnabled();
         dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceSample(
-                VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_SAMPLE.get());
+                terrainProgram && VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_SAMPLE.get());
         dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceMultiplier(
-                VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_MULTIPLIER.get());
+                terrainProgram && VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_MULTIPLIER.get());
         dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceCoordOut(
-                VkDispConfig.MRT_TERRAIN_COORD_OUT.get());
+                terrainProgram && VkDispConfig.MRT_TERRAIN_COORD_OUT.get());
         dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceCoordOutFinal(
-                VkDispConfig.MRT_TERRAIN_COORD_OUT_FINAL.get());
+                terrainProgram && VkDispConfig.MRT_TERRAIN_COORD_OUT_FINAL.get());
         dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceLodZero(
-                VkDispConfig.MRT_TERRAIN_LOD_ZERO.get());
+                terrainProgram && VkDispConfig.MRT_TERRAIN_LOD_ZERO.get());
         // 🔖🔖 两侧同时开 = 两边都被换掉 = 什么都没分开。必须在这里就吵出来，
         //   而不是等跑完看画面 —— 那种「两臂都没变」会被读成「两个因子都不是原因」。
-        if (VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_SAMPLE.get()
+        if (terrainProgram && VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_SAMPLE.get()
                 && VkDispConfig.MRT_TERRAIN_SAMPLE_FACTOR_MULTIPLIER.get()) {
             VkDisp.LOGGER.error("vkdisp: [GAP-008] 🔴 采样因子探针的**左右两侧同时开启**"
                     + "（mrt.terrainSampleFactorSample=true 且 mrt.terrainSampleFactorMultiplier=true）"
@@ -756,77 +1082,15 @@ public final class VkDispVirtualPack {
                     + "已按「左侧开、右侧关」继续；要做右侧那一臂请只开右侧。⚠️ 本臂的结论不可用");
         }
         try {
-            dev.vkdisp.pack.PackTerrainSource.Result terrain =
-                    dev.vkdisp.pack.PackTerrainSource.generate(inventory, profile, selection, store);
-            for (TranslateDiagnostic diagnostic : terrain.diagnostics()) {
-                logDiagnostic(diagnostic);
-            }
-            if (!terrain.wired()) {
-                terrainBuiltinsLayout = BuiltinsBlockLayout.empty();
-                VkDisp.LOGGER.warn("vkdisp: [GAP-003] pack terrain fragment NOT wired"
-                        + " -> derived MRT terrain pipeline keeps vanilla core/terrain");
-                return null;
-            }
-            dev.vkdisp.pipeline.model.PackTerrainProgram program = terrain.program();
-            terrainProgram = program;
-            terrainAdapterMemo = generateTerrainAdapter(program);
-            terrainBuiltinsLayout = BuiltinsBlockLayout.parse(program.fragmentSource());
-            logLayout("terrain", terrainBuiltinsLayout);
-            String fragment = program.fragmentSource();
-            // 🔖🔖 采样因子探针在此生效（**不**接进 OfGlslTranslator，理由见该类 KEEP_OUT）：
-            //   作用域天然是「地形片元源」，且不引入任何跨程序 / 跨线程的静态开关。
-            //   🔖 只改**赋值右值**，不碰任何声明 ⇒ outputCount / samplers / varyings 契约不变，
-            //      所以不必重解析 PackTerrainProgram。
-            dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.Result sampleFactor =
-                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.apply(
-                            dev.vkdisp.glsl.translate.ShaderStage.FRAGMENT, fragment);
-            for (TranslateDiagnostic diagnostic : sampleFactor.diagnostics()) {
-                logDiagnostic(diagnostic);
-            }
-            fragment = sampleFactor.text();
-            // 🔴 GAP-016 **产品级修复**（由 h46 G 臂实测坐实，探针档转正）：
-            //   本引擎里包地形片元对图集的隐式导数 LOD 会选到坏 mip ⇒ texture() 恒 0。
-            //   ⇒ 把**albedo 乘法链那一行**的两参采样钉到显式 mip0（锚点与 h45 探针同一条线；
-            //     其余采样行不在此段范围 —— 视差/材质细节若仍受坏 mip 影响，归 GAP-016 修根）。
-            //   守卫：非诊断窗口里本段**必须只动一行**（h45 的 124 处教训 —— 自报命中行）。
-            if (!VkDispConfig.MRT_TERRAIN_LOD_ZERO.get()
-                    && VkDispConfig.MRT_TERRAIN_ATLAS_LOD0.get()
-                    && dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceLodZeroEnabled() == false) {
-                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceLodZero(true);
-                try {
-                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.Result productLod =
-                            dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.apply(
-                                    dev.vkdisp.glsl.translate.ShaderStage.FRAGMENT, fragment);
-                    if (productLod.patchedLodZero() != 1) {
-                        VkDisp.LOGGER.error("vkdisp: [GAP-016] 产品级 LOD0 段命中 {} 处（预期 1）"
-                                        + " —— 只改一行是 h45 立的铁律，请人工核对：{}",
-                                productLod.patchedLodZero(),
-                                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.lastLodHitLines());
-                    }
-                    fragment = productLod.text();
-                } finally {
-                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceLodZero(false);
-                }
-            }
-            VkDisp.LOGGER.info(
-                    "vkdisp: [GAP-003] pack terrain fragment ready: program={} outputs={} samplers={}"
-                            + " varyings={} bytes={} sampleFactorProbe[sample={} multiplier={}"
-                            + " coordOut={} coordOutFinal={} lodZero={} hits={}]",
-                    program.qualifiedName(), program.outputCount(),
-                    program.fragmentSamplers().size(), program.inputs().size(),
-                    fragment.getBytes(StandardCharsets.UTF_8).length,
-                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceSampleEnabled(),
-                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceMultiplierEnabled(),
-                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceCoordOutEnabled(),
-                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceCoordOutFinalEnabled(),
-                    dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceLodZeroEnabled(),
-                    sampleFactor.patchedAny());
-            return fragment;
+            return realizeGbufferProgram(entry, inventory, profile, selection, store);
         } catch (Throwable t) {
-            terrainProgram = null;
-            terrainBuiltinsLayout = BuiltinsBlockLayout.empty();
-            VkDisp.LOGGER.error("vkdisp: [GAP-003] pack terrain fragment selection FAILED (原文如下)"
-                    + " -> derived MRT terrain pipeline keeps vanilla core/terrain", t);
+            // 🔴 只复位**本条**：包没有水 / 水的契约解析不了，不该把地形那条一起打成不接线
+            //   （X9/X11：keep vanilla behavior AND log why；株连是另一种静默错）。
+            entry.contract = null;
+            entry.builtinsLayout = BuiltinsBlockLayout.empty();
+            VkDisp.LOGGER.error("vkdisp: [GAP-027] pack gbuffer fragment selection FAILED (原文如下)"
+                    + " -> 本条程序不接线，派生 MRT 管线对该层保持原版 core/terrain: program="
+                    + entry.program, t);
             return null;
         } finally {
             // U0001f534 必须在 finally 复位：探针是全局静态闸，漏复位会让后续
@@ -839,6 +1103,91 @@ public final class VkDispVirtualPack {
             dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceCoordOutFinal(coordOutFinalWas);
             dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceLodZero(lodZeroWas);
         }
+    }
+
+    /**
+     * 真正走「选包 → 编译 → 契约解析 → 适配层生成 → 探针改写」那一段（逐程序同一份实现）。
+     *
+     * <p>🔖 从 {@link #generateGbufferSource} 里拆出来只为一件事：探针窗口（开 / 复位）与
+     * 契约落表是两层不同的责任，混在一个方法里就会长出第二个 100+ 行的编排体
+     * （QD-04 棘轮的口径：拆方法，不抬基线）。
+     *
+     * @return 该片元的终稿（进虚拟包资源）；{@code null} = 本条不接线
+     */
+    private static String realizeGbufferProgram(GbufferArtifacts entry, Path inventory,
+            String profile, String selection, PackOptionStore store) {
+        boolean terrainProgram = dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM.equals(entry.program);
+        dev.vkdisp.pack.PackTerrainSource.Result terrain = dev.vkdisp.pack.PackTerrainSource.generate(
+                inventory, profile, selection, store, entry.program);
+        for (TranslateDiagnostic diagnostic : terrain.diagnostics()) {
+            logDiagnostic(diagnostic);
+        }
+        if (!terrain.wired()) {
+            entry.builtinsLayout = BuiltinsBlockLayout.empty();
+            // 🔴 一条「不接线」的自报，**原因**由 GbufferProgramPlan 统一口径（永不静默）。
+            VkDisp.LOGGER.warn("vkdisp: [GAP-027] {}", GbufferProgramPlan.notWiredReport(entry.program,
+                    GbufferProgramPlan.Skip.ABSENT,
+                    dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM));
+            return null;
+        }
+        dev.vkdisp.pipeline.model.PackTerrainProgram program = terrain.program();
+        entry.contract = program;
+        entry.adapterMemo = generateGbufferAdapter(entry, program);
+        entry.builtinsLayout = BuiltinsBlockLayout.parse(program.fragmentSource());
+        logLayout(entry.program, entry.builtinsLayout);
+        String fragment = program.fragmentSource();
+        // 🔖🔖 采样因子探针在此生效（**不**接进 OfGlslTranslator，理由见该类 KEEP_OUT）：
+        //   作用域天然是「本条程序的片元源」，且不引入任何跨程序 / 跨线程的静态开关。
+        //   🔖 只改**赋值右值**，不碰任何声明 ⇒ outputCount / samplers / varyings 契约不变，
+        //      所以不必重解析 PackTerrainProgram。非地形程序走的是中性窗口（上面已置 false），
+        //      apply 在里面就是恒等变换 —— 不必再复制一份代码。
+        dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.Result sampleFactor =
+                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.apply(
+                        dev.vkdisp.glsl.translate.ShaderStage.FRAGMENT, fragment);
+        for (TranslateDiagnostic diagnostic : sampleFactor.diagnostics()) {
+            logDiagnostic(diagnostic);
+        }
+        fragment = sampleFactor.text();
+        // 🔴 GAP-016 **产品级修复**（由 h46 G 臂实测坐实，探针档转正）：
+        //   本引擎里包地形片元对图集的隐式导数 LOD 会选到坏 mip ⇒ texture() 恒 0。
+        //   ⇒ 把**albedo 乘法链那一行**的两参采样钉到显式 mip0（锚点与 h45 探针同一条线；
+        //     其余采样行不在此段范围 —— 视差/材质细节若仍受坏 mip 影响，归 GAP-016 修根）。
+        //   守卫：非诊断窗口里本段**必须只动一行**（h45 的 124 处教训 —— 自报命中行）。
+        //   🔖 GAP-027：本段的锚点是**地形**那条的 albedo 行（h45/h46 的判据都取自那里），
+        //      水是否需要同一段由 GAP-016 自己在程序的臂里判，不在此顺手套用（X39）。
+        if (terrainProgram && !VkDispConfig.MRT_TERRAIN_LOD_ZERO.get()
+                && VkDispConfig.MRT_TERRAIN_ATLAS_LOD0.get()
+                && dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceLodZeroEnabled() == false) {
+            dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceLodZero(true);
+            try {
+                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.Result productLod =
+                        dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.apply(
+                                dev.vkdisp.glsl.translate.ShaderStage.FRAGMENT, fragment);
+                if (productLod.patchedLodZero() != 1) {
+                    VkDisp.LOGGER.error("vkdisp: [GAP-016] 产品级 LOD0 段命中 {} 处（预期 1）"
+                                    + " —— 只改一行是 h45 立的铁律，请人工核对：{}",
+                            productLod.patchedLodZero(),
+                            dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.lastLodHitLines());
+                }
+                fragment = productLod.text();
+            } finally {
+                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceLodZero(false);
+            }
+        }
+        VkDisp.LOGGER.info(
+                "vkdisp: [GAP-027] pack gbuffer fragment ready: program={} outputs={} declaredSlots={}"
+                        + " samplers={} varyings={} bytes={} sampleFactorProbe[sample={} multiplier={}"
+                        + " coordOut={} coordOutFinal={} lodZero={} hits={}]",
+                program.qualifiedName(), program.outputCount(), program.declaredOutputSlots(),
+                program.fragmentSamplers().size(), program.inputs().size(),
+                fragment.getBytes(StandardCharsets.UTF_8).length,
+                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceSampleEnabled(),
+                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceMultiplierEnabled(),
+                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceCoordOutEnabled(),
+                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceCoordOutFinalEnabled(),
+                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceLodZeroEnabled(),
+                sampleFactor.patchedAny());
+        return fragment;
     }
 
     /**
@@ -942,11 +1291,18 @@ public final class VkDispVirtualPack {
         private final byte[] compositeBytes;
         private final byte[] deferredBytes;
         private final byte[] finalBytes;
-        /** GAP-003 地形片元字节；{@code null} = 不接线（此时本资源**不存在**，见 getResource）。 */
-        private final byte[] terrainBytes;
+        /**
+         * 🔴 GAP-027：逐条 gbuffer 程序的片元字节（键 = 程序名）。
+         *
+         * <p>🔖 「这条程序不接线」= 表里<b>根本没有这一项</b>（于是资源查询返回 null =
+         * 资源不存在），而不是返回一段兜底文本：此刻没有任何管线引用它，
+         * 万一后来人引用了却拿到兜底，症状会变成「用的是内建 passthrough 而不是原版地形」
+         * —— 比「资源缺失」更难归因。
+         */
+        private final java.util.Map<Identifier, byte[]> gbufferFragmentBytes;
 
-        /** GAP-003 顶点适配层字节；与 {@link #terrainBytes} 同生共死（半接线 = 链接失败）。 */
-        private final byte[] terrainAdapterBytes;
+        /** 逐条程序的顶点适配层字节（与该片元<b>同生共死</b>，半接线 = 链接失败）。 */
+        private final java.util.Map<Identifier, byte[]> gbufferAdapterBytes;
 
         /** 🔴 后处理 16 槽片元字节（每槽恒非 null —— required 管线的兜底语义同 composite）。 */
         private final byte[][] postBytes;
@@ -955,34 +1311,76 @@ public final class VkDispVirtualPack {
 
         VirtualPackResources(PackLocationInfo location, String compositeSource,
                 String deferredSource, String finalSource) {
-            this(location, compositeSource, deferredSource, finalSource, null, null);
+            this(location, compositeSource, deferredSource, finalSource,
+                    java.util.Map.of(), java.util.Map.of(),
+                    GeneratedSources.fallbackPostSources(), GeneratedSources.fallbackPostVertices());
         }
 
         VirtualPackResources(PackLocationInfo location, String compositeSource,
                 String deferredSource, String finalSource, String terrainSource,
                 String terrainAdapterSource) {
-            this(location, compositeSource, deferredSource, finalSource, terrainSource,
-                    terrainAdapterSource, GeneratedSources.fallbackPostSources(),
-                    GeneratedSources.fallbackPostVertices());
+            this(location, compositeSource, deferredSource, finalSource,
+                    solo(dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM, terrainSource),
+                    solo(dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM, terrainAdapterSource),
+                    GeneratedSources.fallbackPostSources(), GeneratedSources.fallbackPostVertices());
         }
 
-        VirtualPackResources(PackLocationInfo location, String compositeSource,
-                String deferredSource, String finalSource, String terrainSource,
-                String terrainAdapterSource, String[] postSources) {
-            this(location, compositeSource, deferredSource, finalSource, terrainSource,
-                    terrainAdapterSource, postSources, GeneratedSources.fallbackPostVertices());
+        /** 单条程序的源表（{@code null} 值 = 这一条不接线 ⇒ 表里不留项）。 */
+        private static java.util.Map<String, String> solo(String program, String source) {
+            return source == null ? java.util.Map.of() : java.util.Map.of(program, source);
         }
 
+        /** 资源 id 在包内的路径（{@code listResources} 的前缀匹配用它；就是构造时的同一条路径）。 */
+        private static String pathOf(Identifier id) {
+            return id.getPath();
+        }
+
+        /**
+         * 「程序名 → 源文本」翻成「资源 id → 字节」（id 由程序名派生，与管线侧同一份算法）。
+         *
+         * @param fragment {@code true} = 片元（.fsh），{@code false} = 顶点适配层（.vsh）
+         */
+        private static java.util.Map<Identifier, byte[]> toResourceBytes(
+                java.util.Map<String, String> sources, boolean fragment) {
+            if (sources == null || sources.isEmpty()) {
+                return java.util.Map.of();
+            }
+            java.util.Map<Identifier, byte[]> out = new java.util.LinkedHashMap<>();
+            for (java.util.Map.Entry<String, String> entry : sources.entrySet()) {
+                if (entry.getValue() == null) {
+                    continue;
+                }
+                GbufferArtifacts artifacts = GBUFFER_PROGRAMS.get(entry.getKey());
+                if (artifacts == null) {
+                    VkDisp.LOGGER.error("vkdisp: [GAP-027] 生成了不在程序表里的 gbuffer 源 '{}' -> **丢弃**"
+                            + "（没有任何管线会引用它；留着只会让资源侧多一份没人要的文件）", entry.getKey());
+                    continue;
+                }
+                Identifier id = fragment ? artifacts.fragmentResourceId : artifacts.adapterResourceId;
+                out.put(id, entry.getValue().getBytes(StandardCharsets.UTF_8));
+            }
+            return java.util.Map.copyOf(out);
+        }
+
+        /**
+         * 主构造器：逐程序表（键 = 程序名）+ 后处理 16 槽。
+         *
+         * <p>🔖 「程序名 → 源文本」在这里一次性翻成「资源 id → 字节」，id 由程序名派生
+         * （{@link GbufferArtifacts}），与管线侧是<b>同一份</b>算法 ——
+         * 资源侧再算一遍路径就是第二套状态，而两套路径算法漂移的后果是
+         * 「包提供了但管线找不到」= 资源加载期缺 VERTEX/FRAGMENT 源（GAP-010 同族）。
+         */
         VirtualPackResources(PackLocationInfo location, String compositeSource,
-                String deferredSource, String finalSource, String terrainSource,
-                String terrainAdapterSource, String[] postSources, String[] postVertexSources) {
+                String deferredSource, String finalSource,
+                java.util.Map<String, String> gbufferFragments,
+                java.util.Map<String, String> gbufferAdapters,
+                String[] postSources, String[] postVertexSources) {
             this.location = location;
             this.compositeBytes = compositeSource.getBytes(StandardCharsets.UTF_8);
             this.deferredBytes = deferredSource.getBytes(StandardCharsets.UTF_8);
             this.finalBytes = finalSource.getBytes(StandardCharsets.UTF_8);
-            this.terrainBytes = terrainSource == null ? null : terrainSource.getBytes(StandardCharsets.UTF_8);
-            this.terrainAdapterBytes = terrainAdapterSource == null ? null
-                    : terrainAdapterSource.getBytes(StandardCharsets.UTF_8);
+            this.gbufferFragmentBytes = toResourceBytes(gbufferFragments, true);
+            this.gbufferAdapterBytes = toResourceBytes(gbufferAdapters, false);
             this.postBytes = new byte[POST_SLOT_COUNT][];
             this.postVertexBytes = new byte[POST_SLOT_COUNT][];
             String fallbackVsh = GeneratedSources.fallbackPostVertices()[0];
@@ -1014,15 +1412,18 @@ public final class VkDispVirtualPack {
             if (FINAL_ID.equals(id)) {
                 return () -> new ByteArrayInputStream(finalBytes);
             }
-            // 🔖 地形片元「不接线」时**返回 null**（= 资源不存在），而不是返回兜底文本：
-            //   此刻没有任何管线引用 vkdisp_pack:gbuffers_terrain，注册路径不会去取它；
+            // 🔖 gbuffer 片元「不接线」的那一条**返回 null**（= 资源不存在），而不是返回兜底文本：
+            //   此刻没有任何管线引用 vkdisp_pack:<program>，注册路径不会去取它；
             //   万一有人后来引用了却拿到兜底，症状会变成「用的是内建 passthrough 而不是原版地形」
             //   —— 比「资源缺失」更难归因。
-            if (TERRAIN_ID.equals(id) && terrainBytes != null) {
-                return () -> new ByteArrayInputStream(terrainBytes);
+            //   🔴 GAP-027：查表而不是逐条 if —— 表里<b>只有本轮真的接上的</b>那几条。
+            byte[] gbufferFragment = gbufferFragmentBytes.get(id);
+            if (gbufferFragment != null) {
+                return () -> new ByteArrayInputStream(gbufferFragment);
             }
-            if (TERRAIN_ADAPTER_ID.equals(id) && terrainAdapterBytes != null) {
-                return () -> new ByteArrayInputStream(terrainAdapterBytes);
+            byte[] gbufferAdapter = gbufferAdapterBytes.get(id);
+            if (gbufferAdapter != null) {
+                return () -> new ByteArrayInputStream(gbufferAdapter);
             }
             // 🔴 后处理 16 槽（每槽恒在 —— 槽位管线是 required，兜底 = passthrough）。
             for (int i = 0; i < POST_SLOT_COUNT; i++) {
@@ -1060,16 +1461,25 @@ public final class VkDispVirtualPack {
                     || FINAL_PATH.startsWith(normalized + "/")) {
                 output.accept(FINAL_ID, () -> new ByteArrayInputStream(finalBytes));
             }
-            if (terrainBytes != null && (normalized.isEmpty()
-                    || TERRAIN_PATH.equals(normalized)
-                    || TERRAIN_PATH.startsWith(normalized + "/"))) {
-                output.accept(TERRAIN_ID, () -> new ByteArrayInputStream(terrainBytes));
+            // 🔴 GAP-027：逐条 gbuffer 程序的资源（表里有的才列出来 = 「不接线的那条根本不提供」）。
+            //   id → 路径由程序表反查，保证与 getResource 用的是<b>同一份</b> id 算法（X42）。
+            for (java.util.Map.Entry<Identifier, byte[]> entry : gbufferFragmentBytes.entrySet()) {
+                String resourcePath = pathOf(entry.getKey());
+                if (normalized.isEmpty()
+                        || resourcePath.equals(normalized)
+                        || resourcePath.startsWith(normalized + "/")) {
+                    final byte[] bytes = entry.getValue();
+                    output.accept(entry.getKey(), () -> new ByteArrayInputStream(bytes));
+                }
             }
-            if (terrainAdapterBytes != null && (normalized.isEmpty()
-                    || TERRAIN_ADAPTER_PATH.equals(normalized)
-                    || TERRAIN_ADAPTER_PATH.startsWith(normalized + "/"))) {
-                output.accept(TERRAIN_ADAPTER_ID,
-                        () -> new ByteArrayInputStream(terrainAdapterBytes));
+            for (java.util.Map.Entry<Identifier, byte[]> entry : gbufferAdapterBytes.entrySet()) {
+                String resourcePath = pathOf(entry.getKey());
+                if (normalized.isEmpty()
+                        || resourcePath.equals(normalized)
+                        || resourcePath.startsWith(normalized + "/")) {
+                    final byte[] bytes = entry.getValue();
+                    output.accept(entry.getKey(), () -> new ByteArrayInputStream(bytes));
+                }
             }
             for (int i = 0; i < POST_SLOT_COUNT; i++) {
                 String postPath = postPath(i);

@@ -226,6 +226,42 @@ public final class VkDispConfig {
             .define("mrt.packTerrainShader", false);
 
     /**
+     * 🔴 <b>GAP-027：把包自己的 {@code gbuffers_water} 接进 MRT gbuffer pass</b> —— 默认<b>关闭</b>。
+     *
+     * <p><b>它做什么</b>：与 {@link #MRT_PACK_TERRAIN_SHADER} 同一条链（选包 → 能力门控 →
+     * 选项覆盖 → 编译 → DRAWBUFFERS 兑现），只是程序名换成 {@code gbuffers_water}；
+     * 接上之后 {@code TRANSLUCENT} 层改用<b>水的</b>片元 + <b>水的</b>顶点适配层 +
+     * <b>水的</b>绑定组布局（实测 BSL v10.1.8 默认档：2 个输出、8 个自由 sampler、14 条 varying，
+     * 而地形是 1 个输出、5 个 sampler、9 条 varying ⇒ 三样都<b>不能</b>套地形的清单，X39）。
+     * 我方 gbuffer pass 因此在同一个 render pass 内、OPAQUE 组之后<b>再画一次 TRANSLUCENT 组</b>
+     * （见 {@code bridge.MrtTerrainPass}；<b>没有</b>新建 FramePass，顺序由 pass 体内的调用序决定）。
+     *
+     * <p><b>为什么默认关</b>：① 它改变用户可见画面（水进 gbuffer ⇒ 后处理链看到的水深/法线变了）；
+     * ② 附件数会从「按地形契约定」变成<b>按两条程序的最大值定</b>
+     * （{@code MrtPlan.freezePackPrograms}），而附件数与管线颜色目标数不匹配会
+     * 让 {@code FrontendRenderPass#setPipeline} 直接抛 ⇒ 崩客户端；
+     * ③ 按支柱①/②的裁决，任何「换包语义 + 动附件形状」的接线都要由用户显式开启
+     * （与 {@code mrt.packTerrainShader}、{@code pack.capabilityGate} 同一口径）。
+     *
+     * <p>🔖 <b>关掉时行为与今天逐字节相同</b>：只接地形一条，冻结契约只按地形的输出数算，
+     * pass 只画 OPAQUE 组。
+     *
+     * <p><b>包里没有 {@code gbuffers_water} 怎么办</b>：不接线 + <b>一行自报</b>
+     * （{@code [GAP-027] gbuffers_water not wired because absent …}），
+     * 地形那条不受影响、不抛、不静默（X9 / X11 / T11）。
+     *
+     * <p>🔴 <b>生效时机 = 生成期读一次</b> ⇒ 它<b>必须</b>同时进
+     * {@code VkDispVirtualPack#currentTerrainMemoKey} 与 {@code VkDispConfigHotReload} 的核心快照
+     * （QD-08 那一族已由 {@code GenerationTimeSwitchInventoryTest} 当场变红兜住）。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_PACK_WATER_SHADER = BUILDER
+            .comment("GAP-027：把包的 gbuffers_water 接进 MRT gbuffer pass（TRANSLUCENT 层改用"
+                    + "水的片元/适配层/绑定组，并在同一 pass 里多画一次半透明组）。"
+                    + "需配合 mrt.terrain=true；默认关 = 水沿用原画法、附件数只按地形契约定。"
+                    + "包里没有 gbuffers_water 时会打一行 not wired because absent 并只影响水。")
+            .define("mrt.packWater", false);
+
+    /**
      * GAP-003/A：包地形片元的 {@code shadowtex0}/{@code shadowtex1}/{@code shadowcolor0}
      * 绑到**专用 1×1 桩纹理**，而不是本 MRT pass 自己的深度 / colortex0 附件。
      *

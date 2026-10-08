@@ -30,10 +30,13 @@ import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
 import com.mojang.renderpearl.api.pipeline.BlendFunction;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.CompareOp;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.pipeline.UniformType;
 import dev.vkdisp.VkDisp;
 import dev.vkdisp.VkDispConfig;
+import dev.vkdisp.pipeline.model.GbufferProgramPlan;
 import dev.vkdisp.pipeline.model.MrtPlan;
 import dev.vkdisp.pipeline.model.PackTerrainProgram;
 import dev.vkdisp.pipeline.model.TerrainDerivedPlan;
@@ -97,12 +100,17 @@ public final class TerrainPipelineApi {
     private static MappableRingBuffer paramsRing;
 
     /**
-     * GAP-003：包地形片元 {@code VkDispBuiltins} 块的环（懒建；每帧写 —— 块终于有真消费者了）。
+     * GAP-003 / GAP-027：<b>逐条</b>包 gbuffer 程序各自的 {@code VkDispBuiltins} 块环
+     * （懒建；每帧写 —— 块终于有真消费者了）。
      *
      * <p>🔖 与 {@link #paramsRing} 分开的原因：块布局不同（地形片的收编集与 composite 各不相同）
      * ⇒ 字节数不同、成员不同；共用一个环要么装不下，要么写错成员。
+     * 🔴 程序<b>之间</b>同理：水的收编集与地形不是一套（X39），所以键 = 程序名，
+     * 每条各一条环。用 {@code ConcurrentHashMap} 是因为建环可能发生在资源线程之外的
+     * 渲染线程，而注册侧读它 —— 但真正的纪律是「只在渲染线程写内容」（{@code map/close}）。
      */
-    private static MappableRingBuffer terrainBuiltinsRing;
+    private static final java.util.concurrent.ConcurrentHashMap<String, MappableRingBuffer>
+            BUILTINS_RINGS = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** 地形块环的字节下限（与 FrameApi 的 BUILTINS_MIN_BYTES 同口径：std140 对齐后仍够写）。 */
     private static final int TERRAIN_BUILTINS_MIN_BYTES = 256;
@@ -190,58 +198,24 @@ public final class TerrainPipelineApi {
         // 🔖🔖 两个数**必须同一次调用一起冻结**（MrtPlan.FrozenPackContract）：
         //   附件数与「哪些槽被写」若走两条独立通道，就可能出现「附件按新契约、被写的槽按旧契约」，
         //   两者互相矛盾而日志完全正常。
-        PackTerrainProgram packTerrain = packTerrainForMrt();
-        MrtPlan.freezePackProgram(
-                packTerrain == null ? 0 : packTerrain.outputCount(),
-                packTerrain == null ? java.util.List.of() : packTerrain.declaredOutputSlots());
-        if (packTerrain != null) {
-            // 🔖 证据行必须**同时**打出「附件数」与「哪些槽被写」——
-            //   只打 colorTargets=8 会让人以为 8 个附件都被写了（实测<b>残留档</b>是 [0,3,6,7]，
-            //   附件 1/2/4/5 存在但无片元输出；🔖 真默认档只写槽 0 —— 那 8 来自 store 里
-            //   残留的 ADVANCED_MATERIALS=true，见 MrtPlan 的 h45 更正与 evidence/h48 §二十二）。
-            VkDisp.LOGGER.info(
-                    "vkdisp: [GAP-003] MRT terrain pipelines will use pack fragment: program={}"
-                            + " colorTargets={} declaredOutputSlots={} samplers={} varyings={}"
-                            + " unwrittenAttachments={}",
-                    packTerrain.qualifiedName(), MrtPlan.slotCount(),
-                    packTerrain.declaredOutputSlots(),
-                    packTerrain.fragmentSamplers().size(), packTerrain.inputs().size(),
-                    unwrittenAttachments(packTerrain, MrtPlan.slotCount()));
-        }
+        // 🔴 GAP-027：现在<b>两条</b>（以后可能更多）程序一起冻进<b>同一次</b> freezePackPrograms 调用，
+        //   附件数 = 各条的 max、被写的槽 = 各条的并集 ⇒ 一个 pass 只有一套附件数，
+        //   必须容纳写得最多的那一条（BSL 默认档：地形 1 条、水无条件 2 条 ⇒ 附件数 2）。
+        GbufferProgramPlan.Entry terrain = new GbufferProgramPlan.Entry(
+                dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM, packTerrainForMrt());
+        GbufferProgramPlan.Entry water = new GbufferProgramPlan.Entry(
+                dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM, packWaterForMrt(terrain));
+        java.util.List<GbufferProgramPlan.Entry> wiring =
+                GbufferProgramPlan.entriesOf(terrain, water);
+        MrtPlan.freezePackPrograms(GbufferProgramPlan.packPrograms(wiring));
+        // 🔴 GAP-027 强制自报（一行说清「接了哪几条、各几个输出、附件数取到几」）。
+        VkDisp.LOGGER.info("vkdisp: [GAP-027] {}",
+                GbufferProgramPlan.wiredReport(wiring, MrtPlan.slotCount()));
+        reportPerProgram(terrain, water);
         for (TerrainDerivedPlan.Spec spec : TerrainDerivedPlan.all()) {
             String mrtKey = key(spec.layer(), spec.multiDraw());
             try {
-                RenderPipeline.Builder builder = spec.multiDraw()
-                        ? RenderPipeline.builder(RenderPipelines.MULTIDRAW_TERRAIN_SNIPPET)
-                        : RenderPipeline.builder(RenderPipelines.TERRAIN_SNIPPET);
-                builder.withLocation(Identifier.fromNamespaceAndPath(
-                                TerrainDerivedPlan.NAMESPACE,
-                                spec.location().substring((TerrainDerivedPlan.NAMESPACE + ":").length()) + "_mrt"))
-                        .withBindGroupLayout(BindGroupLayout.builder()
-                                .withUniform(TERRAIN_PARAMS_UNIFORM, UniformType.UNIFORM_BUFFER)
-                                .build())
-                        // 🔖 与 MrtTerrainPass 建的多附件 pass 附件数**必须相等**（Vulkan 要求）。
-                        // 两侧都取 MrtPlan.slotCount() —— 单点真源，避免「一处改了一处没改」。
-                        .withColorTargetStates(0, MrtPlan.slotCount() - 1, () -> ColorTargetState.DEFAULT);
-                if (packTerrain != null) {
-                    // 🔖 GAP-003：换成「顶点适配层 + 包自己的片元」。
-                    //   顶点侧不能直接用包的 vsh —— 它要 7 个顶点属性（含 Normal / mc_Entity /
-                    //   mc_midTexCoord），而原版地形顶点缓冲 DefaultVertexFormat.BLOCK 只有 4 个；
-                    //   改网格化属另一层工程。适配层按原版格式取数、逐位置对齐产出包的 9 条 varying。
-                    builder.withVertexShader(TERRAIN_PACK_ADAPTER_ID)
-                            .withFragmentShader(PACK_TERRAIN_FRAGMENT_ID)
-                            // 布局必须**逐条**登记包片元自由声明的 sampler：STRICT_VALIDATION 下
-                            // draw() 按布局校验，SPIR-V 反射出的每个名字查不到即抛（实测原文：
-                            // Unable to find shader defined uniform）。反向（布局多于 SPIR-V）无害。
-                            .withBindGroupLayout(packTerrainBindGroupLayout(packTerrain));
-                }
-                if (spec.hasAlphaCutout()) {
-                    builder.withShaderDefine("ALPHA_CUTOUT", spec.alphaCutout());
-                }
-                builder.withColorTargetState(spec.translucentBlend()
-                        ? new ColorTargetState(BlendFunction.TRANSLUCENT)
-                        : ColorTargetState.DEFAULT);
-                RenderPipeline pipeline = builder.build();
+                RenderPipeline pipeline = buildMrtPipeline(spec, terrain, water);
                 event.registerPipeline(pipeline);
                 // 纳入 registered==compiled 口径：MRT 变体编译不过必须显式暴露（否则地形会静默退回）。
                 PipelineApi.recordTerrainDerived(pipeline);
@@ -255,6 +229,113 @@ public final class TerrainPipelineApi {
         }
         VkDisp.LOGGER.info("vkdisp: [GAP-003/A] terrain MRT derived pipelines registered: {}/6 (colorTargets={})",
                 DERIVED_MRT.size(), MrtPlan.slotCount());
+    }
+
+    /**
+     * 一条 MRT 派生管线（GAP-003 的地形形状 + GAP-027 的「本层挂哪条程序」）。
+     *
+     * <p>🔖 从注册循环里拆出来只为守住 QD-04 那条棘轮的口径：编排方法要长就拆方法，
+     * <b>不抬基线</b>。
+     */
+    private static RenderPipeline buildMrtPipeline(TerrainDerivedPlan.Spec spec,
+            GbufferProgramPlan.Entry terrain, GbufferProgramPlan.Entry water) {
+        RenderPipeline.Builder builder = spec.multiDraw()
+                ? RenderPipeline.builder(RenderPipelines.MULTIDRAW_TERRAIN_SNIPPET)
+                : RenderPipeline.builder(RenderPipelines.TERRAIN_SNIPPET);
+        // 🔴 本层实际用哪条程序（null = 沿用原版 core/terrain）。
+        GbufferProgramPlan.Entry layer = GbufferProgramPlan.entryForLayer(spec.layer(), terrain, water);
+        String program = layer == null ? null : layer.program();
+        builder.withLocation(Identifier.fromNamespaceAndPath(TerrainDerivedPlan.NAMESPACE,
+                        spec.location().substring((TerrainDerivedPlan.NAMESPACE + ":").length())
+                                + GbufferProgramPlan.mrtSuffix(program, terrain.program())))
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withUniform(TERRAIN_PARAMS_UNIFORM, UniformType.UNIFORM_BUFFER)
+                        .build())
+                // 🔖 与 MrtTerrainPass 建的多附件 pass 附件数**必须相等**（Vulkan 要求）。
+                // 两侧都取 MrtPlan.slotCount() —— 单点真源，避免「一处改了一处没改」。
+                .withColorTargetStates(0, MrtPlan.slotCount() - 1, () -> ColorTargetState.DEFAULT);
+        if (layer != null) {
+            // 🔖 GAP-003：换成「顶点适配层 + 包自己的片元」。
+            //   顶点侧不能直接用包的 vsh —— 它要 7 个顶点属性（含 Normal / mc_Entity /
+            //   mc_midTexCoord），而原版地形顶点缓冲 DefaultVertexFormat.BLOCK 只有 4 个；
+            //   改网格化属另一层工程。适配层按原版格式取数、逐位置对齐产出<b>该条程序</b>的 varying。
+            builder.withVertexShader(dev.vkdisp.VkDispVirtualPack.packAdapterShaderId(program))
+                    .withFragmentShader(dev.vkdisp.VkDispVirtualPack.packFragmentShaderId(program))
+                    // 布局必须**逐条**登记包片元自由声明的 sampler：STRICT_VALIDATION 下
+                    // draw() 按布局校验，SPIR-V 反射出的每个名字查不到即抛（实测原文：
+                    // Unable to find shader defined uniform）。反向（布局多于 SPIR-V）无害。
+                    // 🔴 X39：sampler 清单**逐条程序各一份** —— 水要 8 个（含 gaux1/gaux2/depthtex1），
+                    //   照抄地形的 5 个就是「少供」⇒ 每个水的 draw 都抛 Missing uniform。
+                    .withBindGroupLayout(packBindGroupLayout(layer.contract()));
+        }
+        if (spec.hasAlphaCutout()) {
+            builder.withShaderDefine("ALPHA_CUTOUT", spec.alphaCutout());
+        }
+        builder.withColorTargetState(spec.translucentBlend()
+                ? new ColorTargetState(BlendFunction.TRANSLUCENT)
+                : ColorTargetState.DEFAULT);
+        // 🔴 GAP-027：半透明那一层的管线<b>深度测试开、写深度关</b>。
+        //   能做到「不动固体/cutout」是因为本前端的深度写入状态挂在**管线**上
+        //   （RenderPipeline$Builder#withDepthStencilState），不在 render pass 上 ⇒
+        //   只有返回 false 的那一条（TRANSLUCENT 且真挂了包水程序）被改，其余五条逐字不变。
+        //   CompareOp 沿用 snippet 的 GREATER_THAN_OR_EQUAL（本引擎反向 Z），只翻 writeDepth。
+        if (!GbufferProgramPlan.writesDepth(spec.layer(), terrain, water)) {
+            builder.withDepthStencilState(
+                    new DepthStencilState(CompareOp.GREATER_THAN_OR_EQUAL, false));
+            if (DEPTH_WRITE_OFF_LOGGED.compareAndSet(false, true)) {
+                VkDisp.LOGGER.info("vkdisp: [GAP-027] {} MRT pipeline depth = test ON / write OFF"
+                        + " ({} fragment; SOLID/CUTOUT keep DepthStencilState.DEFAULT = write ON)",
+                        spec.layer(), program);
+            }
+        }
+        return builder.build();
+    }
+
+    /** 「半透明关写深度」这条自报只打一次（注册期本来只跑一次，哨兵是防别处复用同一判据）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean DEPTH_WRITE_OFF_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
+     * 逐条程序各打一行「用了什么 / 为什么没用」。
+     *
+     * <p>🔴 GAP-027 的强制项：<b>包里没有水</b>必须说出来（{@code not wired because absent}），
+     * 绝不允许「开关开着而什么都没发生」这种静默（X9 / X11 / T11）。
+     */
+    private static void reportPerProgram(GbufferProgramPlan.Entry terrain,
+            GbufferProgramPlan.Entry water) {
+        if (terrain.wired()) {
+            PackTerrainProgram packTerrain = terrain.contract();
+            // 🔖 证据行必须**同时**打出「附件数」与「哪些槽被写」——
+            //   只打 colorTargets=8 会让人以为 8 个附件都被写了（实测<b>残留档</b>是 [0,3,6,7]，
+            //   附件 1/2/4/5 存在但无片元输出；🔖 真默认档只写槽 0 —— 那 8 来自 store 里
+            //   残留的 ADVANCED_MATERIALS=true，见 MrtPlan 的 h45 更正与 evidence/h48 §二十二）。
+            VkDisp.LOGGER.info(
+                    "vkdisp: [GAP-003] MRT terrain pipelines will use pack fragment: program={}"
+                            + " colorTargets={} declaredOutputSlots={} samplers={} varyings={}"
+                            + " unwrittenAttachments={}",
+                    packTerrain.qualifiedName(), MrtPlan.slotCount(),
+                    packTerrain.declaredOutputSlots(),
+                    packTerrain.fragmentSamplers().size(), packTerrain.inputs().size(),
+                    unwrittenAttachments(packTerrain, MrtPlan.slotCount()));
+        }
+        if (water.wired()) {
+            VkDisp.LOGGER.info("vkdisp: [GAP-027] MRT {} pipelines will use pack fragment: program={}"
+                            + " declaredOutputSlots={} samplers={} varyings={}",
+                    GbufferProgramPlan.TRANSLUCENT_LAYER, water.contract().qualifiedName(),
+                    water.contract().declaredOutputSlots(),
+                    water.contract().fragmentSamplers().size(), water.contract().inputs().size());
+            return;
+        }
+        // 没接 ⇒ 说清**为什么**没接（两种原因要分开说，见 packWaterForMrt 的返回口径）。
+        VkDisp.LOGGER.warn("vkdisp: [GAP-027] {}", GbufferProgramPlan.notWiredReport(
+                water.program(), waterSkip(), terrain.wired() ? terrain.program() : null));
+    }
+
+    /** 水没接上的原因：开关关着 vs 包里没有 —— 两者的处置与后果不同，必须分开报。 */
+    private static GbufferProgramPlan.Skip waterSkip() {
+        return VkDispConfig.MRT_PACK_WATER_SHADER.get()
+                ? GbufferProgramPlan.Skip.ABSENT
+                : GbufferProgramPlan.Skip.DISABLED;
     }
 
     /**
@@ -286,23 +367,22 @@ public final class TerrainPipelineApi {
     }
 
     /**
-     * 顶点适配层着色器 id —— 由虚拟包**按包地形片元的 varying 契约生成**后提供。
+     * 顶点适配层着色器 id —— 由虚拟包**按该条程序的 varying 契约生成**后提供。
      *
-     * <p>🔖 为什么不是本模组自己的静态资产：实测 BSL 默认配置要 9 条 varying、开
-     * {@code ADVANCED_MATERIALS} 后要 <b>15</b> 条；静态适配层对另一个配置就是「少供」⇒
+     * <p>🔖 为什么不是本模组自己的静态资产：实测 BSL 默认配置地形要 9 条 varying、水要 <b>14</b> 条、
+     * 开 {@code ADVANCED_MATERIALS} 后地形要 <b>15</b> 条；静态适配层对另一个签名就是「少供」⇒
      * 驱动层在资源加载期抛 {@code ShaderCompileException: missing output at location 14}
      * ⇒ <b>客户端起不来</b>（本轮真实踩到）。生成物与片元源同生共死，杜绝半接线。
+     * 🔴 GAP-027：id 由<b>程序名</b>派生（{@code GbufferProgramPlan}），
+     * 地形与水各有一份，水的管线绝不会拿到地形的适配层（X39）。
      */
-    private static final Identifier TERRAIN_PACK_ADAPTER_ID =
-            Identifier.fromNamespaceAndPath(dev.vkdisp.VkDispVirtualPack.NAMESPACE,
-                    "terrain_pack_adapter");
-
-    /** 包地形片元 id（虚拟资源包提供的 shaders/gbuffers_terrain.fsh）。 */
-    private static final Identifier PACK_TERRAIN_FRAGMENT_ID =
-            Identifier.fromNamespaceAndPath(dev.vkdisp.VkDispVirtualPack.NAMESPACE, "gbuffers_terrain");
 
     /** 「不接包片元」的一次性告警哨兵（默认关 / 无包地形片元，两种原因要分开说）。 */
     private static final java.util.concurrent.atomic.AtomicBoolean PACK_TERRAIN_OFF_LOGGED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** 「不接包水片元」的一次性告警哨兵（与地形那个**分开**：两种原因要分开说）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean PACK_WATER_OFF_LOGGED =
             new java.util.concurrent.atomic.AtomicBoolean();
 
     /** 本次 MRT 地形管线是否改用包自己的片元；不接时返回 {@code null}（沿用原版 core/terrain）。 */
@@ -330,8 +410,51 @@ public final class TerrainPipelineApi {
         return program;
     }
 
-    /** 包地形片元的绑定组布局：VkDispBuiltins 块 + 它自由声明的每个 sampler。 */
-    private static BindGroupLayout packTerrainBindGroupLayout(PackTerrainProgram program) {
+    /**
+     * GAP-027：本次 MRT 半透明层是否改用<b>包自己的</b> {@code gbuffers_water} 片元。
+     *
+     * <p>🔴 {@code null} = 不接线，且<b>两种原因各打一条</b>（开关关着 / 包里没有），
+     * 绝不静默（X9 / X11）。地形那条已接与否不影响本判断 —— 两条程序各自独立成立，
+     * 这也是 {@code GbufferProgramPlan.programForLayer} 唯一的分支来源。
+     *
+     * @param terrain 地形那条的声明（只用于「没接上时回落到谁」的自报文案）
+     */
+    @Nullable
+    static PackTerrainProgram packWaterForMrt(GbufferProgramPlan.Entry terrain) {
+        if (!VkDispConfig.MRT_PACK_WATER_SHADER.get()) {
+            if (PACK_WATER_OFF_LOGGED.compareAndSet(false, true)) {
+                VkDisp.LOGGER.info("vkdisp: [GAP-027] {}", GbufferProgramPlan.notWiredReport(
+                        dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM,
+                        GbufferProgramPlan.Skip.DISABLED,
+                        terrain != null && terrain.wired() ? terrain.program() : null));
+            }
+            return null;
+        }
+        PackTerrainProgram program = dev.vkdisp.VkDispVirtualPack.waterProgram();
+        if (program == null) {
+            // 一次性哨兵在这里**不**置位：本方法每轮注册只调一次，而 reportPerProgram 会打
+            // 「not wired because absent」那一行 —— 两处都打会变成同义重复。
+            VkDisp.LOGGER.warn("vkdisp: [GAP-027] pack water fragment requested but unavailable"
+                    + " (mrt.packWater=true 却没选出 gbuffers_water)");
+            return null;
+        }
+        return program;
+    }
+
+    /**
+     * 本表冻结后是否真的接上了<b>水</b>（渲染期判据，只读<b>注册期冻结</b>的那一份）。
+     *
+     * <p>🔖 为什么读 {@link MrtPlan#packProgramNames()} 而不是再读一次配置：
+     * 管线是按冻结值注册的，pass 若按<b>当前</b>配置决定画不画半透明，就会出现
+     * 「pass 画了半透明、却没有对应的多附件管线」或反之 —— 两侧必须同源（X42）。
+     */
+    public static boolean waterWiredInFrozenPlan() {
+        return MrtPlan.packProgramNames()
+                .contains(dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM);
+    }
+
+    /** 某条包片元的绑定组布局：VkDispBuiltins 块 + <b>它自己</b>自由声明的每个 sampler。 */
+    private static BindGroupLayout packBindGroupLayout(PackTerrainProgram program) {
         BindGroupLayout.Builder builder = BindGroupLayout.builder();
         for (String name : program.bindGroupUniformNames()) {
             builder = name.equals(PackTerrainProgram.BUILTINS_BLOCK)
@@ -507,8 +630,10 @@ public final class TerrainPipelineApi {
         if (paramsRing != null) {
             paramsRing.rotate();
         }
-        if (terrainBuiltinsRing != null) {
-            terrainBuiltinsRing.rotate();
+        // 🔴 GAP-027：轮换**每一条**程序的块环（漏一条 = 那条下一帧的 CPU 写入覆写
+        // GPU 还在读的槽 = 同一条已成立的未定义行为，只是换了个消费者）。
+        for (MappableRingBuffer ring : BUILTINS_RINGS.values()) {
+            ring.rotate();
         }
     }
 
@@ -584,6 +709,17 @@ public final class TerrainPipelineApi {
             new java.util.concurrent.atomic.AtomicBoolean();
 
     /**
+     * GAP-027：<b>逐条程序</b>各打一次绑定摘要的哨兵（{@code {gbuffers_terrain, gbuffers_water}}）。
+     *
+     * <p>🔖 为什么不能再共用上面那一个布尔：水接上之后若只有地形打过一行，
+     * 「水的 8 个 sampler 到底绑没绑」在日志里就是空的 —— 而空与「没接」在观测上同形
+     * （本项目最贵的两类混淆之一）。用 Set 而不是新加一个水专用布尔：
+     * 第三条程序接进来时不需要再改这里。
+     */
+    private static final java.util.Set<String> PACK_BIND_LOGGED_PROGRAMS =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
      * 「某个 sampler 没有类型匹配的视图」这条 ERROR 的节流哨兵（h33 加）。
      *
      * <p>🔖 <b>为什么必须节流</b>：本方法每帧调、每个 sampler 各有一条分支。
@@ -611,8 +747,19 @@ public final class TerrainPipelineApi {
 
     /** GAP-003：每帧把 OF 内建值写进地形片元的 VkDispBuiltins 环（pass 打开前调用）。 */
     public static void updateTerrainBuiltins() {
+        updateGbufferBuiltins(dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM);
+    }
+
+    /**
+     * GAP-027：每帧把 OF 内建值写进<b>该条程序自己的</b> VkDispBuiltins 环（pass 打开前调用）。
+     *
+     * <p>🔖 逐条各一次 {@code OfUniformManager.gather}：地形与水<b>收编集不同</b>（块布局不同、
+     * 字节数不同），共用一份写出来的字节就是「按地形的成员表写水的块」= 静默喂垃圾。
+     * 代价（明写）：每帧多一次 gather（纯 CPU 取值，不碰 GPU），只在真接上水的那一臂发生。
+     */
+    public static void updateGbufferBuiltins(String program) {
         dev.vkdisp.glsl.translate.BuiltinsBlockLayout layout =
-                dev.vkdisp.VkDispVirtualPack.terrainBuiltinsLayout();
+                dev.vkdisp.VkDispVirtualPack.packBuiltinsLayout(program);
         if (layout == null || layout.isEmpty()) {
             return;
         }
@@ -620,30 +767,36 @@ public final class TerrainPipelineApi {
             java.util.Map<String, Object> values = dev.vkdisp.render.OfUniformManager.gather(
                     net.minecraft.client.Minecraft.getInstance(),
                     mainTargetWidth(), mainTargetHeight(), blockAtlasSizeOrEmpty(), java.util.List.of());
-            MappableRingBuffer ring = terrainBuiltinsRing(
+            MappableRingBuffer ring = builtinsRing(program,
                     Math.max(TERRAIN_BUILTINS_MIN_BYTES, layout.byteSize()));
             try (com.mojang.renderpearl.api.buffers.GpuBufferSlice.MappedView view =
                     ring.currentBuffer().map(false, true)) {
-                dev.vkdisp.render.OfUniformManager.logUploadOnce("terrain", layout,
+                dev.vkdisp.render.OfUniformManager.logUploadOnce(program, layout,
                         dev.vkdisp.render.OfUniformManager.write(layout, values, view.data()), values);
             }
         } catch (Throwable t) {
             if (!BUILTINS_WRITE_FAILED_LOGGED.getAndSet(true)) {
-                VkDisp.LOGGER.error("vkdisp: [GAP-003] terrain builtins upload FAILED (原文如下)"
-                        + " -> 该块将保持零填充", t);
+                VkDisp.LOGGER.error("vkdisp: [GAP-003] gbuffer builtins upload FAILED (原文如下)"
+                        + " -> 该块将保持零填充: program=" + program, t);
             }
         }
     }
 
-    private static MappableRingBuffer terrainBuiltinsRing(int bytes) {
-        MappableRingBuffer ring = terrainBuiltinsRing;
+    private static MappableRingBuffer builtinsRing(String program, int bytes) {
+        MappableRingBuffer ring = BUILTINS_RINGS.get(program);
         if (ring == null) {
-            ring = new MappableRingBuffer(() -> "vkdisp terrain builtins",
+            ring = new MappableRingBuffer(() -> "vkdisp " + program + " builtins",
                     GpuBuffer.USAGE_MAP_WRITE | GpuBuffer.USAGE_UNIFORM, bytes);
-            terrainBuiltinsRing = ring;
-            VkDisp.LOGGER.info("vkdisp: [GAP-003] terrain builtins ring created: bytes={}", bytes);
+            BUILTINS_RINGS.put(program, ring);
+            VkDisp.LOGGER.info("vkdisp: [GAP-027] builtins ring created: program={} bytes={}",
+                    program, bytes);
         }
         return ring;
+    }
+
+    /** 该条程序的块环（未建返回 {@code null} —— 调用点必须显式报错，不静默跳过）。 */
+    private static MappableRingBuffer existingBuiltinsRing(String program) {
+        return BUILTINS_RINGS.get(program);
     }
 
     /**
@@ -677,17 +830,37 @@ public final class TerrainPipelineApi {
             com.mojang.renderpearl.api.textures.GpuTextureView atlas,
             com.mojang.renderpearl.api.textures.GpuTextureView depthView,
             com.mojang.renderpearl.api.textures.GpuTextureView colorView) {
-        PackTerrainProgram program = dev.vkdisp.VkDispVirtualPack.terrainProgram();
+        bindPackGbufferUniforms(pass, sampler, atlas, depthView, colorView,
+                dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM);
+    }
+
+    /**
+     * GAP-027：与 {@link #bindPackTerrainUniforms} 同一条实现，只是<b>按程序名</b>取契约 / 块布局 / 环。
+     *
+     * <p>🔴 这一参数化不是重构美化：水自己声明 8 个 sampler（地形只有 5 个），
+     * 照抄地形的清单 ⇒ 水的每个 draw 都被 {@code validateDraw} 以 Missing uniform 拦下
+     * （响亮失败），或反过来把地形的名字绑到水的管线上当垃圾用（静默错）。X39。
+     *
+     * <p>🔖 调用时机：必须在<b>该层 renderGroup 之前</b>（pass 内改的是当前绑定状态，
+     * 后绑覆盖前绑；先 OPAQUE 后 TRANSLUCENT 各绑一次正是这个原因）。
+     */
+    public static void bindPackGbufferUniforms(RenderPass pass,
+            com.mojang.renderpearl.api.textures.GpuSampler sampler,
+            com.mojang.renderpearl.api.textures.GpuTextureView atlas,
+            com.mojang.renderpearl.api.textures.GpuTextureView depthView,
+            com.mojang.renderpearl.api.textures.GpuTextureView colorView,
+            String programName) {
+        PackTerrainProgram program = dev.vkdisp.VkDispVirtualPack.packContract(programName);
         if (program == null) {
             return;
         }
         dev.vkdisp.glsl.translate.BuiltinsBlockLayout layout =
-                dev.vkdisp.VkDispVirtualPack.terrainBuiltinsLayout();
+                dev.vkdisp.VkDispVirtualPack.packBuiltinsLayout(programName);
         if (layout != null && !layout.isEmpty()) {
-            MappableRingBuffer ring = terrainBuiltinsRing;
+            MappableRingBuffer ring = existingBuiltinsRing(programName);
             if (ring == null) {
-                VkDisp.LOGGER.error("vkdisp: [GAP-003] pack terrain builtins ring is null"
-                        + " -> 不绑定 VkDispBuiltins（draw 将因 Missing uniform 抛）");
+                VkDisp.LOGGER.error("vkdisp: [GAP-003] pack gbuffer builtins ring is null: program={}"
+                        + " -> 不绑定 VkDispBuiltins（draw 将因 Missing uniform 抛）", programName);
             } else {
                 pass.setUniform(PackTerrainProgram.BUILTINS_BLOCK, ring.currentBuffer());
             }
@@ -756,16 +929,23 @@ public final class TerrainPipelineApi {
             }
             pass.setUniform(name, view, sampler);
         }
-        if (!PACK_TERRAIN_BIND_LOGGED.getAndSet(true)) {
-            VkDisp.LOGGER.info("vkdisp: [GAP-003] pack terrain uniforms bound: blockMembers={} samplers={}"
+        // 🔴 GAP-027：绑定摘要**逐条程序各打一次** —— 只打一次的话，接了水之后日志里
+        //   仍然只有「terrain 绑了 5 个 sampler」那一行，水的 8 个到底是绑了还是没绑，
+        //   在观测上分不出来（本项目反复吃过的那种「看起来正常其实没生效」）。
+        if (PACK_BIND_LOGGED_PROGRAMS.add(programName)) {
+            VkDisp.LOGGER.info("vkdisp: [GAP-027] pack gbuffer uniforms bound: program={}"
+                            + " blockMembers={} samplers={}"
                             + " (by dimension: {}; texture_0=图集真值; specular/normals=中性单位元;"
                                     + " shadowtex*=专用桩; sampler3D*=3D 桩; 其余=图集占位)",
+                    programName,
                     layout == null ? 0 : layout.members().size(),
                     program.fragmentSamplers().size(),
                     dimensionPlan.summary());
             for (String warning : dimensionPlan.warnings()) {
                 VkDisp.LOGGER.warn("vkdisp: [GAP-003] sampler plan: {}", warning);
             }
+        }
+        if (!PACK_TERRAIN_BIND_LOGGED.getAndSet(true)) {
             // 🔴🔴 GAP-015（h38 源码级核实）：**本引擎没有「比较采样器」这个能力**。
             //   已从 minecraft-patched-26.3.0.41-beta.jar 逐类核实：
             //   · GpuDevice 只有**一个** createSampler(AddressMode, AddressMode,
