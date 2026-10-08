@@ -512,6 +512,10 @@ public final class MrtTerrainPass {
 
         // 🔴 GAP-018：本 pass 写过的池槽**翻代** ⇒ 之后第一个读者（链的第一步）看到的就是刚写的内容。
         //   toMain 档的槽 0 打的是主目标（不是池）⇒ 不参与翻代。
+        // 🔴 h48p：先轮换 TerrainPipelineApi 的两条 MappableRingBuffer —— 它们**本帧已经画完了**，
+        //   而原版允许 3 个 submit 在飞（VulkanCommandEncoder:222-223）：不轮换 = 下一帧的 CPU
+        //   写入覆写 GPU 还在读的 uniform 槽（FrameApi 每条环都 rotate，本类此前一条都没有）。
+        TerrainPipelineApi.rotateAfterDraw();
         java.util.List<Integer> terrainWritten = new ArrayList<>();
         for (int slot = 0; slot < actualSlots; slot++) {
             if (!(toMain() && slot == 0)) {

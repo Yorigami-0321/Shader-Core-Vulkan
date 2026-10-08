@@ -485,6 +485,30 @@ public final class TerrainPipelineApi {
      * 等 GAP-003 那轮换上自研片元、块真的有消费者时，再改成每帧上传 ——
      * 代价必须挂在消费者身上，不能挂在「也许以后会用」上（支柱③ B1 ≤ +2%）。
      */
+    /**
+     * 🔴 地形 pass **关闭之后**轮换本类的两条环（h48p：GAP-020 排查中掉出的独立缺陷）。
+     *
+     * <p>机制（不是推测，是与 `FrameApi:979-988` 同一条纪律缺了一半）：
+     * `MappableRingBuffer` 是深度 **3** 的环（`MappableRingBuffer.java:14 BUFFER_COUNT=3`），
+     * 每帧写 `currentBuffer()` 然后必须 rotate，否则下一帧的 CPU 写入会**覆写 GPU 还在读的槽**
+     * —— 原版在 `VulkanCommandEncoder:222-223` 允许 3 个 submit 在飞，所以这个窗口是真实的。
+     * 本类此前**从来没有** rotate ⇒ 两条环实际上被钉死在 0 号槽：
+     * `paramsRing`（第 489-502 行）与 `terrainBuiltinsRing`（第 596-599 行写、第 665 行绑）。
+     * 对照：`FrameApi` 的每条环都在绘制后 rotate（第 980/982/985/988/1227 行）。
+     *
+     * <p>⚠️ 它与 h48o 的「严格 3 帧周期整帧为空」是否同源**尚未证明**：不 rotate 的环是
+     * 周期 1（每帧都覆写同一个槽），本身给不出周期 3；但它是**已成立的未定义行为**，
+     * 修掉之后再看那条曲线才有资格说别的东西。
+     */
+    static void rotateAfterDraw() {
+        if (paramsRing != null) {
+            paramsRing.rotate();
+        }
+        if (terrainBuiltinsRing != null) {
+            terrainBuiltinsRing.rotate();
+        }
+    }
+
     private static MappableRingBuffer terrainParamsRing() {
         MappableRingBuffer ring = paramsRing;
         if (ring == null) {

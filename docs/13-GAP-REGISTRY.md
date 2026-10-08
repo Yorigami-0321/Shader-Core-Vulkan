@@ -386,6 +386,41 @@ BSL 的 blue-noise 抖动/胶片颗粒自此有真值）；**三段键**（`text
 
 ---
 
+### GAP-021 · 🔴 包的「作者写死 uniform 表达式」这条能力整块缺失（`uniform.*` / `variable.*` 无人求值；h48p 审计发现；2026-10-08 登记）
+
+| 字段 | 内容 |
+|---|---|
+| **OF/Iris 能力** | `shaders.properties` 里 `uniform.float.<名>=<表达式>` 与 `variable.float.<名>=<表达式>`：包**自己定义**的逐帧标量，可互相引用、可引用原版内建（`sunAngle`、`cameraPosition`、`biome`…），支持函数 `if() frac() clamp() abs() max() min() smooth() in() sin() floor()` 与比较/四则 |
+| **我方现状（核实到行）** | ✅ `pack/properties/ShaderProperties.java` 第 85-104 行的分派里，`screen./profile./program.*.enabled` 之外的**所有** key 落进第 103-104 行的通用 `directives` map ⇒ `uniform.` / `variable.` **没有任何解析与求值者**；`ShaderPackService` 里 `uniform.` 零出现（grep 核实） |
+| **BSL 实测依赖面** | `run/h27/shaderpacks/BSL_v10.1.8.zip` 的 `shaders/shaders.properties`：**28 行 `uniform.*` + 13 行 `variable.*`**。其中直接决定画面的：`uniform.float.shadowFade=clamp(1−(abs(abs(sunAngle−0.5)−0.25)−0.23)×100,0,1)`（`lightShafts.glsl:162` ⇒ **光柱整条 ×0**）；`uniform.float.timeBrightness=max(sin(timeAngle×6.28318),0)`（`fog.glsl:33` ⇒ 雾/日照色调）；`uniform.float.timeAngle=…`（**包自己覆盖 timeAngle**，我方现在给的是朴素 `t%24000/24000`）；`uniform.float.blindFactor=blindFactorSqrt²`（`blindness` 链）；`isCold/isDesert/…`（生物群集旗帜，依赖 `in(biome, …)`） |
+| **与既有 GAP 的关系** | 不是 GAP-007 的「同一个内建没填」：GAP-007 是**我方供**原值；这条是**包自己供**派生值 ⇒ 新能力项。`shadowFade/timeBrightness` 在 GAP-007 清单里恒 0 的**真正原因**就是本条 |
+| **要做什么（顺序）** | ① 词法/语法求值器（纯 Java、可单测）；② 依赖图拓扑求值（`variable` → `uniform`，允许后定义引用先定义）；③ 求值输入的**核实来源**清单：`sunAngle`、`blindness`、`biome`/`BIOME_*`、`cameraPosition`（已有）；④ 结果并入 `OfUniformManager.gather()` 的 values（**包的覆盖优先于我方同名内建**，OF 语义如此，需在 04-SPEC 记一句）；⑤ 未识别的函数/标识符 ⇒ **不猜值**：整条求值跳过 + 一次性 WARN 列名（X9/X11） |
+| **判据** | 单测：BSL 那 28+13 行**全部**求出不为 0 的结果（正午 `sunAngle` 下 `shadowFade=1`、`timeBrightness>0`）；运行期：`[uniforms]` 自报行里出现 `shadowFade=`/`timeBrightness=` 的非 0 值；画面：光柱与雾色进画面（F2 对照） |
+
+### GAP-022 · 🔴 包按 OpenGL 深度约定写分支，我方是反向 Z —— 全链系统性走错分支（h48p 审计；2026-10-08 登记）
+
+| 字段 | 内容 |
+|---|---|
+| **引擎事实** | 我方 gbuffer 深度：`0.0 = 远平面`、`1.0 = 近平面`、比较 `GREATER`（`MrtTerrainPass` 里那段为 0.0/1.0 绕了 6 趟客户端的注释；`docs/07-CONSTRAINTS.md` X34） |
+| **包事实（逐行核实）** | BSL 全部按「1.0 = 天空」写：`deferred1.glsl:337 isSky = z == 1.0`、`:358 if (z < 1.0)`；`deferred.glsl:73 if (z<1.0)`；`ambientOcclusion.glsl:55 z>=1.0 return 1.0`、`:59 hand = z<0.56`；`composite.glsl:366 hand = z0<0.56` → `lightShafts.glsl:39 falloff *= 1−hand`；`taa.glsl:55 pos.z>0.56`；`composite5.glsl:347 depthtex0 >= 1.0`（镜斑）；`clouds.glsl:141/424` |
+| **推出的系统性错误** | 天空永远**不被识别为天空**（`z==1.0` 在反向 Z 里是「贴脸」）；天空像素反而进几何分支（SSR/AO/雾拿垃圾 `viewPos`）；中远景被当「手」⇒ **光柱被 `1−hand` 抹掉**；镜斑永不出现在正确像素；体积云当作被遮挡而淡出；TAA 对近处几何做运动补偿（拖影） |
+| **还没定的设计问题（所以本条先不写代码）** | 「喂给包一张 GL 口径的深度」不能只靠 `1.0 − z`：包里还有 `GetLinearDepth` 用 `depth×2−1` 把窗口深度当 NDC[-1,1] 反解（`deferred:52 / deferred1:146 / composite:120 / composite3:100`），要正确必须知道**原版投影矩阵把 z 映到哪个区间** —— 这一点**未核实**（X9 不许在此处猜）。候选：① 生成一张转换后的 R32F 纹理（多一次全屏 pass + 一次深度→颜色拷贝，代价要登记）；② 在翻译层把包的深度比较改写（改包语义，风险高、且违反「不改包」的取向） |
+| **判据（先做核实那一半）** | 第一步只做取证不做修法：把 `depthtex0` 在**已知像素**（远天空 / 近地形 / 手）上的实际读数打出来（注意：回读深度这条通道本机不可信，见 `evidence/h48 §十四` ⇒ 必须走「包侧行为差分」或 `GetLinearDepth` 的输出反推，不是直接读 D32） |
+
+### GAP-023 · 🔴 `depthtex0/1/2` 三个名字绑到**同一张**深度视图（h48p 审计，grep 核实）
+
+`FrameApi` 第 1263-1266 行：`if (name.startsWith("depthtex"))` 一律回 `MrtTerrainPass.depthView()` ⇒ 包里所有「比较两个深度层」的逻辑恒等失效。已知直接受害者：`composite.glsl:333 z1 > z0`（半透明/水体识别）恒假。修法 = 按 OF 语义给 depthtex1/2 提供**各自**的缓冲（gbuffer 绘制顺序里 0=不透明后、1=半透明后、2=常驻顶层后 —— 我方目前只有一张），登记为独立缺陷而非顺手改。
+
+### GAP-024 · 🟡 `program.*.enabled` 解析了但**没有用来门控链**（h48p 审计）
+
+`ShaderProperties.java:100-102` 收下了 `program.world0/<名>.enabled=…`，但 `pack/PackPostChain.java`（第 99-189 行的装配）**不读**它 ⇒ BSL 关掉 `MOTION_BLUR`/`DOF` 时 `composite2`/`composite3` 照跑（它们退化成拷贝，但白烧两级 + 覆盖 colortex2 的时序）。修法 = 装配期按 enabled 集合跳过未启用 program，并**自报跳过了哪几级**（不许静默，X11）。
+
+### GAP-025 · 🟡 `noisetex` 用的是我方内置 64×64，包声明的 512×512 取不到（h48p 审计）
+
+`bridge/PackTextures.java:121` 恒返回内建 64×64，而包的 `texture.noise=tex/noise.png`（`shaders.properties:141`）+ `noiseTextureResolution=512`（`final.glsl:41` 依赖它做 dither 尺度）⇒ 抖动/噪声频率与包设计不符。修法 = 优先用包里的 `tex/noise.png`（走既有 customImages 的加载路径），拿不到再回退内建并 WARN 一次。
+
+---
+
 ## 4. 快速自检
 
 ```
