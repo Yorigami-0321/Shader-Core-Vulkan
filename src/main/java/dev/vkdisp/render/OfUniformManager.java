@@ -221,6 +221,17 @@ public final class OfUniformManager {
             dev.vkdisp.VkDisp.LOGGER.info(
                     "vkdisp: [qd-02] ofUniform keys={} frame={} firstKeys={}",
                     values.size(), frameNo, new java.util.ArrayList<>(values.keySet()).subList(0, 6));
+            // 🔬 GAP-022 矩阵那一半的**取证行**。登记表明确要求：只能用**游戏里真实**的那一对矩阵，
+            //   不能用我方重构造的矩阵 —— 上一轮的往返检查正是这样自毁的
+            //   （`gl⁻¹·(ndc,1)` 那类恒等式在 `m32 ≠ ±1` 时不成立）。
+            //   这里把**真正喂给包的那一对**逐元素打出来，配 near/far 与窗口深度读数，
+            //   于是「翻深度」与「翻矩阵」能否用同一条式子做完，可以用数字判而不是猜。
+            dev.vkdisp.VkDisp.LOGGER.info("vkdisp: [GAP-022/matrix] frame={} inWorld={}"
+                            + " projection={} projectionInverse={} windowDepth@d1/16/128={}",
+                    frameNo, inWorld, flat(projection), flat(inverted(projection)),
+                    GlDepthConvention.windowDepth(projection, 1.0F)
+                            + "/" + GlDepthConvention.windowDepth(projection, 16.0F)
+                            + "/" + GlDepthConvention.windowDepth(projection, 128.0F));
         }
         MoonPhase moonPhase = inWorld
                 ? probe.getValue(EnvironmentAttributes.MOON_PHASE, partialTicks) : null;
@@ -445,6 +456,22 @@ public final class OfUniformManager {
             result.invert();
         }
         return result;
+    }
+
+    /**
+     * GAP-022 取证用：把矩阵按**行**摊平成一行可读文本（走 {@code get(row, col)} 显式点名行列，
+     * 不用 {@code get(float[])} —— 那个的行列序还要先查，而本行的全部意义就是让元素序没有歧义）。
+     */
+    private static String flat(Matrix4f m) {
+        StringBuilder sb = new StringBuilder(128);
+        for (int row = 0; row < 4; row++) {
+            sb.append(row == 0 ? "{r0=[" : ", r" + row + "=[");
+            for (int col = 0; col < 4; col++) {
+                sb.append(col == 0 ? "" : ", ").append(m.get(row, col));
+            }
+            sb.append(']');
+        }
+        return sb.append("]}").toString();
     }
 
     /**

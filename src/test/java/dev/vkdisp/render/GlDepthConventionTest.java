@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
  * <p>投影矩阵一律按引擎自己的调用形状构造：{@code Projection.getMatrix} =
  * {@code setPerspective(fov, aspect, zFar, zNear, zZeroToOne=true)} —— near/far 互换，
  * 这就是反向 Z 的全部来源。自己另造一份矩阵来「验」是本项目刚踩过的坑
- * （见 {@link #matrixFlipIsNotTheSameAsDepthFlip} 的注释），所以这里比较的就是
+ * （矩阵那一半的判据在 `GlDepthConventionRealMatrixTest`，它先校验重建再判翻法），所以这里比较的就是
  * 引擎那两种调用本身。
  */
 class GlDepthConventionTest {
@@ -86,23 +86,20 @@ class GlDepthConventionTest {
     }
 
     @Test
-    @DisplayName("守卫（红灯）：矩阵不能照 z 行那条式子翻——翻法未推出，别复用")
-    void matrixFlipIsNotTheSameAsDepthFlip() {
-        // 我曾以为 zFlip() 乘上去就得到 GL 投影。实测否证：joml 的 zZeroToOne 分支把
-        // m32 设成约 ±0.05 而不是 ±1 ⇒ w_clip 一起变号，只改 z 行到不了 GL 投影。
-        // 这条断言把那条错路钉住：以后谁再用同样的式子翻矩阵，这里就红。
-        float diff = maxElementDiff(
-                new Matrix4f(zFlip()).mul(engineProjection()), glProjection());
-        assertTrue(diff > 0.5F,
-                "maxDiff=" + diff + " 若变得很小，说明 m32 行为变了（引擎/joml 升级）"
-                        + "⇒ 矩阵那一半可以重新推导，同时本条要改写");
-    }
-
-    @Test
-    @DisplayName("M 自身仍是对合（只说明式子自洽，不说明它是正确答案）")
-    void flipMatrixIsInvolutionButThatProvesNothingAlone() {
+    @DisplayName("🔖 矩阵那一半**不在本类判**：本类的透视是自行重构造的，真判据在 RealMatrixTest")
+    void matrixHalfIsJudgedAgainstRealNumbersNotThisFixture() {
+        // ⛔ 此前这里有一条红灯守卫 `matrixFlipIsNotTheSameAsDepthFlip`，
+        //   它用本类的 `setPerspective(FOV, ASPECT, NEAR, FAR, true)` 当比较基准，
+        //   于是把「基准是自己造的、且 far 取 512（游戏真值 = 1024.001）」当成了
+        //   「矩阵翻不动」—— 那条守卫拦的其实是一条**正确**的式子。已删。
+        // ⇒ 矩阵那一半的全部判据在 {@code GlDepthConventionRealMatrixTest}：
+        //   它先用游戏真实日志里的三个窗口深度读数**校验重建**，再判翻法。
+        //   本类只保留「深度值」那一半（①②③ 三条），那部分与矩阵无关。
         Matrix4f m = zFlip();
         assertEquals(0.0F, maxElementDiff(new Matrix4f(m).mul(m), new Matrix4f()), 1e-6F,
-                "M·M 必须是单位阵");
+                "M（z ← w − z）是对合 —— 这条自洽性本身**不**说明它是正确答案，见上面那段");
+        Matrix4f d2 = new Matrix4f(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -2, 1, 0, 0, 0, 1);
+        assertTrue(maxElementDiff(new Matrix4f(d2).mul(d2), new Matrix4f()) > 0.5F,
+                "真正要用的 D2（z ← w − 2z）不是对合；它的逆是常数矩阵 (0,0,−1/2,+1/2) 那一行");
     }
 }
