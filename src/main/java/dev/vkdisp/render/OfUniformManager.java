@@ -85,7 +85,6 @@ public final class OfUniformManager {
 
     /** gbufferPrevious* / previousCameraPosition 的历史槽（上一次 gather 的当帧值；首帧前为 null）。 */
     private static org.joml.Matrix4f previousView;
-    private static org.joml.Matrix4f previousProjection;
     private static Vector3f previousCamera;
     /** 上一次供值时的世界引用（换世界 ⇒ 历史与当帧对齐；null = 菜单/尚未进世界）。 */
     private static Object previousMatrixLevel;
@@ -137,31 +136,16 @@ public final class OfUniformManager {
             projection = new Matrix4f().perspective(
                     (float) Math.toRadians(60.0), width / (float) height, 0.1F, 32.0F, true);
         }
-        values.put("gbufferModelView", view);
-        values.put("gbufferProjection", projection);
-        values.put("gbufferModelViewInverse", inverted(view));
-        values.put("gbufferProjectionInverse", inverted(projection));
-        Vector3f cameraPos = inWorld
-                ? new Vector3f((float) camera.pos.x, (float) camera.pos.y, (float) camera.pos.z)
-                : new Vector3f();
-        values.put("cameraPosition", cameraPos);
-        // ---- 上一帧相机（TAA / 运动模糊 / DOF 聚焦的输入）----
-        // 🔖 此前这三项在 builtins 上传自报里长期是 `unfilled`（恒 0）⇒ 包把「上一帧」当成
-        //   「相机在原点、矩阵是单位阵」⇒ 运动向量 = 整屏假位移 ⇒ 时序混合把画面往错误的
-        //   历史帧上抹（h48 判读暗帧时的候选之一，先按公开语义把值供上，再按画面判）。
-        // 🔖 「上一帧」= **上一次 gather**（链模式每帧一次）。换世界时对齐成当帧：
-        //   跨维度/重载之后的旧相机没有意义，喂它 = 让包拿上一张地图的相机当历史。
+        // 🔴 GAP-022：深度那一半（bridge/DepthGlProxy 写的 1−z）与**投影矩阵这一半**必须成对切换。
+        //   开关在这里读**一次**，交出的快照由下面四个出口共用；口径本体与
+        //   「上一帧存的是引擎口径」这条不变式写在 render/DepthConventionPair。
         boolean worldSwitch = mc.level != previousMatrixLevel;
         previousMatrixLevel = mc.level;
-        values.put("gbufferPreviousModelView",
-                worldSwitch || previousView == null ? view : previousView);
-        values.put("gbufferPreviousProjection",
-                worldSwitch || previousProjection == null ? projection : previousProjection);
-        values.put("previousCameraPosition",
-                worldSwitch || previousCamera == null ? cameraPos : previousCamera);
-        previousView = view;
-        previousProjection = projection;
-        previousCamera = cameraPos;
+        DepthConventionPair convention = putCameraMatrices(values, view, projection,
+                inWorld
+                        ? new Vector3f((float) camera.pos.x, (float) camera.pos.y, (float) camera.pos.z)
+                        : new Vector3f(),
+                worldSwitch, dev.vkdisp.VkDispConfig.MRT_DEPTH_GL_PROXY.get());
         values.put("near", inWorld ? Camera.PROJECTION_Z_NEAR : 0.1F);
         values.put("far", inWorld ? camera.depthFar : 32.0F);
         values.put("viewWidth", (float) width);
@@ -213,6 +197,12 @@ public final class OfUniformManager {
         values.put("frameTime", frameDeltaSeconds);
         int frameNo = ++frameCounter;
         values.put("frameCounter", frameNo);
+        // 🔴 GAP-022 自报：**两种状态各打一条**，且**不受 debugLog 门**。理由不是「多一行日志」：
+        //   判据对象必须自陈是哪一种口径，而「日志里没有这行」一旦与「开关是关的」同义，
+        //   取证时就会把「接线没跑到」读成「关着，符合预期」（evidence/h48 §二十二：
+        //   在场的信息没人读；缺席的信息更会被直接读成结论）。
+        DepthConventionPair.reportThrottled(convention.glConvention(), frameNo,
+                dev.vkdisp.VkDisp.LOGGER::info);
         // 🔖 QD-02：`vkdisp.debugLog` 的**真实消费点之一**。此前该开关只有定义与热重载快照、
         //   **零消费点**（`grep DEBUG_LOG` 只有 2 处命中）⇒ 开关它没有任何可观察效果，比没有更误导。
         //   这里报「本帧实际写进了哪些键」，用于排查 uniform 缺失（静默失败的头号来源）。
@@ -226,9 +216,13 @@ public final class OfUniformManager {
             //   （`gl⁻¹·(ndc,1)` 那类恒等式在 `m32 ≠ ±1` 时不成立）。
             //   这里把**真正喂给包的那一对**逐元素打出来，配 near/far 与窗口深度读数，
             //   于是「翻深度」与「翻矩阵」能否用同一条式子做完，可以用数字判而不是猜。
-            dev.vkdisp.VkDisp.LOGGER.info("vkdisp: [GAP-022/matrix] frame={} inWorld={}"
+            //   🔖 打的是**出口之后**的那一份（开关开着时它与引擎那份只差 z 行）：口径由
+            //      glConvention= 自己声明，免得几百帧之后没人回去翻当时那一档是什么。
+            //      windowDepth@ 仍是**引擎投影**的读数（h48w §一 用它校验过行列序，改它=断证据链）。
+            dev.vkdisp.VkDisp.LOGGER.info("vkdisp: [GAP-022/matrix] frame={} inWorld={} glConvention={}"
                             + " projection={} projectionInverse={} windowDepth@d1/16/128={}",
-                    frameNo, inWorld, flat(projection), flat(inverted(projection)),
+                    frameNo, inWorld, convention.glConvention(),
+                    flat(convention.forward(projection)), flat(convention.backward(inverted(projection))),
                     GlDepthConvention.windowDepth(projection, 1.0F)
                             + "/" + GlDepthConvention.windowDepth(projection, 16.0F)
                             + "/" + GlDepthConvention.windowDepth(projection, 128.0F));
@@ -273,6 +267,51 @@ public final class OfUniformManager {
         //   PackUniformSupply（实体类会炸测试车道，同 NightVisionSupply 那条理由）。
         PackUniformSupply.applyOverrides(values, mc, partialTicks);
         return values;
+    }
+
+    /**
+     * 视图 / 投影 / 上一帧相机这一族内建的写入点（GAP-022 的**口径接线**就在这里）。
+     *
+     * <p>从 {@link #gather} 里抽出来有两条理由：① QD-04 棘轮 —— gather 本来就在超长名单里，
+     * 本轮不再往里塞；② 这一段是<b>纯 joml</b> 的（不碰任何原版类型，配置值由调用方传进来），
+     * 于是「开关开着时深度与矩阵是不是成对切的」「上一帧有没有被翻两次」这两条
+     * 能直接打在<b>真实调用路径</b>上（{@code DepthConventionPairTest}），而不是打在测试自己
+     * 抄的一份镜像实现上 —— {@code gather} 本身单测跑不到（原版运行态），
+     * 这正是本项目反复被「半翻口径」烧到的原因之一。
+     *
+     * <p>🔖 上一帧那三项的历史语义（保留自抽出前）：
+     * 此前 {@code gbufferPrevious*} 在 builtins 上传自报里长期是 {@code unfilled}（恒 0）⇒
+     * 包把「上一帧」当成「相机在原点、矩阵是单位阵」⇒ 运动向量 = 整屏假位移 ⇒
+     * 时序混合把画面往错误的历史帧上抹（h48 判读暗帧时的候选之一）。
+     * 「上一帧」= <b>上一次 gather</b>（每帧可被调多次：FrameApi 两处 + TerrainPipelineApi 两处），
+     * 换世界时对齐成当帧 —— 跨维度/重载之后的旧相机没有意义。
+     *
+     * @param glDepthConvention {@code mrt.depthGlProxy} 的<b>本帧快照</b>（不在这里读配置：
+     *                          {@code VkDispConfig} 静态初始化要 NeoForge，测试运行时里没有 ⇒
+     *                          这条路径会在构建期当场炸，而不是静默走默认值）
+     * @return 本帧用的口径快照（调用方拿去打 {@code [GAP-022/matrix]} 取证行与自报行，
+     *         于是「日志里那一对」与「交给包的那一对」不可能各说各话）
+     */
+    static DepthConventionPair putCameraMatrices(Map<String, Object> values, Matrix4f view,
+            Matrix4f projection, Vector3f cameraPos, boolean worldSwitch,
+            boolean glDepthConvention) {
+        DepthConventionPair convention = DepthConventionPair.forFrame(glDepthConvention);
+        values.put("gbufferModelView", view);
+        values.put("gbufferProjection", convention.forward(projection));
+        values.put("gbufferModelViewInverse", inverted(view));
+        values.put("gbufferProjectionInverse", convention.backward(inverted(projection)));
+        values.put("cameraPosition", cameraPos);
+        values.put("gbufferPreviousModelView",
+                worldSwitch || previousView == null ? view : previousView);
+        // 🔴 上一帧那一本走的是**同一个** forward 出口：takePreviousEngine 交出来的一定是
+        //   引擎口径（取+存在同一次调用里做完），所以「翻了又翻」在这条路径上写不出来。
+        values.put("gbufferPreviousProjection",
+                convention.forward(convention.takePreviousEngine(projection, worldSwitch)));
+        values.put("previousCameraPosition",
+                worldSwitch || previousCamera == null ? cameraPos : previousCamera);
+        previousView = view;
+        previousCamera = cameraPos;
+        return convention;
     }
 
     /**

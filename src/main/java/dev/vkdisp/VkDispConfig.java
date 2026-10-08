@@ -727,23 +727,41 @@ public final class VkDispConfig {
      * 所以一次逐像素取反就是全精度正确的换算，不需要知道 near/far。
      *
      * <p>🔴 <b>必须与矩阵那一半同帧生效</b>：包里 {@code GetLinearDepth} 用 {@code depth×2−1}
-     * 反解 NDC，再乘 {@code gbufferProjectionInverse} —— 只翻深度不翻投影矩阵
-     * （{@code OfUniformManager} 的 {@code gbufferProjection} / {@code gbufferProjectionInverse}
-     * 要给 {@code P_gl = M · P_en}，{@code M} = 第三行为「{@code row3(P_en)} 取负 + {@code row4(P_en)}」
-     * 的翻转矩阵）会比全错更难查：像「有阴影但位置全歪」。<b>那一半由主线接线</b>。
+     * 反解 NDC，再乘 {@code gbufferProjectionInverse} —— 只翻深度不翻投影矩阵会比全错更难查：
+     * 像「有阴影但位置全歪」。<b>接线已完成</b>（h48w）：同一个开关现在同时决定
+     * {@code depthtex* = 1 − z} 与 {@code OfUniformManager} 交出的那几本投影矩阵
+     * （{@code gbufferProjection = D2·P} / {@code gbufferProjectionInverse = P⁻¹·D2inv}，
+     * 上一帧那一本同口径；本体见 {@code render/DepthConventionPair}），
+     * 一个帧内只读一次配置 ⇒ 结构上不存在「一半翻了一半没翻」。
+     * 生效与否则由 {@code [GAP-022] depth convention = …} 那行自报（<b>两种状态各一条</b>）。
      *
-     * <p><b>默认关的理由</b>（不是「还没写完」）：本开关只覆盖深度那一半，
-     * 矩阵那一半接上之前开它 = 只给包一半真相。开着它做单变量取证时，
-     * 结论必须写清「深度已翻、投影未翻」。
+     * <p><b>默认关的理由</b>（不是「还没写完」）：矩阵那一半是<b>数值</b>推出来的，
+     * 而 h48w §四 明写不许因为「推出来了」就默认改产品 —— 判据在<b>画面侧</b>
+     * （{@code isSky = z==1.0} 翻完站对边、SSR/体积云/光柱/镜斑的像素位置对上）。
+     * 开着它做单变量取证时，结论必须写清当时自报行报的是哪一种口径。
+     *
+     * <p><b>还没被这一对覆盖的</b>（登记，免得把「成对」读成「全都成对了」）：
+     * ① {@code shadowProjection} / {@code shadowtex*} <b>不翻</b> —— 代理只顶替 {@code depthtex*}，
+     * 跟着翻光源空间反而是新的半翻（GAP-015/016 另案）；
+     * ② {@code gbufferProjection} 同时被包的<b>顶点级</b>用（{@code ftransform()} 展开成
+     * {@code gbufferProjection * gbufferModelView * …}，见 {@code glsl.translate.FtransformExpander}）
+     * ⇒ 开档时地形顶点写进 gbuffer 的深度也会跟着换口径，而 {@code DepthGlProxy} 又对那张图再取一次
+     * {@code 1 − z}。这两条的组合<b>只有画面能判</b>，也正是默认关着的理由。
      *
      * <p><b>降级是可见的</b>：开关开着而代理缺席（纹理没建出来 / 管线没编出来 / 深度视图为 null）
      * ⇒ 一次性 WARN 指名缺了哪一条，此时绑过去的仍是反向 Z 原图（X11：不许静默换绑）。
      */
     public static final ModConfigSpec.BooleanValue MRT_DEPTH_GL_PROXY = BUILDER
             .comment("GAP-022 ①：给链一张 GL 口径深度代理（depthtex* = 1 − 引擎反向 Z，"
-                    + "天空=1.0 / 近=0.0）。默认关：与 gbufferProjection/Inverse 的成对翻转"
-                    + "（OfUniformManager 那一半）必须同帧生效，只开这一半是半真半假。"
-                    + "开着但代理没跑成会打一次 WARN（不静默换绑）。")
+                    + "天空=1.0 / 近=0.0），并同帧翻 gbufferProjection/Inverse（半翻比不翻更坏）。"
+                    + "开着但代理没跑成会打一次 WARN（不静默换绑）。"
+                    + "🔴 但**开着不等于画面正确**，仅供取证：gbufferProjection 同时被顶点阶段用"
+                    + "（转译终稿 gl_Position = gbufferProjection * gbufferModelView * position），"
+                    + "翻完之后顶点产出的是 [-1,1] 的 clip.z，而本前端的设备深度值域是 [0,1]"
+                    + "（DeviceInfo.isZZeroToOne=true，没有 GL 那步 (ndc+1)/2 视口映射）"
+                    + "⇒ 光栅化进 gbuffer 的深度会越界，深度测试连带失真。"
+                    + "要真正生效必须按程序族分别供值（gbuffers_* 的顶点阶段留引擎口径、"
+                    + "composite/deferred 那批全屏步给 GL 口径），见登记表 GAP-022 的 h48z 更正。")
             .define("mrt.depthGlProxy", false);
 
     public static final ModConfigSpec SPEC = BUILDER.build();

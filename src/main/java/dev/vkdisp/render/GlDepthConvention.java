@@ -27,9 +27,10 @@ package dev.vkdisp.render;
  * ① 比较基准的 far 取了 512，而由真实矩阵反解出的<b>真 far = 1024.001</b>（near = 0.05；
  * 那个 {@code 0.05000244} 恰恰就是 near，本来就该在那儿）；② 从日志读矩阵时把
  * 「数学第 N 列」当成了「第 N 行」。上面的表格数字同属那个错基准，已一并作废。
- * 🔖 保留一条仍然成立的旧结论：<b>半翻比不翻更坏</b> ——
- * {@code mrt.depthGlProxy} 目前只翻深度、矩阵一个没动，所以本类的矩阵那两个方法
- * <b>尚未接进渲染路径</b>，接线必须与深度同帧、且要先有画面侧判据。
+ * 🔖 「<b>半翻比不翻更坏</b>」这条旧结论现在由<b>接线本身</b>兜住，不再是一句警告：
+ * {@code mrt.depthGlProxy} 同时决定深度那一半与本类的矩阵那一半（同一个开关、一帧内只读一次，
+ * 出口集中在 {@link dev.vkdisp.render.DepthConventionPair}），所以「只翻深度」这个状态已经写不出来了。
+ * 仍然不变的约束是<b>默认关着</b> —— 矩阵那一半只是数值成立，判据在画面侧（GAP-022 登记表）。
  * 全部原始读数与推导见 {@code evidence/h48w-gap022-real-matrices.md}。
  */
 import org.joml.Matrix4f;
@@ -68,8 +69,9 @@ public final class GlDepthConvention {
      * （实测 d=1→−0.5002、16→−8.063、128→−68.27）。全部数字见
      * {@code evidence/h48w-gap022-real-matrices.md}。
      *
-     * <p>⚠️ 本方法<b>尚未接进渲染路径</b>：GAP-022 的「半翻比不翻更坏」仍然成立，
-     * 必须与 {@link #glProjectionInverse} 同帧一起换，且要先有画面侧判据。
+     * <p>✅ <b>已接进渲染路径</b>（h48w 之后）：{@code render/DepthConventionPair} 在
+     * {@code mrt.depthGlProxy} 开着时，把本方法与 {@link #glProjectionInverse} <b>同帧成对</b>地
+     * 交给包（含上一帧那一本）。两本必须一起换 —— 只换其一就是「半翻」那条旧结论。
      */
     public static Matrix4f glProjection(Matrix4f engineProjection) {
         return flipClipZ(engineProjection, -2.0F, 1.0F);
