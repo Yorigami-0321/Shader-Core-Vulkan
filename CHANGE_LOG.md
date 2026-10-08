@@ -6,6 +6,56 @@
 ---
 ---
 
+## 2026-10-08（七十一）— 🔑 GAP-022 矩阵那一半**推出来了**（并撤掉一条拦住自己的假否证）+ 登记 GAP-027
+
+> **verdict = 反向 Z 的矩阵换算已证到 3.0e−9 并钉成单测；非地形 gbuffers 第一次有了官方非 mixin 接法**
+> 证据：`evidence/h48w-gap022-real-matrices.md`、`docs/13-GAP-REGISTRY.md` GAP-022 / **GAP-027**
+
+**做了什么**
+
+1. **给取证加一条自报行**：`OfUniformManager` 新增 `[GAP-022/matrix]`（`debugLog=true` 时按帧节流），
+   把**真正喂给包的那一对矩阵** + 三个已知距离的窗口深度一起打进日志。
+   登记表原本就要求「只能用游戏里真实的矩阵，不能用自己重构造的」—— 这条是照它做的。
+2. 🔴 **先踩两个读数坑，而它们正是上一轮「矩阵翻不动」的全部来源**：
+   ① 把日志里的 `rN` 当成数学**第 N 行** ⇒ 按行算 `d=1` 得 **20.0**，而同一行日志自己打的真实读数是
+      **0.04995361**（这条自相矛盾才是判出来的）；按列重建后三个读数逐位复现、`Q·Q⁻¹=I` 差 5.4e−8。
+   ② 比较基准的 far 用 512 ⇒ 由真实矩阵**反解出真 far = 1024.001**、near = 0.05；
+      上一轮被当成「joml 的 `m32` 是 ±0.05 而不是 ±1」的那个 `0.05000244` **恰恰就是 near**。
+3. ✅ **正确翻法 = 左乘 `D2`（第 2 行 `(0,0,−2,1)`，即 `row_z ← row_w − 2·row_z`）**，四项判据全过：
+   与标准 GL **`[-1,1]`** 投影逐元素差 **3.0e−9**；窗口深度恰好 `1 − z_engine`；x/y NDC 一动不动；
+   包自己 `depth*2−1 → P⁻¹` 的往返逐位回到 −1/−16/−128/−1024。
+   🔖 上一轮的 `(0,0,−1,1)` **也没错**，只是产出 `[0,1]` 那份 —— 症状是反解距离**差整一倍**
+   （d=1→−0.5002、16→−8.063）。这条区分现在有测试钉住，不会再被「看起来能翻」糊过去。
+4. **删掉 `matrixFlipIsNotTheSameAsDepthFlip` 那条红灯守卫**：它拦的是一条正确的式子；
+   矩阵判据整体迁到 `GlDepthConventionRealMatrixTest`（**先校验「重建 = 真实读数」，再判翻法**）。
+   实现按「矩阵作用在基向量上的结果」读列改列，不手搭 `D2` 猜左右乘 —— 手搭版先错了（逆配对差 13 倍）。
+5. **登记 GAP-027（非地形 `gbuffers_*` 全未接）**，并写进本轮查到的一条**结构性事实**：
+   原版有官方、非 mixin 的单点换管线入口 —— `RenderSystem.getCompiledPipelineNullable`（`:106`，
+   首条语句就是 `pipeline = PIPELINE_MODIFIERS.apply(pipeline);` —— **这两行本轮从 sources jar 逐字复核过**）
+   + NeoForge `RegisterPipelineModifiersEvent` + `push/popPipelineModifier`
+   （「全游戏 30 处取管线都过它」这个数字来自子代理统计、**本轮未独立复核**，登记时已标注）
+   ⇒ 实体/手/天气/云这些不走 `ChunkSectionLayer` 的 draw，第一次有了不逐个加 mixin 的接法。
+   三个硬约束一并登记（必须配平否则 `ClientHooks:863` 抛；modifier 要幂等且改 `location`；
+   未知管线按需编译 ⇒ 派生多附件变体不需要预注册）。第一刀选 **water**（与地形同一个已证收口点），
+   第二刀 **clouds**（`CloudRenderer.render(CloudStatus, RenderPass)` 是 public 且自收 RenderPass）。
+
+**影响的文档**：`docs/13-GAP-REGISTRY.md`（GAP-022 两行重写 + 撤回标记、新增 **GAP-027**）、
+`evidence/h48w-gap022-real-matrices.md`（新）。
+
+**测试结果**：`./gradlew test -PquickPlay` 全绿 **1023 条 / 0 失败**
+（本轮新增 `GlDepthConventionRealMatrixTest` 4 条；此前 `ChainEnableGatingTest` 8 条 +
+`BslChainGatingEvidenceTest` 4 条）。运行侧：GAP-024 判据达成（`kept=9 skipped=2`、链 `passes=9`）、
+GAP-026 自报行已在产品链路出现。
+
+**⛔ 仍未完成**：① **GAP-022 只推到、没接线** —— `D2` 那一对还没进 `OfUniformManager`/`DepthGlProxy`，
+   且「半翻比不翻更坏」这条旧结论**没被推翻** ⇒ 接线必须深度+矩阵**同帧**，并要画面判据
+   （`isSky = z==1.0` 站对边、光柱/镜斑/体积云像素位置对上）；② GAP-027 一条程序都没接；
+   ③ 8 附件档每 3 帧空一次的机制未定位；④ GAP-026 修法 ②③、GAP-023 分槽未动。
+
+**是否已提交**：是。
+
+---
+
 ## 2026-10-08（七十）— 🔴 黑白闪屏的自变量查清：不是链、不是仪器，是**store 残留把 BSL 编成了 8 附件档**
 
 > **verdict = 周期 3 的空帧只在「`ADVANCED_MATERIALS=true` ⇒ 8 附件」那一档出现；真默认档两臂各 240 帧 0 空帧**

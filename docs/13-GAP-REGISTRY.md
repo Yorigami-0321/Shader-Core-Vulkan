@@ -467,6 +467,22 @@ BSL 的 blue-noise 抖动/胶片颗粒自此有真值）；**三段键**（`text
 
 ---
 
+### GAP-027 · 🔴 非地形的 `gbuffers_*` 程序**一条都没接**（云/水/实体/手/天气；h48t 画面判读直接看见）
+
+| 字段 | 内容 |
+|---|---|
+| **症状（按图，不按数字）** | `evidence/h48-images/h48t-default-9.png`：抬头这片天上**没有任何云**，而 BSL 默认档 `LIGHT_SHAFT`/云都是开的 ⇒ 不是选项问题，是这些 draw 根本没走包的着色器 |
+| **现状** | 只有 `gbuffers_terrain`（经 `ChunkSectionLayer#pipeline(boolean)` 的派生管线）与 `gbuffers_skybasic/skytextured`（经 `SkyIntoGbuffer` 借 `SkyRenderer` 自建的 pass）落地。`water / clouds / entities / entities_glowing / textured / weather / hand / beaconbeam / spidereye / shadow` **全部未接** ⇒ 包的 deferred/composite 读到的那些槽只有清屏值或上一代残留 |
+| 🔑 **本轮新查到的结构性事实（这条改变了本条的可行性评估）** | 原版**有一个官方、非 mixin 的单点换管线入口**：`com/mojang/blaze3d/systems/RenderSystem.java:106` 的 `getCompiledPipelineNullable(RenderPipeline)`，其**第一条语句**就是 `pipeline = PIPELINE_MODIFIERS.apply(pipeline);`（:107，**本轮从 sources jar 逐字复核过这两行**）；配套公开 API 是 NeoForge 的 `RegisterPipelineModifiersEvent`（`net/neoforged/neoforge/client/pipeline/RegisterPipelineModifiersEvent.java:28`）+ `RenderSystem.pushPipelineModifier/popPipelineModifier/renderWithPipelineModifier`（:502/:507/:513）。⇒ 实体/手/天气/云这些**不走 `ChunkSectionLayer`** 的 draw，第一次有了「不逐个点加 mixin」的接法。<br>⚠️ **口径分开写**：「**全游戏 30 处取管线都过它**」这个数字来自子代理统计，**本轮未独立复核** ⇒ 用它当依据前自己数一遍；本轮独立核实的只有「`getCompiledPipelineNullable` 首条语句是 `PIPELINE_MODIFIERS.apply`」这一条。 |
+| **用它的三个硬约束（源码级，别踩）** | ① 栈必须配平 —— `ClientHooks.java:863` 在 `RenderFrameEvent.Post` 之后立刻 `ensurePipelineModifiersEmpty()`，漏 pop 会**抛**；② modifier 必须**幂等**且必须真的改变 `location`（`PipelineModifierStack.java:57-66`）；③ 未知管线是**按需编译**的（`PipelineCache.java:36`）⇒ 我方派生的多附件变体不需要预先注册 |
+| **包的输出落点（逐行取自包，决定优先级）** | `gbuffers_water` → `01`/`018`/`0186`/`016`；`gbuffers_entities` → `0`/`08`/`083`/`08367`/`03`/`0367`；`gbuffers_clouds` → `0`/`0367`；`gbuffers_weather` → `0`。**这些槽全被链读回去**：colortex1 被 `composite.glsl:45`/`composite5:31`/`final:16` 读，3/6/7 被 `deferred1.glsl:41,53,54` 读，6/8 被 `deferred1.glsl:53,58` 读 ⇒ 不是「接了也没人看」 |
+| **建议的第一刀（由上述判据选出，不是由好恶选出）** | **`gbuffers_water`**：① 它和地形是**同一个已证过的收口点**（`ChunkSectionLayer#pipeline(boolean)`，我方 mixin 今天已经覆盖 TRANSLUCENT 组，只是对它返回「不换」）；② 几何走的是同一个公开 `ChunkSectionsToRender.renderGroup(TRANSLUCENT, pass, …)`（`ChunkSectionsToRender.java:45`），用的就是已捕获的那份 `ChunkSectionsToRender`；③ 需要做的只是「再加一次 renderGroup + 一条派生 TRANSLUCENT 多附件管线 + `pass.requires(terrainPass)` 定序」，且它产出 colortex1（TAA/反射要用）。**第二刀 = clouds**（`CloudRenderer.render(CloudStatus, RenderPass)` 是 public 且**自己收 RenderPass**，与天空同形） |
+| **顺序约束（已实测过一次的坑）** | 帧图的执行序**只由 `FramePass#requires` 决定**，插入序不算依赖（`evidence/h48` §十六/§十七：没声明 `requires` 时天空被排到地形之后，又被地形盖回去）。⇒ 每加一条 gbuffer pass 都必须显式定序，且**必须**在 `04-SPEC`/本表里留一条自报，否则又变成「接了但看不见」 |
+| **未定项（不许当已知用）** | ① `shadow` 的原版绘制路径与可换点**未查**；② `featureRenderDispatcher` 字段私有且无 accessor（`LevelRenderer.java:123`）、`PreparedFrame` 是单实例复用且重复使用会抛（`FeatureRenderDispatcher.java:190`）⇒ 「整帧重放」这条路**能不能走通未证**；③ 手（`GameRenderer.java:411-412`）的 pass 目标是**写死主目标**的 ⇒ 没有公开换点，要么 mixin 要么我方重画；④ BSL **不带** `gbuffers_textured_lit` / `gbuffers_terrain_translucent` / `gbuffers_block_translucent`（目录列举核实） |
+| **判据（每条程序各自收口）** | 该程序的 `DRAWBUFFERS` 声明槽在**链跑之前**就有非清屏内容（`mrt.pixelProbe` 逐槽取点 + `declaredOutputSlots` 同源挑槽），且画面侧能看见对应物体（云/水面/实体各自的可辨认特征），且 `[route]`/新 pass 自报行报出该程序名 |
+
+---
+
 ## 4. 快速自检
 
 ```
