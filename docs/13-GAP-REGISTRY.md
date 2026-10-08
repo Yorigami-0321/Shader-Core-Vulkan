@@ -458,6 +458,35 @@ c) 三条名字各自绑**各自的 view**，`startsWith("depthtex")` 那个一�
 ⇒ 同一个名字在两条链上给不同答案）。
 🔴 **本条仍不关**：关闭条件不变（三个时刻各一张快照 + 画面侧判据）。
 
+🔴🔴 **h48x 复核更正上面那段「净改善」：它换掉了一个错，同时引入了一个更危险的错（4568258 未记）**
+`gbufferDepthSnapshotView(name, depthView)` 里的 `depthView` **就是本 pass 自己的深度附件** ——
+调用点逐字 `MrtTerrainPass.java:501-502` 传 `colortexDepth.getDepthTextureView()`，且绑定发生在
+**pass 内、`renderGroup(OPAQUE)` 之前**（`TerrainPipelineApi.java:844-845` 自己写的时机）。
+⇒ 片元采样器与同 pass 的 depth-stencil 附件指向同一张纹理 = **本仓库 h26 已明令禁止的形态**，
+原话就在**同一个 switch 的上面 25 行**：`TerrainPipelineApi.java:892`「🔴 h26 修正：**不得**绑本
+pass 的深度/颜色附件（读写附件 + 采样器 = Vulkan UB）」—— 正因为这条，`SHADOW_DEPTH_2D` 默认走
+`ShadowStubs.depthView()`（**永不作附件**的桩），而把 `depthView` 直绑那一支被标成
+「🔬 故意恢复旧行为，仅供 A/B 取证」。
+⇒ 新分支**没有任何等价保护**：默认直绑附件、无桩、无开关、无布局检查。
+本机 **没有 `VK_LAYER_KHRONOS_validation`**（X35）⇒ 这条用法错误是**静默**的：它可能表现为
+`depthtex1` 读数随机，也可能什么都不表现 —— **不能**因为「臂没崩」就判它没事。
+⇒ 修法（按优先级）：① **立刻**改绑一张**桩**（与 `ShadowStubs` 同族，读数恒 0 + 一次性 WARN
+点名「快照未实现」），恢复「响亮而非静默」；② 真修法仍是上面的两次 blit 快照（OPAQUE 后 /
+TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源**，否则 ① 号问题原样复发；
+③ 判据：绑定自报行里 `depthtex*` 的 view 来源必须是 `DEPTH_SNAPSHOT_COPY`/桩，**不是** pass 附件；
+`[GAP-027]` 水接上之后的 `z1 > z0` 判定**只在这条之后才算数**。
+
+✅ **① 已落地（本轮，离线可证的部分）**：`DEPTH_SNAPSHOT_2D` 改绑 `ShadowStubs.depthView()`
+（1×1 `D32`@0.0 —— 语义 = 本引擎反向 Z 的**远平面** = 「这一层此刻还没写过任何东西」，
+那正是水正在画时 `depthtex1` **应有的真值**；不新建 GPU 资源、不加新开关，且**永不作附件**）。
+绑定摘要里 `depthtex*` 的来源已单列成「1x1 D32@0.0 桩（**不是**本 pass 附件，快照未实现）」，
+一次性 WARN 同口径；决策侧把禁令写进 `reason`，并由 `SamplerDimensionPlanTest` 钉住
+（钉的是「决策表有没有把约束说出口」这条**性质**，不是代码形状 —— 真正的取视图动作在 bridge，
+单测拿不到 GPU，这一点在测试注释里如实写明）。`./gradlew test` 全绿。
+| **🔴🔴 h48y：① 这个「绑桩」改动自己引入了一条会抛的路径** | `DEPTH_SNAPSHOT_2D` 无条件调 `ShadowStubs.depthView()`，而 `ShadowStubs#depthView()` 刻意**不**懒建（懒建会在 render pass 内新建 encoder）；可旧的门控 `ensureShadowStubs()` **只在 `mrt.shadowStubs=true` 时才 `init()`** ⇒ 在 `false` 档必然 `depthView == null` → **抛 `IllegalStateException`**。后果不是「多个异常」而是**对照实验被换掉一个自变量**：那条臂（专门复现 h25/h26「整帧地形间歇消失」）会从「画面闪烁」退化成「地形整层不画」。修法 = 桩**一律建**，开关只决定「阴影那一族绑桩还是绑附件」。守卫钉的是**结构**（init 那行不在任何 `if` 内）而非字面量 —— 🔶 第一版写成「多行字面量计数」，而本仓的 `countCode` 是**逐行**匹配的 ⇒ 断言恒真、在 bug 版源码上照样 PASSED（h48y 实测），改成花括号深度判定后红绿双向证过 |
+🔴 **②/③ 仍未做**：桩值确定性有了，**场景深度没有** ⇒ 三个名字同源且都不含几何深度，
+`z1 > z0` 一族判据仍不可信；本条**不关**，关闭条件仍是「三个时刻各一张真快照 + 画面侧判据」。
+
 ### GAP-024 · 🟡 `program.*.enabled` 解析了但**没有用来门控链**（h48p 审计；2026-10-08 补全核实）
 
 | 字段 | 内容 |
@@ -479,6 +508,8 @@ c) 三条名字各自绑**各自的 view**，`startsWith("depthtex")` 那个一�
 
 | **状态（h48p 后续）** | 🟡 **代码已实现，但只在单测层面成立**：`bridge/NoiseSamplerSource.java`（纯判定，四态 PACK / BUILTIN_NOT_DECLARED / BUILTIN_DECLARED_BUT_MISSING / NO_PACK）+ `PackTextures.view()` 不再短路、`ensureReady()` 拆分；测试 `NoiseSamplerSourceTest`（8 条，含「旧短路」红灯回归与真 BSL 链路：properties → `PackTextureBindings.fromDirectives` → 判定，并核对 PNG IHDR=512×512）。🔴 **未在运行客户端里观察过**（写码期间客户端被别的取证占着）⇒ 本条**不关**：判据 = 一次 runClient 里 `noisetex` 绑到 512×512 那张（自报行 + dither 尺度可读），且**没声明 noise 的包**仍走内建并打一次性 WARN |
 | **🔴 2026-10-08：实现早就写好了，但**根本没接线**（本族又一例「改了不生效」）** | `SamplerDimensionPlan` 的分类表里**没有 `noisetex` 分支** ⇒ `bindPackGbufferUniforms` 落到 `PLACEHOLDER_2D -> atlas`（**绑方块图集**）。而 BSL 的**地形与水都声明 noisetex**（地形清单实测 `[texture_0, noisetex, shadowtex0, shadowtex1, shadowcolor0]`）⇒ 包把图集当噪声读：**不报错**、画面里是频率完全不对的假噪声。已新增 `ViewKind.NOISE_2D` + 绑定分支 `case NOISE_2D -> PackTextures.view(name)`。⇒ 原判据（运行侧观察）**依然有效且未做**；新判据 = 绑定自报行里 `noisetex` 的类别是 `NOISE_2D`（不再是 `PLACEHOLDER_2D`）。⚠️ 这条改动**改变地形行为**（图集 → 真噪声）⇒ 历史地形臂与之后的地形臂**不可直接比亮度**。 |
+| **✅ h48y：运行侧判据达成（本条仍不关，关闭条件见下）** | 真 Vulkan 后端（`Using graphics backend Vulkan … llvmpipe` + `vkdisp: backend=Vulkan`）跑通两臂对照。**修之前**（日志行号即证据）：`18:34:26.239 gbuffer terrain targets ready` → `18:34:26.318 [ERROR] builtin noisetex FAILED —— Close the existing render pass…` → `18:34:26.356 custom texture loaded: noise 512x512` ⇒ **地形 pass 消费 noisetex 时纹理还没上传**，回落 `builtinNoiseView()`，而它在 render pass 打开期间新建 encoder ⇒ 原版抛异常。🔴 比「少绑一条」更糟：`builtinNoise` 停在 null ⇒ **每帧**重走同一条失败路径（不是一次性）。**修之后**：`builtin noisetex FAILED` **计数 1 → 0**，`custom texture loaded` 排在绑定**之前**，`GAP-025 noisetex 用包声明的真值：texture.noise='tex/noise.png'（内置 64x64 不参与）` 逐字打出，绑定自报行 `NOISE_2D=1`。 |
+| **🔴🔴 h48y 根因（第二个「实现了但没接上」）** | `PackTextures.ensureReady()` 全仓**只有一处**调用：`FrameApi.java:1105`（**后处理链**）。而地形 gbuffer pass **早于**链执行 ⇒ 它消费 `noisetex` 时 `PackTextures.loaded` 必是空的。⇒ 上一轮那条 `case NOISE_2D -> PackTextures.view(name)` **在真机上从未取到过包图**（单测绿、运行侧每帧缺席）。修法 = `MrtTerrainPass.ensureTargets` 补调 `ensureReady()`（该方法按指纹早退，幂等）。🔶 与上一行同类：**决策表 / 接线点都对了，缺的是「资源准备顺序」**。⚠️ 本条仍未关：**关它需要**「没声明 noise 的包仍走内建并打一次性 WARN」那一半在真机上验过。 |
 ---
 
 ### GAP-026 · 🔴 **取证期的状态会泄漏进产品路径**：持久化包选项 store 没有任何闸门（h48r 发现；2026-10-08 登记）

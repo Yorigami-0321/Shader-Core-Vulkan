@@ -90,6 +90,10 @@ public final class SamplerDimensionPlan {
          * <p>具体来源由 bridge 侧<b>按名字后缀</b>分派（三个时刻各绑各的）。
          * 此前这一族名字没有分支 ⇒ 落到 {@link #PLACEHOLDER_2D}（方块图集），
          * 包拿图集当深度读：<b>不报错、结论全假</b>。
+         *
+         * <p>🔴 <b>来源的一条硬约束（本类说得出、bridge 必须守）</b>：真快照实现之前，
+         * 这一族只能喂<b>永不作附件</b>的桩，<b>不能</b>喂本 pass 自己的深度附件 ——
+         * 后者是 {@code SHADOW_DEPTH_2D} 那条 h26 禁令的同一种 Vulkan UB。
          */
         DEPTH_SNAPSHOT_2D,
         /**
@@ -302,8 +306,9 @@ public final class SamplerDimensionPlan {
             //   「同一个 noisetex 在链里是真噪声、在 gbuffer 里是方块图集」正是要消灭的静默错。
             if (name.startsWith("depthtex")) {
                 return new Binding(name, type, ViewKind.DEPTH_SNAPSHOT_2D,
-                        "OF 深度快照（GAP-023）：不得落图集占位 —— 那会让水的 z1>z0 拿图集当深度，"
-                                + "不报错而结论全假");
+                        "OF 深度快照（GAP-023）：既不得落图集占位（那会让水的 z1>z0 拿图集当深度，"
+                                + "不报错而结论全假），也**不得**绑本 pass 自己的深度附件"
+                                + "（读写附件 + 采样器同图 = Vulkan UB，h26 实测结论，本机无 validation layer）");
             }
             if (name.startsWith("gaux")) {
                 return new Binding(name, type, ViewKind.GAUX_2D,

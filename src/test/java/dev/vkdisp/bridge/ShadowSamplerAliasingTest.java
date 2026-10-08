@@ -176,6 +176,88 @@ class ShadowSamplerAliasingTest {
                         + "不能让后来人以为阴影是对的");
     }
 
+    /**
+     * 🔴🔴 h48y 新增：<b>桩的创建不得被 A/B 开关门住</b>。
+     *
+     * <p>为什么钉这条：本轮把 GAP-023 的 {@code depthtex*} 也改成绑桩（与 {@code ShadowStubs}
+     * 共用同一张图），而那条分支是<b>无条件</b>调 {@code ShadowStubs#depthView()} 的。
+     * 旧的 {@code ensureShadowStubs()} 却只在 {@code mrt.shadowStubs=true} 时才 {@code init()}
+     * ⇒ 在 {@code false} 档（专门用来复现 h25/h26「整帧地形间歇消失」的取证臂）必然
+     * {@code depthView == null}，而 {@code depthView()} 刻意<b>不</b>懒建（懒建会在
+     * render pass 内新建 encoder）⇒ <b>抛 IllegalStateException</b>。
+     *
+     * <p>后果不是「多一个异常」而是<b>对照实验被换掉一个自变量</b>：那条臂原本要复现的
+     * 症状是「画面闪烁」，会退化成「地形整层不画」。
+     *
+     * <p>🔶 为什么仍然钉<b>源码形状</b>而不是纯性质：真正的守卫在运行侧（init 有没有跑），
+     * 单测没有 GPU；这里能纯判定的是「init 是否被开关包住」——
+     * 它一旦回到被包住的状态，下一个读代码的人拿到的就是一条会抛的路径。
+     * 这是本仓少数该钉形状的场景，理由写在这里，不做默默收紧。
+     */
+    @Test
+    @DisplayName("🔴🔴 A/B 档（mrt.shadowStubs=false）也必须建桩 —— depthtex* 无条件取那张图")
+    void stubCreationIsNotGatedByTheAbSwitch() {
+        String pass = read(PASS_SRC);
+        // 取出 ensureShadowStubs 的方法体（源码形状守卫，故取到下一个方法为止）。
+        int from = pass.indexOf("private static void ensureShadowStubs()");
+        assertTrue(from > 0, "找不到 ensureShadowStubs()（若被重命名，请同步更新本守卫的锚点）");
+        // 🔖 取到「方法体的收尾花括号」为止，而不是 indexOf("private ")：
+        //   后者会撞上紧跟其后的 javadoc 里出现的 private 字样，把无关文本一起吞进来。
+        int cursor = pass.indexOf("{", from);
+        int bodyEnd = -1;
+        int level = 0;
+        for (int i = cursor; i >= 0 && i < pass.length(); i++) {
+            char c = pass.charAt(i);
+            if (c == '{') {
+                level++;
+            } else if (c == '}') {
+                level--;
+                if (level == 0) {
+                    bodyEnd = i + 1;
+                    break;
+                }
+            }
+        }
+        assertTrue(bodyEnd > from, "无法解析 ensureShadowStubs 的方法体边界（源码形状已变？）");
+        String body = pass.substring(from, bodyEnd);
+
+        // 🔖 这里刻意**不用** countCode 的「字面量计数」写法：
+        //   那个 helper 是**逐行**匹配的，喂多行字面量永远数出 0 ⇒ 断言恒真、守卫是空的
+        //   （h48y 实测踩过：这样写的第一版在 bug 版源码上照样 PASSED，理由写在这里）。
+        //   改为判定**结构**：init 那一行是否位于任何 if 的花括号内。
+        //   取代码行（滤掉注释），逐行数花括号深度 —— 深度 0 即「不在任何 if 内」。
+        String[] codeLines = java.util.Arrays.stream(body.split("\n"))
+                .map(String::trim)
+                .filter(l -> !l.isEmpty() && !l.startsWith("*") && !l.startsWith("//"))
+                .toArray(String[]::new);
+        // 基准深度 0：**方法签名那一行的开括号自己会把深度抬到 1**，
+        // 所以「深度 == 1」正是「处于方法体作用域、不在任何 if 内」。
+        // （h48y 实测：这里一开始写成基准 1 ⇒ 固定代码上就误报红灯，深度语义要按签名计入。）
+        int depth = 0;
+        boolean initUnconditional = false;
+        for (String line : codeLines) {
+            boolean isInit = line.contains("ShadowStubs.init();");
+            if (isInit && depth == 1) {
+                initUnconditional = true;
+            }
+            for (char c : line.toCharArray()) {
+                if (c == '{') {
+                    depth++;
+                } else if (c == '}') {
+                    depth--;
+                }
+            }
+        }
+        assertTrue(initUnconditional,
+                "🔴 桩的创建不得再被 A/B 开关包住 —— GAP-023 的 depthtex* 无条件调"
+                        + " ShadowStubs#depthView()，而它不懒建 ⇒ 开关 false 时会抛"
+                        + " IllegalStateException，把「复现闪烁」那条 A/B 臂变成「整层不画」。"
+                        + "ensureShadowStubs 方法体为：" + body);
+        // 开关的语义仍是「阴影那一族绑桩还是绑附件」，判据不能因此被削弱。
+        assertTrue(body.contains("MRT_SHADOW_STUBS"),
+                "开关仍必须在本方法里被读 —— 它决定的是**绑定**，不是**桩是否存在**");
+    }
+
     @Test
     @DisplayName("🔖 我方 pass 的深度附件仍是**读写**的（这条不能被「顺手改成只读」破坏）")
     void ownDepthAttachmentStaysWritable() {

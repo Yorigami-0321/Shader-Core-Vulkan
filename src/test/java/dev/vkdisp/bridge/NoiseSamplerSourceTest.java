@@ -153,6 +153,61 @@ class NoiseSamplerSourceTest {
         }
     }
 
+    /**
+     * 🔴🔴 h48y 回归红灯：<b>地形 gbuffer pass 也必须在开 pass 之前把自定义纹理备好</b>。
+     *
+     * <p>本轮 runClient 实测（真 Vulkan 后端，BSL 默认档）抓到：
+     * <pre>
+     *   18:34:26.239 [INFO ] gbuffer terrain targets ready     ← ensureTargets 起点
+     *   18:34:26.318 [ERROR] builtin noisetex FAILED —— Close the existing render pass...
+     *   18:34:26.356 [INFO ] custom texture loaded: noise 512x512   ← 纹理**才**上传完
+     * </pre>
+     * 顺序本身就是证据：地形 pass 消费 {@code noisetex} 时 {@code PackTextures.loaded} 还是空的，
+     * 于是 {@code view()} 回落 {@code builtinNoiseView()}，而它在 render pass 打开期间新建
+     * encoder ⇒ 原版抛异常 ⇒ noisetex 缺席（少绑一条，且**每帧**重试同一条失败路径，
+     * 因为 {@code builtinNoise} 停在 null）。
+     *
+     * <p>为什么钉源码形状：判据是「{@code ensureReady()} 在地形 pass 的资源准备阶段被调过」，
+     * 真伪只有 GPU 上跑得出来；这里能纯判定的是调用点**存在且在开 pass 之前**。
+     * 钉住的后果是：下一个只读链侧 {@code FrameApi:1105} 的人会发现这里也有一处，
+     * 而不是以为「链侧已经调过了」。
+     */
+    @Test
+    @DisplayName("🔴🔴 地形 gbuffer pass 必须在开 pass 之前调 PackTextures.ensureReady（否则 noisetex 缺席）")
+    void terrainPassPreparesCustomTexturesBeforeOpeningPass() throws Exception {
+        Path pass = Path.of("src/main/java/dev/vkdisp/bridge/MrtTerrainPass.java");
+        Assumptions.assumeTrue(Files.exists(pass), "工程文件缺失: " + pass);
+        String src = Files.readString(pass);
+        assertTrue(src.contains("PackTextures.ensureReady();"),
+                "🔴 MrtTerrainPass 必须调 PackTextures.ensureReady() —— 自定义纹理的实际上传"
+                        + "自己新建 encoder（h10 规则），而地形 pass **早于**链侧 FrameApi 的那一处调用；"
+                        + "不在这儿备好，noisetex 会在 render pass 打开期间首建内置兑底并抛"
+                        + " \"Close the existing render pass ...\"，导致它每帧缺席（h48y 实测）");
+
+        // 钉住「在同一批资源准备里」：它必须落在 ensureTargets 这条开 pass 之前的路径上。
+        int targets = src.indexOf("private static void ensureTargets(");
+        assertTrue(targets > 0, "找不到 ensureTargets（若被重命名，请同步更新本守卫的锚点）");
+        int cursor = src.indexOf("{", targets);
+        int level = 0;
+        int end = -1;
+        for (int i = cursor; i >= 0 && i < src.length(); i++) {
+            char c = src.charAt(i);
+            if (c == '{') {
+                level++;
+            } else if (c == '}') {
+                level--;
+                if (level == 0) {
+                    end = i;
+                    break;
+                }
+            }
+        }
+        assertTrue(end > targets, "无法解析 ensureTargets 的方法体边界");
+        assertTrue(src.substring(targets, end).contains("PackTextures.ensureReady();"),
+                "🔴 ensureReady() 必须落在 ensureTargets 里（开 pass 之前的资源准备阶段），"
+                        + "而不是在链侧或更晚的调用点上");
+    }
+
     @Test
     @DisplayName("🔴 回归红灯：消费侧必须走别名解析，不许再把内置图写成无条件答案")
     void consumerKeepsPackPriority() throws Exception {

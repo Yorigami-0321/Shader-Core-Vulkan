@@ -6,6 +6,54 @@
 ---
 ---
 
+## 2026-10-08（七十五）— 🔴🔴 接线补齐后的第一次真机取证，当场抓出两个真缺陷：一个是上一轮自己引入的，一个是「决策表全对、资源准备顺序错了」
+
+> **verdict = 离线全绿 ≠ 接上了**：1066 条测试全过，而真机上 `noisetex` 每帧缺席 —— 顺序错了
+> 证据：`docs/13-GAP-REGISTRY.md` GAP-023 / GAP-025 各加一行；`run/logs/latest.log` 逐字时间戳；修前/修后两臂对照
+
+**本次改了什么**
+
+1. **收尾上一轮的 GAP-023 ①**（未提交的 `DEPTH_SNAPSHOT_2D` 改绑 `ShadowStubs` 桩）并逐字核实其语义：
+   桩是 1×1 `D32` 清到 0.0 = 本引擎反向 Z 的**远平面** = 「这一层此刻还没写过任何东西」，
+   与 `depthtex1`（半透明后快照）在水自己正在画的这一刻**应有的真值**同口径；且**永不作附件**。
+2. 🔴🔴 **缺陷①（本轮自己引入的）**：`ensureShadowStubs()` 只在 `mrt.shadowStubs=true` 时才 `init()`，
+   而新的 `depthtex*` 分支**无条件**调 `ShadowStubs.depthView()`（它刻意不懒建）
+   ⇒ **`mrt.shadowStubs=false` 那条 A/B 臂必然抛 `IllegalStateException`**。
+   后果不是「多个异常」，而是**对照实验被换掉一个自变量**：那条臂本要复现 h25/h26 的「画面闪烁」，
+   会退化成「地形整层不画」。修法 = 桩一律建，开关只决定**绑定**。
+3. 🔴🔴 **缺陷②（更值得记：上一轮那条接线在真机上从未生效过）**：`PackTextures.ensureReady()` 全仓**只有一处**调用
+   —— `FrameApi.java:1105`，而后处理链**排在地形 gbuffer pass 之后**
+   ⇒ 地形 pass 消费 `noisetex` 时 `PackTextures.loaded` 必是空的 ⇒ 回落内置兜底，
+   而内置兜底**在 render pass 打开期间新建 encoder** ⇒ 原版抛
+   `Close the existing render pass before performing additional commands`。
+   🔶 比「少绑一条」更糟：`builtinNoise` 停在 null ⇒ **每帧**重走同一条失败路径。
+   **日志顺序本身就是证据**：修前 `18:34:26.318 [ERROR] builtin noisetex FAILED` 排在
+   `18:34:26.356 custom texture loaded: noise 512x512` **之前**。
+4. ✅ **按 A11 真机取证**（`run-client.sh`，真 Vulkan 后端，非 OpenGL 静默降级）：
+   缺陷②修后 `builtin noisetex FAILED` **计数 1 → 0**，`custom texture loaded` 排到绑定之前，
+   绑定自报行 `NOISE_2D=1` + `GAP-025 noisetex 用包声明的真值：texture.noise='tex/noise.png'`。
+   GAP-023 ① 的自报行同步打出 `depthtex*=1x1 D32@0.0 桩（不是本 pass 附件，快照未实现）`。
+5. **两条新守卫都做了红绿双向取证**（在 bug 版源码上确实红、在修好的源码上确实绿）。
+   🔶 第一版守卫**是空的**：写成「多行字面量计数」，而本仓 `countCode` **逐行**匹配 ⇒ 恒 0 ⇒
+   在 bug 版源码上照样 PASSED。改成**花括号深度**判定（init 那行不在任何 `if` 内）后才真正能抓。
+   —— 又一次「守卫写了 ≠ 守卫会响」。
+
+**为什么改**：A11 要求改主源码必须真机取证。不跑这一次，缺陷②会以「地形噪声是方块图集」的形式
+长期留在产品里，而**单测永远是绿的**；缺陷①则会让专门复现 h25/h26 的那条 A/B 臂悄悄失去可比性。
+
+**影响的文档**：`docs/13-GAP-REGISTRY.md`（GAP-023 加缺陷①；GAP-025 加真机判据达成 + 根因②）。
+
+**测试结果**：全量 **1066 / 0 失败 / 0 错误 / 0 skip**（1064 + 2）。
+
+**是否已提交**：见本条目对应提交。
+
+**⛔ 仍未完成**：① GAP-023 的 **②/③ 三张时刻快照**（blit）未做 ⇒ `depthtex*` 仍不含场景深度，
+依赖 `z1 > z0` 的判据仍不可信；② GAP-025 **不关** —— 关闭条件里的另一半
+（「没声明 noise 的包仍走内建并打一次性 WARN」）尚未在真机上验过；③ GAP-027 水的运行侧验收仍未做
+（`mrt.packWater` 仍默认 false）；④ ⚠️ **行为变化要记**：`noisetex` 现在才真正绑上包图，
+历史地形臂与之后的地形臂**不可直接比亮度**（这条自 4568258 起就成立，本轮才真正兑现）。
+
+---
 ## 2026-10-08（七十四）— 🔑 顺藤摸到「实现了但没接上」的第二、三例：noisetex 一直绑的是方块图集
 
 > **verdict = `SamplerDimensionPlan` 缺三个家族分支 ⇒ `noisetex` / `depthtex*` / `gaux*` 全落「图集占位」**

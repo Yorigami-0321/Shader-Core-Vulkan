@@ -344,6 +344,23 @@ class SamplerDimensionPlanTest {
     }
 
     @Test
+    @DisplayName("🔴🔴 深度快照一族的决策必须点名「不得绑本 pass 附件」（h26 那条 UB 禁令）")
+    void depthSnapshotReasonCarriesTheAttachmentBan() {
+        // 为什么钉**理由文本**而不是钉代码形状：真正的守卫在运行侧（bridge 取哪个视图对象），
+        // 单测拿不到 GPU；但「决策表有没有把这条约束写进它对外的说法」是可以纯判定的性质 ——
+        // 它一旦从说法里消失，下一个改 bridge 的人就没有任何提示，而本机没有 validation layer，
+        // 绑错的后果是静默 UB（evidence/h25/h26 实测到的正是「整帧间歇消失」）。
+        for (String name : List.of("shadowtex0", "depthtex1")) {
+            String reason = SamplerDimensionPlan.fromDeclaredTypes(Map.of(name, "sampler2D"))
+                    .binding(name).orElseThrow().reason();
+            assertTrue(reason.contains("附件"), name + " 的决策理由必须提到「本 pass 附件」："
+                    + reason);
+            assertTrue(reason.contains("UB") || reason.contains("未定义"),
+                    name + " 的决策理由必须说明那是 Vulkan 未定义行为，而不是「风格不好」：" + reason);
+        }
+    }
+
+    @Test
     @DisplayName("🔴 gauxN：与链侧 FrameApi 同口径（不是图集）")
     void gauxFamilyMatchesChainSideSemantics() {
         assertEquals(SamplerDimensionPlan.ViewKind.GAUX_2D,

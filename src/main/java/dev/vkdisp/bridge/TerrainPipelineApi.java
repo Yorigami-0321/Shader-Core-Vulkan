@@ -913,8 +913,8 @@ public final class TerrainPipelineApi {
                         // 🔴 GAP-025 接线点：噪声走**选源**（包 texture.noise 优先），不是方块图集。
                         //   此前没有这条分支 ⇒ 地形与水都把图集当噪声读（静默错）。
                         case NOISE_2D -> dev.vkdisp.bridge.PackTextures.view(name);
-                        // 🔴 GAP-023 接线点：深度快照（三个名字暂同源，但**必须自报**）。
-                        case DEPTH_SNAPSHOT_2D -> gbufferDepthSnapshotView(name, depthView);
+                        // 🔴 GAP-023 接线点：深度快照**绑桩**，不绑本 pass 的深度附件（h26 的 UB 禁令）。
+                        case DEPTH_SNAPSHOT_2D -> gbufferDepthSnapshotStub(name);
                         // 🔴 gauxN = colortex(N+3)，与链侧 FrameApi 同口径。
                         case GAUX_2D -> gauxView(name, atlas);
                         case PLACEHOLDER_2D -> atlas;
@@ -943,7 +943,8 @@ public final class TerrainPipelineApi {
             VkDisp.LOGGER.info("vkdisp: [GAP-027] pack gbuffer uniforms bound: program={}"
                             + " blockMembers={} samplers={}"
                             + " (by dimension: {}; texture_0=图集真值; specular/normals=中性单位元;"
-                                    + " shadowtex*=专用桩; sampler3D*=3D 桩; 其余=图集占位)",
+                                    + " shadowtex*=专用桩; depthtex*=1x1 D32@0.0 桩（**不是**本 pass"
+                                    + " 附件，快照未实现）; sampler3D*=3D 桩; 其余=图集占位)",
                     programName,
                     layout == null ? 0 : layout.members().size(),
                     program.fragmentSamplers().size(),
@@ -988,28 +989,43 @@ public final class TerrainPipelineApi {
             java.util.Collections.synchronizedSet(new java.util.LinkedHashSet<>());
 
     /**
-     * GAP-023：把 {@code depthtexN} 绑到**该时刻**的深度快照。
+     * GAP-023：把 {@code depthtexN} 绑到一张**桩**，而<b>不是</b>本 pass 的深度附件。
      *
-     * <p>🔴 <b>分槽尚未实现</b> ⇒ 三个名字目前拿到<b>同一张</b>（本 pass 的深度）。
-     * 这是<b>已知缺口</b>、不是正确行为，因此必须自报一次 —— 否则取证者会把
-     * 「{@code z1 > z0} 恒假」读成「水面没有半透明遮挡」（X11：降级必须可见）。
+     * <p>🔴🔴 <b>为什么必须是桩</b>：传进来的 {@code depthView} 就是<b>本 pass 自己的深度附件</b>
+     * （调用点 {@code MrtTerrainPass:501-502} 逐字传 {@code colortexDepth.getDepthTextureView()}，
+     * 且绑定发生在 <b>pass 内、renderGroup 之前</b>）。把一张 image 同时作读写附件与采样器
+     * = Vulkan <b>未定义行为</b> —— 这条是本仓库 <b>h26 用实测换来的结论</b>，原话就写在
+     * 上面那个 switch 的 {@code SHADOW_DEPTH_2D} 分支（「不得绑本 pass 的深度/颜色附件」），
+     * 而 {@code mrt.shadowStubs=false} 那一支被专门标成「仅供 A/B 取证」。
+     * 症状也不是假想的：{@code evidence/h25/h26} 把「整帧地形间歇性消失」收敛到
+     * <b>只有包片元</b>（原版 core/terrain 不声明这些 sampler ⇒ 不触发），
+     * 与 GAP-020 重开的那个「整帧为空」是<b>同一族机制</b>。
+     * 本机没有 {@code VK_LAYER_KHRONOS_validation} ⇒ 这条用法错<b>不会报错</b>，
+     * 所以「臂没崩」不能当作它没事（X35）。
      *
-     * <p>🔖 相对之前的净改善：此前这一族名字<b>没有分支</b> ⇒ 落 {@code PLACEHOLDER_2D}
-     * （方块图集），包拿一张 2D 图集当深度读 —— 那是「类型对、内容全错」的最坏形态。
-     * 现在至少是**真深度**，只是三个时刻还没分开。
+     * <p>🔶 <b>桩值语义（可解释的缺省，不是编一个好看的数）</b>：1×1 {@code D32} 清到
+     * {@code 0.0} = 本引擎反向 Z 的<b>远平面</b> = 「这一层此刻还没有写过任何东西」——
+     * 那正是 {@code depthtex1}（半透明后的快照）在水自己正在画的这一刻<b>应有的真值</b>。
+     * 与 {@code ShadowStubs} 共用同一张图：同为「永不作附件」的 1×1 D32@0.0，
+     * 不新建 GPU 资源、不加新开关。
+     *
+     * <p>🔴 <b>代价必须点名</b>：三个名字<b>同源且都不含场景深度</b> ⇒ 包里依赖
+     * 「两个深度层之比」的判据（{@code composite.glsl:333 z1 > z0}、水的遮挡识别）
+     * <b>在这一条实现真快照（GAP-023 的两次 blit）之前全部不可信</b>。
+     * 相对 4568258 之前（落 {@code PLACEHOLDER_2D} = 方块图集）的净变化：
+     * 不再拿图集当深度读，且<b>消除了 UB</b>。
      */
-    private static com.mojang.renderpearl.api.textures.GpuTextureView gbufferDepthSnapshotView(
-            String name, com.mojang.renderpearl.api.textures.GpuTextureView depth) {
-        if (depth == null) {
-            return null; // 调用方按「不绑」处理（响亮失败），绝不拿别的图凑数
-        }
+    private static com.mojang.renderpearl.api.textures.GpuTextureView gbufferDepthSnapshotStub(
+            String name) {
         if (DEPTH_SNAPSHOT_NOTED.add(name)) {
-            VkDisp.LOGGER.warn("vkdisp: [GAP-023] {} 绑的是**本 pass 的深度**"
-                    + "（depthtex0/1/2 暂时同源）—— 分槽（OPAQUE 后 / TRANSLUCENT 后 / 全部后"
-                    + " 各一张快照）尚未实现，依赖它的判据（如 composite 的 z1 > z0）目前不可信；"
-                    + "本次只消除了「落到方块图集占位」这个更坏的形态", name);
+            VkDisp.LOGGER.warn("vkdisp: [GAP-023] {} 绑的是 1x1 D32@0.0 **桩**"
+                    + "（语义 = 远平面 = 这一层还没写过）—— 不绑本 pass 的深度附件："
+                    + "读写附件 + 采样器同图 = Vulkan UB，是本仓库 h26 的实测结论，"
+                    + "且本机没有 validation layer（错了不报）。"
+                    + "depthtex0/1/2 目前同源、都不含场景深度 ⇒ 依赖 z1 > z0 的判据在"
+                    + "GAP-023 的快照 blit 实现之前不可信", name);
         }
-        return depth;
+        return ShadowStubs.depthView();
     }
 
     /**

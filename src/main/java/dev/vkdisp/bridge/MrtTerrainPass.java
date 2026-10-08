@@ -580,6 +580,18 @@ public final class MrtTerrainPass {
     private static void ensureTargets(RenderTarget main) {
         ensureColortex(main);
         ensureShadowStubs();
+        // 🔴🔴 h48y：自定义纹理（GAP-009/GAP-025）**同样必须**在开 pass 之前就绪。
+        //   此前这条只在链侧 FrameApi:1105 被调，而**地形 gbuffer pass 早于链**
+        //   ⇒ 首帧 bindPackGbufferUniforms 走到 NOISE_2D 时 loaded 还是空的
+        //   ⇒ PackTextures.view("noisetex") 回落到 builtinNoiseView()，
+        //   而它在 render pass **打开期间**新建 encoder ⇒ 原版抛
+        //   "Close the existing render pass before performing additional commands"
+        //   （h48y 实测：日志 2139 行 ERROR，排在 2170 行 custom texture loaded **之前**，
+        //   顺序本身就是证据）⇒ noisetex 缺席 ⇒ 少绑一条。
+        //   🔶 与「少绑」相比更糟的是它**把内置兑底也烧掉了**：builtinNoise 停在 null，
+        //   之后每帧都会再走同一条失败路径（不是一次性）。
+        //   本方法幂等（指纹相同即早退，见 ensureReady），每帧只多一次指纹比较。
+        PackTextures.ensureReady();
         // 🔴 3D 桩：sampler3D（lighttex0/1、voxeltex）要有类型匹配的 3D 视图，
         //   且必须在开 pass 之前建好（clear 走 encoder）。
         //   🔴 h33：原版 26.3 建不出 3D 纹理 ⇒ 这里**不会**再抛（见 VolumeStubs#noteUnsupported），
@@ -666,15 +678,32 @@ public final class MrtTerrainPass {
      * <p>🔴 必须在**建 pass 之前**建好：它的 clear 需要新建 command encoder，
      * 而 render pass 打开期间新建 encoder 会被 RenderPearl 拒绝
      * （"Close the existing render pass before creating a new one!"，h10 已实测踩过）。
+     *
+     * <p>🔴🔴 h48y 修正：<b>桩的创建不能再被 A/B 开关整个门住</b>。
+     * {@code mrt.shadowStubs=false} 的语义是「<b>阴影那一族</b>改绑本 pass 附件」，
+     * <b>不是</b>「桩资源不存在」。而 {@code DEPTH_SNAPSHOT_2D}（GAP-023，depthtex*）走的是
+     * <b>无条件</b>的 {@code ShadowStubs.depthView()} —— 旧门控下它在 false 档必然拿到
+     * {@code depthView == null} 并抛 {@code IllegalStateException}
+     * （{@code ShadowStubs#depthView} 刻意<b>不</b>懒建：懒建会在 render pass 内新建 encoder）。
+     * ⇒ 那条 A/B 臂（本仓用来复现 h25/h26「整帧地形间歇消失」的取证车道）会从
+     * 「画面闪烁」退化成「<b>直接抛异常、地形整层不画</b>」，单变量对照被换掉一个自变量。
+     * ⇒ 现在：<b>桩一律建</b>，开关只决定「阴影那一族绑桩还是绑附件」。
+     * 代价已核实为零：默认档下 {@code init()} 幂等（见 {@code ShadowStubs#ensure} 的
+     * {@code depthView != null && colorView != null} 早退），每帧只多一次引用判断。
      */
     private static void ensureShadowStubs() {
+        // 桩本身**无条件**建：GAP-023 的 depthtex* 桩与之共用同一张图，
+        // 若在这里被开关门住，那条分支在 A/B 档会抛（ShadowStubs#depthView 不懒建）。
+        ShadowStubs.init();
         if (dev.vkdisp.VkDispConfig.MRT_SHADOW_STUBS.get()) {
-            ShadowStubs.init();
-        } else if (!shadowStubsWarned) {
+            return;
+        }
+        if (!shadowStubsWarned) {
             shadowStubsWarned = true;
             dev.vkdisp.VkDisp.LOGGER.warn("vkdisp: [GAP-003/A] mrt.shadowStubs=false —— "
                     + "**故意**把 shadowtex0/1 与 shadowcolor0 绑到本 pass 的读写附件"
-                    + "（Vulkan 未定义行为），仅供 A/B 取证；画面出现闪烁是预期的");
+                    + "（Vulkan 未定义行为），仅供 A/B 取证；画面出现闪烁是预期的"
+                    + "（注：depthtex* 仍绑桩，它不是这一族 A/B 的自变量）");
         }
     }
 
