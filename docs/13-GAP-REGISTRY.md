@@ -426,6 +426,23 @@ BSL 的 blue-noise 抖动/胶片颗粒自此有真值）；**三段键**（`text
 
 `FrameApi` 第 1263-1266 行：`if (name.startsWith("depthtex"))` 一律回 `MrtTerrainPass.depthView()` ⇒ 包里所有「比较两个深度层」的逻辑恒等失效。已知直接受害者：`composite.glsl:333 z1 > z0`（半透明/水体识别）恒假。修法 = 按 OF 语义给 depthtex1/2 提供**各自**的缓冲（gbuffer 绘制顺序里 0=不透明后、1=半透明后、2=常驻顶层后 —— 我方目前只有一张），登记为独立缺陷而非顺手改。
 
+🔴 **h48x 新增：这条不再是「以后再说」—— 它是 GAP-027 接水的**前置**。**
+实测 `gbuffers_water` 的自由 sampler 清单里就有 **`depthtex1`**（真 BSL 默认档逐字：
+`[texture_0, gaux2, depthtex1, noisetex, gaux1, shadowtex0, shadowtex1, shadowcolor0]`）
+⇒ 水自己就要读那一层；现在接水只会让它的 `z1 > z0` 恒假（不崩，但错）。
+
+🔧 **可行的机制（本轮把形状定下来，未实现）**：我方现在只有**一张** gbuffer 深度
+（`MrtTerrainPass.depthView()`，D32_FLOAT；另有一张天空私有深度，与这三层无关）。
+OF 那三个名字的语义是**同一张深度在三个时刻的快照** ⇒ 不需要三套渲染，只需要两次拷贝：
+① `renderGroup(OPAQUE)` 之后把深度 blit 到 `depthCopy0` ⇒ 它就是 `depthtex0`；
+② `renderGroup(TRANSLUCENT)` 之后 blit 到 `depthCopy1` ⇒ `depthtex1`；
+③ 手/天气/实体全画完之后再 blit 一次 ⇒ `depthtex2`（在那之前 `depthtex2` 与 `depthtex1` 同源，
+   这是**如实的**「还没有第三个时刻」，必须自报，不许静默同源 —— 就是现在这行的毛病）。
+⇒ 三条硬约束：a) 拷贝要落在**同一代**上，别和 GAP-018 的双代轮转打架；
+b) `depthTex` 是**采样器**，被拷的那张必须 `TRANSFER_SRC`、目标 `TRANSFER_DST` + `DEPTH_READ_STENCIL`
+   （本机**没有 validation layer**，X35：用法错是静默的）；
+c) 三条名字各自绑**各自的 view**，`startsWith("depthtex")` 那个一把抓的分支必须改成按后缀分派。
+
 ### GAP-024 · 🟡 `program.*.enabled` 解析了但**没有用来门控链**（h48p 审计；2026-10-08 补全核实）
 
 | 字段 | 内容 |
