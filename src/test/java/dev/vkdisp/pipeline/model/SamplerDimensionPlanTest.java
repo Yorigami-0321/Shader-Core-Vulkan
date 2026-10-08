@@ -307,4 +307,81 @@ class SamplerDimensionPlanTest {
                 "sampler2DShadow 走 2D 占位分支是既有行为，本条不动它"
                         + "（名字命中的 shadowtex* 仍绑深度桩，见 byName）");
     }
+
+    // ────────────────────────────────────────────────────────────────────────────────
+    // GAP-023 / GAP-025：OF 家族名前缀必须走**专用来源**，不许落图集占位
+    // ────────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("🔴 GAP-025：noisetex 必须走噪声选源，不是方块图集")
+    void noisetexIsNotAnAtlasPlaceholder() {
+        SamplerDimensionPlan.Plan plan = SamplerDimensionPlan.fromDeclaredTypes(
+                Map.of("noisetex", "sampler2D"));
+        assertEquals(SamplerDimensionPlan.ViewKind.NOISE_2D, plan.kindOf("noisetex"),
+                "noisetex 落 PLACEHOLDER_2D（方块图集）时，包把图集当噪声用 —— "
+                        + "不报错、画面里是频率完全不对的假噪声（GAP-025）");
+        // 🔖 BSL 的地形与水**都**声明它 ⇒ 这条不是「接水才有」的问题，是既有静默错。
+        assertEquals(SamplerDimensionPlan.ViewKind.PLACEHOLDER_2D,
+                SamplerDimensionPlan.fromDeclaredTypes(Map.of("unknownTex", "sampler2D"))
+                        .kindOf("unknownTex"),
+                "对照组：非家族名仍走 2D 占位（本条只动家族名）");
+    }
+
+    @Test
+    @DisplayName("🔴 GAP-023：depthtex0/1/2（前缀家族）走深度快照，不是方块图集")
+    void depthTexFamilyGetsDepthSnapshots() {
+        for (String name : List.of("depthtex0", "depthtex1", "depthtex2", "depthtex3")) {
+            assertEquals(SamplerDimensionPlan.ViewKind.DEPTH_SNAPSHOT_2D,
+                    SamplerDimensionPlan.fromDeclaredTypes(Map.of(name, "sampler2D")).kindOf(name),
+                    name + " 必须走深度快照 —— 落图集占位时包拿方块图集当深度读，"
+                            + "水的 z1 > z0 那类判据全假而不报错");
+        }
+        // 🔖 家族名只看**前缀**，与链侧 FrameApi 的 startsWith("depthtex") 同口径 ——
+        //   否则同一个名字在两条链上给出不同答案。
+        assertEquals(SamplerDimensionPlan.ViewKind.DEPTH_SNAPSHOT_2D,
+                SamplerDimensionPlan.fromDeclaredTypes(Map.of("depthtex99", "sampler2D"))
+                        .kindOf("depthtex99"));
+    }
+
+    @Test
+    @DisplayName("🔴 gauxN：与链侧 FrameApi 同口径（不是图集）")
+    void gauxFamilyMatchesChainSideSemantics() {
+        assertEquals(SamplerDimensionPlan.ViewKind.GAUX_2D,
+                SamplerDimensionPlan.fromDeclaredTypes(Map.of("gaux1", "sampler2D")).kindOf("gaux1"),
+                "链侧 FrameApi 把 gaux* 绑到 colortex —— gbuffer 侧绑成图集 = 同一名字两个答案");
+        assertEquals(SamplerDimensionPlan.ViewKind.GAUX_2D,
+                SamplerDimensionPlan.fromDeclaredTypes(Map.of("gaux2", "sampler2D")).kindOf("gaux2"));
+    }
+
+    @Test
+    @DisplayName("🔴 真 BSL 清单：地形 5 个 / 水 8 个自由 sampler 逐条落到正确来源，且零「不绑」")
+    void realBslSamplerListsLandOnCorrectSources() {
+        // 夹具 = 实测的真实清单（名字是事实，源码零复制）。
+        //   地形（与 PackTerrainSourceTest 同源）：texture_0 / noisetex / shadowtex0 / shadowtex1 / shadowcolor0
+        //   水（GAP-027 实测）：      + gaux1 / gaux2 / depthtex1
+        Map<String, String> terrain = new LinkedHashMap<>();
+        for (String n : List.of("texture_0", "noisetex", "shadowtex0", "shadowtex1", "shadowcolor0")) {
+            terrain.put(n, n.startsWith("shadow") ? "sampler2DShadow" : "sampler2D");
+        }
+        SamplerDimensionPlan.Plan t = SamplerDimensionPlan.fromDeclaredTypes(terrain);
+        assertEquals(SamplerDimensionPlan.ViewKind.ATLAS_2D, t.kindOf("texture_0"));
+        assertEquals(SamplerDimensionPlan.ViewKind.NOISE_2D, t.kindOf("noisetex"),
+                "地形也读 noisetex ⇒ GAP-025 不是「接水才有」的问题");
+        assertEquals(SamplerDimensionPlan.ViewKind.SHADOW_DEPTH_2D, t.kindOf("shadowtex0"));
+        assertEquals(SamplerDimensionPlan.ViewKind.SHADOW_DEPTH_2D, t.kindOf("shadowtex1"));
+        assertEquals(SamplerDimensionPlan.ViewKind.SHADOW_COLOR_2D, t.kindOf("shadowcolor0"));
+        assertEquals(0, t.unsupportedNames().size(),
+                "地形清单不许有「不绑」—— 一条不绑 = 每个 draw 抛 Missing uniform = 地形整条不渲染");
+
+        Map<String, String> water = new LinkedHashMap<>(terrain);
+        water.put("gaux1", "sampler2D");
+        water.put("gaux2", "sampler2D");
+        water.put("depthtex1", "sampler2D");
+        SamplerDimensionPlan.Plan w = SamplerDimensionPlan.fromDeclaredTypes(water);
+        assertEquals(SamplerDimensionPlan.ViewKind.GAUX_2D, w.kindOf("gaux1"));
+        assertEquals(SamplerDimensionPlan.ViewKind.GAUX_2D, w.kindOf("gaux2"));
+        assertEquals(SamplerDimensionPlan.ViewKind.DEPTH_SNAPSHOT_2D, w.kindOf("depthtex1"),
+                "水自带 depthtex1：分槽尚未实现（GAP-023），但至少不许是图集");
+        assertEquals(0, w.unsupportedNames().size(), "水清单同样不许有「不绑」");
+    }
 }

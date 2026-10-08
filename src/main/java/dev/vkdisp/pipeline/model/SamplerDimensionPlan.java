@@ -84,6 +84,28 @@ public final class SamplerDimensionPlan {
          * 语义 = 「无体积光照 / 无体素数据」，全 0。
          */
         VOLUME_3D,
+        /**
+         * 🔴 <b>GAP-023</b>：OF 深度快照（{@code depthtex0/1/2}）。
+         *
+         * <p>具体来源由 bridge 侧<b>按名字后缀</b>分派（三个时刻各绑各的）。
+         * 此前这一族名字没有分支 ⇒ 落到 {@link #PLACEHOLDER_2D}（方块图集），
+         * 包拿图集当深度读：<b>不报错、结论全假</b>。
+         */
+        DEPTH_SNAPSHOT_2D,
+        /**
+         * 🔴 <b>GAP-023/027</b>：OF 的 {@code gauxN}（= {@code colortex(N+3)}）。
+         *
+         * <p>必须与后处理链侧（{@code FrameApi} 的 {@code startsWith("gaux")}）<b>同一口径</b> ——
+         * 两处不同 = 同一个名字在两条链上给出不同答案（本项目反复吃过的那一族）。
+         */
+        GAUX_2D,
+        /**
+         * 🔴 <b>GAP-025</b>：包的噪声纹理（{@code noisetex}）。
+         *
+         * <p>来源 = 包 {@code texture.noise} 优先、缺失回退内置（{@code PackTextures}），
+         * <b>不是</b>方块图集。此前没有这条分支 ⇒ 噪声/抖动全采图集（静默错）。
+         */
+        NOISE_2D,
         /** 未识别的 2D 占位（图集）；带 WARN，语义不承诺。 */
         PLACEHOLDER_2D,
         /** 未识别的维度：<b>不绑</b>（宁可响亮失败也不喂错类型）。 */
@@ -243,6 +265,13 @@ public final class SamplerDimensionPlan {
                             "绑专用 1x1 D32 桩（**不得**绑本 pass 的读写深度附件：Vulkan UB）");
             case "shadowcolor0" ->
                     new Binding(name, type, ViewKind.SHADOW_COLOR_2D, "绑专用 1x1 RGBA8 桩");
+            // 🔴 GAP-025 的**接线点**：这条 case 此前不存在 ⇒ noisetex 落到 PLACEHOLDER_2D
+            //   （方块图集），而包把图集当噪声用 —— 不报错，画面里全是频率不对的假噪声。
+            //   PackTextures 的选源实现早就写好了，缺的只是接进这条绑定路径
+            //   （与「实现了但没接上」同一族；BSL 的地形与水**都**声明 noisetex）。
+            case "noisetex" ->
+                    new Binding(name, type, ViewKind.NOISE_2D,
+                            "包的噪声纹理（GAP-025：texture.noise 优先，缺失回退内置 64×64）");
             default -> null;
         };
     }
@@ -268,6 +297,18 @@ public final class SamplerDimensionPlan {
         //   非 2D 声明不走名字规则 ⇒ 直接落类型路径，由它决定。
         //   （裸 sampler 与 2D 声明仍走名字规则，维持既有行为。）
         if (!declaredNon2D(name, declaredType)) {
+            // 🔴 GAP-023/025：这三个是 **OF 家族前缀**（不是精确名）。
+            //   链侧 {@code FrameApi} 用 startsWith 分派，gbuffer 侧必须同口径 ——
+            //   「同一个 noisetex 在链里是真噪声、在 gbuffer 里是方块图集」正是要消灭的静默错。
+            if (name.startsWith("depthtex")) {
+                return new Binding(name, type, ViewKind.DEPTH_SNAPSHOT_2D,
+                        "OF 深度快照（GAP-023）：不得落图集占位 —— 那会让水的 z1>z0 拿图集当深度，"
+                                + "不报错而结论全假");
+            }
+            if (name.startsWith("gaux")) {
+                return new Binding(name, type, ViewKind.GAUX_2D,
+                        "OF gauxN = colortex(N+3)：与链侧 FrameApi 同口径（两处不同 = 同一名字两个答案）");
+            }
             Binding byName = byName(name, type);
             if (byName != null) {
                 return byName;

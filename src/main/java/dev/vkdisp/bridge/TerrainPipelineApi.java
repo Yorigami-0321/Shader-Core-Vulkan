@@ -910,6 +910,13 @@ public final class TerrainPipelineApi {
                                 : NeutralMaterialMaps.normalsView();
                         // 🔴 本轮新增：sampler3D ⇒ 类型匹配的 3D 桩（全 0 = 无体积光照/体素数据）。
                         case VOLUME_3D -> VolumeStubs.view();
+                        // 🔴 GAP-025 接线点：噪声走**选源**（包 texture.noise 优先），不是方块图集。
+                        //   此前没有这条分支 ⇒ 地形与水都把图集当噪声读（静默错）。
+                        case NOISE_2D -> dev.vkdisp.bridge.PackTextures.view(name);
+                        // 🔴 GAP-023 接线点：深度快照（三个名字暂同源，但**必须自报**）。
+                        case DEPTH_SNAPSHOT_2D -> gbufferDepthSnapshotView(name, depthView);
+                        // 🔴 gauxN = colortex(N+3)，与链侧 FrameApi 同口径。
+                        case GAUX_2D -> gauxView(name, atlas);
                         case PLACEHOLDER_2D -> atlas;
                         // decide() 已把 UNSUPPORTED 过滤掉；这里只是让编译器知道穷尽了。
                         case UNSUPPORTED -> null;
@@ -970,6 +977,64 @@ public final class TerrainPipelineApi {
                             + "地形本身仍会画。不绑则会让每个用阴影的包整条地形不渲染，"
                             + "按兼容优先故保留绑定。正确修法需要原版提供比较采样器。");
         }
+    }
+
+    /** GAP-023 深度快照自报去重（每个名字一次）。 */
+    private static final java.util.Set<String> DEPTH_SNAPSHOT_NOTED =
+            java.util.Collections.synchronizedSet(new java.util.LinkedHashSet<>());
+
+    /** gaux 回退自报去重。 */
+    private static final java.util.Set<String> GAUX_NOTED =
+            java.util.Collections.synchronizedSet(new java.util.LinkedHashSet<>());
+
+    /**
+     * GAP-023：把 {@code depthtexN} 绑到**该时刻**的深度快照。
+     *
+     * <p>🔴 <b>分槽尚未实现</b> ⇒ 三个名字目前拿到<b>同一张</b>（本 pass 的深度）。
+     * 这是<b>已知缺口</b>、不是正确行为，因此必须自报一次 —— 否则取证者会把
+     * 「{@code z1 > z0} 恒假」读成「水面没有半透明遮挡」（X11：降级必须可见）。
+     *
+     * <p>🔖 相对之前的净改善：此前这一族名字<b>没有分支</b> ⇒ 落 {@code PLACEHOLDER_2D}
+     * （方块图集），包拿一张 2D 图集当深度读 —— 那是「类型对、内容全错」的最坏形态。
+     * 现在至少是**真深度**，只是三个时刻还没分开。
+     */
+    private static com.mojang.renderpearl.api.textures.GpuTextureView gbufferDepthSnapshotView(
+            String name, com.mojang.renderpearl.api.textures.GpuTextureView depth) {
+        if (depth == null) {
+            return null; // 调用方按「不绑」处理（响亮失败），绝不拿别的图凑数
+        }
+        if (DEPTH_SNAPSHOT_NOTED.add(name)) {
+            VkDisp.LOGGER.warn("vkdisp: [GAP-023] {} 绑的是**本 pass 的深度**"
+                    + "（depthtex0/1/2 暂时同源）—— 分槽（OPAQUE 后 / TRANSLUCENT 后 / 全部后"
+                    + " 各一张快照）尚未实现，依赖它的判据（如 composite 的 z1 > z0）目前不可信；"
+                    + "本次只消除了「落到方块图集占位」这个更坏的形态", name);
+        }
+        return depth;
+    }
+
+    /**
+     * OF {@code gauxN} = {@code colortex(N+3)}（与链侧 {@code FrameApi} 的 {@code gaux} 分支同口径）。
+     *
+     * <p>🔖 解析不出槽号 / 池里没有 ⇒ 回退占位，<b>但要点名</b>：
+     * 「名字里带数字却解析失败」意味着包用了本引擎没实现的家族，必须看得见（X9 / X11）。
+     */
+    private static com.mojang.renderpearl.api.textures.GpuTextureView gauxView(
+            String name, com.mojang.renderpearl.api.textures.GpuTextureView fallback) {
+        int slot;
+        try {
+            slot = Integer.parseInt(name.substring("gaux".length())) + 3;
+        } catch (NumberFormatException e) {
+            if (GAUX_NOTED.add(name)) {
+                VkDisp.LOGGER.warn("vkdisp: [GAP-027] gaux 名字不带可用槽号：'{}' ⇒ 回退占位", name);
+            }
+            return fallback;
+        }
+        com.mojang.renderpearl.api.textures.GpuTextureView view = MrtTerrainPass.poolView(slot);
+        if (view == null && GAUX_NOTED.add(name)) {
+            VkDisp.LOGGER.warn("vkdisp: [GAP-027] {} ⇒ colortex{} 视图不存在（池未建 / 槽超上限）"
+                    + " ⇒ 回退占位（不静默换名）", name, slot);
+        }
+        return view != null ? view : fallback;
     }
 
     private static int mainTargetWidth() {

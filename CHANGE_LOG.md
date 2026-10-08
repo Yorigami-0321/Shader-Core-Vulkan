@@ -6,6 +6,51 @@
 ---
 ---
 
+## 2026-10-08（七十四）— 🔑 顺藤摸到「实现了但没接上」的第二、三例：noisetex 一直绑的是方块图集
+
+> **verdict = `SamplerDimensionPlan` 缺三个家族分支 ⇒ `noisetex` / `depthtex*` / `gaux*` 全落「图集占位」**
+> 证据：`docs/13-GAP-REGISTRY.md` GAP-023 / GAP-025 的新增行；单测 4 条（含真 BSL 清单逐条落位）
+
+**本次改了什么**
+
+1. **推 GAP-027 接水时先撞上一堵墙**：水自带 `depthtex1`，而 gbuffer 绑定路径走
+   `SamplerDimensionPlan` 的分类表 —— 该表**只认 4 类名字**（`texture_0` / `specular`+`normals` /
+   `shadowtex*` / `shadowcolor0`），其余按声明类型落 `PLACEHOLDER_2D -> atlas`（**方块图集**）。
+   ⇒ 水与地形的 `noisetex` / `depthtex*` / `gaux*` **全部绑的是方块图集**：
+   类型对、内容全错、**一条错都不报**（本机无 validation layer）。
+2. 🔴 **`noisetex` 是「实现了但没接上」的又一例**：GAP-025 的选源（`PackTextures.view`：
+   包 `texture.noise` 优先 / 回退内置）**早就写好了**，但分类表里没有 `noisetex` 分支
+   ⇒ 改了完全不生效。而 BSL **地形与水都声明 noisetex**（地形实测清单
+   `[texture_0, noisetex, shadowtex0, shadowtex1, shadowcolor0]`）⇒ 这不是「接水才有」的问题。
+3. 🔴 **同一语义两处表示**：链侧 `FrameApi` 把 `gaux*` 绑到 colortex（`gauxN = colortex(N+3)`），
+   gbuffer 侧却归成图集占位 ⇒ 同一个名字在两条链上给不同答案（本项目反复吃过的那一族）。
+4. **修法**（新增 3 个 `ViewKind` + 3 个绑定分支，**纯增量、零删除**）：
+   - `NOISE_2D` → `PackTextures.view(name)`（接线 GAP-025）；
+   - `DEPTH_SNAPSHOT_2D` → **按前缀**分派（与链侧 `startsWith("depthtex")` 同口径）；
+     🔴 **分槽未实现** ⇒ 三名暂同源，但**一次性 WARN 自报**（不许静默 —— 否则取证者会把
+     「`z1 > z0` 恒假」读成「水面没有半透明遮挡」）；
+   - `GAUX_2D` → `gauxN → colortex(N+3)`，与链侧统一；解析失败 / 视图缺席**逐条点名**。
+5. **单测 +4**：`noisetex` 不再落图集、`depthtex0..3` 与 `depthtex99` 前缀家族、`gaux1/2` 同口径、
+   **真 BSL 地形 5 个与水 8 个清单逐条落到正确来源且零「不绑」**。
+
+**为什么改**：这是接水的**正确性前置** —— 不修的话，打开 `mrt.packWater` 得到的是
+「水面画出来了、判据全假」，比不接更难归因。
+
+**影响的文档**：`docs/13-GAP-REGISTRY.md`（GAP-023 / GAP-025 各加一行）。
+
+**测试结果**：全量 **1063 / 0 失败 / 0 错误 / 1 skip**（1059 + 4）。
+
+**是否已提交**：是。
+
+**⛔ 仍未完成**：① 🔴 **本轮改了主源码**（`SamplerDimensionPlan` + `TerrainPipelineApi`），
+按 A11 **必须跑 runClient 才能说完成 —— 未跑**（本机无车具脚本，无法自动进世界取证）；
+② GAP-023 的分槽（三张时刻快照）仍未实现；③ 水的 `renderGroup(TRANSLUCENT)` 仍未接 ——
+本轮的净效果是「接水时不会绑错」，**不是**「水已接上」；
+④ ⚠️ **行为变化要记**：`noisetex` 从方块图集改成真噪声 ⇒ 历史地形臂与之后的地形臂
+**不可直接比亮度**。
+
+---
+
 ## 2026-10-08（七十三）— 红灯清零：守卫从「代码形状」搬回「性质」，并补上决策表的覆盖
 
 > **verdict = 3 个红灯全是「实现正确、测试按旧结构写」—— 改动全在 `src/test/`，主源码零改动**

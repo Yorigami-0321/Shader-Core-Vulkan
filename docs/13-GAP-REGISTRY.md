@@ -448,6 +448,16 @@ b) `depthTex` 是**采样器**，被拷的那张必须 `TRANSFER_SRC`、目标 `
    （本机**没有 validation layer**，X35：用法错是静默的）；
 c) 三条名字各自绑**各自的 view**，`startsWith("depthtex")` 那个一把抓的分支必须改成按后缀分派。
 
+🟡 **2026-10-08 部分推进（净改善，本条未闭环）**：`SamplerDimensionPlan` 此前对 `depthtex*`
+**没有任何分支** ⇒ 归类成 `PLACEHOLDER_2D` ⇒ `bindPackGbufferUniforms` 把**方块图集**绑给
+`depthtex1`（水自带它）⇒ 包拿图集当深度读：**类型对、内容全错、一条错都不报**。
+已新增 `ViewKind.DEPTH_SNAPSHOT_2D`（按**前缀**分派，与链侧 `FrameApi` 的
+`startsWith("depthtex")` 同口径）⇒ 现在绑的是**真深度**；但**三个名字仍同源**（分槽未实现），
+由 `gbufferDepthSnapshotView` 打一次性 WARN 明示。同时新增 `ViewKind.GAUX_2D`，把
+`gauxN → colortex(N+3)` 与链侧口径**统一**（此前 gbuffer 侧把 gaux 归成图集占位、链侧绑 colortex
+⇒ 同一个名字在两条链上给不同答案）。
+🔴 **本条仍不关**：关闭条件不变（三个时刻各一张快照 + 画面侧判据）。
+
 ### GAP-024 · 🟡 `program.*.enabled` 解析了但**没有用来门控链**（h48p 审计；2026-10-08 补全核实）
 
 | 字段 | 内容 |
@@ -468,6 +478,7 @@ c) 三条名字各自绑**各自的 view**，`startsWith("depthtex")` 那个一�
 
 
 | **状态（h48p 后续）** | 🟡 **代码已实现，但只在单测层面成立**：`bridge/NoiseSamplerSource.java`（纯判定，四态 PACK / BUILTIN_NOT_DECLARED / BUILTIN_DECLARED_BUT_MISSING / NO_PACK）+ `PackTextures.view()` 不再短路、`ensureReady()` 拆分；测试 `NoiseSamplerSourceTest`（8 条，含「旧短路」红灯回归与真 BSL 链路：properties → `PackTextureBindings.fromDirectives` → 判定，并核对 PNG IHDR=512×512）。🔴 **未在运行客户端里观察过**（写码期间客户端被别的取证占着）⇒ 本条**不关**：判据 = 一次 runClient 里 `noisetex` 绑到 512×512 那张（自报行 + dither 尺度可读），且**没声明 noise 的包**仍走内建并打一次性 WARN |
+| **🔴 2026-10-08：实现早就写好了，但**根本没接线**（本族又一例「改了不生效」）** | `SamplerDimensionPlan` 的分类表里**没有 `noisetex` 分支** ⇒ `bindPackGbufferUniforms` 落到 `PLACEHOLDER_2D -> atlas`（**绑方块图集**）。而 BSL 的**地形与水都声明 noisetex**（地形清单实测 `[texture_0, noisetex, shadowtex0, shadowtex1, shadowcolor0]`）⇒ 包把图集当噪声读：**不报错**、画面里是频率完全不对的假噪声。已新增 `ViewKind.NOISE_2D` + 绑定分支 `case NOISE_2D -> PackTextures.view(name)`。⇒ 原判据（运行侧观察）**依然有效且未做**；新判据 = 绑定自报行里 `noisetex` 的类别是 `NOISE_2D`（不再是 `PLACEHOLDER_2D`）。⚠️ 这条改动**改变地形行为**（图集 → 真噪声）⇒ 历史地形臂与之后的地形臂**不可直接比亮度**。 |
 ---
 
 ### GAP-026 · 🔴 **取证期的状态会泄漏进产品路径**：持久化包选项 store 没有任何闸门（h48r 发现；2026-10-08 登记）
