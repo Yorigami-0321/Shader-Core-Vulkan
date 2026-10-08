@@ -1256,8 +1256,10 @@ public final class FrameApi {
      * 采样名→视图解析（按名接线，替代旧「18 名一律绑 scene」）。
      *
      * <p>🔖 每个占位分支都返回**显式视图**而非 null —— 「绑 null 看不出根因」正是 h33 那 2702 条的来源；
-     * 还没有真值来源的名字（noisetex/lighttex/vxDepth/dhDepth）同样显式给 colortex0 占位并在此登记，
-     * 不假装接好了（noisetex = GAP-009 customImages；sampler3D 族 = GAP-014 原版能力缺失）。
+     * 还没有真值来源的名字（lighttex/vxDepth/dhDepth）同样显式给 colortex0 占位并在此登记，
+     * 不假装接好了（sampler3D 族 = GAP-014 原版能力缺失）。
+     * {@code noisetex} 已从该清单毕业：包声明的 {@code texture.noise} 是真值，
+     * 取不到时由 {@link PackTextures} 兜内置噪声并**一次性点名**（GAP-025 / X11）。
      */
     private static PipelineApi.PostSamplerViewResolver chainResolver(GpuTextureView fallbackView) {
         return name -> {

@@ -643,3 +643,35 @@ h48n 把帧尾的槽 0/1 各取**两代**（`@readGen` / `@writeGen`）：
    在 `every=10` 下等价于「真实周期 ≈ 3 帧」的**混叠**（10 mod 3 = 1 ⇒ 采样相位每轮移 1）。
    3 帧周期是强信号：它指向某个**三深度环形资源**（原版动态 uniform 环 / 上传缓冲），
    而不是随机丢内容。逐帧数据到手才配定责。
+
+## 十八、回读仪器会**自己造零**（源码级核实；这条直接影响「黑帧」是不是真的）
+
+h48o 量到「严格每第 3 帧整帧为 0」之后，先别急着渲染层归因 —— 回读这条通道自己有一个
+会产生周期零的机制。逐行核实 `com/mojang/renderpearl/backend/vulkan/VulkanCommandEncoder.java`：
+
+```
+ 60:  private final DestructionQueue<Destroyer> destroyQueue = new DestructionQueue<>(2, ...)
+219:  signalSemaphore(submitSemaphore, currentSubmitIndex, ...)
+222:  currentSubmitIndex++
+223:  if (!awaitSubmitCompletion(currentSubmitIndex - 2L, 5s)) throw ...
+229:  destroyQueue.rotate()
+```
+
+⇒ 两件事同时成立：
+1. `copyTextureToBuffer(..., callback, ...)` 的「完成」回调是**随销毁队列在 CPU 侧被执行**的
+   （深度 2，每 submit 轮一次），**不是** GPU fence 完成的回调；
+2. GPU 侧「第 N 个 submit 已经完成」最早要到第 **N+2** 次 submit 才被 `awaitSubmitCompletion` 等到。
+
+而 `TargetReadback` 的落地余量此前是 **1 拍**（`READ_DELAY_TICKS=1`），`every=1` 时一拍 = 一帧。
+⇒ 余量 < 2 时，我们可能把一块 **GPU 还没写过的回读缓冲**映射出来读，而它的初始内容就是零。
+「整帧全 0 `allZero=true`」与真实黑帧在日志里**逐字同形**，而周期恰与「2~3」同量级。
+
+处理（不靠猜，做成一臂就能判的 A/B）：
+- 余量改为可调 `mrt.pixelProbeReadDelay`（默认 **3**），注释里写清上面两段行号；
+- 判据：**调 1** 若复现「每第 3 帧为 0」⇒ 那是仪器假象，GAP-020 重开时挂着的 3 帧周期解释当场了结；
+  **调 3/4** 若黑帧消失 ⇒ 黑帧不再算渲染缺陷，剩余问题回到「画面内容对不对」那条线上。
+- 顺带修正 GAP-020 重开行里我写的一句推断：「两代同为零 ⇒ 连续 ≥2 帧为空」是错的，
+  槽 0 一帧内被 6 个 pass 写（翻代 6 次 = 偶数）⇒ 两代都被同一帧写满，单帧空就让两代同空。
+
+🔖 通用形式：**用「CPU 侧轮队列」冒充「GPU 完成信号」的通道，都要先问一句
+「我读的时候它真的写完了吗」**，并把余量做成可调，好让「仪器」与「被测物」能用一臂分开。

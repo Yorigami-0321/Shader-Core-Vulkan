@@ -444,6 +444,30 @@ public final class VkDispConfig {
             .defineInRange("mrt.pixelProbeEvery", 300, 1, 100000);
 
     /**
+     * 🔬 回读**落地余量**（探针节拍数；实现见 {@code TargetReadback#readDelayTicks()}）。
+     *
+     * <p><b>为什么这条必须可调</b>：{@code VulkanCommandEncoder#copyTextureToBuffer} 的
+     * 「完成」回调走 {@code queueForDestroy}（<b>销毁队列</b>，CPU 侧轮转，不是 fence）
+     * ⇒ 「回调回来了」<b>不等于</b>「拷贝落进了缓冲」。核实到行（同一文件）：
+     * 第 60 行 {@code new DestructionQueue<>(2, ...)} + 第 229 行每次 submit 轮一次；
+     * 第 219-223 行每次 submit 只 {@code awaitSubmitCompletion(currentSubmitIndex - 2)}
+     * ⇒ 第 N 个 submit 的 GPU 完成<b>最早</b>要到第 N+2 次 submit 才被等到。
+     * 余量小于这个 2 时，取到的可能是<b>还没被 GPU 写过的缓冲</b>，而它的初始内容是零 ⇒
+     * 日志里的「整帧全 0」与「画面真的是黑的」逐字同形。
+     *
+     * <p>🔴 这正好是 h48o 量到的<b>严格 3 帧周期</b>空帧（160 个连续样本 {@code 0 N N}、
+     * 间隔恒 3、每次只空 1 帧）的头号候选：周期与「在飞深度 2 + 每帧一次轮转」同量级。
+     * 默认给 <b>3</b>（≥ 等到完成所需的最短距离），并且可以 A/B：
+     * 调到 1 若能<b>复现</b>「每第 3 帧为 0」，就证明那是仪器造的假黑帧，
+     * GAP-020 重开时挂着的「3 帧周期」解释当场了结；调到 3/4 若黑帧消失，
+     * 黑帧这件事从渲染缺陷清单里划掉（剩下的是另一回事：画面内容对不对）。
+     */
+    public static final ModConfigSpec.IntValue MRT_PIXEL_PROBE_READ_DELAY = BUILDER
+            .comment("回读落地余量（探针节拍数，默认 3；引擎的 submit 完成最早在 +2 次 submit 后才可保证）。"
+                    + "调 1 用来复现「每第 3 帧全 0」这个仪器假象。")
+            .defineInRange("mrt.pixelProbeReadDelay", 3, 1, 20);
+
+    /**
      * 🔬 像素回读探针**额外**把方块图集（{@code texture_0} 的真值）也测一次（默认关）。
      *
      * <p>🔖 <b>它回答什么</b>：包地形片元的 albedo 是

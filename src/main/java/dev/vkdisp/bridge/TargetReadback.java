@@ -109,7 +109,7 @@ public final class TargetReadback {
         GpuBuffer buffer;
         long bytes;
         boolean busy;
-        /** 引擎的回读回调是否已回来（🔴 它**不**等于「GPU 已写完」—— 见 {@link #READ_DELAY_TICKS}）。 */
+        /** 引擎的回读回调是否已回来（🔴 它**不**等于「GPU 已写完」—— 见 {@link #readDelayTicks()}）。 */
         volatile boolean copyReturned;
         /** 提交时所在的**探针节拍**（不是帧号，见 {@link #tailCalls}）。 */
         long submittedAtTail;
@@ -144,8 +144,23 @@ public final class TargetReadback {
      * <p>实测轨迹（h48）：每帧收割 + 只等 2 帧 ⇒ 7 轮里 5 轮整轮（连主目标）读 0；
      * 0 与「画面真的是黑的」在日志里长得一模一样 ⇒ 那是**假证据生成器**，宁可改成
      * 「读一个完整探针间隔之前提交的那一份」（软件栈 lavapipe 上那就是几秒的余量）。
+     *
+     * <p>🔴 <b>余量必须 ≥ 2，理由核实到行</b>（h48p，`VulkanCommandEncoder` 源码逐字）：
+     * ① 第 60 行 {@code new DestructionQueue<>(2, ...)} + 第 229 行每 submit 轮一次
+     *    ⇒ 回读回调是<b>随销毁队列在 CPU 侧被执行</b>的，不是 fence 完成的回调；
+     * ② 第 219-223 行：本次 submit 只 {@code awaitSubmitCompletion(currentSubmitIndex - 2)}
+     *    ⇒ GPU 侧「第 N 个 submit 已完成」这件事最早要到第 N+2 次 submit 才被等到。
+     * 合起来：回调回来 ≠ 拷贝落地。余量小于这个「2」时，映射到的可能就是
+     * <b>GPU 还没写过的缓冲</b> ⇒ 读出全零，与真实黑帧逐字同形。
+     *
+     * <p>这正好是 h48o 量到的<b>严格 3 帧周期</b>空帧（160 连续样本 {@code 0 N N}、
+     * 间隔恒 3、每次只空 1 帧）的候选解释：周期与「在飞深度 2 + 每帧一次轮转」是同一个量级，
+     * 而 {@code every=1} 时「节拍」就是帧。⇒ 余量改为可调（{@code mrt.pixelProbeReadDelay}），
+     * 一臂调 1、一臂调 3/4 就能<b>判定它到底是仪器还是渲染</b>，不用再靠猜。
      */
-    private static final long READ_DELAY_TICKS = 1L;
+    private static long readDelayTicks() {
+        return Math.max(1L, VkDispConfig.MRT_PIXEL_PROBE_READ_DELAY.get().longValue());
+    }
 
     /** 回调迟迟不回来的上限（节拍数；超过就自报并释放槽，不静默卡死）。 */
     private static final long COPY_STALL_TICKS = 20L;
@@ -646,7 +661,7 @@ private static final long WARMUP_FRAMES = 600L;
      * 收割已落地的回读：回调回来、且距提交至少过了一个完整探针节拍的槽才读。
      *
      * <p>🔖 读的是**上一轮提交的那一份**拷贝 —— 打印时刻晚于 {@code roundTag} 里的轮次一轮，
-     *   数字本身仍属于那一轮（这就是延迟余量的来源，见 {@link #READ_DELAY_TICKS}）。
+     *   数字本身仍属于那一轮（这就是延迟余量的来源，见 {@link #readDelayTicks()}）。
      */
     private static void collectReady() {
         for (Slot[] slots : SLOTS.values()) {
@@ -665,7 +680,7 @@ private static final long WARMUP_FRAMES = 600L;
                     }
                     continue;
                 }
-                if (waited < READ_DELAY_TICKS) {
+                if (waited < readDelayTicks()) {
                     continue;
                 }
                 finish(slot);
