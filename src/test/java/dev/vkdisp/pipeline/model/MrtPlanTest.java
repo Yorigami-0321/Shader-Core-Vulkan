@@ -27,6 +27,55 @@ import org.junit.jupiter.api.Test;
 class MrtPlanTest {
 
     @Test
+    @DisplayName("GAP-027：多条 gbuffer 程序 ⇒ 附件数取 max、被写的槽取并集")
+    void multiProgramFreezeTakesMaxAndUnion() {
+        // BSL 默认档的真实形状：地形只写 colortex0，水**无条件**写 colortex0+colortex1
+        // （program/gbuffers_water.glsl:726-728 的 DRAWBUFFERS:01 + gl_FragData[0..1]）。
+        MrtPlan.freezePackPrograms(List.of(
+                new MrtPlan.PackProgram("gbuffers_terrain", 1, List.of(0)),
+                new MrtPlan.PackProgram("gbuffers_water", 2, List.of(0, 1))));
+        assertEquals(2, MrtPlan.packOutputCount(),
+                "一个 pass 只有一套附件数 ⇒ 必须容纳写得最多的那条程序");
+        assertEquals(List.of(0, 1), MrtPlan.packDeclaredOutputSlots(), "槽位取并集");
+        assertEquals(List.of("gbuffers_terrain", "gbuffers_water"), MrtPlan.packProgramNames(),
+                "自报必须说清接了哪几条（GAP-026 同一口径：不报=不知道）");
+
+        // 顺序不许影响结果：注册侧与绘制侧若因顺序读到不同的数，setPipeline 会直接崩
+        MrtPlan.freezePackPrograms(List.of(
+                new MrtPlan.PackProgram("gbuffers_water", 2, List.of(0, 1)),
+                new MrtPlan.PackProgram("gbuffers_terrain", 1, List.of(0))));
+        assertEquals(2, MrtPlan.packOutputCount(), "附件数与冻结顺序无关");
+        assertEquals(List.of(0, 1), MrtPlan.packDeclaredOutputSlots(), "并集与冻结顺序无关");
+        MrtPlan.freezePackProgram(0, List.of());
+    }
+
+    @Test
+    @DisplayName("GAP-027：包没有某条程序（outputs<=0）不许把附件数拉回 0")
+    void absentProgramDoesNotClobberWiredOnes() {
+        MrtPlan.freezePackPrograms(java.util.Arrays.asList(
+                new MrtPlan.PackProgram("gbuffers_terrain", 1, List.of(0)),
+                new MrtPlan.PackProgram("gbuffers_water", 0, List.of()),
+                null));
+        assertEquals(1, MrtPlan.packOutputCount(),
+                "「这条不接」是正常状态（包可以没有 gbuffers_water），不是「全部不接」");
+        assertEquals(List.of("gbuffers_terrain"), MrtPlan.packProgramNames());
+        MrtPlan.freezePackProgram(0, List.of());
+    }
+
+    @Test
+    @DisplayName("GAP-027：单程序入口与多程序入口必须给出同一个结果（否则两条通道会互相矛盾）")
+    void singleAndMultiEntryAgree() {
+        MrtPlan.freezePackProgram(4, List.of(0, 3, 6, 7));
+        int viaSingleOutputs = MrtPlan.packOutputCount();
+        List<Integer> viaSingleSlots = MrtPlan.packDeclaredOutputSlots();
+        MrtPlan.freezePackPrograms(List.of(
+                new MrtPlan.PackProgram("gbuffers_terrain", 4, List.of(0, 3, 6, 7))));
+        assertEquals(viaSingleOutputs, MrtPlan.packOutputCount(), "两个入口的附件数必须一致");
+        assertEquals(viaSingleSlots, MrtPlan.packDeclaredOutputSlots(), "两个入口的槽集合必须一致");
+        MrtPlan.freezePackProgram(0, List.of());
+    }
+
+    @Test
     @DisplayName("槽位数 = 3，且槽位下标与 OF location 逐条对应")
     void slotCountMatchesOfGbufferRoles() {
         assertEquals(3, MrtPlan.SLOT_COUNT);

@@ -48,6 +48,17 @@ public final class PackTerrainSource {
     /** 参与选择的地形程序名（OF 语义：gbuffers 族；根命名空间名，维度目录由限定名体现）。 */
     public static final String TERRAIN_PROGRAM = "gbuffers_terrain";
 
+    /**
+     * GAP-027 第一条被接的非地形程序。
+     *
+     * <p>🔖 <b>为什么先挑它</b>（判据不是「哪个容易」而是「哪个复用已证的收口点」）：
+     * 水的几何走的是<b>与地形同一个</b> {@code ChunkSectionLayer} 体系（TRANSLUCENT 层），
+     * 而我方的 M-01 注入点今天<b>已经覆盖</b>那一层、只是对它返回「不换」。
+     * 且它产出的 colortex1 被 {@code composite.glsl:45} / {@code composite5.glsl:31} /
+     * {@code final.glsl:16} 读回去 ⇒ 接上就有可观察后果，不是「接了没人看」。
+     */
+    public static final String WATER_PROGRAM = "gbuffers_water";
+
     /** 保留名：强制「不接线」（与 PackCompositeSource.SELECTION_NONE 同义，避免两处字面量）。 */
     public static final String SELECTION_NONE = PackCompositeSource.SELECTION_NONE;
 
@@ -95,6 +106,19 @@ public final class PackTerrainSource {
      */
     public static Result generate(Path inventoryDir, String profileName, String packSelection,
             PackOptionStore store) {
+        return generate(inventoryDir, profileName, packSelection, store, TERRAIN_PROGRAM);
+    }
+
+    /**
+     * GAP-027：按<b>指定程序名</b>选片元 —— 地形之外的 {@code gbuffers_*} 走<b>同一条</b>
+     * 选包 / 门控 / 选项覆盖 / 编译 / 槽位兑现链。
+     *
+     * <p>🔖 <b>为什么必须复用而不是另写一份</b>：这条链上有三处「两侧口径必须一致」的地方
+     * （选哪个包、能力门控改了什么选项、槽位兑现被不被拒绝）。另写一份迟早会有一份忘了改，
+     * 而那类错的形状永远是「画面有内容、通道全错、日志全绿」。
+     */
+    public static Result generate(Path inventoryDir, String profileName, String packSelection,
+            PackOptionStore store, String programName) {
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         String profile = profileName == null ? "" : profileName.trim();
         String selection = packSelection == null ? "" : packSelection.trim();
@@ -124,11 +148,11 @@ public final class PackTerrainSource {
                 continue; // load 诊断已由 PackCompositeSource 侧打过；逐包继续找
             }
             boolean declaresTerrain = pack.programs().stream()
-                    .anyMatch(program -> TERRAIN_PROGRAM.equals(program.name()));
+                    .anyMatch(program -> programName.equals(program.name()));
             if (!declaresTerrain) {
                 diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.INFO,
-                        "vkdisp: 包 '" + pack.name() + "' 不含 " + TERRAIN_PROGRAM
-                                + " 程序，地形片元不接线（继续找下一个包）",
+                        "vkdisp: 包 '" + pack.name() + "' 不含 " + programName
+                                + " 程序，该程序不接线（继续找下一个包）",
                         pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
                 continue;
             }
@@ -146,18 +170,18 @@ public final class PackTerrainSource {
             ShaderPackCompiler.CompileResult compiled =
                     PackCompileCache.getOrCompile(discovered, overrides);
             diagnostics.addAll(compiled.diagnostics());
-            String source = selectTerrainFragment(compiled);
+            String source = selectTerrainFragment(compiled, programName);
             if (source == null) {
                 diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.WARN,
                         named
-                                ? "vkdisp: 指定包 '" + pack.name() + "' 的 " + TERRAIN_PROGRAM
-                                        + " 片元阶段无成功产出（shaderPack 指定下不换包，地形片元不接线）"
-                                : "vkdisp: 包 '" + pack.name() + "' 的 " + TERRAIN_PROGRAM
+                                ? "vkdisp: 指定包 '" + pack.name() + "' 的 " + programName
+                                        + " 片元阶段无成功产出（shaderPack 指定下不换包，该程序不接线）"
+                                : "vkdisp: 包 '" + pack.name() + "' 的 " + programName
                                         + " 片元阶段无成功产出，尝试下一个包",
                         pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
                 continue;
             }
-            String qualified = terrainQualifiedName(compiled, source);
+            String qualified = terrainQualifiedName(compiled, source, programName);
             // 🔴 槽位语义是否被兑现，由转译链的 ⑦½ 段（DrawBuffersSlotAdapter）判定；
             //   它若拒绝（歧义 / 槽位重复 / 超过 maxColorAttachments），这里必须**跟着拒绝接线**。
             //   理由：此时片元仍按「下标 = location」写着；若照样接上去，材质会静默写进 colortex1、
@@ -183,9 +207,9 @@ public final class PackTerrainSource {
 
         diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.WARN,
                 named
-                        ? "vkdisp: 指定包 '" + selection + "' 无可用的 " + TERRAIN_PROGRAM
-                                + " 片元源（inventory=" + inventoryDir + "），地形片元不接线"
-                        : "vkdisp: 库存中没有可用的 " + TERRAIN_PROGRAM + " 片元源，地形片元不接线"
+                        ? "vkdisp: 指定包 '" + selection + "' 无可用的 " + programName
+                                + " 片元源（inventory=" + inventoryDir + "），该程序不接线"
+                        : "vkdisp: 库存中没有可用的 " + programName + " 片元源，该程序不接线"
                                 + "（inventory=" + inventoryDir + ", profile='" + profile + "'）",
                 selection.isEmpty() ? String.valueOf(inventoryDir) : selection,
                 TranslateDiagnostic.UNKNOWN_LINE));
@@ -193,18 +217,23 @@ public final class PackTerrainSource {
     }
 
     /**
-     * 维度偏好：world0（主世界）> 根命名空间 > 其它维度；并列取先出现者（结果确定）。
+     * 在<b>指定程序</b>的各维度变体里按 world0 &gt; 根命名空间 &gt; 其它 选一份片元终稿；
+     * 并列取先出现者（结果确定）。
      *
-     * <p>🔖 与 composite 的 {@code dimensionRank} 同规则，但**不跨包配对** ——
-     * 地形是唯一的几何来源，没有第二个阶段要与它配维度。
+     * <p>🔖 与 composite 的 {@code dimensionRank} 同规则。GAP-027 之后<b>每条程序各自选维度</b>
+     * （地形选 world0 不代表水也选 world0）—— 这不是新决定：包本来就可以只给某个维度写水程序，
+     * 跨程序共用一次选择会让「水用了 world-1 的程序、地形用了 world0 的」这种混搭无法被发现。
+     * 🔖 但「候选里留哪一条 Program」在 {@code PackPostChain} 那边曾经踩过同族坑
+     * （先到先得 ⇒ 留下一个片源永不入选的维度），本方法的显式 rank 就是为避开它。
      */
-    private static String selectTerrainFragment(ShaderPackCompiler.CompileResult compiled) {
+    private static String selectTerrainFragment(ShaderPackCompiler.CompileResult compiled,
+            String programName) {
         String best = null;
         int bestRank = Integer.MAX_VALUE;
         for (ShaderPackCompiler.CompiledStage stage : compiled.stages()) {
             if (stage.stage() != ShaderStage.FRAGMENT
                     || !stage.isSuccess()
-                    || !isTerrainProgram(stage.programName())) {
+                    || !isTerrainProgram(stage.programName(), programName)) {
                 continue;
             }
             int rank = dimensionRank(dimensionOf(stage.programName()));
@@ -225,7 +254,11 @@ public final class PackTerrainSource {
      */
     private static String slotRefusal(ShaderPackCompiler.CompileResult compiled, String qualified) {
         for (ShaderPackCompiler.CompiledStage stage : compiled.stages()) {
-            if (stage.stage() != ShaderStage.FRAGMENT || !isTerrainProgram(stage.programName())) {
+            // 🔖 按**被选中的那条限定名**精确匹配，而不是按程序名后缀匹配所有维度：
+            //   GAP-027 之后同一条程序会有多个维度变体，用后缀会把「没被选中的那个维度」的
+            //   拒绝理由也算到本次接线头上（那会误拒一次本来可接的接线）。
+            if (stage.stage() != ShaderStage.FRAGMENT
+                    || !qualified.equals(stage.programName())) {
                 continue;
             }
             for (TranslateDiagnostic diagnostic : stage.result().diagnostics()) {
@@ -244,21 +277,22 @@ public final class PackTerrainSource {
     /** 复用转译段的标记名常量（不散落字面量）。 */
     private static final String MARKER =
             dev.vkdisp.glsl.translate.DrawBuffersSlotAdapter.MARKER;
-    private static String terrainQualifiedName(ShaderPackCompiler.CompileResult compiled, String source) {
+    private static String terrainQualifiedName(ShaderPackCompiler.CompileResult compiled,
+            String source, String programName) {
         for (ShaderPackCompiler.CompiledStage stage : compiled.stages()) {
             if (stage.stage() == ShaderStage.FRAGMENT
                     && stage.isSuccess()
-                    && isTerrainProgram(stage.programName())
+                    && isTerrainProgram(stage.programName(), programName)
                     && stage.result().text().equals(source)) {
                 return stage.programName();
             }
         }
-        return TERRAIN_PROGRAM;
+        return programName;
     }
 
-    private static boolean isTerrainProgram(String qualifiedName) {
-        return TERRAIN_PROGRAM.equals(qualifiedName)
-                || qualifiedName.endsWith("/" + TERRAIN_PROGRAM);
+    private static boolean isTerrainProgram(String qualifiedName, String programName) {
+        return programName.equals(qualifiedName)
+                || qualifiedName.endsWith("/" + programName);
     }
 
     private static int dimensionRank(String dimension) {

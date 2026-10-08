@@ -120,32 +120,86 @@ public final class MrtPlan {
      * 两者互相矛盾而日志完全正常。造键与校验必须同源是本项目已吃过一次的教训
      * （{@code VkDispVirtualPack#currentTerrainMemoKey} 的「造键用 A、校验用 B」）。
      */
-    private record FrozenPackContract(int outputCount, List<Integer> declaredSlots) {
+    private record FrozenPackContract(int outputCount, List<Integer> declaredSlots,
+            List<String> programNames) {
 
         FrozenPackContract {
             declaredSlots = declaredSlots == null ? List.of() : List.copyOf(declaredSlots);
+            programNames = programNames == null ? List.of() : List.copyOf(programNames);
         }
     }
 
     /** 冻结值；默认 = 「不接包片元」。volatile：注册线程写、渲染线程每帧读。 */
-    private static volatile FrozenPackContract frozenPack = new FrozenPackContract(0, List.of());
+    private static volatile FrozenPackContract frozenPack =
+            new FrozenPackContract(0, List.of(), List.of());
 
     /**
      * 注册期一次性冻结包地形片元契约（<b>两个数一起</b>，见 {@link FrozenPackContract}）。
+     *
+     * <p>等价于 {@code freezePackPrograms(List.of(new PackProgram("(terrain)", outputs, slots)))}
+     * —— 保留这个单程序入口是为了让「只有一个 gbuffer 程序被接」这条常见路径不必到处构造列表，
+     * 也保住既有调用方与单测的口径。
      *
      * @param outputs        包片元输出数；{@code <= 0} 表示「本次不接包片元」（附件数回到配置值）
      * @param declaredSlots  包片元<b>声明</b>写的槽位（升序）；空 = 未知/不接包片元
      */
     public static void freezePackProgram(int outputs, List<Integer> declaredSlots) {
-        int clamped = outputs <= 0 ? 0 : Math.min(HARD_MAX_SLOTS, outputs);
-        if (clamped == 0) {
-            frozenPack = new FrozenPackContract(0, List.of());
+        freezePackPrograms(List.of(new PackProgram("(terrain)", outputs, declaredSlots)));
+    }
+
+    /** 一个被接进 MRT pass 的包 gbuffer 程序的契约。 */
+    public record PackProgram(String name, int outputs, List<Integer> declaredSlots) {
+    }
+
+    /**
+     * GAP-027：冻结<b>多条</b> gbuffer 程序的契约（地形 + 水 + …）。
+     *
+     * <p>🔖 <b>为什么必须一次算完、一次写入</b>：附件数与「被写的槽」若分两次冻结，
+     * 就可能出现「附件数按地形、被写的槽按水」——两者互相矛盾而日志完全正常。
+     * 更硬的后果是 {@code setPipeline} 校验「render pass 附件数 == 管线颜色目标数」，
+     * 注册侧与绘制侧读到不同的数会<b>直接崩客户端</b>（X42 那条时序铁律的延续）。
+     *
+     * <p>🔖 <b>附件数取 max 而不是取地形那一条</b>：BSL 的 {@code gbuffers_water} 在
+     * {@code ADVANCED_MATERIALS}/{@code MCBL_SS} 都关的默认档下也<b>无条件</b>写两条
+     * （{@code /* DRAWBUFFERS:01 *}/{@code /} + {@code gl_FragData[0..1]}，
+     * 见 {@code program/gbuffers_water.glsl:726-728}），而默认档地形只写 1 条。
+     * 一个 pass 只能有一套附件数 ⇒ 必须容纳写得最多的那条程序；
+     * 少写的程序只是不碰多出来的附件（合法，且 {@link #packDeclaredOutputSlots()} 会如实少报）。
+     */
+    public static void freezePackPrograms(List<PackProgram> programs) {
+        int maxOutputs = 0;
+        java.util.TreeSet<Integer> slots = new java.util.TreeSet<>();
+        List<String> names = new ArrayList<>();
+        for (PackProgram program : programs) {
+            if (program == null || program.outputs() <= 0) {
+                continue; // 「这条不接」是正常状态（例如包没有 gbuffers_water），不是错误
+            }
+            int clamped = Math.min(HARD_MAX_SLOTS, program.outputs());
+            maxOutputs = Math.max(maxOutputs, clamped);
+            if (!program.name().isBlank()) {
+                names.add(program.name());
+            }
+        }
+        if (maxOutputs == 0) {
+            frozenPack = new FrozenPackContract(0, List.of(), List.of());
             return;
         }
-        List<Integer> slots = declaredSlots == null ? List.of() : declaredSlots.stream()
-                .filter(slot -> slot != null && slot >= 0 && slot < clamped)
-                .distinct().sorted().toList();
-        frozenPack = new FrozenPackContract(clamped, slots);
+        for (PackProgram program : programs) {
+            if (program == null || program.declaredSlots() == null) {
+                continue;
+            }
+            for (Integer slot : program.declaredSlots()) {
+                if (slot != null && slot >= 0 && slot < maxOutputs) {
+                    slots.add(slot);
+                }
+            }
+        }
+        frozenPack = new FrozenPackContract(maxOutputs, List.copyOf(slots), List.copyOf(names));
+    }
+
+    /** 被接进 MRT pass 的包程序名（自报用；空 = 一条都没接）。 */
+    public static List<String> packProgramNames() {
+        return frozenPack.programNames();
     }
 
     /** 冻结后的包片元输出数（0 = 不接包片元，附件数用 {@code mrt.attachments}）。 */
