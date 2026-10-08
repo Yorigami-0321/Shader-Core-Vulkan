@@ -6,6 +6,47 @@
 ---
 ---
 
+## 2026-10-08（七十三）— 红灯清零：守卫从「代码形状」搬回「性质」，并补上决策表的覆盖
+
+> **verdict = 3 个红灯全是「实现正确、测试按旧结构写」—— 改动全在 `src/test/`，主源码零改动**
+> 证据：本机复验 `1048 完成 / 3 失败` → 修后全量 `1059 / 0 失败 / 1 skip`
+
+**本次改了什么**
+
+1. **先摆判定依据，再动手**：三个旧字段名 `terrainSourceMemo` / `terrainAdapterMemo` /
+   `terrainMemoKey` 在**主源码已零残留**（只活在测试里）；而逐程序落源
+   （`GbufferArtifacts` 表 + `memoKeyFor() = currentTerrainMemoKey() + "|" + program`）
+   是 GAP-027 的**必要结构**，回退它等于放弃接水 ⇒ **测试过时，不是实现漏改**。
+2. **三条守卫搬家并加强**（不是放宽）：`takeTerrainSourceMemo()` / `takeTerrainAdapterMemo()`
+   已退化为一行委托 ⇒ 守卫移到真正的单一真源 `takeSourceMemo(String)` / `takeAdapterMemo(String)`；
+   新增「地形必须**经由**统一路径」（两份取走逻辑 = 两份会漂移的状态）；
+   新增「键的算法只有一份」（`memoKeyFor` 必须复用 `currentTerrainMemoKey()` 且带程序名后缀）。
+3. 🔴 **清空守卫改用缩进判据**（`indent >= 12` = 被 `if` 包住）：合法清空点有**两个**
+   （键不符 ⇒ 整条作废 / A/B 开关），旧写法要求「必须恰好被 `MRT_GAP010_REGRESSION` 包住」，
+   会把「键不符」这个**正确且必需**的分支判成违规 —— 守卫要求的是把实现改回去。
+4. **记忆键清单补 `MRT_PACK_WATER_SHADER`**（GAP-027 新增的生成闸门，QD-08 第五例）：
+   守卫要跟着新开关一起长，否则「加了开关但没进键」下次照样穿过去。
+5. ✅ **补上声明了却缺失的覆盖**：`GbufferProgramPlan` 的 javadoc 自述「零原版类型依赖 ⇒
+   可单测」，但在 `src/test/` 里曾**零引用** ⇒ 新增 `GbufferProgramPlanTest` **11 条**
+   （路径/后缀纯函数、**水关着时三层行为逐字不变**、只有真挂水的层才关写深度、
+   附件数取 max、自报行三要素、`Entry.wired` 语义）。
+
+**为什么改**：`abbe786` 是子代理触轮次上限后的**备份提交**，自带 3 个红灯；不修则任何后续
+改动的测试基线都不可信（红灯会被当成"已知噪声"忽略）。
+
+**影响的文档**：本文件、`docs/QUALITY-DEBT.md` 的 QD-08 相关判据（守卫形态变化）；
+测试文件 3 个（`VirtualPackMemoKeyTest`、`PackTerrainMemoTakeTest` 改，`GbufferProgramPlanTest` 新增）。
+
+**测试结果**：全量 **1059 / 0 失败 / 0 错误 / 1 skip**（1048 + 11）。主源码零改动。
+
+**是否已提交**：是。
+
+**⛔ 仍未完成**：① `abbe786` 的**水接线运行侧验收仍未做**（水有没有画出来 / 附件数变几个，
+全未知）—— 本次只改测试、不改变产品行为，故不触发 A11「必须跑 runClient」；
+② GAP-023（depthtex 分槽）/ GAP-020（坏 mip 整帧黑）/ GAP-011（闪烁）状态不变。
+
+---
+
 ## 2026-10-08（七十二）— 🔑 GAP-022 接线时被抓出我一个错结论；GAP-027 起步（水）；注入器一个真 bug
 
 > **verdict = 矩阵那一半「推对了但接不了」—— 同一个 uniform 也喂顶点阶段；水的契约与前置依赖实测清楚**

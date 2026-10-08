@@ -78,15 +78,33 @@ class VirtualPackMemoKeyTest {
                         + "而地形契约因键未变返回旧 memo ⇒「覆盖已生效」与「地形画面没变」并存，"
                         + "且没有任何日志说「地形契约被记忆命中」。"
                         + "这与 h33 死开关、QD-02 死开关同族。");
-        // 取走时必须核对键（本轮实测：重载后 memo 还在，按旧配置生成）。
-        int takeAt = pack.indexOf("private static String takeTerrainSourceMemo()");
-        assertTrue(takeAt > 0, "找不到 takeTerrainSourceMemo");
-        String takeBody = pack.substring(takeAt, Math.min(pack.length(),
-                takeAt + pack.substring(takeAt).indexOf("private static String takeTerrainAdapterMemo()")));
-        assertTrue(takeBody.contains("currentTerrainMemoKey()"),
+        // 🔖🔖 取走时必须核对键（本轮实测：重载后 memo 还在，按旧配置生成）。
+        //   ⚠️ GAP-027 逐程序化之后，「取走」只有**一条**路径：takeSourceMemo(String)
+        //   （地形那两个方法已退化为一行委托）⇒ 守卫必须断言这一条路径。
+        //   旧版断言 takeTerrainSourceMemo() 的方法体内含核对 —— 逐程序化之后必然失败，
+        //   而它要求的是「把实现改回去」。**守卫不是主人**：契约要写成「性质」
+        //   （取走必核对键 / 键的算法只有一份），不是「代码长什么样」。
+        String takeBody = bracedBody(pack, "private static String takeSourceMemo(String program)");
+        assertTrue(takeBody.contains("memoKeyFor()"),
                 "取走 memo 时必须核对键 —— ensureTerrainProgram 只在**管线注册期**调一次，"
                         + "而注册事件在资源重载时不再触发 ⇒ 重载后 memo 若还在，"
                         + "它就是按上一轮配置生成的那一份（本轮实测踩到）");
+        assertTrue(takeBody.contains("entry.memoKey"),
+                "核对键必须真的比较「生成时的键 vs 当前键」，只算出来不用 = 白算");
+        // 🔖 逐程序化之后新增的性质：地形也走这条统一路径（否则它被漏检而没人发现）。
+        assertTrue(bracedBody(pack, "private static String takeTerrainSourceMemo()")
+                        .contains("takeSourceMemo("),
+                "地形片元取走必须委托给统一路径 takeSourceMemo(String)");
+        assertTrue(bracedBody(pack, "private static String takeTerrainAdapterMemo()")
+                        .contains("takeAdapterMemo("),
+                "地形适配层取走必须委托给统一路径 takeAdapterMemo(String)");
+        // 🔖🔖 键的算法只有一个：每条程序的键 = currentTerrainMemoKey() + "|" + 程序名。
+        //   缺程序名后缀 ⇒ 两条程序互相命中对方的 memo（水的源被当地形的用）。
+        String keyFor = bracedBody(pack, "String memoKeyFor()");
+        assertTrue(keyFor.contains("currentTerrainMemoKey()"),
+                "memoKeyFor 必须复用单一真源 currentTerrainMemoKey()（造键与校验同一算法）");
+        assertTrue(keyFor.contains("program"),
+                "逐程序的键必须带程序名后缀，否则两条程序会互相命中对方的 memo");
     }
 
     @Test
@@ -107,23 +125,7 @@ class VirtualPackMemoKeyTest {
         // 🔖🔖 取**方法体**（花括号配平）而不是固定长度窗口：h45 在键里补两项后，
         //   方法体变长，固定 500 字的窗口**截不到末尾**的覆盖串 ⇒ 本守卫误报。
         //   「守卫因实现变长而误报」是把人引向改对代码的死路，必须消灭。
-        String code = pack.substring(keyBodyStart);
-        int open = code.indexOf('{');
-        int depth = 0;
-        int close = code.length();
-        for (int i = open; i < code.length(); i++) {
-            char c = code.charAt(i);
-            if (c == '{') {
-                depth++;
-            } else if (c == '}') {
-                depth--;
-                if (depth == 0) {
-                    close = i;
-                    break;
-                }
-            }
-        }
-        String keyBody = code.substring(0, close);
+        String keyBody = bracedBody(pack, "private static String currentTerrainMemoKey()");
         assertTrue(keyBody.contains("PACK_PROFILE") && keyBody.contains("SHADER_PACK")
                         && keyBody.contains("PackOptionOverrideSwitch"),
                 "currentTerrainMemoKey 必须同时含 profile / selection / 覆盖串 —— "
@@ -133,6 +135,11 @@ class VirtualPackMemoKeyTest {
                 "ENABLED 与 MRT_PACK_TERRAIN_SHADER 在生成窗口内被读取（生成前的闸门），"
                         + "必须在记忆键里 —— 否则改动它们不触发地形契约重算，"
                         + "而 openResources 侧按新值走，两条链互相矛盾而日志全正常（QD-08 本体）");
+        // 🔖 GAP-027 新增项：水那条的生成闸门（mrt.packWater）同样在本窗口内被读
+        //   ⇒ 它必须进键（QD-08 第五例）。守卫要跟着新开关一起长，否则
+        //   「加了新开关但忘了进键」下次照样能穿过去。
+        assertTrue(keyBody.contains("MRT_PACK_WATER_SHADER"),
+                "mrt.packWater 是 GAP-027 的生成闸门，必须在记忆键里");
     }
 
     @Test
@@ -143,5 +150,33 @@ class VirtualPackMemoKeyTest {
         String pack = readOrSkip();
         assertTrue(pack.contains("地形契约的记忆键") || pack.contains("记忆键"),
                 "记忆键的说明必须留在源码里（它是「要同步加项」的唯一提示）");
+    }
+
+    /**
+     * 取「签名之后第一个花括号块」的原文（花括号配平）。
+     *
+     * <p>🔖 为什么不用固定长度窗口：h45 在键里补两项后方法体变长，固定 500 字的窗口
+     * <b>截不到末尾</b>的覆盖串 ⇒ 守卫误报。而「守卫因实现变长而误报」会把人引向
+     * 改对代码的死路，必须消灭（本类里已经吃过一次同族的亏）。
+     */
+    private static String bracedBody(String src, String signature) {
+        int at = src.indexOf(signature);
+        assertTrue(at > 0, "方法没找到: " + signature);
+        String code = src.substring(at);
+        int open = code.indexOf('{');
+        assertTrue(open > 0, "方法没有花括号体: " + signature);
+        int depth = 0;
+        for (int i = open; i < code.length(); i++) {
+            char c = code.charAt(i);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return code.substring(0, i + 1);
+                }
+            }
+        }
+        throw new AssertionError("花括号不配平: " + signature);
     }
 }
