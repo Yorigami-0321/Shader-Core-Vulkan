@@ -78,11 +78,12 @@ public final class VkDispConfigHotReload {
      * @param shaderPack      核心项（变了要重载）
      * @param packOptionsScreen 驱动项（变了只执行屏幕动作，不重载）
      * @param capabilityGate  核心项（包选项相关，变了要重载）
+     * @param chainEnableGating 核心项（GAP-024：只在链装配时读一次，变了必须重载才换臂）
      * @param optionOverrides 核心项（包选项相关，变了要重载）
      */
     private record Snapshot(boolean enabled, boolean debugLog, String packProfile,
             String shaderPack, String packOptionsScreen, boolean capabilityGate,
-            String optionOverrides) {}
+            boolean chainEnableGating, String optionOverrides) {}
 
     /** 最近一次快照；null = 还没见 Loading（防御位，实际由首载 Loading 填充）。 */
     private static volatile Snapshot last;
@@ -189,11 +190,13 @@ public final class VkDispConfigHotReload {
                 VkDisp.LOGGER.info(
                         "vkdisp: config hot-reload: file={} type={} enabled={} debugLog={}"
                                 + " packProfile='{}' shaderPack='{}'"
-                                + " capabilityGate={} optionOverrides='{}' -> resource reload",
+                                + " capabilityGate={} chainEnableGating={} optionOverrides='{}'"
+                                + " -> resource reload",
                         config.getFileName(), config.getType(),
                         current.enabled(), current.debugLog(),
                         current.packProfile(), current.shaderPack(),
-                        current.capabilityGate(), current.optionOverrides());
+                        current.capabilityGate(), current.chainEnableGating(),
+                        current.optionOverrides());
                 if (minecraft != null) {
                     //观察者线程（nightconfig FileWatcher）不能直接开资源重载 → 挪渲染线程。
                     // P4.5：先异步预编译，编译完成再重载（切 BSL 实测 3.97s 同步阻塞 → 未响应）。
@@ -235,6 +238,7 @@ public final class VkDispConfigHotReload {
                 || !Objects.equals(previous.packProfile(), current.packProfile())
                 || !Objects.equals(previous.shaderPack(), current.shaderPack())
                 || previous.capabilityGate() != current.capabilityGate()
+                || previous.chainEnableGating() != current.chainEnableGating()
                 || !Objects.equals(previous.optionOverrides(), current.optionOverrides());
     }
 
@@ -328,6 +332,7 @@ public final class VkDispConfigHotReload {
                 VkDispConfig.SHADER_PACK.get(),
                 VkDispConfig.PACK_OPTIONS_SCREEN.get(),
                 VkDispConfig.CAPABILITY_GATE.get(),
+                VkDispConfig.CHAIN_ENABLE_GATING.get(),
                 VkDispConfig.OPTION_OVERRIDES.get());
     }
 

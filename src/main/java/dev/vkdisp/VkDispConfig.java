@@ -356,6 +356,38 @@ public final class VkDispConfig {
             .define("pack.capabilityGate", false);
 
     /**
+     * 🔴 <b>GAP-024：链装配期执行包自己写下的 {@code program.*.<名>.enabled}</b> —— 默认<b>开</b>。
+     *
+     * <p><b>它修的是什么</b>：{@code ShaderProperties} 早就把这些表达式收进了
+     * {@code programSwitches}，{@code ShaderPackService.deriveSettings} 也早就把它落到
+     * {@code Program#settings()} 的 {@code enabled} 键上 —— 但 {@code PackPostChain} 的装配
+     * 循环<b>从不读它</b>。结果：包里明确关着的特性级（BSL 默认档的 MOTION_BLUR / DOF
+     * 两级 composite）照样每帧执行 —— 画面在「按包声明跑」与「全都跑」之间没有区别，
+     * 而这两臂的像素差就是被跳过的功能。这属于「数据在、没接线」那一族（QD-02 死开关的镜像形态：
+     * 有消费方但没人读源）。
+     *
+     * <p>🔖 <b>为什么默认开（与 {@link #CAPABILITY_GATE} 的默认关相反，且这个相反是有意的）</b>：
+     * 本开关做的事是「执行<b>包自己</b>写下的开关」。关掉它 = 让包明确关着的那一级继续跑
+     * = <b>违反包的声明</b>（支柱①兼容的口径），所以默认按包意图生效。
+     * {@code pack.capabilityGate} 关的却是「我方<b>替</b>包关掉它<b>没声明</b>要关的东西」，
+     * 那种改变包语义的动作才需要用户显式开启。
+     *
+     * <p>🔖 <b>那它为什么还要存在</b>：A/B 取证。要证明「门控本身有没有副作用」，
+     * 必须在同一二进制里把这一刀切出来（h45 单变量纪律），而不是靠改代码重编两版。
+     *
+     * <p>🔖 <b>保守处置</b>：表达式认不出来（语法不支持 / 名字不在选项表里）时
+     * <b>保留</b>那一级并自报（{@code ProgramEnableGate} 的三值口径）；
+     * 跳过只发生在表达式<b>确定为假</b>时。无论跳过几级，每次装配都有一行
+     * {@code [GAP-024] post chain enable-gating:} 自报（含 gating=on/off），
+     * 两臂的日志各自说明自己跑了哪个行为。
+     */
+    public static final ModConfigSpec.BooleanValue CHAIN_ENABLE_GATING = BUILDER
+            .comment("GAP-024：后处理链装配时执行包自己写的 program.*.enabled 开关（默认开）。"
+                    + "关闭 = 回到旧行为（关了特性的步也照跑），仅供 A/B 取证；"
+                    + "表达式认不出时一律保留该级并在 [GAP-024] 自报行里点名。")
+            .define("pack.chainEnableGating", true);
+
+    /**
      * 🔬 A/B 开关：**故意**用高对比逐槽诊断色（绿 / 蓝 / 品红）清地形 MRT pass 的各槽。
      *
      * <p>🔴 <b>默认关，且不建议打开</b>。背景（实测见 {@code evidence/h27b-…} §六）：

@@ -7,6 +7,7 @@ import dev.vkdisp.pipeline.model.PostPassContract;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 包的完整后处理链（OF 执行序：deferred* → composite*（含无号的 composite=0 号）→ final）。
@@ -24,6 +25,24 @@ import java.util.List;
  * <p><b>维度口径</b>（与 composite 链一致的已知未覆盖项）：只在
  * 「与基准程序同维度 → world0 → 根命名空间」里择优；其它维度目录的程序**不进链**并逐条 INFO
  * （把它们混进主世界链比不跑更糟 —— 与 {@link PackCompositeSource} 的串链教训同源）。
+ *
+ * <p>🔴 <b>GAP-024：包自己写的 {@code program.<名>.enabled} 在这里生效</b>。
+ * 这些数据从 {@code ShaderProperties.programSwitches} → {@code ShaderPackService.deriveSettings}
+ * 一路活到 {@code Program#settings().get("enabled")}，但本类的装配循环<b>曾经从不读它</b>
+ * ⇒ 包里明确关着的特性级照跑（BSL 默认档的 MOTION_BLUR / DOF 两级 composite 每帧白烧，
+ * 且画面与「按包声明跑」之间<b>没有可观测的区别</b>）。现在：
+ * <ul>
+ *   <li>决策与自报在 {@link ChainEnableGating}（纯逻辑，可单测），三值求值在
+ *       {@link ProgramEnableGate}（本类不重造求值器，X17）；</li>
+ *   <li>只有表达式<b>确定为假</b>的步被丢；看不懂（UNKNOWN）的步<b>照样进链</b>，
+ *       但它的名字会出现在自报行里 —— 那是我方知识的边界，不是包的错；</li>
+ *   <li>选项值由调用方（{@link PackCompositeSource}）传入，且<b>必须是编译用的同一份</b>，
+ *       否则就是「按 A 编、按 B 跑」；</li>
+ *   <li>每次装配出<b>一行</b> {@code [GAP-024] post chain enable-gating:} INFO，
+ *       跳过 0 级时也照打（否则「没这行」与「这行说没跳过」不可区分），
+ *       并带 {@code gating=on/off} 说明本臂跑的是哪个行为
+ *       （{@code pack.chainEnableGating}，见 {@link PackChainGatingSwitch}）。</li>
+ * </ul>
  */
 public final class PackPostChain {
 
@@ -92,12 +111,17 @@ public final class PackPostChain {
     /**
      * 从**已编译**的包产物构建有序链。
      *
-     * @param pack               包模型（提供程序清单与族/序号）
+     * @param pack               包模型（提供程序清单与族/序号，以及每级的 {@code enabled} 表达式）
      * @param compiled           同一次 {@link ShaderPackCompiler} 的产物（FRAGMENT 终稿）
      * @param preferredDimension 基准维度（= composite 选中的维度目录；可为空串 = 根）
+     * @param optionValues       当前生效的<b>选项值</b>（选项名 → 值），GAP-024 用它求 {@code enabled}。
+     *                           🔴 必须是<b>编译用的那一份</b>（{@code PackOptionsSession#options()}
+     *                           的 {@code values()}）—— 另取一份就是「按 A 编、按 B 跑」。
+     *                           没有选项可给时传<b>空表</b>（不许传 null）：空表 ⇒ 每条表达式都
+     *                           认不出 ⇒ 全部保留 + 自报行把它们逐条点名（保守且不静默）
      */
     public static Chain build(ShaderPack pack, ShaderPackCompiler.CompileResult compiled,
-            String preferredDimension) {
+            String preferredDimension, Map<String, String> optionValues) {
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         List<Pass> passes = new ArrayList<>();
         // OF 执行序：族序（DEFERRED < COMPOSITE < FINAL）→ 族内序号（composite=0 先于 composite1）。
@@ -121,7 +145,14 @@ public final class PackPostChain {
                 .comparingInt((Program p) -> p.stage().order())
                 .thenComparingInt(Program::stageIndex)
                 .thenComparing(Program::name));
+        // 🔴 GAP-024：包自己写的 program.*.enabled 在这里生效（跳过谁、留下谁都只有一条自报行）。
+        ChainEnableGating.Plan gating = applyEnableGating(pack, candidates, optionValues, diagnostics);
         for (Program program : candidates) {
+            // 门控掉的步<b>先于</b>槽位上限检查：它不进链就不该占 16 个槽位预算，
+            // 更不该在「已达上限」的那条 break 里被当成「没轮到」—— 那是两种不同的原因。
+            if (!gating.keeps(program.name())) {
+                continue;
+            }
             if (passes.size() >= MAX_POST_PASSES) {
                 diagnostics.add(TranslateDiagnostic.warn(
                         "vkdisp: post 链已达上限 " + MAX_POST_PASSES + "，后续程序（含 "
@@ -202,6 +233,41 @@ public final class PackPostChain {
                     TranslateDiagnostic.UNKNOWN_LINE));
         }
         return new Chain(passes, diagnostics);
+    }
+
+    /**
+     * 🔴 GAP-024 的门控点（单独成方法 = 让 {@code build} 不因为「新增一次决策」再变长，
+     * 也是 {@link ChainEnableGating} 那条自报行唯一的产生地）。
+     *
+     * <p>本方法只做三件事：① 读总开关；② 把候选步的 {@code enabled} 表达式交给
+     * {@link ChainEnableGating} 求值（求值口径在 {@link ProgramEnableGate}，这里不重造）；
+     * ③ <b>无条件</b>留下一条 INFO 自报 —— 包括一行都没跳过的那一次。
+     *
+     * @param diagnostics 诊断收集器（自报行与开关读取失败都往这里追加，随链一起交付给调用方）
+     * @return 门控决策（调用方按 {@link ChainEnableGating.Plan#keeps(String)} 过滤候选）
+     */
+    private static ChainEnableGating.Plan applyEnableGating(ShaderPack pack, List<Program> candidates,
+            Map<String, String> optionValues, List<TranslateDiagnostic> diagnostics) {
+        boolean gatingEnabled = PackChainGatingSwitch.enabled();
+        List<ChainEnableGating.Step> steps = new ArrayList<>(candidates.size());
+        for (Program program : candidates) {
+            steps.add(new ChainEnableGating.Step(program.name(), program.settings().get("enabled")));
+        }
+        ChainEnableGating.Plan plan = ChainEnableGating.plan(steps, optionValues, gatingEnabled);
+        diagnostics.add(TranslateDiagnostic.info(plan.report(pack.name()), pack.name(),
+                TranslateDiagnostic.UNKNOWN_LINE));
+        // 🔴 开关读不到（字段被改名/被删）⇒ 开关会恒取默认值，而「我把它写成 false 但它没生效」
+        //   在日志里完全看不出来 —— h33 实测的正是这一族。必须 ERROR 点名，不能只按默认继续跑。
+        String switchFailure = PackChainGatingSwitch.reflectionFailure();
+        if (switchFailure != null) {
+            diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.ERROR,
+                    "vkdisp: [GAP-024] 链门控开关 " + PackChainGatingSwitch.CONFIG_KEY
+                            + " 读取失败：" + switchFailure
+                            + " ⇒ 它将**恒为 " + PackChainGatingSwitch.DEFAULT_ENABLED
+                            + "（默认开）**，即该配置写了也不生效。这是真错误不是正常状态。",
+                    pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+        }
+        return plan;
     }
 
     /** 一次程序选中的结果：转译终稿 + 其限定名。 */

@@ -349,7 +349,11 @@ public final class PackCompositeSource {
                 // 🔴 整链：同一次编译产物里选出 deferred*/composite*/final 全序列并做
                 //   location→附件下标重编号（旧三步只喂 3 个程序；BSL 实链 10 步）。
                 //   与上面三源**同源同维度**：链里混进别的维度目录的程序 = 串链（P4.1 同判据）。
-                PackPostChain.Chain chain = PackPostChain.build(pack, compiled, compositeDimension);
+                //   🔴 GAP-024：门控吃的选项值 = **本次编译用的同一份**（session 的当前值），
+                //   不是重新算一遍的默认值 —— 否则「按 profile/store 编的源、按默认值决定跑不跑」
+                //   会让关掉的特性级照样出现，而那正是本次改动要消灭的形态。
+                PackPostChain.Chain chain = PackPostChain.build(pack, compiled, compositeDimension,
+                        session.options().values());
                 diagnostics.addAll(chain.diagnostics());
                 // GAP-009 素材线：texture.<sampler>=path 指令（BSL 的 noisetex 真值来源）。
                 dev.vkdisp.pipeline.model.PackTextureBindings.Result tex =
