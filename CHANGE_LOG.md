@@ -6,6 +6,69 @@
 ---
 ---
 
+## 2026-10-08（七十二）— 🔑 GAP-022 接线时被抓出我一个错结论；GAP-027 起步（水）；注入器一个真 bug
+
+> **verdict = 矩阵那一半「推对了但接不了」—— 同一个 uniform 也喂顶点阶段；水的契约与前置依赖实测清楚**
+> 证据：`evidence/h48w-gap022-real-matrices.md`、`evidence/h48-flicker-and-readback.md` §二十六/§二十七
+
+**做了什么**
+
+1. **GAP-027 第一步（已提交推送）**：`PackTerrainSource` 选源**参数化**（5 参 `generate`，
+   4 参版委托 ⇒ 选包/门控/选项覆盖/编译/槽位兑现五处口径全部复用同一条链），
+   `MrtPlan` 的冻结契约从「单程序」改成「**多程序取 max/并集**」（`freezePackPrograms`，仍一次 volatile 写入）。
+   `slotRefusal` 顺手改成按被选中的限定名精确匹配（按后缀匹配会把没入选维度的拒绝理由算到本次头上 ⇒ 误拒）。
+2. **实测水契约**（真 BSL 默认档，钉成单测）：**2 输出 / 槽 `[0,1]` / 8 sampler（含 `depthtex1`、`gaux1`、`gaux2`）/ 14 varying**，
+   对照地形 1 输出 / 5 sampler / 9 varying。并证明顶点适配层**按每条程序各自**产出（14 条逐位置逐名字对齐、
+   文本与地形不同）⇒ 接水不含顶点侧未知数。🔴 同时定下一条依赖：**水要 `depthtex1` ⇒ GAP-023 从「以后再说」变成接水前置**，
+   并已把分槽机制写进登记表（同一张深度在三个时刻的两次 blit 快照 + usage/代次三条约束）。
+3. **GAP-022 矩阵那一半接线落地**（子代理实现，我逐条核实）：`DepthConventionPair` 成对出口 + 13 条离线单测，
+   历史槽只存**引擎口径**、翻只发生在出口 ⇒ 「上一帧被翻几次」机械化答案是恰好一次（`D2` 不是对合）。
+   开关 `mrt.depthGlProxy` 仍默认 **false**；OFF 态逐字节不变。核实：包里**没有** `gbufferPreviousProjectionInverse`
+   声明 ⇒ 未新增（不无据改动 OFF 态字节）。
+4. 🔴 **接线时抓出我上一轮的一个错结论（这条比接线本身重要）**：`gbufferProjection` **同时是顶点阶段的投影矩阵**
+   （转译终稿逐字 `gl_Position = gbufferProjection * gbufferModelView * position;`，
+   `build/bench-golden/.../world0_gbuffers_terrain.vsh.trans.glsl:450`）。本前端设备深度值域是 `[0,1]`
+   （`isZZeroToOne=true`），**没有 GL 那步 `(ndc+1)/2` 视口映射** ⇒ 喂 `D2·P` 会让顶点产出 `[-1,1]` 的 clip.z、
+   光栅化深度越界。我 h48w §3.1 把「GL 视口的事实」当成了「这条 Vulkan 路径的事实」。
+   数学部分（差 3.0e−9、逆配对、包口径往返）**仍然全对**，错在「所以可以换这一个 uniform」那一步。
+   ⇒ 真正的修法是**按程序族分别供值**（`gbuffers_*` 留引擎口径、`composite*/deferred*` 给 GL 口径，
+   已核实这五个片元文件确实读它）。已把 `mrt.depthGlProxy` 的用户可见 comment 从「只开这一半是半真半假」
+   改成说清「两半都开反而会弄坏顶点」—— 旧文案会误导出**反方向**的错。
+5. **GAP-026 修法②闸门首次真跑并通过**（`档位核验通过：STORE_RESIDUE_NONE`）。
+   并记一条工具层事实：**别改正在被运行的脚本** —— 上一轮我在臂运行中插了 28 行，
+   bash 按字节偏移续读 ⇒ 新闸门**整段被安静跳过**；那次运行的「无残留」是产品打的、不是闸门判的。
+6. **注入器一个确定的 bug（已修，但不足以解释症状）**：`x11_input.py` 的 `key_for()` 只返回 keycode、
+   丢掉命中的是第几层 ⇒ 要按 Shift 的字符全打成该键下层：`/`→`7`、`#`→`3`
+   ⇒ **每一条以 `/` 开头的注入命令从来没生效过**（与 §二十.1 的「前导字符被吃掉」是两个不同的错：
+   丢字符 vs 换字符，这也解释了为什么加垫子救不回来）。离线证明 + 已修。
+   🔴 但修完再跑一臂，`clockTime` 仍从 23092 自己走到 25221 并跨过 24000 进新一天 ⇒ **命令还是没执行**。
+   剩下候选未查（F2 能落地 ⇒ 「键完全进不去」不成立）。
+   ⇒ **判读规矩立刻生效**：「观测面钉成正午+晴天」至今没有一次臂真正成立 ⇒ 跨臂比亮度必须带
+   「两臂自报时刻不同」这个已知混杂量；可用的是①同一臂内做对照 ②用「是否为 0」而非「亮度高低」判有没有画面。
+7. **更正 `04-SPEC:161`**：那句「链模式下上一次 gather 就等于上一帧」不成立 ——
+   `gather` 一帧内最多被调 **4 次**（`FrameApi:801/:1110`、`TerrainPipelineApi:550/:620`）而历史每次 gather 轮一次
+   ⇒ 同帧内第 2..4 次的「上一帧」就是本帧 ⇒ `previous == current` ⇒ 运动向量恒 0，
+   TAA/运动模糊/DOF 重投影退化成原地累积。**这与「此前恒 0」是方向相反的另一种错**，两个都得防。
+
+**影响的文档**：`docs/13-GAP-REGISTRY.md`（GAP-022 加 h48z 更正行与新的关闭条件、GAP-023 补「接水前置」与机制、
+GAP-026 加修法②状态、新增 GAP-027 实测契约）、`docs/04-SPEC.md:161`、
+`evidence/h48w-gap022-real-matrices.md`（新）、`evidence/h48-flicker-and-readback.md` §二十六/§二十七。
+
+**测试结果**：`./gradlew test -PquickPlay` 全绿 **1041 条 / 0 失败**（本轮新增
+`MrtPlanTest` 3 条、`PackTerrainSourceTest` 2 条水契约、`DepthConventionPairTest` 13 条）。
+运行侧：h48y 回归闸证明 `MrtPlan` 重构对运行期**逐字无影响**
+（`colorTargets=1 declaredOutputSlots=[0]`、门控 `kept=9 skipped=2`、240 帧 0 空帧、luma 中位 141.95）。
+
+**是否已提交**：是（`feat(h48x/GAP-027) 第一步`、`test(h48x/GAP-027)`、`docs(h48x/GAP-023)`、
+`docs(h48y/GAP-026)`、`feat(h48z/GAP-022)`、`docs(h48z)`），全部已推送、与 `origin/master` 同步。
+
+**⛔ 仍未完成**：① 水**正在接**（子代理做 `VkDispVirtualPack` 多程序化 + TRANSLUCENT 管线 + `renderGroup(TRANSLUCENT)`），
+   我未复核前不算数；② GAP-023 depthtex 分槽未实现（已是接水的正确性前置）；
+   ③ GAP-022 需要「按程序族分别供值」才算真修好；④ `gbufferPrevious*` 需要真的帧身份；
+   ⑤ 聊天注入仍未通（命令从不执行）；⑥ 8 附件档每 3 帧空一次机制未定位；⑦ 云/实体/手/shadow 未接。
+
+---
+
 ## 2026-10-08（七十一）— 🔑 GAP-022 矩阵那一半**推出来了**（并撤掉一条拦住自己的假否证）+ 登记 GAP-027
 
 > **verdict = 反向 Z 的矩阵换算已证到 3.0e−9 并钉成单测；非地形 gbuffers 第一次有了官方非 mixin 接法**
