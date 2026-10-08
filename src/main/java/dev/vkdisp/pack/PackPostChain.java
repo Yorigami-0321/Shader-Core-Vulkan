@@ -126,7 +126,8 @@ public final class PackPostChain {
         List<Pass> passes = new ArrayList<>();
         // OF 执行序：族序（DEFERRED < COMPOSITE < FINAL）→ 族内序号（composite=0 先于 composite1）。
         List<Program> candidates = new ArrayList<>();
-        java.util.Set<String> seenNames = new java.util.HashSet<>();
+        java.util.Map<String, Integer> rankByName = new java.util.HashMap<>();
+        java.util.Map<String, Program> byName = new java.util.LinkedHashMap<>();
         for (Program program : pack.programs()) {
             ProgramStage stage = program.stage();
             if (stage != ProgramStage.DEFERRED && stage != ProgramStage.COMPOSITE
@@ -136,11 +137,27 @@ public final class PackPostChain {
             // 🔖 按**程序名**去重：多维度包里 deferred 有 world-1/world0/world1 三条 Program，
             // 不去重就会进链三次 —— 实测 BSL：16 个槽位预算被 5 个程序 ×3 维度吃光，
             // 尾部（composite5..final）整体消失，而**没有任何一步报错**。
-            if (!seenNames.add(program.name())) {
-                continue;
+            //
+            // 🔴 但「留哪一条」**必须与取源用同一套维度优先级**（{@link #chainDimensionRank}）。
+            //   旧实现是 `Set.add` 先到先得，而 BSL 的枚举顺序是 world-1 → world0 → world1
+            //   ⇒ 留在候选里的是 **world-1 那条 Program**，可它的片元源**永远不会被选中**
+            //   （{@code selectFragment} 给非偏好维度打 MAX_VALUE）。在此之前它只是
+            //   「settings 里的 blend/alphaTest 取错维度」的潜在坑；GAP-024 接上 {@code enabled}
+            //   之后它立刻变成**功能回归**：BSL 逐字写着
+            //     program.world0/composite1.enabled = LIGHT_SHAFT                              （真）
+            //     program.world-1/composite1.enabled = LIGHT_SHAFT && MULTICOLORED_BLOCKLIGHT   （假）
+            //   ⇒ 光柱被一个**根本不进链的维度**的表达式砍掉（h48u 实测 {@code skipped=[composite1,…]}，
+            //   而我方选项表逐字写着 {@code option name=LIGHT_SHAFT … default=true}）。
+            String dimension = program.dimensionFolder() == null ? "" : program.dimensionFolder();
+            int rank = chainDimensionRank(dimension, preferredDimension);
+            String name = program.name();
+            Integer held = rankByName.get(name);
+            if (held == null || rank < held) {
+                rankByName.put(name, rank);
+                byName.put(name, program);
             }
-            candidates.add(program);
         }
+        candidates.addAll(byName.values());
         candidates.sort(Comparator
                 .comparingInt((Program p) -> p.stage().order())
                 .thenComparingInt(Program::stageIndex)
