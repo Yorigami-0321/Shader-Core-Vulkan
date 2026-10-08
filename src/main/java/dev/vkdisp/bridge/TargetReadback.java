@@ -397,7 +397,8 @@ private static final long WARMUP_FRAMES = 600L;
         // 🔖 主目标先测：它是「用户看到的」那个面（h31 收尾被撤回的教训 = 判读对象必须自报）。
         boolean any = submit("main", main == null ? null : main.getColorTexture());
         // 🔖🔖 再测我方 pass 写出的槽：**挑哪一槽由 PixelProbePlan 决定，不由本类猜**。
-        //   本类上一版硬编码「terrainToMain 档改测槽 1」，而实测默认档包声明写的是
+        //   本类上一版硬编码「terrainToMain 档改测槽 1」，而实测<b>残留档</b>（store 带
+        //   {@code ADVANCED_MATERIALS=true}）包声明写的是
         //   [0, 3, 6, 7]（outputCount=8）⇒ 槽 1 那一帧**不是附件**，读它必然是清屏值
         //   ⇒ 日志会报 `colortex1 allZero=true`，被读成「包片元输出黑」——
         //   那是**假证据**：真相是「那张图没有包的输出」。

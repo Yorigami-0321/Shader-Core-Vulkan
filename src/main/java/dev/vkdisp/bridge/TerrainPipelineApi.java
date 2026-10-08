@@ -196,8 +196,9 @@ public final class TerrainPipelineApi {
                 packTerrain == null ? java.util.List.of() : packTerrain.declaredOutputSlots());
         if (packTerrain != null) {
             // 🔖 证据行必须**同时**打出「附件数」与「哪些槽被写」——
-            //   只打 colorTargets=8 会让人以为 8 个附件都被写了（实测 BSL 默认档是 [0,3,6,7]，
-            //   附件 1/2/4/5 存在但无片元输出）。这是本轮实测定位的假证据来源。
+            //   只打 colorTargets=8 会让人以为 8 个附件都被写了（实测<b>残留档</b>是 [0,3,6,7]，
+            //   附件 1/2/4/5 存在但无片元输出；🔖 真默认档只写槽 0 —— 那 8 来自 store 里
+            //   残留的 ADVANCED_MATERIALS=true，见 MrtPlan 的 h45 更正与 evidence/h48 §二十二）。
             VkDisp.LOGGER.info(
                     "vkdisp: [GAP-003] MRT terrain pipelines will use pack fragment: program={}"
                             + " colorTargets={} declaredOutputSlots={} samplers={} varyings={}"
@@ -261,8 +262,10 @@ public final class TerrainPipelineApi {
      *
      * <p>🔖🔖 <b>为什么专门把它打出来</b>（2026-10-05 实测）：
      * {@code colorTargets=8} 单独看会让人以为 8 个附件都被包片元写了；
-     * 而 BSL 默认档实测是 {@code declaredOutputSlots=[0,3,6,7]} ⇒ 附件 <b>1/2/4/5</b>
+     * 而实测<b>残留档</b>（store 带 {@code ADVANCED_MATERIALS=true}）是 {@code declaredOutputSlots=[0,3,6,7]}
+     * ⇒ 附件 <b>1/2/4/5</b>
      * 存在但**没有任何片元输出**，读它们只会得到清屏值。
+     * （🔖 这<b>不是</b>包默认档：默认档只写槽 0；见 {@code MrtPlan} 的 h45 更正、{@code evidence/h48} §二十二。）
      * 不自报这四项 ⇒ 诊断一旦读了其中一槽，就会把「清屏值」当成「包输出是黑的」报出去。
      *
      * <p>声明槽位为空（不接包片元 / 契约不可得）时返回 {@code [-]}：

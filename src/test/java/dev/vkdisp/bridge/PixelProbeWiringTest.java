@@ -144,10 +144,11 @@ class PixelProbeWiringTest {
     }
 
     @Test
-    @DisplayName("🔖🔖 探针不得硬编码槽号（槽 1 在 BSL 默认档不是包输出 ⇒ 读它是假证据）")
+    @DisplayName("🔖🔖 探针不得硬编码槽号（槽 1 在**残留档**不是包输出 ⇒ 读它是假证据）")
     void probeMustNotHardcodeASlot() {
         // 🔴🔖 本轮实测定位：上一版在 `terrainToMain` 档里硬编码「改测槽 1」。
-        //   而 BSL 默认档实测 `declaredOutputSlots=[0,3,6,7]` / `outputCount=8`
+        //   而**残留档**（store 带 `ADVANCED_MATERIALS=true`；🔖 包默认档只写槽 0）实测
+        //   `declaredOutputSlots=[0,3,6,7]` / `outputCount=8`
         //   ⇒ 槽 1 那一帧**不是包的输出**，只有清屏值 ⇒ 读出来必然 `allZero=true`
         //   ⇒ 日志报「包片元输出黑」—— 结论反了（真相反是「没写」）。
         //   判据 = **源码里不得出现任何字面槽号**：挑槽必须是 PixelProbePlan 的职责。
@@ -156,7 +157,7 @@ class PixelProbeWiringTest {
             assertFalse(probe.contains(literal),
                     "探针里出现字面槽号 " + literal + " ⇒ 挑槽又被写死回本类了。"
                             + "必须交给 PixelProbePlan.decide(...)（按包声明写的槽集合挑），"
-                            + "否则包配置一变就静默指错槽（BSL 默认档 [0,3,6,7]，槽 1 无输出）");
+                            + "否则包配置一变就静默指错槽（**残留档** [0,3,6,7]，槽 1 无输出；默认档只写 0）");
         }
         assertTrue(probe.contains("PixelProbePlan.decide("),
                 "探针必须把挑槽委托给 PixelProbePlan（纯逻辑、可单测）");

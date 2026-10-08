@@ -211,8 +211,8 @@ MCP 截图（854×480，最终帧含 GUI）同一采样区：`meanRGB=(0.3521,0.
 
 | 编号 | 既有说法 | 本轮实测 | 处置 |
 | --- | --- | --- | --- |
-| `h43` §④ | 「`toMain` 档需 ≥2 附件，而 BSL 默认只写槽 0 ⇒ 该档做不了对照」 | 默认写 `[0,3,6,7]`、8 附件 | **作废**（前提来自一条错注释） |
-| `MrtPlan` 旧注释 | 「`ADVANCED_MATERIALS`/`MCBL_SS` 默认注释掉 ⇒ 默认只写 colortex0」 | `ADVANCED_MATERIALS` 默认 **true**、`MCBL_SS` 包声明 **default=false** ⇒ 走 `0367` | **就地更正**并附实测依据 |
+| `h43` §④ | 「`toMain` 档需 ≥2 附件，而 BSL 默认只写槽 0 ⇒ 该档做不了对照」 | 默认写 `[0,3,6,7]`、8 附件 | ⛔ **本行作废**（见文件头 h45 更正）：那一档是 **store 残留**，不是默认档 ⇒ `h43` §④ 的**前提是对的**。h48r 用真默认档实测 `colorTargets=1 declaredOutputSlots=[0]`，且 240 帧 **0 空帧** |
+| `MrtPlan` 旧注释 | 「`ADVANCED_MATERIALS`/`MCBL_SS` 默认注释掉 ⇒ 默认只写 colortex0」 | `ADVANCED_MATERIALS` 默认 **true**、`MCBL_SS` 包声明 **default=false** ⇒ 走 `0367` | ⛔ **本行的「实测」是错的，处置已回滚**：扫包日志逐字 `default=false`，`MrtPlan` 原注释**本来就对**（h45 恢复；h48r 再以生产链路单测复核 = 只写 1 个输出）。🔖 **本行是「用残留状态反推默认值」的标本**，机制见 `evidence/h48-flicker-and-readback.md` §二十二 |
 | `h43` 探针 | `toMain` 档「改测槽 1」 | 槽 1 无包输出 ⇒ 读它是清屏值 = 假证据 | **改为契约驱动**（`PixelProbePlan`） |
 | `h43` 探针判读 | 四格标签表不认档位 | 该档下 `NOT_ON_MAIN` 说反了 | **改为档位敏感**（`PixelProbeVerdict`） |
 | `h42` §4.3 | 「输出黑」与「没落到主目标」本轮未分开 | 本轮**已分开**（A/B 两档各自独立给出） | **收口** |

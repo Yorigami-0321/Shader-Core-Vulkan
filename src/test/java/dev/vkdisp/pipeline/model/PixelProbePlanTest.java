@@ -15,13 +15,22 @@ import org.junit.jupiter.api.Test;
  * <p>🔖 <b>这些断言守的是假证据</b>：读一张**包片元根本没写**的附件，
  * 得到的必然是清屏值；而清屏值读出来是「全黑」，
  * 于是日志会报「包片元输出黑」——那是<b>结论反了</b>，不是精度差一点。
- * 期望值全部按实测独立写死（BSL v10.1.8 默认档：{@code declaredOutputSlots=[0,3,6,7]}、
- * {@code outputCount=8}），**不跟随实现**。
+ * 期望值全部按实测独立写死（BSL 的<b>残留档</b>：{@code declaredOutputSlots=[0,3,6,7]}、
+ * {@code outputCount=8}；🔖 <b>不是包默认档</b> —— 默认档只写槽 0，见 {@code MrtPlan} 的 h45 更正
+ * 与 {@code evidence/h48-flicker-and-readback.md} §二十二），**不跟随实现**。
  */
 class PixelProbePlanTest {
 
-    /** BSL 默认档实测：8 个附件，包片元声明写 0/3/6/7。 */
-    private static final List<Integer> BSL_DEFAULT = List.of(0, 3, 6, 7);
+    /**
+     * <b>残留档</b>实测：8 个附件，包片元声明写 0/3/6/7。
+     *
+     * <p>🔖 名字就叫 RESIDUE_AM 而不是 BSL_DEFAULT，是因为这组数字来自
+     * {@code config/vkdisp-pack-options.properties} 里残留的 {@code ADVANCED_MATERIALS=true}
+     * 那一臂（h43/h44），<b>不是</b>包默认档。本类测的是 {@code PixelProbePlan} 的<b>挑槽逻辑</b>，
+     * 用哪一档的形状当输入都可以，但<b>不许</b>把这组数字说成「BSL 默认」——
+     * 上一轮就是在这里说成了默认，才让登记表把 8 附件当成了默认档（见 evidence/h48 §二十二）。
+     */
+    private static final List<Integer> RESIDUE_AM = List.of(0, 3, 6, 7);
 
     @Test
     @DisplayName("🔖🔖 terrainToMain 档必须剔除槽 0 —— 那一档槽 0 就是主目标视图，不是附件")
@@ -30,7 +39,7 @@ class PixelProbePlanTest {
         //   根本不是包的输出（声明写的是 0/3/6/7）⇒ 读到的是清屏值
         //   ⇒ 日志报「colortex1 allZero=true」⇒ 会被读成「包片元输出黑」。
         //   那正是 h31 收尾被推翻、`terrainToMain` 误测槽 0 的同一族假证据。
-        PixelProbePlan plan = PixelProbePlan.decide(8, true, BSL_DEFAULT, 0);
+        PixelProbePlan plan = PixelProbePlan.decide(8, true, RESIDUE_AM, 0);
         assertEquals(List.of(3, 6, 7), plan.colortexSlots(),
                 "terrainToMain 档下槽 0 已是主目标视图；对照只能取确实被写的 3/6/7，"
                         + "绝不能取槽 1（那一槽没有包输出，读到的是清屏值）");
@@ -45,7 +54,7 @@ class PixelProbePlanTest {
     @Test
     @DisplayName("🔖 非 terrainToMain 档测全部被写的槽（逐槽给数字，才能分清「哪一路输出是黑的」）")
     void sideBySideLaneProbesEveryWrittenSlot() {
-        PixelProbePlan plan = PixelProbePlan.decide(8, false, BSL_DEFAULT, 0);
+        PixelProbePlan plan = PixelProbePlan.decide(8, false, RESIDUE_AM, 0);
         assertEquals(List.of(0, 3, 6, 7), plan.colortexSlots(),
                 "主目标是原版画面时，包写的每一槽都值得单独取数 —— "
                         + "「只有 albedo 黑」与「四路都黑」是两个完全不同的结论");
@@ -56,8 +65,8 @@ class PixelProbePlanTest {
     @Test
     @DisplayName("🔖 附件 1/2/4/5 存在但无包输出 ⇒ 一个都不能进待测集合")
     void unwrittenAttachmentsAreNeverProbed() {
-        PixelProbePlan toMain = PixelProbePlan.decide(8, true, BSL_DEFAULT, 0);
-        PixelProbePlan side = PixelProbePlan.decide(8, false, BSL_DEFAULT, 0);
+        PixelProbePlan toMain = PixelProbePlan.decide(8, true, RESIDUE_AM, 0);
+        PixelProbePlan side = PixelProbePlan.decide(8, false, RESIDUE_AM, 0);
         for (int slot : List.of(1, 2, 4, 5)) {
             assertFalse(toMain.colortexSlots().contains(slot),
                     "槽 " + slot + " 无包输出（只有清屏值），绝不能当成包的输出来读");
@@ -113,7 +122,7 @@ class PixelProbePlanTest {
     @Test
     @DisplayName("🔖 无附件时不得产出任何数字（这与「数字是 0」是两件事）")
     void noAttachmentsProducesNoSlots() {
-        PixelProbePlan plan = PixelProbePlan.decide(0, false, BSL_DEFAULT, 0);
+        PixelProbePlan plan = PixelProbePlan.decide(0, false, RESIDUE_AM, 0);
         assertTrue(plan.colortexSlots().isEmpty());
         assertFalse(plan.comparable());
         assertEquals(0, plan.comparable() ? 1 : 0);
@@ -148,7 +157,7 @@ class PixelProbePlanTest {
     void unwrittenViewSlotIsFlagged() {
         // 🔖 mrt.viewSlot 只影响诊断视图 blit 显示哪一张；把它配成没被写的槽，
         //   显示出来的那张图是清屏色 —— 会被当成「包输出是黑的」。
-        PixelProbePlan plan = PixelProbePlan.decide(8, false, BSL_DEFAULT, 1);
+        PixelProbePlan plan = PixelProbePlan.decide(8, false, RESIDUE_AM, 1);
         assertTrue(plan.note().contains("mrt.viewSlot=1"),
                 "必须点名配置值，否则读日志的人只会看到「viewSlot=1」却不知道它没有包输出");
     }

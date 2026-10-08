@@ -729,3 +729,230 @@ camera-pitch 那一步实测：`chat "/time set 6000"` 落到游戏里是 `ime s
 而「是不是真黑」已由截图通道独立成立。
 另记一条真实故障模式：**键盘注入会在合成器抢走焦点后静默失效**（那次 10 分钟里 F2 与 `/say`
 全部没落地，只有重启客户端才恢复）；鼠标相对位移不受焦点影响（`look` 因此可用）。
+
+## 二十一、h48q：`readDelay 1 vs 3` A/B 出数了 —— 仪器贡献被量化，但**两臂的观测面根本不同**
+
+同一份编译产物、同一条链、只差 `mrt.pixelProbeReadDelay`（取点 `main`，各取末尾 240 帧）：
+
+| 臂 | readDelay | 空帧占比 | 空帧间隔分布 | 序列形态 | 非空帧 luma |
+|---|---|---|---|---|---|
+| d1 | 1 | **160/240 = 66.7%** | `{1:80, 2:79}` | `00N 00N 00N…` | min 46.76 / med 54.72 / max 55.20 |
+| d3 | 3 | **80/240 = 33.3%** | `{3:79}` | `N0N N0N N0N…` | min 66.36 / med 82.88 / max 130.81 |
+
+能定的结论（两条都只靠这张表）：
+
+1. **仪器造的零 = 每个周期恰好多一个**。1→3 只把占空比从 2/3 压到 1/3，
+   而 **周期始终是 3**，且 d3 的间隔分布是 `{3:79}`（除首尾外**全部**严格等于 3，没有第二档）。
+   ⇒ §十八那条机制（`copyTextureToBuffer` 的回调走 `queueForDestroy`，CPU 侧排空 ≠ GPU 侧完成，
+   完成只在 `submitIndex-2` 处被等）被**定量**确认：余量不足时每个周期多误报一个空帧。
+2. **余量加到 3 仍然剩一个严格周期 3 的零**，而且它在**两种完全不同的画面内容**下都出现
+   （见 21.1）⇒ 这一份不是仪器余量能解释的，**渲染侧确有每 3 帧一次的空**（与 §20.2 的 F2 独立通道同向）。
+3. 但 `3` 同时**正好等于 `MappableRingBuffer.BUFFER_COUNT`** —— 所以「d3 剩下的那一个零」
+   仍可能是同一台仪器的**边界档**（第 3 tick 回收 = 恰好在写回的那一格）。
+   ⇒ 本表**不足以**宣布根因，只足以宣布「d1 的数字不能当证据用」。
+   下一刀必须换**不经过这条环的通道**（F2 连拍已具备，本臂没落地是另一件事，见 21.2）。
+
+### 21.1 🔴 两臂的观测面不同，所以**luma 不许跨臂比**
+
+进程内自报（唯一可信的时刻证据，§20.1 立的规矩）：
+
+- d1：`clockTime=69206（当地时 21206）… skyColor=(0.000, 0.000, 0.000) … rain=1.000 render#=900`
+  → **夜里 + 下雨**；且 `clockTime` 在两次自报之间从 69206 走到 70285 ⇒ **`/time set` 与 `/gamerule doDaylightCycle false` 都没生效**。
+- d3：`clockTime=74352（当地时 2352）… skyColor=(0.514, 0.620, 1.000) … rain=0.000` → **拂晓 + 晴**，
+  同样在走（74352→75319）。
+
+⇒ 表里那列 luma（54.7 vs 82.9）是**夜 vs 昼**的差，不是「部分完成」的差，**不许**拿去支持任何机制结论。
+⇒ 顺带把 §20.1 的教训再钉一遍：驱动脚本打的 `chat sent: '/time set 6000'` 只证明**注入器发了**，
+不证明**游戏执行了**；两臂都通过了「chat sent」这一关却都在夜里/在黎明，且都在推进。
+
+### 21.2 本臂 F2 一张没落地
+
+`h48q-d1-driver.log` 尾部：`❌ 本臂**没有截图**（F2 没落地 / 世界没进去）⇒ 无判据`，
+`run/h27/screenshots/` 实测为空目录，而世界**确实进了**（探针有 1200 个 render）。
+⇒ §20.2 记的那条「键盘注入在焦点被抢后静默失效」在本轮**复现**（鼠标 `look` 同期有效：
+`observed_delta=(0,-260)` 与注入值逐字相符）。
+⇒ 判据缺口按本项目规矩**明写为缺口**，不许用探针数字冒充截图判据，也不许把「空表」读成「画面正常」。
+
+## 二十二、🔴 一条改变**所有 h45 之后臂的归因**的发现：持久化选项 store 的残留一直在改写 BSL
+
+### 22.1 起因：文档里两条互斥的说法
+
+`docs/13-GAP-REGISTRY.md` 一处写「BSL 默认只写 colortex0」，另一处用
+「`ADVANCED_MATERIALS` 默认为真」来解释运行日志里的 `colorTargets=8`。
+而 BSL `shaders/lib/settings.glsl:69` 逐字是 `//#define ADVANCED_MATERIALS`（**注释掉**）。
+两条不可能同时成立 ⇒ 去查我方预处理器有没有把注释掉的 `#define` 复活。
+
+### 22.2 预处理器是**清白**的（两条都实测）
+
+- `DefineProcessor.process` 只在 `line.strip().startsWith("#")` 时进指令分支
+  （`src/main/java/dev/vkdisp/glsl/preprocess/DefineProcessor.java:87-88`）
+  ⇒ `//#define …` 首字符是 `/`，走 else 分支**原样透传**给 GLSL 当注释 —— 复活不了。
+- 生产链路实测：`TerrainProductionOutputCountTest`（真包 + 生产同款 include→define→translate）
+  断言 BSL 默认档地形片元**只有 1 个颜色输出**（`maxLoc + 1 == 1`），本轮跑到 **绿**（`EXIT=0`）。
+  同文件另测把「能力上限 5 槽」与「生产 1 槽」明确分成两个事实。
+
+⇒ 单测是对的，**跑起来却是 8** ⇒ 差别只能在单测没有、运行期才有的东西上：本地状态。
+
+### 22.3 真机制（逐字日志为证）
+
+h48q d1 臂（`/tmp/h48q-d1-lane.log`）里同时存在三行，把它们串起来就是全部答案：
+
+```
+option name=ADVANCED_MATERIALS type=BOOLEAN default=false values=[true, false]   ← 我方扫包结果是对的
+选项覆盖已改写进源: 命中 3/3 [PARALLAX=false, ADVANCED_MATERIALS=true, SHARPEN=3] ← 但它被改写进了源
+[GAP-003] MRT terrain pipelines will use pack fragment: program=world0/gbuffers_terrain
+          colorTargets=8 declaredOutputSlots=[0, 3, 6, 7] … unwrittenAttachments=[1, 2, 4, 5]
+```
+
+残留就在**本地状态文件**（gitignore 的 `run/`，不是仓库内容）：
+`run/config/vkdisp-pack-options.properties` 与 `run/h27/config/vkdisp-pack-options.properties`
+各自写着 `BSL_v10.1.8.ADVANCED_MATERIALS=true`（后者还有 `PARALLAX=false`、`SHARPEN=3`；
+mtime 分别是 2026-10-04 12:51 与 2026-10-05 20:23 —— 与 h45 那条取证线对得上）。
+
+**为什么一直没被发现**（这条比结论重要）：
+
+- `PackCapabilityGate` 设计上**只在内存里**关依赖缺失素材的特性，明确「`PackOptionStore` 一个字节都不碰」
+  （`PackCapabilityGate.java:46-47`）⇒ 门控不会替我清掉残留；
+- 取证脚本为了让臂之间保持**单变量**，显式传 `pack.capabilityGate=false pack.optionOverrides=""`
+  （`tools/vulkan-local/h45_arm.sh:32`、`h47_chain_arm.sh:36`）——
+  而 `optionOverrides=""` 清的是**配置档覆盖**，**不是 store**；
+- 两件事叠起来 ⇒ 门控不干预 + 覆盖表为空 + store 仍带 `ADVANCED_MATERIALS=true`
+  ⇒ `diffAgainstDefaults` 把它当成「与默认不同」照常注入 ⇒ **命中 3/3**。
+- 运行期日志确实打了「命中 3/3 … ADVANCED_MATERIALS=true」（第 603 行），
+  而且 `PixelProbePlan`/`PackOptionEvidence` 每行都带 `effective={…}` ——
+  **信息一直在，只是没人读那一行**。⇒ 加判据不解决问题，**读判据**才解决问题。
+
+### 22.4 影响范围（必须按「撤回」处理，不是按「补一句」处理）
+
+1. **h45 之后所有 BSL 臂的编译配置都不是包默认**，而是「ADVANCED_MATERIALS=on / PARALLAX=off(仅 h27 档) / SHARPEN=3」。
+   ⇒ 那些臂里 `colorTargets=8`、`unwrittenAttachments=[1,2,4,5]`、`varyings=15`、`samplers=7`
+   全部是**这一档**的数字，**不是**「BSL 默认档」的数字。
+2. 更要紧：GAP-009 的实测结论正是「`ADVANCED_MATERIALS` 打开 ⇒ 地形 albedo 被压成**恰好 0**
+   （纯黑剪影，主目标地形区 luma `0.0000`）」，依据 `evidence/h31`（关掉后 0.0000 → 96.1485）。
+   ⇒ 本轮这批「黑」的证据里，**有一部分是这条已知故障模式在被动复现**，
+      用它推「空帧周期」的机制**不成立**（§二十一那张表的**周期**仍可用，
+      因为它与内容无关：d1 在夜+雨、d3 在拂晓+晴，周期都是 3 —— 见 21.1）。
+3. `MrtPlan.java:61-79` 那段「h45 第二次更正」把这件事记对了（包默认 false；8 槽是 store 残留），
+   本轮**没有推翻它**，只是补上它缺的两环：
+   残留**为什么**能穿过 `optionOverrides=""` 与 `capabilityGate=false`，以及它**至今仍在**生效。
+
+### 22.5 本轮做的处置（都可逆）
+
+- 备份：`/tmp/vkdisp-store-backup/main.properties`、`/tmp/vkdisp-store-backup/h27.properties`
+  （原文件本就 untracked，`git check-ignore` 指到 `.gitignore:68 run/`）。
+- 从两个 store 里删掉 `BSL_v10.1.8.*` 三行，保留 `vkdisp-fixture-dir.SHADOW_DARKNESS=0.20`
+  （别的包、与本轮无关）⇒ 现在 BSL 走**真·包默认**。
+- 重开一臂（`/tmp/h48r_clean_arm.sh`：清残留 + `pack.capabilityGate=true` + `readDelay=3`），
+  判据先看进程内自报「有没有命中 / 门控关了哪几项」，再看周期 3 是否还在。
+
+### 22.6 🔖 结构性缺口（登记，不顺手实现）
+
+「**取证期的状态泄漏进产品路径**」这一类缺陷，目前**没有任何闸门**：
+store 里残留什么，下一臂就默默带什么跑。候选修法（下一条要有实测口径再定）：
+包加载时若 store 中存在**与该包默认值不同**的键，打一条 **WARN 列出键名与来源**，
+让「我测的到底是哪一档」在**每次运行**都成为一条必须读的行，而不是等人事后 grep。
+
+## 二十三、🟢 h48r：清掉残留 + 门控开 ⇒ **空帧归零**（周期 3 是那一档的性质，不是链的性质）
+
+一臂（`/tmp/h48r_clean_arm.sh`：store 已清 BSL 键 + `pack.capabilityGate=true` + `readDelay=3`，
+其余与 §二十一 d3 臂**逐字相同**）。
+
+### 23.1 先证明「被测对象确实换了」——三条进程内自报
+
+```
+选项覆盖已改写进源: 命中 8/8 [PARALLAX=false, REFLECTION_RAIN=false, REFLECTION_SPECULAR=false,
+                              REFLECTION_ROUGH=false, SELF_SHADOW=false, SSS=false,
+                              NORMAL_DAMPENING=false, NORMAL_PLANTS=false]
+[GAP-003] MRT terrain pipelines will use pack fragment: program=world0/gbuffers_terrain
+          colorTargets=1 declaredOutputSlots=[0] samplers=5 varyings=9 unwrittenAttachments=[]
+观测面自报: clockTime=6675（当地时 6675）, skyColor=(0.514, 0.620, 1.000) … rain=0.000 render#=1200
+```
+
+- **列表里没有 `ADVANCED_MATERIALS`** ⇒ 它本来就是 false（门控只关「当前为真」的），
+  即 §22.5 的清残留**确实生效**；这一条是「被测对象换成了真·包默认」的直接证据。
+- 门控按设计把整条依赖闭包 8 项在内存里关掉（不写用户文件）。
+- 🔖 **运行期与单测第一次对上**：`colorTargets=1 / declaredOutputSlots=[0] / samplers=5 / varyings=9`
+  与 `TerrainProductionOutputCountTest` 断言的生产值**逐项相同**。
+  ⇒ §二十二那条「单测绿、跑起来 8」的裂缝闭合：从来不是预处理器分歧，**只是两臂带的 store 不同**。
+
+### 23.2 数字（同一条链、同一台仪器，只换包配置）
+
+| 臂 | 包配置 | 附件 | 空帧 | 间隔分布 | 非空帧 luma |
+|---|---|---|---|---|---|
+| h48q d3 | store 残留 `ADVANCED_MATERIALS=true` + 门控**关** | 8（写 `[0,3,6,7]`） | **80/240 = 33.3%** | `{3:79}` | med 82.88 |
+| **h48r** | **真·包默认** + 门控**开** | **1（写 `[0]`）** | **0/240** | — | 全程有内容 |
+
+⇒ **周期 3 的空帧在这换了一档之后完全消失**（240 帧连续取点，一个 `0` 都没有）。
+
+### 23.3 能定与不能定
+
+🟢 **能定**：
+1. 「空帧」**不是**回读仪器/`MappableRingBuffer(3)` 造的 —— 那一档 240 帧全有内容，
+   仪器与环与上一臂完全同款。⇒ §18/§21 那条「仪器会自己造零」**只在余量不足时**成立
+   （d1 每周期多一个零），**周期 3 的主体是渲染侧的**。
+2. 「空帧」与 **8 附件 / 多槽 MRT 形态**强相关（写 `[0,3,6,7]`、`1/2/4/5` 无输出、
+   双代次 ping-pong 的槽数从 1 变 8），与「包内容是否为黑」弱相关（那一档 luma 中位 82.88，有画面）。
+3. 🔖 **文档侧的 8/1 矛盾到此彻底了结**（§22.1 起的那条）：包默认 = 1 槽，残留档 = 8 槽，
+   `MrtPlan` 的 h45 更正与 `TerrainProductionOutputCountTest` 都对。
+
+🔴 **不能定（登记为开放，别顺手当结论用）**：
+1. **8 附件那一档为什么每 3 帧空一次**，机制仍未定位。已知：与槽数相关、与代次 ping-pong 相关，
+   未知：是 `GAP-018`（同槽既是附件又是采样器）在多槽下的兑现，还是清屏/LOAD 语义在多槽下的组合。
+   ⇒ 这一档**用户是能进去的**（`ADVANCED_MATERIALS` 是包内合法开关，且我方门控默认**关**），
+      所以 GAP-020 **不因此关闭**，只**收窄**成「多槽档专属」。
+2. `pack.capabilityGate` 的代码默认是 **`false`**（`VkDispConfig.java:356`），
+   而「默认关 ⇒ 包内 9 项依赖缺失素材的特性保持为真」正是产生坏画面的那一档。
+   ⇒ 默认值该不该翻成 `true` 是**产品决策**，要 h48s 那一臂（清残留 + 门控**关**）的数字才能定，
+      不能靠本轮「门控开就正常」直接推。
+
+### 23.4 顺带：观测面钉死这一步**仍然没成**
+
+`clockTime` 两次自报之间从 6675 走到 7423 ⇒ `/gamerule doDaylightCycle false` 依旧没执行。
+本臂能出白天只是因为**开机时恰好是白天**，不是注入成功。
+⇒ §20.1 的修法（改读进程内自报的「当地时」）只把**判读**修对了，**注入本身还没修**；
+   驱动脚本那句 `⇒ 白天注入生效` 现在读的是自报时刻（合格），但它挡不住「时刻在走」这件事
+   ⇒ 下一轮要么修键盘注入，要么把「时刻必须静止」写进臂的失败判据。
+
+## 二十四、h48s：再补一臂把**门控**这个变量也切掉 ⇒ 空帧的唯一自变量是**那一档包配置**
+
+h48s 臂 = h48r 的**全部设置**，只把 `pack.capabilityGate` 从 `true` 改回 **`false`**
+（= 我方代码默认值，`VkDispConfig.java:356`，也正是**用户客户端所在的那一档**）：
+
+| 臂 | store 残留 | 门控 | 包契约自报 | 空帧 / 240 | 非空帧 luma |
+|---|---|---|---|---|---|
+| h48q d3 | **有** `ADVANCED_MATERIALS=true` | 关 | `colorTargets=8 slots=[0,3,6,7] unwritten=[1,2,4,5]` | **80（33.3%）** 间隔恒 `{3:79}` | med 82.88 |
+| h48r | 清 | **开**（关掉闭包 8 项） | `colorTargets=1 slots=[0] unwritten=[]` | **0** | （本臂未打） |
+| **h48s** | 清 | **关** | `colorTargets=1 slots=[0] samplers=5 varyings=9 unwritten=[]` | **0** | min 62.74 / **med 143.21** / max 150.16 |
+
+h48s 的配置自报（证明档位确实换了）：
+```
+WARN  选项 [CAPABILITY_GATE_OFF] 能力门控已由配置关闭（pack.capabilityGate=false）⇒ …保持包内原值
+INFO  [GAP-003] MRT terrain pipelines will use pack fragment: program=world0/gbuffers_terrain
+      colorTargets=1 declaredOutputSlots=[0] samplers=5 varyings=9 unwrittenAttachments=[]
+观测面自报: clockTime=6555（当地时 6555）, skyColor=(0.514, 0.620, 1.000) … rain=0.000 render#=1200
+```
+
+### 24.1 三条能定的结论
+
+1. **空帧的唯一自变量是「哪一档包配置」，不是门控**：门控开与关两臂**都是 0 空帧**，
+   而与它们只差残留的那一臂是 **每 3 帧空一次**。⇒ §23.3 里我留的那条「默认值该不该翻成 true」
+   **与本症状无关**，本轮**不动** `pack.capabilityGate` 的默认值（不无依据地改产品行为）。
+2. **GAP-009 的「黑」在这档不成立**：门控**关**着（`PARALLAX`/`SSS`/`REFLECTION_*` 全按包默认为真）
+   而地形照样有画面，luma 中位 **143.21**（比残留档的 82.88 还亮）。
+   ⇒ GAP-009 那条「albedo 被压成恰好 0」的成因**绑的是 `ADVANCED_MATERIALS` 这一项**，
+      不是门控闭包整体 —— 登记表里这两件事此前混写在一起，应分列。
+3. **用户看到的黑白闪屏，最可能的解释就是这条残留**：用户客户端走的正是 `run/config` 车道，
+   它的 store 与 toml 与本轮清掉/复现的那一档逐字相同（`ADVANCED_MATERIALS=true` + 门控关）。
+   ⇒ 残留已清（备份在 `/tmp/vkdisp-store-backup/`），**下一个人眼检查应当不再闪屏**；
+      但这仍是**同一台仪器**给的结论 ⇒ 按本项目纪律，**必须由人眼或 F2 独立通道再判一次**才算收口
+      （本轮 F2 又没落地：`run/h27/screenshots/` 空，键盘注入在焦点被抢后失效这条复现了第三轮）。
+
+### 24.2 仍然开放的那一半（不要因为它消失了就当已修）
+
+「**8 附件那档为什么每 3 帧空一次**」机制仍未定位 —— 本轮只是把触发条件钉清楚了：
+写 `[0,3,6,7]`、附件 `1/2/4/5` 无输出、双代 ping-pong 的槽数从 1 变 8 时才会出现。
+`ADVANCED_MATERIALS` 是包内**合法开关**（用户开了就该能用）⇒ **GAP-020 不收口**，
+候选收窄到两条：① GAP-018（同槽既附件又采样器）在多槽下的兑现；② 未写槽的清屏/LOAD 语义 × 双代轮转。
+下一刀：在**残留档**（手工把 `ADVANCED_MATERIALS=true` 塞回 `pack.optionOverrides`，
+这次**显式**而不是残留）跑只差 `mrt.attachments=1 vs 8` 的 A/B —— 若 1 附件也出周期 3，
+则是链的问题；若只有 8 附件出，就是多槽形态的问题。

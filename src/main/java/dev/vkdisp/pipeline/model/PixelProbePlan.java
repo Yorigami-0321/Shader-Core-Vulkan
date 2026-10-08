@@ -7,6 +7,12 @@ package dev.vkdisp.pipeline.model;
  *    {@code dev.vkdisp.glsl.translate.DrawBuffersSlotAdapter} 的槽位表语义（同样 MIT 自有）；
  *    ③ BSL v10.1.8 的实测数字（{@code run/h27/logs/latest.log} 里 {@code colorTargets=8} /
  *    {@code slots=8} 两行 + {@code shaders/program/gbuffers_terrain.glsl} 的四条 DRAWBUFFERS 标记）。
+ *    🔖 <b>那两个 8 不属于「包默认档」</b>（2026-10-08 h48r 更正）：打出 8 的那些臂带着
+ *    {@code config/vkdisp-pack-options.properties} 里残留的 {@code ADVANCED_MATERIALS=true} 编译
+ *    （扫包日志逐字 {@code option name=ADVANCED_MATERIALS … default=false}）⇒ 它们是<b>残留档</b>的
+ *    实测数字；真默认档由 {@code TerrainProductionOutputCountTest} 实测为<b>只写 1 个颜色输出</b>。
+ *    ⇒ 本类的<b>逻辑</b>不受影响（它防的是「附件存在 ≠ 附件被写了」，两档都成立），
+ *      受影响的是「拿这组数字当默认档」的判读。
  *    全部为仓库内自有代码 / 自有实测 / 不受版权保护的事实，不搬运任何第三方或 Mojang 源码。
  *    → 能否并入本项目（MIT）：可以（本文件为独立编写的纯 Java 决策类）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码，也不含任何 Mojang 着色器文本
@@ -45,7 +51,8 @@ import java.util.List;
  * 像素回读探针该测哪一（几）个 colortex 槽 —— 纯决策，零 GPU / 零原版类型依赖 ⇒ 可单测。
  *
  * <p><b>它防的是哪一种失败</b>（2026-10-05 实测定位，本项目同族的第五例）：
- * 「附件存在」被当成「附件被写了」。BSL 默认档的实测数字：
+ * 「附件存在」被当成「附件被写了」。下面这组是<b>残留档</b>（store 带 {@code ADVANCED_MATERIALS=true}）
+ * 的实测数字，<b>不是</b>包默认档（默认档只写槽 0）：
  * <pre>
  *   outputCount         = 8            （日志：colorTargets=8 / targets ready: slots=8）
  *   declaredOutputSlots = [0, 3, 6, 7] （源：program/gbuffers_terrain.glsl 活标记 DRAWBUFFERS:0 + 0367）

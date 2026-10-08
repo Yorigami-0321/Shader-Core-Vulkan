@@ -71,10 +71,11 @@ class PackTerrainProgramTest {
     }
 
     @Test
-    @DisplayName("🔖🔖 声明写哪些槽 ≠ 有几个附件（BSL 默认档实测 8 附件但只写 4 槽）")
+    @DisplayName("🔖🔖 声明写哪些槽 ≠ 有几个附件（**残留档**实测 8 附件但只写 4 槽）")
     void declaredSlotsAreSeparateFromOutputCount() {
         // 🔖🔖 这是本轮实测定位的**假证据**来源：附件存在 ≠ 附件被写。
-        //   BSL v10.1.8 默认档（MCBL_SS=包声明的 false / ADVANCED_MATERIALS=无 option 行 ⇒ 默认 true）
+        //   BSL v10.1.8 的**残留档**（store 里 `ADVANCED_MATERIALS=true`；
+        //   🔖 包**默认**是 false ⇒ 只写槽 0，见 `MrtPlan` 的 h45 更正与 evidence/h48 §二十二）
         //   走 #else 分支里那条活标记 `/* DRAWBUFFERS:0367 */` ⇒ 声明输出槽 [0,3,6,7]。
         //   若只保留 outputCount=8 而丢掉槽位集合，下游就会去读附件 1/2/4/5
         //   —— 那四张图只有清屏值，读出来是「全黑」，会被当成「包片元输出黑」。

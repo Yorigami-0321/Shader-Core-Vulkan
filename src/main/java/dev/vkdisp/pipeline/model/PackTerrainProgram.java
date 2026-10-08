@@ -106,7 +106,8 @@ public record PackTerrainProgram(
      * <p><b>为什么它必须与 {@link #outputCount()} 分开存在</b>（2026-10-05 实测）：
      * 两者回答的是<b>不同</b>的问题，而把它们当成一件事就会读出一个**不存在的槽位事实**：
      * <pre>
-     *   outputCount()         = max(declared) + 1 = <b>8</b>（BSL 默认档实测）
+     *   outputCount()         = max(declared) + 1 = <b>8</b>（🔖 <b>残留档</b>实测：store 里
+     *                            {@code ADVANCED_MATERIALS=true}；真默认档 = 1，见 {@code MrtPlan} 的 h45 更正）
      *   declaredOutputSlots() =              [0, 3, 6, 7]
      * </pre>
      * ⇒ 附件 0..7 全部存在，但附件 <b>1 / 2 / 4 / 5 没有任何片元输出</b>。
