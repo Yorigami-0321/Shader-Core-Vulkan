@@ -37,7 +37,7 @@
 ## 2. P0：骨架与首个可见产物
 
 ```bash
-cd D:/Code/Minecraft/Shader-Core-Vulkan
+cd /home/yorigami/Minecraft/Shader-Core-Vulkan
 ./gradlew build
 echo "exit=$?"
 

@@ -2,7 +2,7 @@
 
 > 工程：`vkdisp`（Vulkan Shader Dispatcher）· 许可证：**MIT**
 > 定位：基于 Minecraft **原版 Vulkan 渲染后端**的、兼容 **OptiFine / Iris 格式**着色器包的引擎。
-> 最后整理：2026-10-04（文档清理 + 审查改进项落地；详见 `CHANGE_LOG.md` 顶部条目）
+> 最后整理：2026-10-08（文档清理 + 审查改进项落地；详见 `CHANGE_LOG.md` 顶部条目）
 
 ---
 
@@ -74,46 +74,15 @@
 17-NATIVE.md          ← 性能预算 B1–B7 + 原生准入闸门（G 系列）+ FFM 接线
 18-PARALLEL.md        ← ⛔ 已过时（旧轮次编号），仅并行拆分方法论仍可用
 08-TESTING.md         ← 验收细则（性能 / 原生 / 稳定 / 兼容矩阵）
-03-DIRECTION.md       ← 为什么可行、参考模组能借鉴什么、许可证边界
-04-SPEC.md            ← 组件清单、mixin 注入点登记表、OF uniform 表、构建配置
-```
-
-再往下：
-
-```
-06-MIGRATION.md       ← bridge 包隔离 + 版本升级流程（第一天就要落实隔离）
-12-GAP-STRATEGY.md    ← 原版 Vulkan 没有的特性怎么办
-13-GAP-REGISTRY.md    ← 上面那份的登记表（GAP-001–014；当前焦点 GAP-003 接线已通 / GAP-009+014 素材与 3D 纹理能力 / GAP-011 闪烁）
-15-ITERATION.md       ← 迭代维护协议
+03-DIRECTION.md       ← 为什么需要它 + 要自研的四件事 + 性能目标 + 成功标准分级
+04-SPEC.md            ← 技术规格书（含组件清单）
+06-MIGRATION.md       ← 版本迁移预案
+12-GAP-STRATEGY.md    ← 原版不支持时的自行补充策略
+13-GAP-REGISTRY.md    ← 缺口登记表
+15-ITERATION.md       ← 三层防乱协议
 16-READING.md         ← 按读者类型的阅读路径
-AGENT_CONTEXT.md      ← 跨会话记忆（决策、原版 API 清单、待决策项）
+AGENT_CONTEXT.md      ← 跨会话记忆
 ```
-
----
-
-| `review/` | **一次性审阅记录**（不参与本索引编号）。⛔ 内含 4 份**已过时**报告，读取前必看 `review/README.md` 的一览状态表 |
-
-## 2. 全部文档
-
-| 文件 | 内容 |
-|---|---|
-| `00-INDEX.md` | 本文（含**三支柱总纲**） |
-| `01-DEV-LOOP.md` | **开发测试流程**：构建 → runClient → 看真实输出 → 修错 → 循环 |
-| `02-OVERVIEW.md` | **三支柱**、定位、问题、自研范围、**为什么必须开 mixin**、成功标准分级 |
-| `03-DIRECTION.md` | 新方向总纲 + 证据清单 + 参考模组许可证边界 |
-| `04-SPEC.md` | 组件清单（热度/语言已重标）、**§5.0 mixin 注入点登记表**、OF 内建 uniform、顶点格式、构建配置 |
-| `05-VERSION.md` | **版本权威**：支持范围、锁定表、兼容策略 |
-| `06-MIGRATION.md` | bridge 隔离、升级步骤、回归 R1–R9 |
-| `07-CONSTRAINTS.md` | **§〇·〇 三支柱优先级** + §1.4 M1（mixin 松绑）+ 许可证 §〇 + L1–L12 + M1 + T1–T19 + 红线 X1–X32 |
-| `08-TESTING.md` | 阶段验收 + **性能 B1–B7** + **§8.2 G 系列 Rust 对比** + **§8.3 稳定性** + **§10 兼容矩阵** |
-| `12-GAP-STRATEGY.md` | 原版不支持时的自行补充规则 |
-| `13-GAP-REGISTRY.md` | 缺口登记表（GAP-001–014：003 多附件 / 004 自定义 uniform / 005 glslang 候选 / 006 FFI panic / 007 顶点缺数据 / 008 高级材质全黑 / 009 素材缺失（方案 A 已落地）/ 010 已修 / 011 闪烁 / 012 sampler 维度（已修）/ 013 诊断色泄漏（已修）/ **014 原版无 3D 纹理能力**） |
-| `15-ITERATION.md` | 三层防乱协议（A1–A17） |
-| `16-READING.md` | 按读者类型的阅读路径 |
-| `17-NATIVE.md` | **🔴 本轮重写**：三支柱度量 + 预算 B1–B7 + 热度重标 + FFM/Rust 架构 + **§5 G 系列准入闸门与 20% 阈值** |
-| `18-PARALLEL.md` | ⛔ **已过时**（2026-10-04 标注）：建立在已废除的 `P0.x/P4.x` 轮次编号上。**仅「并行拆分方法论」与「契约冻结闸门」思路仍可用**，A–H 线划分不要照搬 |
-| `AGENT_CONTEXT.md` | 跨会话记忆 |
-| `QUALITY-DEBT.md` | **代码质量债登记表**（无编号文档）：`@Nullable` / `debugLog` 死开关 / 静态可变状态 / 长方法等代码层待办，附「每轮迭代第 0 步」闭环回路 |
 
 ---
 
