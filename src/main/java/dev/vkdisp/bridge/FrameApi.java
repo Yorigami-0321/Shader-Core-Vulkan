@@ -1118,6 +1118,7 @@ public final class FrameApi {
         GpuTextureView sceneView = SceneCaptureApi.hasScene() ? SceneCaptureApi.sceneColorView() : null;
         // InSampler（OF 语义 = 场景色）：链模式采不到 colortex 时才回 scene。
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+        refreshDepthGlProxy(main, encoder, label); // GAP-022 ① 地形之后、链第一级之前（WHY 见下方方法体）
 
         // 采样名→视图解析器（每帧一条；「按名接 colortex」的机制所在 —— 见 chainResolver 注释）。
         final GpuTextureView fallbackView = MrtTerrainPass.poolView(0) != null
@@ -1287,8 +1288,13 @@ public final class FrameApi {
                 return g != null ? g : fallbackView;
             }
             if (name.startsWith("depthtex")) {
-                GpuTextureView d = MrtTerrainPass.depthView();
-                return d != null ? d : fallbackView;
+                // 🔴 GAP-022 ①：开关开着 ⇒ 绑 GL 口径代理（1 − z_en，天空=1.0）；
+                //   开关关着 / 代理缺席 ⇒ 回到今天这张反向 Z 原图，缺席那条由 DepthGlProxy
+                //   自己打一次 WARN（不许静默换绑 —— X11）。
+                //   depthtex1/2 与 0 号同源一起翻，理由见 DepthGlProxy#chooseDepthSource
+                //   （GAP-023「三名一张」是<b>另一条</b>缺陷，本轮不动它的观测面）。
+                return dev.vkdisp.bridge.DepthGlProxy.chainDepthView(
+                        name, MrtTerrainPass.depthView(), fallbackView);
             }
             if (name.startsWith("shadowtex")) {
                 GpuTextureView s = ShadowStubs.depthView();
@@ -1300,6 +1306,23 @@ public final class FrameApi {
             }
             return fallbackView;
         };
+    }
+
+    /**
+     * GAP-022 ①：刷新 GL 口径深度代理（建/重建纹理 + 跑那一趟全屏翻转 pass）。
+     *
+     * <p>🔖 开关<b>关掉</b>时走 {@code release()}，不是「留着但不用」：代理一旦在场，
+     * 它就是 {@code depthtex*} 那个分支里「开关开着就用它」的那个「它」—— 留下一张没人维护的旧图
+     * 等于给下一轮 A/B 留一个看不见的状态源（h33/h34 那一族的形状）。
+     */
+    private static void refreshDepthGlProxy(RenderTarget main, CommandEncoder encoder, String label) {
+        if (!dev.vkdisp.VkDispConfig.MRT_DEPTH_GL_PROXY.get()) {
+            dev.vkdisp.bridge.DepthGlProxy.release();
+            return;
+        }
+        dev.vkdisp.bridge.DepthGlProxy.ensure(main.width, main.height);
+        dev.vkdisp.bridge.DepthGlProxy.renderFlipPass(
+                encoder, label, MrtTerrainPass.depthView());
     }
 
     /** 读前重建 + 写后标脏（GAP-017 脏集机制）。 */

@@ -678,6 +678,42 @@ public final class VkDispConfig {
                     + "隐式导数 LOD 路径，仅用于复现/修根对照）。")
             .define("mrt.terrainAtlasLod0", true);
 
+    /**
+     * 🔴 <b>GAP-022 ①：GL 口径深度代理</b>（默认关 —— 未验证到「画面真的对」之前不默认生效）。
+     *
+     * <p><b>它修的是什么</b>：引擎窗口深度是<b>反向 Z</b>（近平面 = 1.0、天空 = 0.0；
+     * 源码事实 = {@code Projection#getMatrix} 里那句 {@code float near = this.zFar; float far = this.zNear;}
+     * × {@code VulkanDevice.java:91-95} 给 {@code DeviceInfo.isZZeroToOne} 传 true ⇒ X34 从经验规律
+     * 升级为源码事实），而包全部按「1.0 = 天空」写：BSL {@code deferred1.glsl:337 isSky = z == 1.0}、
+     * {@code ambientOcclusion.glsl:55 z>=1.0 return 1.0}、{@code :59 hand = z<0.56} …
+     * ⇒ 天空永远不被认成天空、中远景被当成「手」把光柱按 {@code 1−hand} 抹掉、AO/雾拿垃圾 viewPos。
+     *
+     * <p><b>机制</b>：地形 pass 之后、链第一级之前跑<b>一次全屏 pass</b>，把
+     * {@code 1 − z_engine} 写进一张 R32F 离屏图；链里的 {@code depthtex*} 改绑那张图
+     * （实现见 {@code dev.vkdisp.bridge.DepthGlProxy}）。
+     * 同一组 (near, far) 下 {@code z_gl = 1 − z_engine} <b>恒等</b>（GAP-022 的代数证明），
+     * 所以一次逐像素取反就是全精度正确的换算，不需要知道 near/far。
+     *
+     * <p>🔴 <b>必须与矩阵那一半同帧生效</b>：包里 {@code GetLinearDepth} 用 {@code depth×2−1}
+     * 反解 NDC，再乘 {@code gbufferProjectionInverse} —— 只翻深度不翻投影矩阵
+     * （{@code OfUniformManager} 的 {@code gbufferProjection} / {@code gbufferProjectionInverse}
+     * 要给 {@code P_gl = M · P_en}，{@code M} = 第三行为「{@code row3(P_en)} 取负 + {@code row4(P_en)}」
+     * 的翻转矩阵）会比全错更难查：像「有阴影但位置全歪」。<b>那一半由主线接线</b>。
+     *
+     * <p><b>默认关的理由</b>（不是「还没写完」）：本开关只覆盖深度那一半，
+     * 矩阵那一半接上之前开它 = 只给包一半真相。开着它做单变量取证时，
+     * 结论必须写清「深度已翻、投影未翻」。
+     *
+     * <p><b>降级是可见的</b>：开关开着而代理缺席（纹理没建出来 / 管线没编出来 / 深度视图为 null）
+     * ⇒ 一次性 WARN 指名缺了哪一条，此时绑过去的仍是反向 Z 原图（X11：不许静默换绑）。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_DEPTH_GL_PROXY = BUILDER
+            .comment("GAP-022 ①：给链一张 GL 口径深度代理（depthtex* = 1 − 引擎反向 Z，"
+                    + "天空=1.0 / 近=0.0）。默认关：与 gbufferProjection/Inverse 的成对翻转"
+                    + "（OfUniformManager 那一半）必须同帧生效，只开这一半是半真半假。"
+                    + "开着但代理没跑成会打一次 WARN（不静默换绑）。")
+            .define("mrt.depthGlProxy", false);
+
     public static final ModConfigSpec SPEC = BUILDER.build();
 
     private VkDispConfig() {

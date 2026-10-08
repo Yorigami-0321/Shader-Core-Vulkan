@@ -75,6 +75,16 @@ public final class PipelineApi {
     /** 合成管线 location（P2 前置：中间目标 → 中间目标，多目标 ping-pong 的中间级）。 */
     public static final String COMPOSITE_LOCATION = "vkdisp:pipeline/composite";
 
+    /**
+     * GAP-022 ① 深度代理 location（采引擎 gbuffer 深度 → 写 {@code 1 − z} 的 R32F 单通道图）。
+     *
+     * <p>它**必须**是独立的一条管线而不是复用 {@link #BLIT_LOCATION}：
+     * {@code FrontendRenderPass.java:119-121} 逐附件核对「管线声明的 ColorTargetState 格式
+     * == 附件纹理格式」，而 blit 的附件是 {@code ColorTargetState.DEFAULT}（= RGBA8_UNORM）。
+     * 把 R32F 视图挂到 blit 上 = 当场抛格式不匹配 ⇒ 整条链每帧死一次（h33 那族的形状）。
+     */
+    public static final String DEPTH_PROXY_LOCATION = "vkdisp:pipeline/depth_gl_proxy";
+
     /** P3.2 场景合成管线 location（纯字符串视图，错误信息用）。 */
     public static final String COMPOSITE_SCENE_LOCATION = "vkdisp:pipeline/composite_scene";
 
@@ -388,6 +398,14 @@ public final class PipelineApi {
     private static final Identifier BLIT_SHADER_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "blit");
 
+    /** GAP-022 ① 深度代理管线 location id。 */
+    private static final Identifier DEPTH_PROXY_PIPELINE_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/depth_gl_proxy");
+
+    /** 深度代理片元着色器 id：vkdisp:depth_gl_flip → assets/vkdisp/shaders/depth_gl_flip.fsh（顶点复用 fullscreen.vsh）。 */
+    private static final Identifier DEPTH_PROXY_SHADER_ID =
+            Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "depth_gl_flip");
+
     /** 合成管线 location id。 */
     private static final Identifier COMPOSITE_PIPELINE_ID =
             Identifier.fromNamespaceAndPath(VkDisp.MOD_ID, "pipeline/composite");
@@ -505,6 +523,9 @@ public final class PipelineApi {
 
     /** 注册成功后暂存的传递管线实例；未注册时为 null。 */
     private static RenderPipeline blitPipeline;
+
+    /** GAP-022 ① 注册成功后暂存的深度代理管线实例；未注册时为 null。 */
+    private static RenderPipeline depthProxyPipeline;
 
     /** 注册成功后暂存的合成管线实例；未注册时为 null。 */
     private static RenderPipeline compositePipeline;
@@ -637,6 +658,44 @@ public final class PipelineApi {
         event.registerPipeline(pipeline);
         blitPipeline = pipeline;
         REGISTERED_PIPELINES.add(pipeline);
+    }
+
+    /**
+     * 构建并注册 GAP-022 ① 的深度代理管线（采 gbuffer 深度 → 写 {@code 1 − z}）。
+     *
+     * <p>形状 = {@link #registerBlitPipeline} 那一套（POST_PROCESSING_SNIPPET + 不翻转的
+     * {@code vkdisp:fullscreen} 顶点 + 单条 {@code InSampler} 绑定组 + 单颜色目标），
+     * **唯一**的差别是颜色目标格式：这里必须是 {@link DepthGlProxy#proxyFormat()}，
+     * 因为 {@code FrontendRenderPass.java:119-121} 会把它和附件纹理的格式逐条对账，
+     * 而 {@code VulkanRenderPipeline.java:286-293} 又把它烧进 VkPipeline
+     * （两条一起决定了「管线格式 == 纹理格式」是硬约束，不是风格问题）。
+     *
+     * <p>写掩码取 {@code WRITE_RED}：R32F 只有 R 分量，G/B/A 位是空转；
+     * 这里不用 {@code WRITE_ALL} 不是为了省带宽，是为了让「这是一张单通道图」这件事
+     * 出现在源码里而不只出现在注释里。
+     *
+     * <p>无条件注册（required）：编译失败 = 整次资源重载失败，绝不静默（T11）；
+     * 同时它进入 {@code registered==compiled} 的计数口径（{@link #REGISTERED_PIPELINES}）。
+     */
+    public static void registerDepthProxyPipeline(RegisterRenderPipelinesEvent event) {
+        RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
+                .withLocation(DEPTH_PROXY_PIPELINE_ID)
+                .withVertexShader(FULLSCREEN_SHADER_ID)
+                .withFragmentShader(DEPTH_PROXY_SHADER_ID)
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withUniform(SAMPLER_UNIFORM, UniformType.COMBINED_IMAGE_SAMPLER)
+                        .build())
+                .withColorTargetState(new ColorTargetState(java.util.Optional.empty(),
+                        DepthGlProxy.proxyFormat(), ColorTargetState.WRITE_RED))
+                .build();
+        event.registerPipeline(pipeline);
+        depthProxyPipeline = pipeline;
+        REGISTERED_PIPELINES.add(pipeline);
+        VkDisp.LOGGER.info("vkdisp: [GAP-022] depth proxy pipeline registered: {}"
+                        + " colorTarget={} vertex={} fragment={} (single target, format must equal the"
+                        + " proxy texture format —— FrontendRenderPass.java:119-121)",
+                DEPTH_PROXY_LOCATION, DepthGlProxy.proxyFormat(),
+                FULLSCREEN_SHADER_ID, DEPTH_PROXY_SHADER_ID);
     }
 
     /**
@@ -1030,6 +1089,20 @@ public final class PipelineApi {
         RenderPipeline pipeline = blitPipeline;
         if (pipeline == null) {
             throw new IllegalStateException("vkdisp: blit pipeline not registered yet");
+        }
+        return pipeline;
+    }
+
+    /** GAP-022 ① 深度代理管线是否已注册完成（纯布尔视图；未注册时调用方走自报，不抛）。 */
+    public static boolean isDepthProxyPipelineRegistered() {
+        return depthProxyPipeline != null;
+    }
+
+    /** 已注册管线：GAP-022 ① 深度代理管线（bridge 包内部使用）。 */
+    static RenderPipeline depthProxyPipeline() {
+        RenderPipeline pipeline = depthProxyPipeline;
+        if (pipeline == null) {
+            throw new IllegalStateException("vkdisp: depth proxy pipeline not registered yet");
         }
         return pipeline;
     }

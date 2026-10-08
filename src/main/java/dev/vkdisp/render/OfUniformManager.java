@@ -253,6 +253,14 @@ public final class OfUniformManager {
         values.put("eyeBrightnessSmooth", inWorld
                 ? eyeBrightness(mc, camera, levelState)
                 : new int[] {0, 0});
+        // 🔴 GAP-021：包自写的 `uniform.<类型>.<名>=<表达式>` 必须在**最后**并入 ——
+        //   OF 语义是包覆盖同名内建（BSL 就自己写了 `uniform.float.timeAngle`，
+        //   见 BSL_v10.1.8 shaders.properties:151），反过来把我方内建压上去就等于
+        //   「包作者写的时间曲线被引擎的朴素曲线替换掉」，画面表现为昼夜过渡生硬但日志正常。
+        //   表达式求值本体在纯 Java 的 pack/uniform/（无 Minecraft 类型，可单测）；
+        //   本类只在渲染线程调它，Minecraft 侧的补充供值（sunAngle/blindness）隔离在
+        //   PackUniformSupply（实体类会炸测试车道，同 NightVisionSupply 那条理由）。
+        PackUniformSupply.applyOverrides(values, mc, partialTicks);
         return values;
     }
 
@@ -379,12 +387,48 @@ public final class OfUniformManager {
         dev.vkdisp.VkDisp.LOGGER.info(
                 "vkdisp: builtins uploaded: slot={} members={} bytes={} written={} unfilled={}"
                         + " mismatched={} overflow={} sample={{far={}, worldTime={},"
-                        + " frameTimeCounter={}, frameTime={}, rainStrength={}}} unfilledNames={}",
+                        + " frameTimeCounter={}, frameTime={}, rainStrength={}}} unfilledNames={}"
+                        + " packAuthored={} count={}",
                 slot, layout.members().size(), layout.byteSize(),
                 stats.written(), stats.missing(), stats.mismatched(), stats.overflow(),
                 values.get("far"), values.get("worldTime"),
                 values.get("frameTimeCounter"), values.get("frameTime"),
-                values.get("rainStrength"), shown);
+                values.get("rainStrength"), shown,
+                packOverrideSummary(values), packOverrideCount(values));
+    }
+
+    /**
+     * GAP-021 判据里那条「自报行要出现 {@code shadowFade=/timeBrightness=} 的非 0 值」。
+     *
+     * <p>🔖 为什么单独报：包自写的值走的是同一张映射、同一个块，缺了这行就只能靠画面反推
+     * 「表达式到底跑没跑」（QD-02 那一族：数字在场但看不出是谁供的）。
+     * 只列**本帧真有值**的名字（被跳过的由 {@code PackUniformSupply} 的一次性 WARN 负责），
+     * 数量另行给出 ⇒ 截断不会藏掉决定性条目（QD-02 的 16 阈值教训）。
+     */
+    private static String packOverrideSummary(Map<String, Object> values) {
+        List<String> names = dev.vkdisp.pack.uniform.ActivePackUniforms.current().uniformNames();
+        StringBuilder out = new StringBuilder();
+        for (String name : names) {
+            Object value = values.get(name);
+            if (value == null) {
+                continue;
+            }
+            if (out.length() > 0) {
+                out.append(", ");
+            }
+            out.append(name).append('=').append(value);
+        }
+        return out.length() == 0 ? "-" : out.toString();
+    }
+
+    private static int packOverrideCount(Map<String, Object> values) {
+        int count = 0;
+        for (String name : dev.vkdisp.pack.uniform.ActivePackUniforms.current().uniformNames()) {
+            if (values.get(name) != null) {
+                count++;
+            }
+        }
+        return count;
     }
 
     // ----------------------------------------------------------------------------------

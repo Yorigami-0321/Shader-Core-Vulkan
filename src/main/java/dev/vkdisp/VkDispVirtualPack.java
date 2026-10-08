@@ -429,6 +429,9 @@ public final class VkDispVirtualPack {
                 postChain = dev.vkdisp.pack.PackPostChain.Chain.EMPTY;
                 java.util.Arrays.fill(POST_BUILTINS_LAYOUTS, BuiltinsBlockLayout.empty());
                 dev.vkdisp.bridge.PackTextures.setDesired(null, null, java.util.Map.of());
+                // GAP-021：总开关关闭 ⇒ 包自写 uniform 一并复位（漏这一步 = 上一张包的
+                //   timeAngle 继续覆盖内建，画面「时间感没换」而日志全正常）。
+                dev.vkdisp.pack.uniform.ActivePackUniforms.install(dev.vkdisp.pack.uniform.PackUniformSet.EMPTY);
                 VkDisp.LOGGER.warn(
                         "vkdisp: composite source: mod disabled (vkdisp.enabled=false)"
                                 + " -> built-in passthrough fallback");
@@ -512,6 +515,9 @@ public final class VkDispVirtualPack {
             // GAP-009 素材线：texture.<sampler> 绑定表记下（上传在渲染线程懒做，见 PackTextures）。
             dev.vkdisp.bridge.PackTextures.setDesired(inventory, result.packName(),
                     result.textureBindings());
+            // GAP-021：包自写的 uniform 表达式随本次激活一起安装（同一份冷路径产物，
+            //   渲染侧每帧在 OfUniformManager.gather 末尾求值；兜底路径走下面的 EMPTY）。
+            dev.vkdisp.pack.uniform.ActivePackUniforms.install(result.packUniforms());
             // GAP-003：包地形片元契约（**独立**一条链，失败绝不影响上面三源）。
             // 之所以不并进 PackCompositeSource.generate：那是一条「必有源」的 required 管线链，
             // 它的兜底语义是 passthrough；而地形片的正确兜底是「不接线、用原版 core/terrain」。
@@ -538,6 +544,7 @@ public final class VkDispVirtualPack {
             postChain = dev.vkdisp.pack.PackPostChain.Chain.EMPTY;
             java.util.Arrays.fill(POST_BUILTINS_LAYOUTS, BuiltinsBlockLayout.empty());
             dev.vkdisp.bridge.PackTextures.setDesired(null, null, java.util.Map.of());
+            dev.vkdisp.pack.uniform.ActivePackUniforms.install(dev.vkdisp.pack.uniform.PackUniformSet.EMPTY);
             VkDisp.LOGGER.error("vkdisp: composite source generation FAILED (原文如下)"
                     + " -> built-in passthrough fallback", t);
             return new GeneratedSources(PackCompositeSource.FALLBACK_GLSL,

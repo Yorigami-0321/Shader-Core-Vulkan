@@ -101,6 +101,12 @@ public final class ShaderProperties {
             String name = key.substring("program.".length(), key.length() - ".enabled".length());
             b.programSwitches.put(name, value);
         } else {
+            // 🔴 GAP-021：`uniform.<类型>.<名>=` / `variable.<类型>.<名>=` **故意**留在通用表里，
+            //   不在这里开分支 —— 本类只负责分派，CPU 侧的表达式语法属
+            //   {@code pack/uniform/PackUniformSet#fromProperties}（那里才有函数表与依赖图）。
+            //   留在这里的好处：① 不重复一份键语法；② 分派层与求值层各自可单测。
+            //   ⚠️ 但「留在通用表」不等于「没人管」：此前这两族正是因为在 directives 里
+            //   而**没有任何消费方**，BSL 的 shadowFade / timeBrightness 才恒 0（GAP-021）。
             b.directives.put(key, value);
         }
     }

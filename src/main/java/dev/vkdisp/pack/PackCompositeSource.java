@@ -128,6 +128,11 @@ public final class PackCompositeSource {
      *                           空链 = 包没有可进链的后处理程序 ⇒ FrameApi 走旧三步）
      * @param textureBindings    OF {@code texture.<sampler>=<path>} 指令的解析结果（GAP-009 素材线；
      *                           空表 = 包没声明；非法条目已进诊断）
+     * @param packUniforms       🔴 GAP-021：包自写的 {@code uniform.*} / {@code variable.*}
+     *                           表达式集合（空集 = 包没写）。它必须随本次激活一起交付，
+     *                           而不是让渲染侧自己再去读一遍包 —— 那是「两侧各算一遍」
+     *                           那一族（QD-02 第四例）；求值发生在
+     *                           {@code render/OfUniformManager.gather} 的末尾
      */
     public record Result(
             String source,
@@ -140,7 +145,8 @@ public final class PackCompositeSource {
             String profile,
             List<TranslateDiagnostic> diagnostics,
             PackPostChain.Chain chain,
-            Map<String, String> textureBindings) {
+            Map<String, String> textureBindings,
+            dev.vkdisp.pack.uniform.PackUniformSet packUniforms) {
 
         /** 归一构造：三源非空（空视为调用方错误直接抛），profile 归一，列表冻结。 */
         public Result {
@@ -160,6 +166,8 @@ public final class PackCompositeSource {
             diagnostics = diagnostics == null ? List.of() : List.copyOf(diagnostics);
             chain = chain == null ? PackPostChain.Chain.EMPTY : chain;
             textureBindings = textureBindings == null ? Map.of() : Map.copyOf(textureBindings);
+            packUniforms = packUniforms == null
+                    ? dev.vkdisp.pack.uniform.PackUniformSet.EMPTY : packUniforms;
         }
 
         /** 旧十参形态（无纹理绑定 = 空表；供既有调用点/测试渐进迁移）。 */
@@ -167,7 +175,8 @@ public final class PackCompositeSource {
                 String finalSource, boolean hasFinalProgram, String packName, boolean fallback,
                 String profile, List<TranslateDiagnostic> diagnostics, PackPostChain.Chain chain) {
             this(source, deferredSource, hasDeferredProgram, finalSource, hasFinalProgram,
-                    packName, fallback, profile, diagnostics, chain, Map.of());
+                    packName, fallback, profile, diagnostics, chain, Map.of(),
+                    dev.vkdisp.pack.uniform.PackUniformSet.EMPTY);
         }
     }
 
@@ -350,9 +359,29 @@ public final class PackCompositeSource {
                             TranslateDiagnostic.Severity.WARN, "vkdisp: " + rejection,
                             pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
                 }
+                // 🔴 GAP-021：包自写的 `uniform.<类型>.<名>=<表达式>` / `variable.` 解析。
+                //   这些行此前只是 directives 表里的**字符串**（ShaderProperties.classify 的
+                //   通用分支，第 103-104 行），没有任何求值者 ⇒ BSL 的 shadowFade / timeBrightness
+                //   恒 0（GAP-007 那条清单里它们恒 0 的真正原因，见 13-GAP-REGISTRY GAP-021）。
+                //   语法错/不支持的类型在这里就点名（X11），运行期只处理「输入供不到」那一类。
+                dev.vkdisp.pack.uniform.PackUniformSet packUniforms =
+                        dev.vkdisp.pack.uniform.PackUniformSet.fromProperties(pack.properties());
+                for (String rejection : packUniforms.rejections()) {
+                    diagnostics.add(TranslateDiagnostic.of(
+                            TranslateDiagnostic.Severity.WARN,
+                            "vkdisp: [GAP-021] 包自写 uniform 未采纳: " + rejection,
+                            pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+                }
+                if (!packUniforms.isEmpty()) {
+                    diagnostics.add(TranslateDiagnostic.of(
+                            TranslateDiagnostic.Severity.INFO,
+                            "vkdisp: [GAP-021] pack-authored uniforms parsed: definitions="
+                                    + packUniforms.size() + " names=" + packUniforms.allNames(),
+                            pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+                }
                 return new Result(composite.source(), deferredSource, hasDeferred,
                         finalSource, hasFinal, pack.name(), false, profile, diagnostics, chain,
-                        tex.bindings());
+                        tex.bindings(), packUniforms);
             }
             diagnostics.add(TranslateDiagnostic.of(
                     TranslateDiagnostic.Severity.WARN,
