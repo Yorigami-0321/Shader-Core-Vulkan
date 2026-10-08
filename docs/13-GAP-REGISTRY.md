@@ -413,14 +413,24 @@ BSL 的 blue-noise 抖动/胶片颗粒自此有真值）；**三段键**（`text
 
 `FrameApi` 第 1263-1266 行：`if (name.startsWith("depthtex"))` 一律回 `MrtTerrainPass.depthView()` ⇒ 包里所有「比较两个深度层」的逻辑恒等失效。已知直接受害者：`composite.glsl:333 z1 > z0`（半透明/水体识别）恒假。修法 = 按 OF 语义给 depthtex1/2 提供**各自**的缓冲（gbuffer 绘制顺序里 0=不透明后、1=半透明后、2=常驻顶层后 —— 我方目前只有一张），登记为独立缺陷而非顺手改。
 
-### GAP-024 · 🟡 `program.*.enabled` 解析了但**没有用来门控链**（h48p 审计）
+### GAP-024 · 🟡 `program.*.enabled` 解析了但**没有用来门控链**（h48p 审计；2026-10-08 补全核实）
 
-`ShaderProperties.java:100-102` 收下了 `program.world0/<名>.enabled=…`，但 `pack/PackPostChain.java`（第 99-189 行的装配）**不读**它 ⇒ BSL 关掉 `MOTION_BLUR`/`DOF` 时 `composite2`/`composite3` 照跑（它们退化成拷贝，但白烧两级 + 覆盖 colortex2 的时序）。修法 = 装配期按 enabled 集合跳过未启用 program，并**自报跳过了哪几级**（不许静默，X11）。
+| 字段 | 内容 |
+|---|---|
+| **现状** | `ShaderProperties.java:100-102` 把 `program.<名>.enabled` 收进 `programSwitches`，`ShaderPackService.deriveSettings`（第 519-522 行）把它落到 `Program#settings()` 的 `enabled` 键 —— 但 `pack/PackPostChain.java` 的装配循环（第 106-190 行）**从不读它** ⇒ 关闭的特性级照跑 |
+| **BSL 实际开关表（逐行取自包）** | `deferred=AO`、`composite1=LIGHT_SHAFT`、`composite2=MOTION_BLUR`、`composite3=DOF`、`composite6=FXAA && !RETRO_FILTER`、`composite7=TAA && !RETRO_FILTER`、`shadow=SHADOW`（world-1 还多 `&& MULTICOLORED_BLOCKLIGHT`）、`shadowcomp=MULTICOLORED_BLOCKLIGHT`；默认态（`shaders/lib/settings.glsl` 逐字）：`SHADOW`/`AO`/`LIGHT_SHAFT`/`FXAA`/`TAA` **开**，`DOF`/`MOTION_BLUR`/`AUTO_EXPOSURE`/`ADVANCED_MATERIALS`/`RETRO_FILTER` **关**（写成 `//#define`） |
+| **门控表达式能不能求值？✅ 能，来源已核实** | 包里**没有** `option.`/`type.`/`const boolean`（grep 核实：`option.` 0 行、`const boolean` 0 行）—— 特性开关是 `#define NAME` / `//#define NAME` 配 `// [候选值]` 列表；而我方 `glsl/preprocess/ConstEvaluator.java` 明确识别这两种形态（其第 36-43 行：带 `[候选值]` 的 `#define` 才算选项；第 100-101 行：放行 `//#define` 裸前缀 ⇒ 关着的宏也进模型）。⇒ `PackOptions.value("MOTION_BLUR")` 这条路是通的，**不需要新造机制** |
+| **为什么不只是「白烧两级」**（这条决定了它值不值得做在黑帧之前） | 我方 GAP-018 是**双代轮转**：每个 pass 写过的槽都会 `advanceWritten` 翻代，而 `FrameApi` 每级写完还立刻重建金字塔。被禁用的 `composite2/composite3` 是「读 colortex0 再写回 colortex0」的透传 ⇒ 它们**照样翻代、照样触发金字塔重建** ⇒ 增加代次奇偶抖动。GAP-020 重开里「① mip/金字塔与代次错配」这条候选，正好可以被本条的门控**当作一次 A/B 来测**（门控后 3 帧周期空帧若变化，就指向这条） |
+| **修法** | 装配期按 `PackOptions` 求值 `program.<名>.enabled`（布尔：`&&`/`\|`/`!`/括号/`true`/`false`），false ⇒ 该级**不进链**，并**自报跳过名单**（X11）；表达式里出现无法识别的名字 ⇒ **保留该级 + 一次性 WARN**（X9 不猜） |
+| **判据** | `[chain] post chain ready` 自报行里 passes 从 11 减到 9（DOF/MOTION_BLUR 两级消失）且**打出跳过原因**；随后跑 `every=1` 对照臂看 3 帧周期空帧是否变化 |
+
 
 ### GAP-025 · 🟡 `noisetex` 用的是我方内置 64×64，包声明的 512×512 取不到（h48p 审计）
 
 `bridge/PackTextures.java:121` 恒返回内建 64×64，而包的 `texture.noise=tex/noise.png`（`shaders.properties:141`）+ `noiseTextureResolution=512`（`final.glsl:41` 依赖它做 dither 尺度）⇒ 抖动/噪声频率与包设计不符。修法 = 优先用包里的 `tex/noise.png`（走既有 customImages 的加载路径），拿不到再回退内建并 WARN 一次。
 
+
+| **状态（h48p 后续）** | 🟡 **代码已实现，但只在单测层面成立**：`bridge/NoiseSamplerSource.java`（纯判定，四态 PACK / BUILTIN_NOT_DECLARED / BUILTIN_DECLARED_BUT_MISSING / NO_PACK）+ `PackTextures.view()` 不再短路、`ensureReady()` 拆分；测试 `NoiseSamplerSourceTest`（8 条，含「旧短路」红灯回归与真 BSL 链路：properties → `PackTextureBindings.fromDirectives` → 判定，并核对 PNG IHDR=512×512）。🔴 **未在运行客户端里观察过**（写码期间客户端被别的取证占着）⇒ 本条**不关**：判据 = 一次 runClient 里 `noisetex` 绑到 512×512 那张（自报行 + dither 尺度可读），且**没声明 noise 的包**仍走内建并打一次性 WARN |
 ---
 
 ## 4. 快速自检

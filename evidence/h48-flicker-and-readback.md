@@ -675,3 +675,28 @@ h48o 量到「严格每第 3 帧整帧为 0」之后，先别急着渲染层归�
 
 🔖 通用形式：**用「CPU 侧轮队列」冒充「GPU 完成信号」的通道，都要先问一句
 「我读的时候它真的写完了吗」**，并把余量做成可调，好让「仪器」与「被测物」能用一臂分开。
+
+## 十九、按**资源所有权**排除一条候选：`CrossFrameResourcePool(3)` 解释不了本症状
+
+h48p 的源码调研给出过一条很贴合「周期 3」的假设：原版帧图的瞬态纹理池
+`CrossFrameResourcePool(3)`（`GameRenderer:127`）会在 3 帧内把一张物理纹理重新发给别的 pass，
+而带零清屏的 descriptor（`RenderTargetDescriptor.java:24-33`）会先把它清成零。
+
+**但它管不到这次量到的那些纹理**，理由是按归属而不是按印象：
+
+| 黑帧里读为零的源 | 谁创建它 | 在不在帧图资源池里 |
+|---|---|---|
+| `colortex0` / `colortex1` / `colortex2` | 我方 `ColortexPool`（`device.createTexture`，usage=15，见其类注释） | ❌ 不在 |
+| `main`（主目标） | 原版 `GameRenderer` 持有的 `mainRenderTarget()`（常驻 TextureTarget） | ❌ 不在 |
+| 池深度 `vkdisp gbuffer depth` / 天空私有深度 | 我方 `TextureTarget` | ❌ 不在 |
+
+⇒ 帧图池只回收**它自己 `createsInternal` 出来的**纹理（OIT / 中间附件那一类），
+而我方两个 pass 都没调用 `createsInternal`（`onFrameGraphSetup` 里只有 `addPass` +
+`disableCulling` + `executes`）⇒ 这条链碰不到上面任何一个被读为零的纹理。
+⇒ **本条从候选里划掉**，不需要为它做臂。剩下的只有：
+① mip/金字塔与代次错配（GAP-020 原机制）；
+② 回读仪器造零（§十八，`mrt.pixelProbeReadDelay` 一臂可判）；
+③ 真实的渲染丢帧（地形重放在某些帧不出内容，GAP-019 那条老线）。
+
+🔖 顺带钉一条通用纪律：**归因之前先问「这个资源是谁分配的」**。
+「周期 3」这个特征看着像谁，不代表那个人碰得到这块内存 —— 这条省下一整臂取证。
