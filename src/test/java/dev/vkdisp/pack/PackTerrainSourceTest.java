@@ -119,6 +119,41 @@ class PackTerrainSourceTest {
     }
 
     @Test
+    @DisplayName("🔖 GAP-027：水要 14 条 varying ⇒ 适配层必须<b>按每条程序各自</b>的签名产出")
+    void waterAdapterCoversAllFourteenInputs() {
+        Assumptions.assumeTrue(Files.isDirectory(INVENTORY), "库存目录不在本地");
+        PackTerrainSource.Result water =
+                PackTerrainSource.generate(INVENTORY, "", "", null, PackTerrainSource.WATER_PROGRAM);
+        Assumptions.assumeTrue(water.wired(), "本机没选出水片元，跳过签名对账");
+        // 🔖 这条测试的动机（不是「再测一遍地形」）：地形默认档只要 9 条 varying，
+        //   而水要 14 条 —— 若适配层还是那份「静态供 9 条」的老形状，接上水之后
+        //   驱动会在资源加载期抛 ShaderCompileException、**客户端直接起不来**
+        //   （同款故障已在地形上实测过一次：开 ADVANCED_MATERIALS 后要 15 条）。
+        //   ⇒ 必须在改 pass 之前先把这条判据立起来。
+        var adapter = dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.generate(
+                water.program().inputs(), false, false, false);
+        java.util.Map<Integer, String> adapterOuts = new java.util.LinkedHashMap<>();
+        Matcher m = OUT_DECL.matcher(adapter.glsl());
+        while (m.find()) {
+            adapterOuts.put(Integer.parseInt(m.group(1)), m.group(3));
+        }
+        java.util.Map<Integer, String> packIns = new java.util.LinkedHashMap<>();
+        for (PackTerrainProgram.Input input : water.program().inputs()) {
+            packIns.put(input.location(), input.name());
+        }
+        assertEquals(14, packIns.size(), "前提：水默认档要 14 条 varying");
+        assertEquals(packIns, adapterOuts,
+                "适配层产出的 varying 必须与水片元要的逐位置逐名字一致，实际产出 "
+                        + adapterOuts);
+        // 🔖 地形的适配层**不能**顺手复用：两条程序的 varying 集合不同，
+        //   复用会把水的一条 in 留空（= 同上，客户端起不来）。
+        var terrainAdapter = dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.generate(
+                PackTerrainSource.generate(INVENTORY, "", "").program().inputs(), false, false, false);
+        assertNotEquals(terrainAdapter.glsl(), adapter.glsl(),
+                "水的适配层与地形的必须不同；相同就说明按程序各自生成没生效");
+    }
+
+    @Test
     @DisplayName("🔖 shaderPack=none ⇒ 明确**不接线**（不是兜底 passthrough）")
     void selectionNoneMeansNotWired() {
         PackTerrainSource.Result result =
