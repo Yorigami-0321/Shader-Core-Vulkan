@@ -1139,7 +1139,31 @@ public final class FrameApi {
             regeneratePyramidsForWritten(encoder, label, passPlan, mipSlots, pyramidSampler);
         }
         logChainExecutedOnce(passes.subList(0, chainPassLimit(passes)), sceneView);
+        reportChainGenerations();
         return new FrameSize(width, height);
+    }
+
+    /** 代次自报的节流计数（跑过多少帧链）。 */
+    private static long chainFrames;
+
+    /**
+     * 🔖 GAP-020 重开后的**代次奇偶自报**（每 120 帧链一行；纯读，不改任何渲染行为）。
+     *
+     * <p>为什么要打：一帧里各槽被写的次数不同 ⇒ 翻代次数不同 —— BSL 这条链实测
+     * 槽 0 被写 6 次（偶数，代次不变）、槽 1 被写 5 次、槽 2 被 3 次（奇数，代次每帧翻）。
+     * 而金字塔是**按当时的被读代**重建的 ⇒ 「读者采到哪一代的 mip」这件事只有打出来才能判。
+     * h48o 量到的严格 3 帧周期空帧（{@code 0 N N}）要么落在这条线上（GAP-020 机制回来），
+     * 要么与它无关（转向深度为 3 的环形资源）—— 这一行就是那条分岔的读数。
+     */
+    private static void reportChainGenerations() {
+        chainFrames++;
+        if (chainFrames % 120L != 0L) {
+            return;
+        }
+        dev.vkdisp.VkDisp.LOGGER.info("vkdisp: [GAP-020/parity] chainFrame={} 被读代 c0={} c1={} c2={} c4={}"
+                        + "（一帧内写次数 c0=6 c1=5 c2=3 c4=2 ⇒ 奇数次的槽每帧翻代）",
+                chainFrames, MrtTerrainPass.poolGeneration(0), MrtTerrainPass.poolGeneration(1),
+                MrtTerrainPass.poolGeneration(2), MrtTerrainPass.poolGeneration(4));
     }
 
     /** 链「已执行」自报只打一次（热路径日志 I/O 纪律）。 */

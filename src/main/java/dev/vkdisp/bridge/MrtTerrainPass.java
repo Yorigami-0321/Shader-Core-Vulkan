@@ -628,6 +628,11 @@ public final class MrtTerrainPass {
         return POOL.view(slot);
     }
 
+    /** 某槽当前**被读那一代**的编号（0/1）。链每帧的代次奇偶 = GAP-020 重开后唯一能直接看的量。 */
+    public static int poolGeneration(int slot) {
+        return POOL.generation(slot);
+    }
+
     /** GAP-018：某槽的**待写那一代**视图（颜色附件用；与 {@link #poolView(int)} 不同图）。 */
     @Nullable
     public static GpuTextureView poolWriteView(int slot) {

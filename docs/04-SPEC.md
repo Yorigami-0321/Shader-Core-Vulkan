@@ -159,6 +159,7 @@ glsl/
 | `eyeBrightnessSmooth` | **近似 v1（登记）**：`ivec2(block×16, round(clamp(sky,0,15)×clamp(skyLightFactor,0,1)×16))` 各 clamp 到 0..240；block/sky = eye 处 `LightLayer`，factor = `SKY_LIGHT_FACTOR` 属性 probe —— OF 精确曲线与平滑未取证（X9） |
 | 非目录填充 | `aspectRatio = viewWidth/viewHeight`（BSL `vec2(aspectRatio,1.0)` 消费）、`timeAngle = (t%24000)/24000`（与 BSL 夜窗 0.5325–0.9675 = 12780/24000–23220/24000 吻合）、`moonPhase = attributeProbe(MOON_PHASE).index()`（SkyRenderer:125 同源，null 回退 `SkyRenderState`；原版序直传；与 OF 相位序一致性未取证，登记）、**`frameTime` = 最近一次有效帧间隔（秒，沿用上面 0.5s 尖峰截断；尖峰帧沿用旧值而不是回 0）** —— 🔴 h47 白屏机制位：BSL `composite3:196` / `composite5:371,378` 把 `exp2(−frameTime × SPEED)` 当**逐帧混合系数**用，恒 0 ⇒ 系数恒 1 ⇒ `mix(新,旧,1)` 永远返回旧值，而旧值 = 附件初始 0 ⇒ 自动曝光卡在 0 ⇒ `color /= 2×0 + 0.125` = 固定 ×8 增益 ⇒ 整屏削顶 |
 | `gbufferPreviousModelView` / `gbufferPreviousProjection` / `previousCameraPosition` | 上一次 gather 的当帧值（链模式 = 上一帧）。首帧/换世界 ⇒ 与当帧对齐（跨世界的旧相机当历史没有意义）。🔖 这三项此前恒 0 ⇒ 包把「上一帧」读成「相机在原点 + 单位矩阵」⇒ 运动向量是整屏假位移（TAA/运动模糊/DOF 聚焦全部失真） |
+| `cloudHeight` | ✅ 公开路径核实（26.3.0.51-beta）：`LevelRenderState.cloudHeight` 是 **public float**（源码第 28 行），原版自己在 `LevelRenderer:554/563` 把它当云层底高传给云渲染 ⇒ 取法与天空重放同源 `gameRenderer.gameRenderState().levelRenderState`。为什么要补：BSL 的 `DrawCloudVolumetric` 拿它当云层下界，恒 0 ⇒ 体积云压到海平面以下 ⇒ 一个像素都看不见（GAP-007 清单项，h48o 起填） |
 | **不填充（恒 0 + 一次性 INFO 列名）** | `timeBrightness`（OF 公式未取证，X9 拒猜）、blindFactor / darknessFactor / nightVision / endFlash* / shadowFade / bedrockLevel / dh* 等非目录项 |
 
 **布局与缓冲（P4.1.3）**：块成员顺序 = 收编声明在前 + 目录缺失在后（`UniformInjector` 发射序，

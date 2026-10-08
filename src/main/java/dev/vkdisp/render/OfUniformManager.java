@@ -233,6 +233,13 @@ public final class OfUniformManager {
         values.put("rainStrength", rainStrength);
         values.put("wetness", rainStrength);
         values.put("isEyeInWater", eyeInWater(camera));
+        // cloudHeight：✅ 公开路径核实（26.3.0.51-beta）
+        //   `LevelRenderState.cloudHeight` 是 **public float**（源码第 28 行），
+        //   原版自己在 `LevelRenderer:554/563` 就把它当云层高度传给云渲染。
+        //   取法与天空重放同源：`gameRenderer.gameRenderState().levelRenderState`。
+        //   为什么值得补：BSL 的体积云 `DrawCloudVolumetric` 用它当云层底高，
+        //   恒 0 ⇒ 云层被压到海平面以下 ⇒ 一个像素都看不见（GAP-007 清单项）。
+        values.put("cloudHeight", inWorld ? levelState.cloudHeight : 0.0F);
 
         // ---- 图集 / 眼亮度（亮度为近似 v1，见 04-SPEC 上传注记登记） ----
         values.put("atlasSize", new int[] {

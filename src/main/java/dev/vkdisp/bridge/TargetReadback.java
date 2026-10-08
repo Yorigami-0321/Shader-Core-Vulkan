@@ -222,6 +222,12 @@ private static final long WARMUP_FRAMES = 600L;
             // 🔖 天空写的是**待写那一代**（地形接着 LOAD 同一代）⇒ 取点必须跟着代次走，
             //   读「被读那一代」会取到上一帧，然后拿「天空臂 vs 对照臂」的差分下错结论。
             submit("c0@afterSky", MrtTerrainPass.poolWriteTexture(0));
+            // 🔴 同帧再取一次**被读那一代**（h48l 的判据）：待写代读到全 0 —— 连 alpha 都是 0，
+            //   说明连我方自己那次 clearColorTexture 都没落进去，而天空的 skyColor 明明是亮的
+            //   (0.514, 0.620, 1.000)。两代同帧对照才分得开：
+            //     ① 天空其实写在**另一代** ⇒ 我方的代次模型/翻代时机错；
+            //     ② 两代都空 ⇒ 天空那批 draw 根本没落到任何纹理上。
+            submit("c0@skyReadGen", MrtTerrainPass.slotTexture(0));
         }
     }
 
@@ -384,6 +390,15 @@ private static final long WARMUP_FRAMES = 600L;
         PixelProbePlan plan = decidePlan();
         reportPlanOnce(plan);
         any |= submitSlots(plan);
+        // 🔖🔖 双代同帧对照（h48m 的判据，纯仪器、不改任何渲染行为）：
+        //   帧尾读数在 `0.0000 allZero=true` 与非零之间**按轮**跳，而与它同步跳动的还有
+        //   「被读那一代」的天空取点（h48m：#30/#33 两代都有内容 ⇔ main=122.8，
+        //   其余轮两代皆空 ⇔ main=0）。⇒ 「间歇性整帧塌黑」有一个**测量侧**的等价解释：
+        //   取点打到了**这一帧没被写过的那一代**。这里把槽 0/1 的两代各取一次，一刀切开：
+        //     两代都有内容 ⇒ 之前的黑帧是取点问题；
+        //     只有一代有     ⇒ 双代轮转本身有问题（GAP-018 的账没算对）。
+        any |= submitGenPair("c0", 0);
+        any |= submitGenPair("c1", 1);
         // 🔖 ③ 方块图集（texture_0 的真值）：把它也当一个源测一次。
         //   h13 只对图集的 mip 链做过**静态**核查，从未在**运行期**取过它的数字；
         //   而「包片元乘上去的那张图是不是黑的」正是 albedo ≡ 0 的头号候选输入。
@@ -426,6 +441,12 @@ private static final long WARMUP_FRAMES = 600L;
             }
         }
         return any;
+    }
+
+    /** 同一槽的**两代**各取一次（h48m 判据：把「间歇黑帧」在取点/轮转之间一刀切开）。 */
+    private static boolean submitGenPair(String label, int slot) {
+        boolean any = submit(label + "@readGen", MrtTerrainPass.slotTexture(slot));
+        return submit(label + "@writeGen", MrtTerrainPass.poolWriteTexture(slot)) || any;
     }
 
     /**

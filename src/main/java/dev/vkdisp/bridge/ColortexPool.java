@@ -123,6 +123,11 @@ final class ColortexPool {
         return slots[slot].mipViews[generation][level];
     }
 
+    /** 第 slot 槽当前**被读那一代**的编号（GAP-020 重开后的自报用：奇偶要能被打出来）。 */
+    int generation(int slot) {
+        return gen(slot);
+    }
+
     private int gen(int slot) {
         return inRange(slot) ? slots[slot].cur : 0;
     }

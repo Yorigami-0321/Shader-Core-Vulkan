@@ -49,6 +49,8 @@ import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.minecraft.client.renderer.state.level.SkyRenderState;
 import org.jspecify.annotations.Nullable;
 import org.joml.Vector4f;
+import java.util.Optional;
+import java.util.OptionalDouble;
 
 /** 天空 → colortex0 的重放器（渲染线程独占，无锁）。 */
 public final class SkyIntoGbuffer {
@@ -104,7 +106,7 @@ public final class SkyIntoGbuffer {
             skipOnce("fog-slice-null");
             return;
         }
-        clearWriteGeneration();
+        clearWriteGeneration(color, depth);
         if (renderer == null || targetWidth != width || targetHeight != height) {
             rebuild(mc, color, depth, width, height);
         }
@@ -159,15 +161,24 @@ public final class SkyIntoGbuffer {
      * 而地形 pass 在这一代改为 LOAD 后**不再清**槽 0 ⇒ 没人清的话槽 0 会留着
      * **两帧前**的内容（天空只覆盖它真画到的地方）。alpha 清成 1.0 的理由与
      * {@code MrtTerrainPass} 里 h47c 那条相同（premultiplied 黑会让 bloom 权重塌缩）。
+     *
+     * <p>🔴 为什么用**一个只清不画的 render pass**而不是 {@code CommandEncoder#clearColorTexture}：
+     * h48l 实测那次 `clearColorTexture` **完全没落进纹理**（`c0@afterSky` 连 alpha 都是 0，
+     * 而天空自己也是空的），且本机**没有 validation layer**（07-CONSTRAINTS X35）⇒
+     * 布局用错不会报错、只会静默不生效。{@code clearColorTexture} 走的是手动 barrier 路径，
+     * 而我方池纹理是被 render pass 当附件用过的（布局不是它假设的那个）。
+     * 对照：本项目所有**确实生效**的清屏（地形 pass、ShadowStubs）都是走
+     * `createRenderPass(..., Optional.of(clearColor), ...)` 的**附件清屏**语义 ⇒ 这里照同一条路。
      */
-    private static void clearWriteGeneration() {
-        var texture = MrtTerrainPass.poolWriteTexture(0);
-        if (texture == null) {
-            skipOnce("write-texture-null");
-            return;
+    private static void clearWriteGeneration(GpuTextureView color, GpuTextureView depth) {
+        try (var pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "vkdisp sky gbuffer clear",
+                color,
+                java.util.Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)),
+                depth,
+                java.util.OptionalDouble.of(0.0))) {
+            // 什么都不画：这个 pass 的存在只为让引擎按它自己的布局规则把附件清一遍。
         }
-        RenderSystem.getDevice().createCommandEncoder()
-                .clearColorTexture(texture, new Vector4f(0.0F, 0.0F, 0.0F, 1.0F));
     }
 
     private static @Nullable GpuTextureView ensureSkyDepth(int width, int height) {
