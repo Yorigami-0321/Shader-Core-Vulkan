@@ -36,6 +36,22 @@
 5. **撤回到处标注**：登记表 GAP-008 `h44` 行「BSL 默认 8 附件」**作废**（②③④ 数字改挂「`ADVANCED_MATERIALS=on` 档」名下）；
    `evidence/h44` §五两行就地标 ⛔；代码/测试注释与断言文案把 `[0,3,6,7]/8` 一律改称**残留档**
    （`PixelProbePlanTest` 常量 `BSL_DEFAULT` → `RESIDUE_AM`，就是为了不许再把它读成默认）。
+6. **GAP-024 落地：后处理链终于执行包自己写的 `program.*.enabled`**（`ChainEnableGating` 纯决策 +
+   `ProgramEnableGate` 三值求值，门控点在 `PackPostChain.build` 候选循环里、**先于**槽位上限检查；
+   新开关 `pack.chainEnableGating` **默认开** —— 与 `capabilityGate` 默认关相反且有意：
+   这一刀执行的是包**自己**的声明，不执行才是违约）。运行侧逐字：
+   `gating=on considered=11 switches=6 kept=9 skipped=2 skippedNames=[composite2, composite3] unresolved=[]`
+   ＋ `[chain] post chain executed: passes=9 first=deferred last=final`
+   ⇒ 登记表判据「passes 11→9 且点名跳过原因」达成。
+7. 🔴 **接 GAP-024 时挖出并修掉一条老 bug**：首跑自报的是 `skipped=[composite1, composite2, composite3]`
+   —— **光柱被砍**，而选项表同时写着 `LIGHT_SHAFT default=true`、包里 `settings.glsl:205` 是 `#define`。
+   查下去是 `PackPostChain` 按名去重**先到先得**，而 BSL 枚举顺序是 `world-1 → world0 → world1`
+   ⇒ 候选里留的是 world-1 那条 Program，可它的片源**永远不会被选中**（`selectFragment` 给非偏好维度打
+   `MAX_VALUE`）；BSL 恰好给两个维度写了不同表达式（`world0=LIGHT_SHAFT` 真 /
+   `world-1=LIGHT_SHAFT && MULTICOLORED_BLOCKLIGHT` 假）⇒ 门控按一个**根本不进链的维度**做了决定。
+   修法 = 去重改用与取源**同一套** `chainDimensionRank`（单点真源）。
+   🔖 **这条 bug 在 `enabled` 之前就已存在**（`blend`/`alphaTest` 一直取错维度），只是没有可观察后果
+   ⇒ 教训形式：**「数据取错来源」这类 bug，只在有人真读那个字段的那天才暴露**。
 
 **影响的文档**：`docs/13-GAP-REGISTRY.md`（GAP-020 加 h48q/h48r/h48s 三行与「先自报档位」的关闭前提、
 GAP-009 收紧、GAP-008 `h44` 行作废、新增 **GAP-026**）、`evidence/h48-flicker-and-readback.md` §二十一～二十四、
@@ -49,13 +65,21 @@ GAP-009 收紧、GAP-008 `h44` 行作废、新增 **GAP-026**）、`evidence/h48
 **⛔ 仍未完成**：① 「8 附件档为何每 3 帧空一次」机制**未定位**（`ADVANCED_MATERIALS` 是包内合法开关，
 用户开了就该能用 ⇒ GAP-020 **不收口**，候选收窄为 GAP-018 多槽兑现 / 未写槽清屏×双代轮转，
 下一刀 = 残留档下只差 `mrt.attachments 1 vs 8` 的 A/B）；② GAP-026 修法 ②（车具起臂前判无效）与
-③（一次性覆盖，改产品行为需裁决）未做；③ **F2 注入连续第三轮没落地**（`run/h27/screenshots/` 空，
-键盘注入在合成器抢焦点后静默失效；`/gamerule doDaylightCycle false` 同样没执行 ⇒ 「时刻被钉住」
-仍是未证实前提）⇒ 「用户眼前的闪屏是否消失」**尚未由独立通道判定**；④ 实体/水/云/shadow 等
-`gbuffers_*` 仍未进 colortex（GAP-003/015）；⑤ GAP-022 矩阵那一半、GAP-023 分槽、GAP-024 门控链未动。
+③（一次性覆盖，改产品行为需裁决）未做；③ 实体/水/云/shadow 等 `gbuffers_*` 仍未进 colortex
+（GAP-003/015 —— h48t 画面判读里「天上没有云」就是这条）；④ GAP-022 矩阵那一半、GAP-023 分槽未动。
 
-**是否已提交**：是（本轮两条：`docs+forensics(h48q/r/s)` 与 `feat(h48t/GAP-026)`）。
-本地领先远端，**推送被网络挡住**（`Failed to connect to github.com:443`），提交不丢，待网络恢复补推。
+**⛔ 本轮写错又自己改掉的一条**（保留原文形状，不做静默删除）：本条目初稿写过
+「**F2 注入连续第三轮没落地** ⇒ 闪屏是否消失尚未由独立通道判定」。**这是错的** ——
+同一批里的 h48t 臂 **10 张 F2 全部落地**（`mean_luma 80.62~108.85`，黑帧形态是 `≈4.5`），
+独立通道已经给出答案：**真默认档不闪屏**（`evidence/h48-flicker-and-readback.md` §二十五）。
+剩下未查清的只是「同一套脚本为什么 h48q d1 全不中、h48t 全中」这条**工具层**问题
+⇒ 它改变的是「下次没图时该怎么判」，不改变画面结论。
+另记：GAP-024 的「门控会不会影响 3 帧周期空帧」这条 A/B 在**默认档是空转的**
+（默认档本来就 0 空帧，没有可变化的量）⇒ 它只在 8 附件档有意义。
+
+**是否已提交**：是（本轮五条：`docs+forensics(h48q/r/s)`、`feat(h48t/GAP-026)`、`evidence(h48t)`、
+`feat(h48u/GAP-024)`、`fix(h48u/GAP-024)`）。推送遇网络抖动（`Failed to connect to github.com:443`
+两次、`SSL_read unexpected eof` 一次），已成功推上去一部分；剩余提交待网络恢复补推，**内容不丢**。
 
 ---
 
