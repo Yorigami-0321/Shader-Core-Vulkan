@@ -20,8 +20,10 @@ import java.util.Set;
  *    遇到即显式报错（T11），绝不静默吞掉。
  * 2. 备选：无。
  * 3. 我们的差异点：宏集合由调用方（主线/解析层）提供；A 线自身不发现宏（宏发现属 C 线）。
- *    宏目前只有「定义/未定义」两态（值为 1 / 0）——比较式取值环境（MC_VERSION 编码、
- *    选项当前数值）未取证（X9），登记为已知缺口，遇数值比较按 0/1 求值且**不猜**。
+ *    数值宏已补 {@code MC_VERSION} 这一格（本轮实测：只有「定义/未定义」两态时
+ *    {@code #if MC_VERSION >= 11800} 永远按 0 判假 ⇒ BSL 生物群集那批 uniform 一直取老数字 ID 那一支）。
+ *    取值走 {@link dev.vkdisp.McVersion#numericOf(String)}，编码口径与出处写在那儿。
+ *    其余比较式取值环境（选项当前数值等）仍未取证（X9）⇒ 按 0/1 求值且**不猜**，缺哪个补哪个。
  * 4. 许可证核对结论：本项目 MIT；本文件零第三方代码。
  * 5. 性能基线：❄️ 冷路径（加载/重载时跑一次），不做任何性能优化（18-PARALLEL §7.7）。
  */
@@ -316,7 +318,13 @@ final class ConditionalPreprocessor {
             if (!tok.isEmpty() && Character.isDigit(tok.charAt(0))) {
                 return Double.parseDouble(tok);
             }
-            // 标识符：已定义 → 1、未定义 → 0（与 GLSL 侧 DefineProcessor.ExprEval 同口径）。
+            // 标识符：数值宏优先（本轮补的就是这一格 —— 此前只有「定义/未定义」两态，
+            // 于是 `#if MC_VERSION >= 11800` 里 MC_VERSION 按 0 算 ⇒ 永远走老分支）。
+            java.util.OptionalInt numeric = dev.vkdisp.McVersion.numericOf(tok);
+            if (numeric.isPresent()) {
+                return numeric.getAsInt();
+            }
+            // 其余标识符：已定义 → 1、未定义 → 0（与 GLSL 侧 DefineProcessor.ExprEval 同口径）。
             return m.contains(tok) ? 1.0 : 0.0;
         }
     }

@@ -370,12 +370,21 @@ class DepthConventionPairTest {
     @DisplayName("🔴 自报必须在 debugLog 门**之外**：关档也要留痕")
     void selfReportIsNotGatedOnDebugLog() {
         String uniforms = readOrSkip(UNIFORMS);
-        int report = uniforms.indexOf("DepthConventionPair.reportThrottled(");
         int debugGate = uniforms.indexOf("if (dev.vkdisp.VkDispConfig.DEBUG_LOG.get()");
-        assertTrue(report > 0, "接线了就必须自报（判据对象不声明自己是谁 = h48 §二十二 那一族）");
         assertTrue(debugGate > 0, "debugLog 那道门还在（守卫的相对位置前提）");
-        assertTrue(report < debugGate,
-                "自报不许排在 DEBUG_LOG 门里 —— 那样 debugLog=false 时「没有这行」会被读成「开关是关的」");
+        // 🔖 断的是**性质**而不是「字符下标先后」：自报后来被收进一个 helper
+        //   （gather() 顶在 QD-04 棘轮 60 行边上 —— 只能靠提取方法解决，不能靠放宽棘轮）。
+        //   按源码书写位置判会把一次等价重构读成回归，那是测试在管「代码怎么写」而不是「行为是什么」。
+        int gateEnd = debugLogBlockEnd(uniforms, debugGate);
+        for (String call : List.of("DepthConventionPair.reportThrottled(", "reportConventions(")) {
+            for (int at = uniforms.indexOf(call); at >= 0; at = uniforms.indexOf(call, at + 1)) {
+                assertTrue(!(at > debugGate && at < gateEnd),
+                        "自报调用落在 DEBUG_LOG 门里了 —— debugLog=false 时「没有这行」会被读成"
+                                + "「开关是关的」（" + call + "）");
+            }
+        }
+        assertTrue(uniforms.contains("DepthConventionPair.reportThrottled("),
+                "接线了就必须自报（判据对象不声明自己是谁 = h48 §二十二 那一族）");
         assertTrue(uniforms.contains("dev.vkdisp.VkDisp.LOGGER::info"),
                 "生产侧的 sink 必须是 LOGGER（本类不加载 VkDisp，所以这条只能按接线文本证）");
         String pair = readOrSkip(PAIR);
@@ -402,6 +411,24 @@ class DepthConventionPairTest {
             }
         }
         return true;
+    }
+
+    /** 从 {@code if (...)} 的 {@code &#123;} 起找到配对的 {@code &#125;}；找不到就返回文件末尾。 */
+    private static int debugLogBlockEnd(String source, int ifIndex) {
+        int open = source.indexOf('{', ifIndex);
+        if (open < 0) {
+            return source.length();
+        }
+        int depth = 0;
+        for (int i = open; i < source.length(); i++) {
+            char c = source.charAt(i);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}' && --depth == 0) {
+                return i;
+            }
+        }
+        return source.length();
     }
 
     private static String readOrSkip(Path path) {

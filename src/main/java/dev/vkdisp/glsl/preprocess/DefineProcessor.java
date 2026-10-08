@@ -65,8 +65,27 @@ public final class DefineProcessor {
      * @param text          来自 IncludeProcessor 的展开后文本
      * @param inputLineMap  IncludeProcessor 产出的行号映射（用于把诊断指回原文件）
      */
-    public static Result process(String text, SourceLineMap inputLineMap) {
+    /**
+     * 引擎侧预定义宏（<b>不是</b>包里 {@code #define} 出来的那些）。
+     *
+     * <p>🔴 {@code MC_VERSION}：BSL v10.1.8 里出现 <b>53 次、跨 32 个文件</b>，而我方从来没定义过它
+     * ⇒ 本类的 {@link ExprEval} 按「未定义标识符 = 0」求值 ⇒ <b>整包被当成跑在 1.7 之前编译</b>
+     * （本轮实测：{@code #if MC_VERSION >= 11800} 一直走老数字那一支）。
+     * 取不到值时<b>什么都不塞</b> —— 保持「未定义」而不是喂一个猜的数（X9），
+     * 且这件事由生产侧的自报行说清楚（{@code OfUniformManager#reportConventions}）。
+     */
+    private static Map<String, Macro> engineMacros() {
         Map<String, Macro> macros = new HashMap<>();
+        java.util.OptionalInt mcVersion = dev.vkdisp.McVersion.current();
+        if (mcVersion.isPresent()) {
+            macros.put(dev.vkdisp.McVersion.MACRO,
+                    new Macro(MacroKind.OBJECT, List.of(), Integer.toString(mcVersion.getAsInt())));
+        }
+        return macros;
+    }
+
+    public static Result process(String text, SourceLineMap inputLineMap) {
+        Map<String, Macro> macros = engineMacros();
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         SourceLineMap.Builder lineBuilder = SourceLineMap.builder(null);
         StringBuilder out = new StringBuilder();

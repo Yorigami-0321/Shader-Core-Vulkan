@@ -197,12 +197,10 @@ public final class OfUniformManager {
         values.put("frameTime", frameDeltaSeconds);
         int frameNo = ++frameCounter;
         values.put("frameCounter", frameNo);
-        // 🔴 GAP-022 自报：**两种状态各打一条**，且**不受 debugLog 门**。理由不是「多一行日志」：
-        //   判据对象必须自陈是哪一种口径，而「日志里没有这行」一旦与「开关是关的」同义，
-        //   取证时就会把「接线没跑到」读成「关着，符合预期」（evidence/h48 §二十二：
-        //   在场的信息没人读；缺席的信息更会被直接读成结论）。
-        DepthConventionPair.reportThrottled(convention.glConvention(), frameNo,
-                dev.vkdisp.VkDisp.LOGGER::info);
+        // 🔴 GAP-022 / MC_VERSION 两条自报（两种状态各打一条、每进程一次）。
+        //   收进一个 helper 而不摊在 gather() 里：gather() 本来就在 QD-04 棘轮的 60 行边上，
+        //   摊开写会把方法推过线，而**降基线只能靠提取、不能靠放宽棘轮**。
+        reportConventions(convention, frameNo);
         // 🔖 QD-02：`vkdisp.debugLog` 的**真实消费点之一**。此前该开关只有定义与热重载快照、
         //   **零消费点**（`grep DEBUG_LOG` 只有 2 处命中）⇒ 开关它没有任何可观察效果，比没有更误导。
         //   这里报「本帧实际写进了哪些键」，用于排查 uniform 缺失（静默失败的头号来源）。
@@ -496,6 +494,40 @@ public final class OfUniformManager {
         }
         return result;
     }
+
+    /**
+     * 两条「本进程到底是哪种口径」的自报。
+     *
+     * <p>🔴 为什么打在<b>这里</b>（生产路径）而不是 {@code McVersion} / 转译器 / 属性解析器里：
+     * 那三处会被单测调用，而单测类路径一碰 {@code VkDisp.LOGGER} 就是
+     * {@code NoClassDefFoundError: net/neoforged/fml/config/IConfigSpec}（本轮实测踩过）。
+     *
+     * <p>🔖 为什么<b>两种状态各打一条</b>、且不受 {@code debugLog} 门：
+     * 「日志里没有这行」一旦与「开关是关的」同义，取证时就会把「接线没跑到」读成
+     * 「关着，符合预期」（{@code evidence/h48} §二十二：在场的信息没人读；缺席的信息更会被读成结论）。
+     */
+    private static void reportConventions(DepthConventionPair convention, int frameNo) {
+        DepthConventionPair.reportThrottled(convention.glConvention(), frameNo,
+                dev.vkdisp.VkDisp.LOGGER::info);
+        if (!MC_VERSION_REPORTED.compareAndSet(false, true)) {
+            return;
+        }
+        java.util.OptionalInt value = dev.vkdisp.McVersion.current();
+        if (value.isPresent()) {
+            dev.vkdisp.VkDisp.LOGGER.info(
+                    "vkdisp: [{}] = {}（运行期版本串 \"{}\"；编码 major*10000+minor*100+patch）"
+                            + " ⇒ 包里 53 处 #if MC_VERSION >= … 按此选支",
+                    dev.vkdisp.McVersion.MACRO, value.getAsInt(), dev.vkdisp.McVersion.rawName());
+        } else {
+            dev.vkdisp.VkDisp.LOGGER.warn(
+                    "vkdisp: [{}] 取不到 ⇒ 该宏**不定义** ⇒ 所有 #if MC_VERSION >= … 按「未定义=0」判假"
+                            + "（= 整包按老版本分支编译）。原因：{}",
+                    dev.vkdisp.McVersion.MACRO, dev.vkdisp.McVersion.lastFailure());
+        }
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean MC_VERSION_REPORTED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /**
      * GAP-022 取证用：把矩阵按**行**摊平成一行可读文本（走 {@code get(row, col)} 显式点名行列，
