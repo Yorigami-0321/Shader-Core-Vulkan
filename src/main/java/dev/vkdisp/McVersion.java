@@ -18,7 +18,7 @@ package dev.vkdisp;
  *   11605 → 1.16.5     12106 → 1.21.6     12109 → 1.21.9     12111 → 1.21.11
  * </pre>
  *
- * <p><b>版本串从哪来</b>：运行期 {@code SharedConstants.getGameVersion().name()}，
+ * <p><b>版本串从哪来</b>：运行期 {@code DetectedVersion.tryDetectVersion().name()}，
  * 其真身是 classpath 上那份 {@code version.json}（实测逐字 {@code "id": "26.3", "name": "26.3"}）
  * ⇒ {@code MC_VERSION = 26*10000 + 3*100 = 260300}，高于包里全部门限 ⇒ 所有「新版本」分支都会走到。
  * 🔖 用反射读而不是 {@code import}：本仓库的<b>单测类路径没有原版类</b>
@@ -141,9 +141,10 @@ public final class McVersion {
 
     private static OptionalInt resolveFromGame() {
         try {
-            Class<?> shared = Class.forName("net.minecraft.SharedConstants");
-            Object worldVersion = shared.getMethod("getGameVersion").invoke(null);
-            Object name = worldVersion.getClass().getMethod("name").invoke(worldVersion);
+            Class<?> detectedVersion = Class.forName("net.minecraft.DetectedVersion");
+            Class<?> worldVersionType = Class.forName("net.minecraft.WorldVersion");
+            Object version = detectedVersion.getMethod("tryDetectVersion").invoke(null);
+            String name = (String) worldVersionType.getMethod("name").invoke(version);
             rawName = name == null ? null : String.valueOf(name);
             OptionalInt encoded = encode(rawName);
             if (encoded.isEmpty()) {
@@ -152,7 +153,7 @@ public final class McVersion {
             return encoded;
         } catch (Throwable t) {
             // 无原版类（单测类路径）/ 方法改名 —— 都按「拿不到」处理，不猜一个数。
-            failure = "读 SharedConstants.getGameVersion().name() 失败：" + t;
+            failure = "读 DetectedVersion.tryDetectVersion().name() 失败：" + t;
             return OptionalInt.empty();
         }
     }
