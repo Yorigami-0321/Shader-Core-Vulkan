@@ -1000,3 +1000,47 @@ h48t 十张全落地。**为什么同一套脚本一次全中、一次全不中�
 - §二十四的「0 空帧」从**单通道**升级为**双通道一致** ⇒ 「黑白闪屏在真默认档消失」可以作为**已判**的结论用。
 - 但**「BSL 正常生效」远未成立**：本轮第一次看清的是「天空对、云没有、阴影层没接、地面没看」
   ⇒ 下一线的重点从「修闪屏」转到 **GAP-015（把实体/水/云/shadow 这几条 `gbuffers_*` 接进 colortex）**。
+
+## 二十六、h48y：把「档位」变成**臂的通过条件**（GAP-026 修法②），并给 MrtPlan 重构上一道回归闸
+
+### 26.1 闸门放在车具里，但**判据不另写一份**
+
+`tools/vulkan-local/h48_flicker_capture.sh` 在「进世界信号」之后立刻读产品自己的
+`STORE_RESIDUE` / `STORE_RESIDUE_NONE` 自报行：
+
+- 读到 `STORE_RESIDUE`（有残留）⇒ **本臂直接判无效并退出**，除非显式设
+  `H48_ALLOW_STORE_RESIDUE=1`（那时也必须把结论标注成「非默认档」）；
+- 读到 `STORE_RESIDUE_NONE` ⇒ 打一行「档位核验通过」；
+- **两行都没有 ⇒ 也退出**，并明说「按判据缺口对待，不许当成『无残留』」。
+
+🔖 为什么车具不自己解析 `vkdisp-pack-options.properties`：那样就有**第二份**「本次加载的是哪个包、
+哪些值算残留」的口径，而迟早与产品侧不一致 —— 本项目已经为「造键用 A、校验用 B」付过一次学费
+（`VkDispVirtualPack#currentTerrainMemoKey`）。`PackOptionsSession.residueReport` 已经做过
+工作值 vs 基线的差分**并且零残留也打一行**，所以车具只需要**读它**。
+（⇒ §二十二.6 里那条「信息一直在，缺的是把它变成判据」到这里才算闭环：
+  现在它既是日志里的一行，也是**臂能不能交卷**的条件。）
+
+### 26.2 🔴 一条工具层事实：**别改正在被运行的脚本**
+
+本轮在 h48y 运行途中编辑了 `h48_flicker_capture.sh`（在文件前部插入约 28 行）。
+结果该臂的驱动输出是「链/探针已跑起来」→ **直接跳到**「预热等待」，中间新加的闸门**整段被跳过**：
+bash 按字节偏移续读已打开的脚本，插入内容会让它**越过**新写的段落。
+
+⇒ 三条后果与规矩：
+1. 那次运行**没有**经过档位闸门 ⇒ 它的「闸门通过」是**未证**的（本节的 26.3 因此只把它当
+   **回归闸**用，不当闸门证据）；它确实打出了 `STORE_RESIDUE_NONE`，但那是**产品**打的，
+   不是闸门判的 —— 这两件事不许混。
+2. 改车具脚本前**先确认没有臂在跑**（`pgrep -f h48_flicker_capture`），或改完**重跑一臂**才算验证。
+3. 与本项目一贯口径同形：**「没报错」不等于「执行了」** —— 这里连报错都没有，只是安静地少跑了一段。
+
+### 26.3 h48y 回归闸数字（`MrtPlan` 契约改成「多程序取 max」之后）
+
+| 判据 | 读数 | 结论 |
+|---|---|---|
+| 崩溃/`setPipeline` 附件数校验 | 无 `IllegalStateException`、客户端跑满 240 帧 | ✅ 不崩 |
+| 包契约自报 | `program=world0/gbuffers_terrain colorTargets=1 declaredOutputSlots=[0] samplers=5 varyings=9 unwrittenAttachments=[]` | ✅ 只接地形时 max 就是 1 ⇒ **行为逐字未变** |
+| GAP-024 门控 | `gating=on considered=11 switches=6 kept=9 skipped=2 skippedNames=[composite2, composite3]` | ✅ 未受影响 |
+| GAP-026 自报 | `STORE_RESIDUE_NONE` | ✅ 档位仍是真默认 |
+| 空帧 | **0 / 240**，非空 luma `min 64.03 / med 141.95 / max 147.99` | ✅ 与 §二十四（h48s：med 143.21）同档同形 |
+
+⇒ 可以放心在 `MrtPlan` 之上继续接水（附件数会从 1 变 2，见 GAP-027 的实测契约）。
