@@ -127,5 +127,5 @@ AGENT_CONTEXT.md      ← 跨会话记忆
 里面的路线 A/B/C、「假 Sodium」、`Shader-Core-Vulkan-docs/` 路径等**全部已作废**，
 不要再去找，也不要尝试恢复。**只有 `docs/` 下的有效文档 + `AGENT_CONTEXT.md` 是权威。**
 
-> ⚠️ 2026-10-02 起，**本文件与 `07-CONSTRAINTS.md` §〇·₀ 共同构成目标真源**。
+> ⚠️ 2026-10-02 起，**本文件与 `07-CONSTRAINTS.md` §〇·〇 共同构成目标真源**。
 > 任何与「三支柱 / mixin 边界 / 原生闸门」冲突的表述，以这两处为准。

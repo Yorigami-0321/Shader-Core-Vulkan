@@ -86,7 +86,7 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 | **`vulkan/shader/layout/`** | `AlignedStruct`、`PushConstants`、`Uniform`、`Mat3`、`Vec1f`、`Vec1i` | ⭐⭐ 思路：std140/std430 对齐需要工具类。**对齐规则是 spec 公开内容，自己按 spec 写** |
 
 **关键限制（务必注意）**：
-- 它编译目标是 **MC 1.21.11 / Java 21 / yarn mappings / `com.mojang.blaze3d.*`**，新方向是 **26.3 / Java 25 / 官方 mappings / `com.mojang.renderpearl.*`**。**类名和包名全变了**（`blaze3d.* → renderpearl.*`，现成映射表见 `Vitrail-Shaders/versions/26.3.remap`）—— 但**因为不移植代码，这个映射表只作理解用，不是移植依据**。
+- 它编译目标是 **MC 1.21.11 / Java 21 / yarn mappings / `com.mojang.blaze3d.*`**，新方向是 **26.3 / Java 25 / 官方 mappings / `com.mojang.renderpearl.*`**。**类名和包名全变了**（`blaze3d.* → renderpearl.*`）—— 但**因为不移植代码，任何映射表只作理解用，不是移植依据**。
 - 它 **完全不支持 OptiFine 格式**。它的着色器是自己写的、放在 `assets/vulkanmod/shaders/` 里的固定管线（`PipelineManager` 里硬编码 `terrain` / `terrain_earlyZ` / `blit` / `clouds` 四条），走的是自己的 JSON 配置格式，跟 OF 的 `shaders.properties`/`gbuffers_*` 毫无关系。
 - **它的 `gl/` 包的意义在 26.3 已经大幅下降**：26.3 的原版已经是 Vulkan 后端，`RenderSystem` 下面接的是 `renderpearl.backend.vulkan`。所以 VulkanMod 那套"用 Vulkan 假装 GL"的工作，**在新方向上大部分不需要做了** —— 原版已经替你做完了。真正有参考价值的只是它那两三个"挂载模式"（**做法**，不是代码）。
 - 🔴 **license 边界（本项目的红线）**：VulkanMod 是 **LGPL-3.0**，本项目是 **MIT**，两者不同族。**不得复制它的任何一行代码**（`07-CONSTRAINTS.md` §〇 P1 / L7）。可以带走的是"给 `RenderPipeline` 挂 mixin 扩展接口""`ShaderManager.apply` 里有个可注入的编译点"这类**事实性结论**。
@@ -254,7 +254,7 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 
 > ⚠️ **用途仅限"理解与定位"**。本项目 MIT，**不得移植 VulkanMod 代码**（`07-CONSTRAINTS.md` §〇）。
 > 此表用来回答"它的这个东西相当于我们这边的什么"，不是移植依据。
-> 真正的重映射工具表（若将来用于原版 API 升级）见 `Vitrail-Shaders/versions/26.3.remap`。
+> 重映射表按需自建，不在本项目仓库内维护。
 
 | VulkanMod 类 | 1.21.11 类型 | 26.3 对应类型 | 说明 |
 |---|---|---|---|

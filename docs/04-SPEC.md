@@ -169,7 +169,7 @@ std140 布局、三条环形缓冲**（P4.1.3 双槽 42/24 成员，P4.1.4 补 f
 按 pass 各绑各的。布局由 `glsl/translate/BuiltinsBlockLayout` 从**转译终稿
 文本**重解析（F3 冻结契约：`TranslateResult` 不外传 Injector 内部结果，终稿即驱动编译的
 真源）。太阳走**原版路径**（非 BSL `sunPathRotation=-40°` 包天空）—— 与当前画面里 vanilla
-渲染的天空一致；P4.2 启用包天空后复审（18-PARALLEL 未覆盖登记）。
+渲染的天空一致；启用包天空后复审（登记在 13-GAP-REGISTRY.md GAP-027）。
 
 ### 3.3 管线构建层（`pipeline/`）
 
@@ -299,8 +299,8 @@ OF/Iris 包依赖额外的顶点属性。原版 `VertexFormat` 需要通过 `Ver
 > 🔴 **未定项（禁止猜值，07 X9）**：官方文档给的是**着色器侧**分量类型，
 > **底层元素类型（float32 / int16）文档未给**，而它直接决定 `mc_Entity` 的字节数与 stride。
 > 该值必须等 **P1.2 构建真实 `VertexFormat` 时与原版实测对齐**后再走
-> `18-PARALLEL.md` §3.2 定稿；在此之前 F2 的 `VertexAttribute` 与 E 线 `VertexLayout`（stride=47）
-> 沿用本表旧值，缺口由 `18-PARALLEL.md` §10 的 **P-1d** 跟踪，**不许在并行线里私自改契约**。
+> `VertexAttribute` 与 `VertexLayout`（stride=47）
+> 沿用本表旧值，缺口单独跟踪；**不许私自改契约**。
 
 ---
 
@@ -528,7 +528,7 @@ FramePass pass = frame.addPass("main");
 
 ⇒ **方案 A 已通（生产形态）**；「把包自己的地形 SPIR-V 接进派生 MRT 管线」也已于
 2026-10-04 落地（`h08`/`h09`：片元接线 + `DRAWBUFFERS` 槽位兑现 + 布尔选项可见可改）。
-**历史注（2026-10-03 当时）**：GAP-003 与 GAP-004 曾按 `18-PARALLEL` H 线「顺序纪律」要求同批做，
+**历史注（2026-10-03 当时）**：GAP-003 与 GAP-004 曾按当时的并行规划要求同批做，
 后拆开 —— GAP-004 单独做并非没有意义（其前提正是「派生管线」，没有派生管线就无处挂块），
 该轮把「通道是否真的通」「块能否挂上并每帧绑定」变成可验证事实。
 **未完成项照旧登记，不许当已完成引用。**

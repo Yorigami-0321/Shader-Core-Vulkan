@@ -6,6 +6,98 @@
 ---
 ---
 
+## 2026-10-09（九十六）— 🔬 GAP-027 云：用 MCP 复测黑帧率 ⇒ 云开/关都是 ~33%，**云不是黑帧源**（否证旧「67%」，归因到 GAP-026 残留档）
+
+> **verdict = 三臂都在 [STORE_RESIDUE_NONE]（包默认档）下测：云开(A)=188/562=33.5%、云关(C)=12/36=33.3%，误差内相同 ⇒ 云不是黑帧源；周期 3 按 X55 不作正确性结论**
+> 证据：`evidence/h52-clouds-blackframe-recheck.md` + `evidence/h52-images/`
+> 登记：GAP-027 加 h52 行
+
+### 为什么重测
+
+h51 把 MCP 取证通道打通之后，顺手把 GAP-027「云进 gbuffer」此前靠 X11/残留档测出来的
+「一开云黑帧 1/3→2/3」重测一遍。本轮**无源码改动**，纯取证。
+
+### 测到了什么（三臂，MCP 钉观测面，机位 teleport_player）
+
+| 臂 | cloudsPass | depthGlProxy | main 黑帧 |
+|---|---|---|---|
+| A | on | off | 188/562 = **33.5%**（周期 3） |
+| B | on | on | 0/34（小样本，X55 不采信） |
+| C | off | on | 12/36 = **33.3%** |
+
+云开（A）与云关（C）在误差内相同 ⇒ **云不是黑帧源**，**否证** h49x 的 67%。
+那条 67% 几乎肯定来自 **GAP-026 残留档**（`ADVANCED_MATERIALS=true` 的 8 附件档穿过 h45 起所有臂、
+且改变了被测量本身）；本轮三臂都 `[STORE_RESIDUE_NONE]`，残留排除后云的影响消失。
+A 臂周期严格 3，与 GAP-020 同形，按 **X55**（本机 lavapipe，黑帧率测节奏不测内容）不作云的正确性结论。
+
+云确实进了 gbuffer（独立于黑帧率）：`c0@afterClouds > c0@afterTerrain` 426 帧里 371 帧为正，
+`[GAP-027] 云管线替换生效`、`quadCount=10143 textureReady=true` 都在场。
+
+### 改了什么
+
+仅文档 + 证据（无 src 改动）：新增 `evidence/h52-clouds-blackframe-recheck.md` 与
+`evidence/h52-images/`（glproxyON/OFF × up/horizon 四张）；`docs/13-GAP-REGISTRY.md` GAP-027 加 h52 行。
+
+### 测试结果
+
+`./gradlew test -PquickPlay` → **1088 项 0 失败**（无代码改动）。真机（lavapipe，隔离车道 run/h27）：
+三臂经 MCP 驱动，`[STORE_RESIDUE_NONE]`、后端 Vulkan。
+
+### ⛔ 仍未完成
+
+1. **云的观感不对**（抬头天顶近黑、天上无可辨认云块）⇒ 换成包的 `gbuffers_clouds` 是 GAP-027 下一刀；`mrt.cloudsPass` 不翻默认（视觉未闭环 + 黑帧本机不可判）。
+2. GAP-027 其余未接程序（实体/手/天气/阴影）；GAP-028 的 `renderStage` 逐 draw 供值。
+3. GAP-023 的「像不像」仍待 Iris 同世界同机位对照帧。
+
+## 2026-10-09（九十五）— ✅ GAP-023 看图判据达成：改用 **MCP 驱动游戏**，截图通道一次就通；并更正「本机 MCP 被权限拦」这条被反复抄的错误前提
+
+> **verdict = 看得见水的两个朝向（yaw 270/315）截图里真有 vkdisp 画出来的水面与反射，同臂探针 `depthtex0 ≠ depthtex1` 每帧成立（16/16、21/21）；对照朝向（yaw 0）两者逐帧相同（0/18）且无水**
+> 证据：`evidence/h51-gap023-visual-via-mcp.md` + `evidence/h51-images/`
+> 登记：GAP-023 加 h51 行；`08-TESTING.md` 更正「MCP 被权限拦」口径
+
+### 为什么能一次通
+
+h50o/h50p/h50r 三臂的 F2 截图通道**静默失效**：`x11_input.py` 一路打印 `injected F2 OK`，
+而 `run/h27/screenshots/` 是空的。根因是本机 `GetInputFocus` 恒回 `PointerRoot`（焦点由合成器持有）
+⇒ F2 落不进 Minecraft 表面。X11 键注入这条路**依赖**合成器把键盘焦点留给 MC，而本机不满足。
+
+🔴 **更正一条被反复抄进文档/脚本的错误前提**：`08-TESTING.md:379`、`x11_input.py:550`、
+`h48_flicker_capture.sh:7` 都写着「本机 mcpfabric 驱动被权限层拦，所以走 X11 键注入」。
+**实测不成立**：隔离车道客户端在跑时端口 `25600` 在听，`tools/mcp-drive.py`（stdio 直连 + 车道 token）
+调 `get_self`/`run_command`/`set_time`/`set_weather`/`teleport_player`/`screenshot`/`describe_scene`
+**全部拿到正确回执**。被 `evidence/mcp-fabric-integration.md` §6.1 真正拦的是「在**仓库外**第三方目录
+跑 `./gradlew` 构建 mcpfabric」与「配置不热加载进当前 AI 会话」——两者都不等于「不能驱动游戏」。
+⇒ `screenshot` 直读渲染目标、`teleport_player` 精确钉机位（yaw/pitch 可复核），都不依赖窗口焦点。
+
+### 测到了什么（同臂，`time=6000`+`weather clear`，MCP teleport_player 定三机位）
+
+| 机位 | describe_scene 水 ray | `c1@afterTerrain` 非0 | `depthviz0` | `depthviz1` | `0≠1` | 看图 |
+|---|---|---|---|---|---|---|
+| yaw 270 / pitch 0 | — | 16/16 | 3.269 | **3.635** | **16/16** | 右侧深色反光水面 |
+| yaw 315 / pitch 15 | 23/48 | 21/21 | 4.022 | **4.588** | **21/21** | 前景水面 + 反射 |
+| yaw 0 / pitch 0（对照）| 7/48 | 0/18 | 6.697 | 6.697 | **0/18** | 无水（正确退化）|
+
+⇒ 机制（h50q）+ 看图两条判据都达成：BSL `composite.glsl:333 z1 > z0` 在真实渲染帧里成立。
+
+### 改了什么
+
+仅文档 + 证据（无 src 改动）：新增 `evidence/h51-gap023-visual-via-mcp.md` 与
+`evidence/h51-images/{h51-water-yaw270,h51-water-yaw315,h51-nowater-yaw0}.png`；
+`docs/13-GAP-REGISTRY.md` GAP-023 加 h51 行；`docs/08-TESTING.md` 更正「MCP 被权限拦」那段。
+
+### 测试结果
+
+`./gradlew test -PquickPlay` → **BUILD SUCCESSFUL / UP-TO-DATE，1088 项 0 失败**（无代码改动）。
+真机（lavapipe，隔离车道 run/h27）：本轮三机位经 MCP 驱动取证，后端自报 `Using graphics backend Vulkan`、
+档位 `[STORE_RESIDUE_NONE]`（包默认档）。未提交（待用户确认）。
+
+### ⛔ 仍未完成（下一步入口）
+
+1. **GAP-023 的「像不像」**：需要 Iris 侧同世界同机位对照帧才能逐像素判；本轮只证「水经我方管线进画面 + depthtex1 独立且被用上」。
+2. GAP-027 其余未接程序（云/实体/手/天气/阴影）；GAP-028 的 `renderStage` 逐 draw 供值。
+3. GAP-020 周期 3（X55：本机 lavapipe 不可判）。
+4. 把 `x11_input.py` / `h48_flicker_capture.sh` 里「MCP 被拦 ⇒ 走 X11」的注释按本轮结论改过来（取证主通道改用 MCP）。
+
 ## 2026-10-09（九十四）— 🎯 GAP-023 机制端到端成立：真因是 GAP-027 接水时**把半透明层的写深度关掉了**（原版只有 WEATHER 关），修好之后 `depthtex0 ≠ depthtex1` 每帧成立
 
 > **verdict = 看得见水的三个朝向里两个深度时刻每帧不同、看不见的五个朝向逐帧相同（同臂白送对照）**

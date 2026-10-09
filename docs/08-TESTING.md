@@ -180,8 +180,7 @@ compiled=9 (aligned)`，零 `undeclared identifier` / `are reserved` / `Missing 
 `解析失败` / `fullscreen pass failed`，首错遮蔽闭合（DH 类已知、非未知类收轮）。
 
 **P4.1 BSL 视觉基线（2026-10-02）**：141 矩阵修复后确认 BSL 实际渲染连贯、无静默破坏。
-⚠️ 本环境 Agent 不支持查看图片（PNG Read 被内容过滤拒绝），视觉判读改 **luma 量化分带**
-（p418 同源口径）+ 日志诊断 + **用户目检** 三方交叉。A/B：`shaderPack=""`（BSL）vs
+视觉判读用 **luma 量化分带** + 日志诊断 + **用户目检** 三方交叉。A/B：`shaderPack=""`（BSL）vs
 `shaderPack="none"`（passthrough，config 热加载切）截图 luma —— BSL content 20.9 / 天空 6.9 /
 地面 26.6；passthrough content 34.1 / 天空 28.3 / 地面 38.3（BSL 偏暗、天空 0.24×，因相机朝天且
 世界时钟冻结黎明）；渲染连贯（无全黑/全白/彩色尖刺）、零 vkdisp ERROR、用户目检确认 BSL 观感正常
@@ -220,7 +219,7 @@ compiled=9 (aligned)`，零 `undeclared identifier` / `are reserved` / `Missing 
 | **B4 切包端到端** | **≤ 2 秒**（中等包）；缓存命中 **≤ 0.5s** | 计时日志 | **P0 起必过** | 1861ms ⚠️ 接近 |
 | **B5 首帧编译** | 无 **> 200ms** 单帧卡顿 | 帧时间直方图 | P3 起 | 待测 |
 | **B6 常驻内存** | 1 小时无持续增长；增量 **≤ 200MB** | 任务管理器 / JFR | P1 起 | 待测 |
-| **B7 换维度 / F3+T** | 不崩、不闪烁（零空窗） | 截图序列 + 日志 | P3 起 | 待做（P4.6） |
+| **B7 换维度 / F3+T** | 不崩、不闪烁（零空窗） | 截图序列 + 日志 | P3 起 | 待做 |
 
 **冷路径分段计时（必须打，B3/B4 的取证依据）**：
 
@@ -295,7 +294,7 @@ LOGGER.info("vkdisp: stage timing: scan={}ms parse={}ms preprocess={}ms translat
 | 静默降级 | **0 处**（任何降级必须 WARN 或 ERROR，X11） |
 | mixin 注入点可归因 | 出问题时能通过关闭**单个**注入点定位（M1⑤ / X29） |
 | FFI panic 隔离 | 原生侧任意 `panic!` **不得**导致 JVM abort（N5 专项：故意触发一次 panic，须降级为错误码） |
-| 切包闪烁 | P4.6 完成后切包零空窗（B7） |
+| 切包闪烁 | B7 闭环后切包零空窗 |
 
 ---
 
@@ -377,9 +376,12 @@ LOGGER.info("vkdisp: stage timing: scan={}ms parse={}ms preprocess={}ms translat
 
 🔴 **这张对照图的判据边界（必须写在图旁边）**：两张图**不是同一存档、不是同一机位**，
 所以它只能回答「**这个效果有没有做**」，**不能**回答「做得像不像」。
-后者需要同一世界同一坐标同一时刻的截图 —— 本机 MCP 驱动被权限拦，
-现用 `x11_input.py chat` 注入 `/gamerule doDaylightCycle false` + `/time set 6000` 钉时刻，
-但机位仍只能靠 quickPlay 恢复的上次状态 ⇒ **同场景逐像素对比尚未成立**。
+后者需要同一世界同一坐标同一时刻的截图。🔴 **2026-10-09 更正**：此前写「本机 MCP 驱动被权限拦」
+**不成立**（h51 实测）—— 隔离车道客户端在跑时端口 25600 在听，`tools/mcp-drive.py`（stdio 直连）
+的 `teleport_player`/`set_time`/`set_weather`/`screenshot`/`describe_scene` 全部可用，
+机位可由 `teleport_player` 精确钉住（yaw/pitch 可复核）⇒ **同场景对比现在可做**；
+X11 `chat`/F2 注入这条通道因焦点被合成器持有而静默失效，已退役。
+仍缺的是 **Iris 侧的同世界同机位对照帧** ⇒ 逐像素「像不像」尚未成立。
 
 ⇒ 因此 BSL 行的「渲染正确」列**保持 ⬜ 不勾**：对照图是进度证据，不是通过证据。
 
