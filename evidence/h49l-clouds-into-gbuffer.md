@@ -134,3 +134,57 @@ Vulkan 1.4.354 / Mesa 26.2.4，帧图 `854x480`，包 `BSL_v10.1.8` 默认档，
   抬头看天时云本该盖住大片画面，所以还有一格（位姿 / 相机偏移 / 云层在相机之上还是之下）未查。
 - 取证车道被改过又改回：`run/h27/options.txt` 的 `graphicsPreset` 在 h49o 期间是 `"fast"`，
   跑完已恢复 `"fancy"`（本臂结论只在**明说档位**的前提下成立）。
+
+---
+
+## 九、h49p：管线替换那条路**走通了**（FANCY 云在 `withCull(false)` 下落地）
+
+实现：`bridge/GbufferPipelineSwaps`（`@EventBusSubscriber` mod 总线）注册一个
+`PipelineModifier`，只把 `RenderPipelines.CLOUDS` 换成
+`RenderPipeline.builder(CLOUDS_SNIPPET).withLocation(name).withCull(false).build()`；
+云那一格用 `RenderSystem.renderWithPipelineModifier(key, runnable)` 包住
+（自带 push/pop 配对 ⇒ 不会漏 pop 撞上 `ClientHooks` 的 `ensurePipelineModifiersEmpty()` 抛错）。
+
+| 逐字 | 值 |
+|---|---|
+| 注册自报 | `[GAP-027] pipeline modifier 注册: key=vkdisp:clouds_no_cull 目标=RenderPipelines.CLOUDS -> withCull(false)` |
+| **生效**自报 | `[GAP-027] 云管线替换生效: location=minecraft:pipeline/clouds/transform/vkdisp/clouds_no_cull` |
+| `status` | `FANCY`（**没**改画质，`graphicsPreset` 保持 `fancy`） |
+| 网格 | `quadCount=9844 textureReady=true facesBufferReady=true` |
+| `c0@afterClouds#418`（诊断洋红底） | `meanRGB=(253.3363, **3.8221**, 253.3363)` |
+
+对照 h49n（同一档、`cloudsNoCull=false` ⇒ 用原版带裁剪的 `CLOUDS`）：
+`c0@afterClouds#415 = (255.0000, **0.0000**, 255.0000)` ⇒ **零写入**。
+⇒ 🔑 **差异只有「裁剪」一项，FANCY 云从不写变成写** ⇒ 根因确认，且修法就是那条派生管线。
+另外两条：`Modifier stack is not empty` 计数 **0**、`Failed to find or load pipeline` 计数 **0**
+⇒ 栈配平没问题，**未预注册的派生管线确实被按需编译**（`PipelineCache#get:30-36` 那条事实成立）。
+
+## 十、h49q：顺手修掉一个**我自己刚造的判据污染**（`c0@afterTerrain` 名不副实）
+
+云那一格插在「地形 pass 关闭」与「翻代」之间，而 `probeAfterTerrain()` 原来挂在翻代之后
+⇒ 它读到的其实是「地形 **+ 云**」。这个标签是水/云两条判据的分工依据，不能含糊。
+
+修法：把 `probeAfterTerrain()` **前移**到地形 pass 刚关、云之前，并跟着把读法从
+`slotTexture(slot)`（被读那一代）改成 `poolWriteTexture(slot)`（待写那一代）——
+翻代前的 writeGen 与翻代后的 readGen 是**同一张图** ⇒ 与历史臂逐位可比。
+
+| 逐字（h49q，同一帧 #420） | 值 | 判什么 |
+|---|---|---|
+| `c0@afterTerrain#420` | `(36.1019, 45.4776, 57.1091)` | 只有**地形**（不是洋红 ⇒ 探针确实在云之前） |
+| `c0@afterClouds#420` | `(252.6122, **5.5169**, 252.6122)` | 洋红底 + **云**（绿通道 5.52） |
+
+⇒ 两个标签第一次真正切开「地形 vs 云」。
+🔖 同一臂还有一条早帧自报：`本帧跳过云重放（原因=clouds-off-or-transparent status=FANCY alpha=0）`
+—— 关卡状态还没填的时候 `cloudColor` 的 alpha 是 0，**跳过原因自报**这一格当场值回票价
+（否则下一轮又会把「早帧没云」读成「云坏了」）。
+
+## 十一、h49p/h49q 之后仍然**没判**的东西
+
+1. **云覆盖只有 ~1-2% 画面量级**（绿通道 3.8~5.5 / 255）：抬头看天、云高 192、云范围 64 时
+   本该盖住大片天空 ⇒ 还有一格（位姿 / 相机偏移 / `CloudInfo` 的代次）未查。
+   **裁剪只解释了「为什么是零」，没解释「为什么这么少」。**
+2. **绕序为什么会翻**：我方自建 pass 里原版绕序判定把云剔光，但**地形在同一族 pass 里正常出画**
+   ⇒ 不能推广成「所有 pass 都翻」。来处未查（`VulkanRenderPass` 对 swapchain 与 image 目标的
+   `frontFace`/视口差异是第一个要读的地方）。
+3. 云用的仍是**原版着色器**，不是包的 `gbuffers_clouds`。
+

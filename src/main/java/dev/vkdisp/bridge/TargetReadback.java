@@ -242,7 +242,14 @@ private static final long WARMUP_FRAMES = 600L;
             slots = java.util.List.of(0);
         }
         for (int slot : slots) {
-            submit("c" + slot + "@afterTerrain", MrtTerrainPass.slotTexture(slot));
+            // 🔴 h49p：取「**待写那一代**」而不是「被读那一代」。
+            //   本方法原来跑在 `POOL.advanceWritten` **之后**，那时「被读那一代」就是刚写完的那张；
+            //   现在云那一格插在「地形 pass 关闭」与「翻代」之间 ⇒ 若还留在原处，
+            //   `c0@afterTerrain` 这个标签就**名不副实**（它会把云也算进去），
+            //   而水/云两条判据都要靠这个标签切「地形 vs 链」。
+            //   ⇒ 调用点前移到地形 pass 刚关时，读法跟着换成同一张图的另一个名字
+            //     （翻代前的 writeGen == 翻代后的 readGen ⇒ 与历史臂逐位可比）。
+            submit("c" + slot + "@afterTerrain", MrtTerrainPass.poolWriteTexture(slot));
         }
     }
 

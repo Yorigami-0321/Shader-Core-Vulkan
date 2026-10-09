@@ -194,7 +194,19 @@ public final class CloudsIntoGbuffer {
                 .createRenderPass(descriptor)) {
             // 原版在 CloudRenderer#render 内部自己调 bindDefaultUniforms（第 201 行），
             // 这里**不**重复调：多调一次不报错，但会让人以为云依赖我方绑的东西。
-            renderer.render(status, renderPass);
+            if (VkDispConfig.MRT_CLOUDS_NO_CULL.get()) {
+                // 🔌 管线替换（GAP-027 第一次用这条官方通道）：
+                //   CloudRenderer 内部走 RenderSystem.getCompiledPipeline(...)
+                //   → getCompiledPipelineNullable 的**首条语句**就是 PIPELINE_MODIFIERS.apply
+                //   ⇒ 在它的调用期间 push 我们的 modifier 就够了，不必 mixin、也不必预注册管线
+                //   （PipelineCache#get 未命中会就地编译）。
+                //   renderWithPipelineModifier 自带 push/pop 配对 —— 不用手写 finally：
+                //   漏 pop 会让 ClientHooks 的 ensurePipelineModifiersEmpty() 在帧尾**抛**。
+                RenderSystem.renderWithPipelineModifier(GbufferPipelineSwaps.CLOUDS_NO_CULL,
+                        () -> renderer.render(status, renderPass));
+            } else {
+                renderer.render(status, renderPass);
+            }
         }
     }
 

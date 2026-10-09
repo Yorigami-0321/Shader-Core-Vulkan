@@ -6,6 +6,64 @@
 ---
 ---
 
+## 2026-10-09（八十二）— ✅ 云「被剔光」修好了：管线替换那条官方通道**第一次走通**，并修掉我自己刚造的判据污染
+
+> **verdict = GAP-027 的「非地形几何换状态/换着色器」这条路从此可用；云在生产档也真的写进 colortex0 了**
+> 证据：`evidence/h49l-clouds-into-gbuffer.md` §九（h49p）§十（h49q）+ h49s 生产档对照
+
+**本次改了什么**
+
+1. ✅ 新增 `bridge/GbufferPipelineSwaps`：mod 总线注册一个 `PipelineModifier`，
+   只把 `RenderPipelines.CLOUDS`（FANCY 云，**带**背面裁剪）换成
+   `builder(CLOUDS_SNIPPET).withLocation(name).withCull(false)`。
+   幂等靠「入参**是不是**那条原版对象」判定，不是靠 location 里有没有我的后缀
+   （后者会让结果再次进 modifier 时被二次加工）。
+   云那一格用 `RenderSystem.renderWithPipelineModifier(key, runnable)` 包住 ——
+   它自带 push/pop 配对，**不手写 finally**：漏 pop 会撞上帧尾
+   `ClientHooks.ensurePipelineModifiersEmpty()` 的**抛**。
+2. ✅ **判据（四臂递进）**：
+   生效自报 `云管线替换生效: location=minecraft:pipeline/clouds/transform/vkdisp/clouds_no_cull`；
+   诊断洋红底 `c0@afterClouds#418 = (253.3363, **3.8221**, 253.3363)`
+   （对照 h49n 同档不带替换 = `(255, 0, 255)` 零写入）；
+   🔑 **生产档 LOAD**（`cloudsDiagnosticClear=false`）h49s 也量到稳定差：
+   `#423 afterTerrain (36.10,45.48,57.11)` → `afterClouds (36.98,45.90,55.85)`（`R+0.88 / B−1.26`）
+   ⇒ 云在生产画面里**确实改变了 colortex0**。
+   两条配平判据：`Modifier stack is not empty` **0** 条、`Failed to find or load pipeline` **0** 条
+   ⇒ 派生管线**不需要预注册**（`PipelineCache#get:30-36` 未命中就地编译，这条事实钉死）。
+3. ✅ 开关 `mrt.cloudsNoCull` **默认开**：它不是「可选增强」，是修正「把云剔光」这个错误状态；
+   关掉只用于对照取证。（`mrt.cloudsPass` 仍默认关 ⇒ 整条云路径默认不进。）
+4. 🔴 **修掉一个我自己上一轮刚造的判据污染**：`probeAfterTerrain()` 原来挂在 `advanceWritten` 之后，
+   而云 pass 插在「地形 pass 关闭」与「翻代」之间 ⇒ 那个标签读到的其实是「地形 **+ 云**」。
+   现在前移到云之前，读法跟着从 `slotTexture`（被读那一代）改成 `poolWriteTexture`（待写那一代）——
+   翻代前 writeGen == 翻代后 readGen ⇒ **历史臂逐位可比**。
+   h49q 逐字：`#420 afterTerrain (36.10,45.48,57.11)` vs `afterClouds (252.61,**5.52**,252.61)`
+   ⇒ 两个标签第一次真正切开「地形 vs 云」。
+   🔖 同一臂还有一条早帧自报 `本帧跳过云重放（原因=clouds-off-or-transparent status=FANCY alpha=0）`
+   ——「跳过原因自报」这一格当场值回票价（否则下一轮又会把「早帧没云」读成「云坏了」）。
+
+**为什么改**：上一条把根因判到「背面裁剪」，修法有两条路（预注册派生管线 / 官方管线替换）。
+选后者是因为它同时是 GAP-027 登记的**结构性入口**：实体/手/天气/云这些不走 `ChunkSectionLayer`
+的 draw，第一次能不换着色器地换状态、下一步能不换 mixin 地换成包的 `gbuffers_*` 程序。
+
+**影响的文档**：`evidence/h49l-clouds-into-gbuffer.md`（§九/§十/§十一）、
+`docs/13-GAP-REGISTRY.md` GAP-027 云那一行（替换完成 + 判据污染修复 + 默认值翻开的理由，
+并**保留**原「下一刀」原文以免被当成事后编的）。
+
+**测试结果**：全量 **1071 / 0 失败 / 0 错误**。运行侧：h49p（诊断档）+ h49r（配置漏重置，如实记）
++ h49s（生产档）三臂。
+
+**是否已提交**：见本条目对应提交（本地提交，未推送）。
+
+**⛔ 仍未完成**：① **云覆盖只有 ~1-2% 画面量级**（绿通道 3.8~5.5 / 255）——
+裁剪只解释「为什么是零」，没解释「为什么这么少」；位姿 / 相机偏移 / `CloudInfo` 那一格未查；
+② **绕序为什么会翻**未查（地形在同一族 pass 里正常出画 ⇒ 不能推广成通则；
+第一个要读的地方是 `VulkanRenderPass` 对 swapchain 与 image 目标的 `frontFace`/视口差异）——
+这条是「实体/手/天气搬进 gbuffer 却不写」那一整类的解释；
+③ 云用的仍是原版着色器，换成包的 `gbuffers_clouds` 未做（现在通道通了，缺的是逐程序的顶点适配层）；
+④ 生产视图整帧黑（GAP-019/020）；⑤ 水读数断续；⑥ GAP-028 第二半；⑦ GAP-023 ②/③。
+
+---
+
 ## 2026-10-09（八十一）— 🔑 云「搬进 gbuffer 却零写入」的根因判到底了：**背面裁剪**（`CLOUDS` 裁、`FLAT_CLOUDS` 不裁）
 
 > **verdict = 同一份云几何、同一条 shader，只差 `withCull(false)` 一项，就从「一个像素都不写」变成「落地」**

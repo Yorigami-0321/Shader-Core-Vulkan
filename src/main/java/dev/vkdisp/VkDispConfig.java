@@ -786,6 +786,25 @@ public final class VkDispConfig {
                     + "问题在云的 draw；仍读到地形值 ⇒ 挂的 view 与被读的代次不是同一张图。")
             .define("mrt.cloudsDiagnosticClear", false);
 
+    /**
+     * GAP-027：云走「关背面裁剪」的派生管线。默认<b>开</b> —— 关掉就等于「云一条像素都不写」，
+     * 它不是「可选的增强」而是<b>修正一个把云剔光的错误状态</b>（证据链见下面 comment）。
+     *
+     * <p>依据（h49n/h49o 实测）：原版 {@code RenderPipelines.CLOUDS}（FANCY 云）<b>带</b>背面裁剪，
+     * 而我方 gbuffer pass 里同一份云几何被<b>剔光</b>（洋红底上零写入）；切到 {@code fast}
+     * 走 {@code FLAT_CLOUDS}（逐字 {@code withCull(false)}）后云像素落地。
+     * ⇒ 本格用 NeoForge 的管线替换通道把 {@code CLOUDS} 换成 {@code withCull(false)} 的派生版。
+     *
+     * <p>⚠️ 它只解决「被剔光」，<b>不</b>解决「覆盖只有 ~0.1%」那一半（位姿/相机偏移未查）。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_CLOUDS_NO_CULL = BUILDER
+            .comment("GAP-027：云改用 withCull(false) 的派生管线（默认**开**）。"
+                    + "依据 = h49n→h49s 四臂：原版 CLOUDS 带背面裁剪 ⇒ 云在我方 pass 里被剔光"
+                    + "（诊断洋红底上零写入），换成 withCull(false) 后生产档 LOAD 下"
+                    + "c0@afterClouds 与 c0@afterTerrain 出现稳定差 (R+0.88 / B−1.26)。"
+                    + "关掉 = 回到「云一条像素都不写」，只用于对照取证。")
+            .define("mrt.cloudsNoCull", true);
+
     public static final ModConfigSpec.BooleanValue MRT_CLOUDS_PASS = BUILDER
             .comment("GAP-027：把原版云画进 gbuffer colortex0（地形之后、链之前；默认关）。"
                     + "本格只搬几何、不换成包的着色器 —— 换包着色器要走管线替换那一刀。")

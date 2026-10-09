@@ -529,6 +529,10 @@ public final class MrtTerrainPass {
             inMrtPass = false;
         }
 
+        // 🔬 GAP-019 定位档：**地形 pass 刚画完**就取一次（h49p 把它从翻代之后挪到这里）。
+        //   为什么必须在云之前：云那一格也写 colortex0 ⇒ 留在后面这个标签就名不副实，
+        //   而水/云两条判据都靠「c0@afterTerrain vs c0@afterClouds」切责任侧。
+        TargetReadback.probeAfterTerrain();
         // 🔴 GAP-027 第二刀：把云画进 gbuffer。位置是**硬约束**，不是风格：
         //   ① 必须在下面那次 {@code POOL.advanceWritten} **之前** —— 翻代之后「待写那一代」就换了，
         //      云会写进另一代 ⇒ 链读到「只有地形、没有云」（h48i 的天空逐字踩过）；
@@ -550,9 +554,8 @@ public final class MrtTerrainPass {
             }
         }
         POOL.advanceWritten(terrainWritten);
-        // 🔬 GAP-019 定位档：链跑之前就取一次 ⇒ 与帧尾的 `colortex0` 对比即可分辨
-        //   「地形没画进池」与「链把内容打没了」（开关默认关，见 mrt.pixelProbeAfterTerrain）。
-        TargetReadback.probeAfterTerrain();
+        // 🔖 `probeAfterTerrain()` 已在**地形 pass 刚关、云之前**取过（h49p）：
+        //   翻代前读 writeGen 与翻代后读 readGen 是同一张图 ⇒ 数值口径不变。
 
         framesDrawn++;
         if (!orderMarkerLogged) {
