@@ -271,7 +271,48 @@ h49h 顺着做了一次完整回执核对，日志里逐字出现：
 
 ---
 
-## 九、本轮**不覆盖**什么（显式清单，别把这些读成已验）
+## 九、离线读出来的一条**具体依赖**（候选 ② 从「也许有 discard」升级成「discard 由谁喂」）
+
+不必跑臂就能往前推一步：水那一条 `discard` 的**输入**是可以逐字查的。
+
+```glsl
+// build/bench-golden/BSL_v10.1.8/world0_gbuffers_water.fsh.trans.glsl:1899-1905
+float cloudViewLength = texture(gaux1, screenPos.xy).r * cloudMaxDistance;   // cloudMaxDistance = 2*far
+cloudBlendOpacity = step(viewLength, cloudViewLength);
+if (cloudBlendOpacity == 0) { discard; }
+```
+
+⇒ **水像素的生死不取决于水自己，取决于 `gaux1.r`**：`gaux1.r = 0` ⇒ `cloudViewLength = 0`
+⇒ `step(viewLength, 0) = 0`（`viewLength > 0` 恒成立）⇒ **每一片水都自弃**。
+
+那 `gaux1` 是谁写的？逐字查包（`BSL_v10.1.8.zip`）：
+
+| 出处 | 逐字 | 含义 |
+|---|---|---|
+| `program/final.glsl:27` | `const int gaux1Format = R8; //cloud distance, ao` | 包自己说这张图**同时**装「云距离」和「AO」 |
+| `program/deferred.glsl:87-88` | `/* DRAWBUFFERS:4 */` + `gl_FragData[0] = vec4(ao, 0.0, 0.0, 0.0);` | 声明写槽 4、把 **AO** 放进它的第 0 个分量 ⇒ 我方口径下 `gaux1 = colortex4` ⇒ **`gaux1.r = ao`** |
+| `program/deferred1.glsl:616,621,624,627` | `DRAWBUFFERS:04 / 045 / 046 / 0456` | 高级材质档下 deferred1 也写槽 4 |
+| `program/gbuffers_terrain.glsl:435` 等 | `gl_FragData[4] = vec4(fresnel3, 1.0);` | 地形在**开了高级材质**时才写槽 4（默认档那条在死分支里 ⇒ 默认档 `declaredSlots=[0]`，与本轮实测一致） |
+
+🔑 **要害在顺序**：OF/Iris 的执行序是 `gbuffers_* → deferred* → composite*`，
+而水（`gbuffers_water`）**读**的 `gaux1` 是 `deferred`（**跑在它之后**）写的
+⇒ 包自己依赖的是**上一帧**的 `gaux1`。我方确实是那个形状（GAP-018 的双代轮转：
+水读 `poolView(4)` = 被读那一代 = 上一帧链写进去的内容），
+所以这条依赖**结构上成立**，但**本轮没有量过 `colortex4` 的实际值**
+⇒ 「水自弃是不是因为 `gaux1.r ≈ 0`」目前**只是假设，未判**（候选 ① 深度、③ 几何同样未判）。
+
+### 下一轮最省的一刀（**不需要改代码**）
+
+链侧探针的槽位本来就是配置项：`mrt.pixelProbeChainSlots="0,4"` ⇒ 直接读 `colortex4`。
+- 读到 `ao ≈ 1`（开阔处）⇒ 自弃假设**否证**，回到 ①/③（深度比较改 `ALWAYS` 那一臂）；
+- 读到 `≈ 0` ⇒ 自弃假设**成立**，修法方向 = 「`gaux1` 缺席时给**中性元**」：
+  `gaux1.r = 1.0` ⇒ `cloudViewLength = 2*far ≥ 任何 viewLength` ⇒ `step = 1` ⇒ 不遮挡
+  （语义 = 「此刻还没有云层/AO 覆盖」，与 `NeutralMaterialMaps` 那对「乘法单位元」同一族，
+  不是编一个好看的数）。⚠️ 那是**改产品行为**，得先按 T12 登记再动。
+
+---
+
+## 十、本轮**不覆盖**什么（显式清单，别把这些读成已验）
 
 1. **水为什么没落地**未判（§八 那四个候选一个都没切开）；**水的画面效果对不对**也未判 ——
    那还要 `depthtex1` 的真快照（GAP-023 ②/③ 未做）与水的顶点属性上限（GAP-007）。
