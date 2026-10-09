@@ -80,9 +80,6 @@ public final class OfUniformManager {
     private static float frameDeltaSeconds;
     private static Object lastLevelKey;
 
-    /** frameCounter 自增（跨世界持续）。 */
-    private static int frameCounter;
-
     /** gbufferPrevious* / previousCameraPosition 的历史槽（上一次 gather 的当帧值；首帧前为 null）。 */
     private static org.joml.Matrix4f previousView;
     private static Vector3f previousCamera;
@@ -113,6 +110,21 @@ public final class OfUniformManager {
      * @param shadowEntries 光空间列表（P3.1；空 = 单位阵）
      * @return 名字 → 值；永不 null
      */
+    /** 每帧恰好推进一次的时钟（见 {@link FrameClock} 的说明；纯逻辑，可离线单测）。 */
+    private static final FrameClock FRAME_CLOCK = new FrameClock();
+
+    /**
+     * 本帧的令牌：优先用 M-05 的捕获计数（GAP-019 的自报实测它与 {@code framesDrawn} 严格 1:1）。
+     *
+     * <p>⚠️ 拿不到捕获计数（未进世界 / 捕获关着）时退回「每次调用都算一帧」——
+     * 那是<b>本次修改前的行为</b>，不是猜一个新语义；退回时会被 {@link FrameClock} 的
+     * 自报统计看见（{@code noToken} 计数）。
+     */
+    private static long frameToken() {
+        long token = dev.vkdisp.bridge.TerrainDrawCapture.captureCount();
+        return token > 0L ? token : -1L;
+    }
+
     public static Map<String, Object> gather(Minecraft mc, int width, int height,
             int[] atlasSize, List<LightSpaceList.Entry> shadowEntries, Family family) {
         Map<String, Object> values = new HashMap<>();
@@ -191,7 +203,14 @@ public final class OfUniformManager {
         //   `color /= 2*0 + 0.125` = 固定 ×8 增益 ⇒ 整屏削顶（evidence/h47）。
         //   尖峰帧（>0.5s，切窗/暂停）不更新 ⇒ 沿用上一次的有效步长，而不是回 0 卡死。
         values.put("frameTime", frameDeltaSeconds);
-        int frameNo = ++frameCounter;
+        // 🔴 OF 语义：frameCounter 是<b>每帧</b> +1，不是「每次取值 +1」。
+        //   而 gather() <b>一帧内可以被调多次</b>（h48z 核实：FrameApi 两处 + 本类两处，
+        //   接上水之后每帧还要多一次）⇒ 旧写法会让它每帧跳 2~4。
+        //   包拿它做逐帧抖动/TAA 相位：BSL `ambientOcclusion.glsl:64/66` 逐字
+        //   `dither = fract(dither + frameCounter * 0.618)` / `* 0.5`
+        //   ⇒ 一个「*0.5」的表达式对奇偶敏感，每帧跳 2 就等于**永远同一相位**。
+        //   修法 = 用「每帧恰好推进一次的捕获计数」当令牌去重（GAP-019 已实测 1:1）。
+        int frameNo = FRAME_CLOCK.advance(frameToken());
         values.put("frameCounter", frameNo);
         // 🔴 GAP-022 / MC_VERSION 两条自报（两种状态各打一条、每进程一次）。
         //   收进一个 helper 而不摊在 gather() 里：gather() 本来就在 QD-04 棘轮的 60 行边上，
@@ -203,8 +222,11 @@ public final class OfUniformManager {
         //   ⚠️ **必须节流**：本方法每帧都跑，无节流的 INFO 会把热路径变成 I/O 瓶颈。
         if (dev.vkdisp.VkDispConfig.DEBUG_LOG.get() && frameNo % 300 == 0) {
             dev.vkdisp.VkDisp.LOGGER.info(
-                    "vkdisp: [qd-02] ofUniform keys={} frame={} firstKeys={}",
-                    values.size(), frameNo, new java.util.ArrayList<>(values.keySet()).subList(0, 6));
+                    "vkdisp: [qd-02] ofUniform keys={} frame={} frameClock=({}) firstKeys={}"
+                            + " —— frameClock 每帧只该 +1：sameTokenHits 是「同一帧内被省下的自增」，"
+                            + "noTokenCalls>0 表示本帧拿不到捕获计数（退回每次调用算一帧）",
+                    values.size(), frameNo, FRAME_CLOCK.describe(),
+                    new java.util.ArrayList<>(values.keySet()).subList(0, 6));
             // 🔬 GAP-022 矩阵那一半的**取证行**。登记表明确要求：只能用**游戏里真实**的那一对矩阵，
             //   不能用我方重构造的矩阵 —— 上一轮的往返检查正是这样自毁的
             //   （`gl⁻¹·(ndc,1)` 那类恒等式在 `m32 ≠ ±1` 时不成立）。

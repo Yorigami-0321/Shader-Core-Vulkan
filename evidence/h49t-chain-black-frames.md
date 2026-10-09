@@ -224,3 +224,69 @@ AO 那边（`ambientOcclusion.glsl:60 GetLinearDepth(z, projectionInverse)`）
   而我方 `frameCounter` 是「每次 `gather()` +1」而非「每帧 +1」（h48z 已核实 `gather` 一帧可被调多次）
   ⇒ 多一个 pass 会改变 `gather` 的调用次数分布。切法：把 `frameCounter` 改成每帧恰好 +1 再跑同一格。
 
+## 十、h50c：🎯 **根因找到了** —— `frameCounter` 每次 `gather()` 都 +1，而 BSL 的 AO 靠它的**奇偶**取抖动相位
+
+### 缺陷形状（源码级）
+
+`OfUniformManager` 旧写法逐字 `int frameNo = ++frameCounter;` —— 一个**静态自增**，
+而 `gather()` **一帧内可以被调多次**（h48z 核实：`FrameApi` 两处 + `TerrainPipelineApi` 两处，
+接上水之后每帧还要多一次）⇒ `frameCounter` 每帧跳 2~4。
+包拿它做逐帧相位，BSL 逐字：
+
+```glsl
+// shaders/lib/lighting/ambientOcclusion.glsl:64 / :66
+dither = fract(dither + frameCounter * 0.618);
+dither = fract(dither + frameCounter * 0.5);      // ← 对**奇偶**敏感
+```
+
+`* 0.5` 那支：`frameCounter` 每帧 +2 ⇒ `fract` 的结果**永远同一相位**；
+每帧 +1 才会在 0 / 0.5 之间交替。AO 的采样核靠这个抖动打散规则网格，
+相位被钉住时某些配置下整个累加会**系统性落到空处** ⇒ `float ao = 0.0` 保持 0 ⇒ 写黑。
+
+### 修法
+
+`render/FrameClock`：以「每帧恰好推进一次的令牌」去重 —— 令牌用 M-05 的捕获计数
+（GAP-019 的自报实测它与 `framesDrawn` 严格 1:1）；同一令牌内帧号恒定。
+拿不到令牌（未进世界 / 捕获关着）时**退回旧口径**并把退回次数数出来（`noTokenCalls`），
+不猜一个新语义。单测 3 条（`FrameClockTest`：同令牌不自增 / 无令牌退回且被计数 / 退回后恢复）。
+
+### 判据（与 §八/§九 同一套逐级观测面，**唯一差异 = 这份修法**）
+
+| 配置（云开 + `depthGlProxy=true`） | `deferred1` 输出为 0 的帧 |
+|---|---|
+| h50a（修 `frameCounter` 之前） | 52 / 78 = **67%** |
+| h50b（+ 云不写深度） | 50 / 76 = **66%**（⇒ 那条假设否证） |
+| **h50c（+ `frameCounter` 每帧 +1）** | **0 / 76 = 0%** ✅ |
+
+`main` 前 8 帧逐字：`88.43 / 145.89 / 142.05 / 107.98 / 91.35 / 107.72 / 107.68 / 91.07`
+—— **每帧都有内容**（此前每 3 帧就有一个 `0.0000`）。
+`frame=` 最大 154 而探针取样 76 轮 ⇒ 帧号与实际帧数同速（旧写法会跑到 300~600）。
+
+### 完整因果链（本轮闭合）
+
+```
+mrt.packWater/cloudsPass 等改动让 gather() 每帧被调的次数变化
+        ↓
+frameCounter 每帧跳 2~4（而不是 1）
+        ↓
+BSL AO 的 dither 相位被钉住（fract(x + frameCounter*0.5)）
+        ↓
+GetLinearDepth 那圈累加系统性落到空处 → float ao = 0.0 保持 0
+        ↓
+deferred1 输出全黑（周期性，因为相位只在部分帧上撞坏）
+        ↓
+帧尾 main 跟着黑 ⇒ 用户看到的「黑一下正常一下」（2026-10-06 报的那条）
+```
+
+🔴 **仍然没解释的一格（别当已知）**：为什么**云关着**时同样的 `frameCounter` bug 只有 33%、
+而云开着变 67%，且 `depthGlProxy=true` 能在云关时把它压到 0.6%、云开时却压不住。
+合理解释是「AO 的坏相位与 `depthGlProxy` 引入的额外 pass/提交次数互相调制」，
+但本轮**没有判这一层** —— 只证明了修 `frameCounter` 之后**两种配置都不再黑**。
+
+### 现在可以谈默认值了吗
+
+- `mrt.depthGlProxy`：仍**不翻**。§五 那三条看图判据（`isSky` 认对天空 / 光柱镜斑位置 /
+  SSR 不再拿垃圾 `viewPos`）**还没做** —— 本轮修的是「不黑」，不是「对」。
+- `mrt.cloudsPass`：仍**不关**（默认 false 不变），但拦它的两条里已经解决一条
+  （黑帧），剩下「云渲染成暗绿的布」那条未判。
+
