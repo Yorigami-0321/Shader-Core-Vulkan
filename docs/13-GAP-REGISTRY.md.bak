@@ -567,10 +567,10 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 | **顺序约束（已实测过一次的坑）** | 帧图的执行序**只由 `FramePass#requires` 决定**，插入序不算依赖（`evidence/h48` §十六/§十七：没声明 `requires` 时天空被排到地形之后，又被地形盖回去）。⇒ 每加一条 gbuffer pass 都必须显式定序，且**必须**在 `04-SPEC`/本表里留一条自报，否则又变成「接了但看不见」 |
 | **未定项（不许当已知用）** | ① `shadow` 的原版绘制路径与可换点**未查**；② `featureRenderDispatcher` 字段私有且无 accessor（`LevelRenderer.java:123`）、`PreparedFrame` 是单实例复用且重复使用会抛（`FeatureRenderDispatcher.java:190`）⇒ 「整帧重放」这条路**能不能走通未证**；③ 手（`GameRenderer.java:411-412`）的 pass 目标是**写死主目标**的 ⇒ 没有公开换点，要么 mixin 要么我方重画；④ BSL **不带** `gbuffers_textured_lit` / `gbuffers_terrain_translucent` / `gbuffers_block_translucent`（目录列举核实） |
 | **判据（每条程序各自收口）** | 该程序的 `DRAWBUFFERS` 声明槽在**链跑之前**就有非清屏内容（`mrt.pixelProbe` 逐槽取点 + `declaredOutputSlots` 同源挑槽），且画面侧能看见对应物体（云/水面/实体各自的可辨认特征），且 `[route]`/新 pass 自报行报出该程序名 |
-| 🔴 **h50q 更正本条的一处决定：接水时把 `TRANSLUCENT` 的写深度关掉了，是错的** | 核实原版 `RenderPipelines.java`：`TRANSLUCENT_TERRAIN:393-399`、`TRANSLUCENT_TERRAIN_MULTIDRAW:400-406` 都没有 `withDepthStencilState`（⇒ `DepthStencilState.DEFAULT` = 写深度开），`TRANSLUCENT_BLOCK:434-441` 还显式写了 DEFAULT；整张表里唯一关写深度的 gbuffer 阶段层是 `WEATHER:1028-1032`。⇒ 本条此前把 WEATHER 的状态安到了 TRANSLUCENT 上。后果有两层：① 破坏与原版逐项等价（支柱①）；② 让 OF 的 `depthtex1` 在结构上永远等于 `depthtex0` ⇒ **GAP-023 无论怎么拍都拍不出差别**（真机 h50p 八朝向全等就是这个症状）。⇒ 已改为决策表 `GbufferProgramPlan.DEPTH_WRITE_OFF_LAYERS`（今天空集；将来接 WEATHER 时把它加进去），自报文案改由决策表算出，测试断言换成原版事实并写明出处行号。修完的正面证据见 GAP-023 的 h50q 行（yaw 225/270/315 每帧 `depthviz0 ≠ depthviz1`，其余五个朝向逐帧相同）。 |
 
 ---
 
+| 🔴 **h50q 更正本条的一处决定：接水时把 `TRANSLUCENT` 的写深度关掉了，是错的** | 核实原版 `RenderPipelines.java`：`TRANSLUCENT_TERRAIN:393-399`、`TRANSLUCENT_TERRAIN_MULTIDRAW:400-406` 都没有 `withDepthStencilState`（⇒ `DepthStencilState.DEFAULT` = 写深度开），`TRANSLUCENT_BLOCK:434-441` 还显式写了 DEFAULT；整张表里唯一关写深度的 gbuffer 阶段层是 `WEATHER:1028-1032`。⇒ 本条此前把 WEATHER 的状态安到了 TRANSLUCENT 上。后果有两层：① 破坏与原版逐项等价（支柱①）；② 让 OF 的 `depthtex1` 在结构上永远等于 `depthtex0` ⇒ **GAP-023 无论怎么拍都拍不出差别**（真机 h50p 八朝向全等就是这个症状）。⇒ 已改为决策表 `GbufferProgramPlan.DEPTH_WRITE_OFF_LAYERS`（今天空集；将来接 WEATHER 时把它加进去），自报文案改由决策表算出，测试断言换成原版事实并写明出处行号。修完的正面证据见 GAP-023 的 h50q 行（yaw 225/270/315 每帧 `depthviz0 ≠ depthviz1`，其余五个朝向逐帧相同）。 |
 
 ### GAP-028 · 🔴 `renderStage` 与 `MC_RENDER_STAGE_*` 这一族引擎侧**一个都没供** ⇒ 包的 `gbuffers_skybasic` 编译不过（h49 真机抓出；2026-10-09 登记）
 

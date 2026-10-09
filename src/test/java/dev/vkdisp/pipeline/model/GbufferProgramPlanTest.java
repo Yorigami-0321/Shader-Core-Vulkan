@@ -128,17 +128,27 @@ class GbufferProgramPlanTest {
     }
 
     @Test
-    @DisplayName("只有「真的挂了水」的半透明层才关写深度，其余层与既有臂逐字相同")
-    void writesDepthIsOffOnlyForRealWaterLayer() {
+    @DisplayName("🔴 半透明层必须写深度（与原版 TRANSLUCENT_TERRAIN 一致）；今天没有任何层关写深度")
+    void everyLayerInThisPassWritesDepth() {
         GbufferProgramPlan.Entry terrain = terrain();
         GbufferProgramPlan.Entry water = water();
-        assertFalse(GbufferProgramPlan.writesDepth(TRANSLUCENT, terrain, water), "水面本身不写深度");
+        // 本条是**改过来的**：GAP-027 接水时曾把 TRANSLUCENT 的写深度关掉，测试当时断言
+        // 「水面本身不写深度」—— 那是没有出处的信念（本项目第三次犯同一个形状）。核实原版之后：
+        //   RenderPipelines.TRANSLUCENT_TERRAIN(:393-399) / _MULTIDRAW(:400-406) 没有
+        //   withDepthStencilState ⇒ DepthStencilState.DEFAULT = 写深度开；
+        //   TRANSLUCENT_BLOCK(:434-441) 显式写 DEFAULT；只有 WEATHER(:1028-1032) 关。
+        // 后果也要记：关掉写深度会让 OF 的 depthtex1 在结构上永远等于 depthtex0
+        //   ⇒ GAP-023 的三个时刻快照永远拍不出差别（真机 h50p：八朝向 depthviz0==depthviz1）。
+        assertTrue(GbufferProgramPlan.writesDepth(TRANSLUCENT, terrain, water),
+                "半透明层必须写深度：原版如此，且 depthtex1 的语义依赖它");
         assertTrue(GbufferProgramPlan.writesDepth("SOLID", terrain, water));
         assertTrue(GbufferProgramPlan.writesDepth("CUTOUT", terrain, water));
-        // 水没接 ⇒ 半透明层照旧写深度（GAP-027 之前的基线；这里错了会静默丢掉深度）
         assertTrue(GbufferProgramPlan.writesDepth(TRANSLUCENT, terrain, null));
         assertTrue(GbufferProgramPlan.writesDepth(TRANSLUCENT, terrain,
                 new GbufferProgramPlan.Entry(WATER, null)));
+        assertTrue(GbufferProgramPlan.DEPTH_WRITE_OFF_LAYERS.isEmpty(),
+                "今天本 pass 里没有该关写深度的层；要加就加 WEATHER（原版唯一关的那条），"
+                        + "不许再给半透明加特例");
         assertTrue(GbufferProgramPlan.isWaterLayer(TRANSLUCENT, terrain, water));
         assertFalse(GbufferProgramPlan.isWaterLayer("SOLID", terrain, water));
     }

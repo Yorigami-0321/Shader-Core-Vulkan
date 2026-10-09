@@ -675,12 +675,17 @@ public final class MrtTerrainPass {
         dev.vkdisp.pipeline.model.PackTerrainProgram water =
                 dev.vkdisp.VkDispVirtualPack.packContract(
                         dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM);
+        // 🔴 这一行以前把「depth=测试开/写入关」写死在文案里 —— 而那是当时一个<b>错误决定</b>的自报。
+        //   现在文案由决策表算出来：状态变了，这一行跟着变（X11：自报不许比代码更自信）。
+        boolean depthWrite = dev.vkdisp.pipeline.model.GbufferProgramPlan
+                .writesDepth(dev.vkdisp.pipeline.model.GbufferProgramPlan.TRANSLUCENT_LAYER, null, null);
         VkDisp.LOGGER.info("vkdisp: [GAP-027] renderGroup(TRANSLUCENT) issued in gbuffer MRT pass:"
                         + " attachments={} waterDeclaredSlots={} waterSamplers={}"
-                        + " (管线 depth=测试开/写入关；noisetex 与 depthtex* 各自来源见绑定摘要)",
+                        + " (管线 depth 测试开 / 写深度{}；noisetex 与 depthtex* 各自来源见绑定摘要)",
                 actualSlots,
                 water == null ? "[-]" : water.declaredOutputSlots(),
-                water == null ? -1 : water.fragmentSamplers().size());
+                water == null ? -1 : water.fragmentSamplers().size(),
+                depthWrite ? "开（与原版 TRANSLUCENT_TERRAIN 一致）" : "关");
         probeDrawCounts(draws);
     }
 

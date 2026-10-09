@@ -6,6 +6,72 @@
 ---
 ---
 
+## 2026-10-09（九十四）— 🎯 GAP-023 机制端到端成立：真因是 GAP-027 接水时**把半透明层的写深度关掉了**（原版只有 WEATHER 关），修好之后 `depthtex0 ≠ depthtex1` 每帧成立
+
+> **verdict = 看得见水的三个朝向里两个深度时刻每帧不同、看不见的五个朝向逐帧相同（同臂白送对照）**
+> 证据：`evidence/h50n-pass-split.md` §六（h50q）
+> 登记：GAP-023 加 h50q 行、GAP-027 加更正行
+
+### 为什么之前 h50p 八朝向全等
+
+不是机位问题。GAP-027 接水时给 `TRANSLUCENT` 层设了 `DepthStencilState(GREATER_THAN_OR_EQUAL, false)`
+—— 水画了但**不写深度** ⇒ `depthtex1`（= 半透明之后的深度）在结构上永远等于 `depthtex0`
+⇒ GAP-023 的三个时刻怎么拍都拍不出差别。核实原版 `RenderPipelines.java`：
+
+| 管线 | 行 | 写深度 |
+|---|---|---|
+| `TRANSLUCENT_TERRAIN` | 393-399 | 没有 `withDepthStencilState` ⇒ DEFAULT = **开** |
+| `TRANSLUCENT_TERRAIN_MULTIDRAW` | 400-406 | 同上 = **开** |
+| `TRANSLUCENT_BLOCK` | 434-441 | 显式 `DEFAULT` = **开** |
+| `WEATHER` | 1028-1032 | `(GREATER_THAN_OR_EQUAL, false)` = **唯一关的那条** |
+
+⇒ 我们把 WEATHER 的状态安到了 TRANSLUCENT 上。两处错：① 破坏与原版等价（支柱①）；
+② 让 GAP-023 永远关不掉。**这是本项目第三次把信念当判据写进测试**
+（旧断言逐字：「水面本身不写深度」，没有任何出处）。
+
+### 改了什么
+
+1. **`pipeline/model/GbufferProgramPlan.java`** —— 决策表改成 `DEPTH_WRITE_OFF_LAYERS`（今天**空集**，
+   注释写明原版四条管线的行号与「将来接 WEATHER 时把它加进来，而不是再给半透明加特例」）。
+2. **`bridge/MrtTerrainPass.java`** —— `reportWaterGroup` 那句写死的「depth=测试开/写入关」
+   改成由决策表算出来（自报不许比代码更自信）。
+3. **`GbufferProgramPlanTest`** —— 断言换成原版事实 + 出处行号；顺手删掉我自己写的一条**恒真**断言
+   （`writesDepth("WEATHER") && !contains("WEATHER")` —— 测试第一次跑就把它打红了，是我写错了而不是它错）。
+
+### 测到了什么（h50q；配置与 h50p 逐字相同，只差这一处代码）
+
+| 机位 | 样本 | `c1@afterTerrain` 非 0 帧 | `depthviz0` | `depthviz1` | 0≠1 帧数 |
+|---|---|---|---|---|---|
+| yaw 0 / 45 / 90 / 135 | 60/66/67/56 | **0** | 16.136 | 16.136 | **0** |
+| yaw 180 | 27 | 0 | 11.370 | 11.370 | 0 |
+| **yaw 225** | 32 | **32** | 4.931 | **4.975** | **32** |
+| **yaw 270** | 34 | **34** | 3.269 | **3.635** | **34** |
+| **yaw 315** | 37 | **37** | 2.657 | **3.073** | **37** |
+
+⇒ 看得见水的三段里**每一帧**两个时刻都不同；看不见水的五段里**逐帧相同**
+⇒ 对照是白送的：同臂、同码、同配置，差别只有「画面里有没有水」。
+⇒ 顺带解掉 h50p 的悬案：`c1@afterTerrain` 全 0 不是「水的第二个输出没落」，是当时那几个朝向根本没有水。
+⇒ **GAP-023 的机制至此端到端成立**：BSL `composite.glsl:333 z1 > z0` 第一次拿到两个可能不同的数。
+
+### 影响的文档
+
+`docs/13-GAP-REGISTRY.md`：GAP-023 加 h50q 行、GAP-027 加这条更正行；
+`evidence/h50n-pass-split.md` 加 §六。
+
+### 测试结果
+
+`./gradlew test -PquickPlay` → **BUILD SUCCESSFUL，1088 项 0 失败**。
+真机（A11）：h50q 一臂（闸门 A ✓ 14 键一致）。已提交（本地 master，未 push）。
+
+### ⛔ 仍未完成
+
+1. **GAP-023 的看图判据**：`packWater=true` + yaw≈270（看得见水）下画面是否更接近 BSL 语义
+   —— 需要先修 **F2 截图通道**（h50o 整臂截图为空，注入器却报成功）。
+2. 水接进来之后 `depthGlProxy` / GAP-022 那三条看图判据要重跑（水的画面内容变了）。
+3. GAP-020 周期 3（唯一嫌疑 = uniform 块环相位；X55 已写明它本机不可判）。
+4. GAP-027 其余未接程序（云/实体/手/天气/阴影）；GAP-028 的 `renderStage` 逐 draw 供值。
+
+
 ## 2026-10-09（九十三）— 🔬 给 GAP-023 加「两个时刻直接比」的探针，跑出来**三张深度图逐位相同** ⇒ 「时刻真的分开了」至今未被证明；顺手抓出自己仪器里的一个覆盖 bug
 
 > **verdict = 机制按语义正确退化（本帧没画出半透明几何），关闭条件仍未达成；另记一条 F2 截图整臂没落地**

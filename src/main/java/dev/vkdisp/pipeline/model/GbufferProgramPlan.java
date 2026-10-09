@@ -30,8 +30,9 @@ package dev.vkdisp.pipeline.model;
  *    ① <b>路径/id 全部由程序名派生</b>（{@link #fragmentPath} / {@link #adapterPath}），
  *      新增第三条程序（{@code gbuffers_skybasic} …）时<b>不必</b>再动虚拟包的十个硬编码点；
  *    ② <b>层 → 程序</b>是一张可单测的表（{@link #programForLayer}），不是散在注册循环里的 if；
- *    ③ <b>深度写入</b>按层决定（{@link #writesDepth}）：只有「TRANSLUCENT 且真的挂了包水程序」
- *      才关写深度 ⇒ SOLID/CUTOUT 与既有臂完全不变；
+ *    ③ <b>深度写入</b>按层决定（{@link #writesDepth} / {@link #DEPTH_WRITE_OFF_LAYERS}）：
+ *      今天是<b>所有层都写深度</b>（与原版 {@code TRANSLUCENT_TERRAIN} 一致；唯一该关的是
+ *      {@code WEATHER}，它还没进本 pass）—— 🔴 此前把 TRANSLUCENT 关了，是错的，见那个字段的注释；
  *    ④ 自报行由本类生成（{@link #wiredReport} / {@link #notWiredReport}）：
  *      「接了哪几条、各几个输出、最后几个附件」与「为什么没接」都必须<b>一行说清</b>
  *      （GAP-026 同一口径：不报 = 不知道）。
@@ -191,8 +192,32 @@ public final class GbufferProgramPlan {
      * 固体/cutout 两条管线一个字节都不变。
      */
     public static boolean writesDepth(String layer, Entry terrain, Entry water) {
-        return !TRANSLUCENT_LAYER.equals(layer) || !isWaterLayer(layer, terrain, water);
+        return !DEPTH_WRITE_OFF_LAYERS.contains(layer);
     }
+
+    /**
+     * 本 pass 里<b>不</b>写深度的层。<b>今天是空集</b>，而且这不是「还没想到」，是核实过原版的结论：
+     *
+     * <p>🔴 原版事实（{@code net/minecraft/client/renderer/RenderPipelines.java}，本轮逐行核实）：
+     * <ul>
+     *   <li>{@code TRANSLUCENT_TERRAIN}（第 393-399 行）与 {@code TRANSLUCENT_TERRAIN_MULTIDRAW}
+     *       （第 400-406 行）<b>根本没有</b> {@code withDepthStencilState} 那一格
+     *       ⇒ 走 builder 默认 = {@code DepthStencilState.DEFAULT} = <b>写深度开</b>；</li>
+     *   <li>{@code TRANSLUCENT_BLOCK}（第 434-441 行）更是<b>显式</b>写
+     *       {@code .withDepthStencilState(DepthStencilState.DEFAULT)}；</li>
+     *   <li>整张表里唯一关写深度的 gbuffer 阶段层是 {@code WEATHER}
+     *       （第 1028-1032 行）= {@code (GREATER_THAN_OR_EQUAL, writeDepth=false)}。</li>
+     * </ul>
+     *
+     * <p>🔴 <b>本条是一次改错</b>：GAP-027 接水时把 {@code TRANSLUCENT} 也关掉了写深度，
+     * 两处都错 —— ① 破坏与原版逐项等价（支柱①）； 让 OF 的 {@code depthtex1}
+     * （= 半透明之后的深度）<b>在结构上永远等于</b> {@code depthtex0}，于是 GAP-023
+     * 那三个时刻的快照永远拍不出差别（真机 h50p 实测：八个朝向、pitch 0，
+     * {@code depthviz0} 与 {@code depthviz1} 每一帧都是同一个数 16.136）。
+     * 天气层还没接进本 pass ⇒ 等它接进来时把 {@code "WEATHER"} 加进这个集合，
+     * <b>而不是</b>再给半透明加特例。
+     */
+    public static final java.util.Set<String> DEPTH_WRITE_OFF_LAYERS = java.util.Set.of();
 
     /** 该层是不是「被包水程序接管的半透明层」。 */
     public static boolean isWaterLayer(String layer, Entry terrain, Entry water) {
