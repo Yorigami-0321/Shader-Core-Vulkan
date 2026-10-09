@@ -6,7 +6,64 @@
 ---
 ---
 
+## 2026-10-09（八十七）— 🔴 撤回上一条的「根因已找到」：周期 3 的黑帧**活过了 `frameCounter` 修法**；闸门是 BSL 的云混合，顺着它掉出并补上了 **GAP-029**（三个从来没供的 OF 内建），并纠正**阴影桩清屏值的口径**
+
+> **verdict = GAP-029 三名已供并真机验收（`shadowFade=1.0 timeBrightness=1.0 screenBrightness=0.75`）+ 阴影桩 0.0→1.0 让云从「看不见」变成「有形状」；但黑帧闸门从 AO 改判为云混合，周期 3 仍未判，画面仍不对**
+> 证据：`evidence/h50e-period3-black.md`（h50d 看图 / h50e 计数 / h50f 四臂）、`evidence/h50g-shadowstub-ab.md`
+> 登记：GAP-029（新）、GAP-020（加 h50e 更正行）、GAP-022（看图判据仍不过）
+
+### 改了什么
+
+1. **`render/AtmosphereBuiltins.java`（新）** —— `timeBrightness(skyDarken)` / `shadowFade(rainStrength)` /
+   `screenBrightness(gamma)` 三个纯函数 + `declaredUnsupplied()`（16 个「显式不供」名）。
+   🔴 本类**一个原版类型都不 import**：测试源集没有 MC 类路径，而 javac 做重载决议就要加载形参类型，
+   写成 `timeBrightness(Minecraft)` 重载会让测试里 `timeBrightness(0)` 直接
+   `error: cannot access Minecraft`（本轮实测）。⇒ 读 `mc.level.getSkyDarken()` / `mc.options.gamma()` 留在 `gather()`。
+2. **`render/OfUniformManager.gather()`** —— 三条 `values.put` + `[GAP-029]` 自报（三个值与「显式未供 16 个」同行）。
+3. **`bridge/ShadowStubs.java`** —— 深度桩清屏值 **0.0 → 1.0**，注释重写。
+4. **`ShadowSamplerAliasingTest`** —— 原断言 `depthTex, 0.0F`（把「反向 Z 下 0.0 = 无遮挡」这句**信念**编成了守卫）
+   改成断言 1.0 + 反向断言，并把真机 A/B 写进失败消息。
+5. **测试** —— 新增 `AtmosphereBuiltinsTest` 5 条（三个口径 + 「三名真的进了供值路径」+ 「供值集与显式不供集不得重叠」）。
+
+### 为什么（三条都是被测量推着改的，不是整理）
+
+- **上一条的结论被本轮推翻了一半**：h50e 把机位钉死之后测到 `depthGlProxy=false` 下黑帧 **33.1% / 32.4%**、
+  间隔逐字 `[3,3,3,…]`，而同一臂 `[qd-02] frame=900 … noTokenCalls=0` 自证 `frameCounter` 修法**正在生效**
+  ⇒ 「根因是 frameCounter」只对了一支，周期 3 是**另一件事**。
+- **闸门不是 AO**：`CLOUDS=0` 一臂 **0/171 帧为 0**，而 `AO_STRENGTH=0.00`（让那次乘法变恒等、
+  pass 结构不动）反而升到 66.7% ⇒ **撤回 h49v「黑帧由 AO 产生」** —— 那臂用的 `AO=false` 被
+  `program.world0/deferred.enabled=AO` 门住了**整条 `deferred` pass**，两臂根本不是单变量。
+- **GAP-029 的来源**：顺着「云为什么算成黑」审计包内 uniform，发现 `shadowFade` 恒 0 会让
+  `sunmoon.glsl:111 visibility *= shadowFade * LIGHT_SHAFT_STRENGTH` 逐字把光柱整条乘没、
+  `forwardLighting.glsl:76` 把太阳直射乘没；`timeBrightness` 恒 0 让 `deferred1.glsl:478`
+  **正午按午夜配色** ⇒ 那片暗绿的云最省事的解释方向不是「云画错了」，是「云被当成在没有太阳的午夜来算」。
+- **阴影桩那一格**：供上 `shadowFade` 之后画面变暗 ⇒ 不是补错了，是它**第一次让阴影项成为判据**
+  （此前 `shadow = mix(vec3(1.0), shadow, shadowFade)` 恒取 1.0，桩里存什么都无所谓）。
+  包读 `shadowtex0` 是 `sampler2DShadow` + GL 口径 ⇒ 桩的 0.0 被读成「贴脸就有遮挡物」。
+
+### 影响的文档
+
+`docs/13-GAP-REGISTRY.md`：GAP-029 整节新增（含 19 名清单、承重四名的包内用法逐行、取值出处到行、
+`centerDepthSmooth` 为什么本轮不供）+ GAP-020 加 h50e 更正行 + GAP-022 看图判据仍不过。
+新增 `evidence/h50e-period3-black.md`、`evidence/h50g-shadowstub-ab.md`、`evidence/h50-images/`（5 张）。
+
+### 测试结果
+
+`./gradlew test -PquickPlay` → **BUILD SUCCESSFUL，1082 项 0 失败**（1077 + 新增 5）。
+真机（A11）：h50d / h50e / h50f / h50g×2 全部走 `tools/vulkan-local/run-client.sh iso`。
+
+### ⛔ 仍未完成（照实记）
+
+1. **黑帧率本轮没测到**：h50g 两跑的逐帧探针窗口都没采到数（等待条件 500 秒未命中 ⇒ 采集窗落在进世界之前；
+   截图在窗口之后 ⇒ 画面通道有效、计数通道无效）。**`样本=0` 不是「0% 黑帧」** —— 脚本把这两件事印在了一起，
+   下一版必须在 `样本=0` 时判失败退出。⇒ 下轮第一件事：重跑一臂拿这个数。
+2. **天空为什么是黑的、地形为什么偏暗**（三条候选一条没判：`isSky` 恒假 / 阴影矩阵占位口径 / `dfade` 与 `sunVisibility` 的组合）。
+3. **周期 3 的来处**未判（`frameCounter` 已排除）。
+4. **GAP-022 看图判据仍不过** ⇒ `mrt.depthGlProxy` 默认值继续不翻（开着它黑帧从 1/3 涨到 2/3）。
+5. GAP-029 剩余 **16 个显式未供名**；`centerDepthSmooth` 属「想供但供不了」。
+
 ## 2026-10-09（八十六）— 🎯 追了十几轮的「黑一下正常一下」**根因找到并修掉了**：`frameCounter` 每次 `gather()` 都 +1，而 BSL 的 AO 靠它的奇偶取抖动相位
+
 
 > **verdict = 最坏那一格（云开 + `depthGlProxy=true`）的 `deferred1` 黑帧从 67% → 0%，`main` 每帧都有内容**
 > 证据：`evidence/h49t-chain-black-frames.md` §八/§九/§十（h49z → h50a → h50b → h50c 四臂）

@@ -267,6 +267,23 @@ public final class OfUniformManager {
         values.put("bedrockLevel", inWorld ? NightVisionSupply.bedrockLevel(mc) : 0.0F);
         values.put("nightVision", NightVisionSupply.value(mc, partialTicks));
 
+        // ---- GAP-029：链上「包当引擎会给、我方一直没给」的三个承重内建 ----
+        //   为什么这一格必须补：`shadowFade` 恒 0 ⇒ BSL 逐字 `visibility *= shadowFade *
+        //   LIGHT_SHAFT_STRENGTH`（sunmoon.glsl:111）与 `shadowMult = (1-0.95*rain)*shadowFade`
+        //   （forwardLighting.glsl:76）⇒ **光柱与太阳直射被整条乘没**；`timeBrightness` 恒 0 ⇒
+        //   `sunColor = mix(lightMA, …, timeBrightness)`（deferred1.glsl:478）⇒ 正午按午夜配色。
+        //   取值与口径（含「归一化是我方口径、Iris 实现未取证」那句）都在 AtmosphereBuiltins 类头。
+        float gapShadowFade = AtmosphereBuiltins.shadowFade(rainStrength);
+        values.put("shadowFade", gapShadowFade);
+        // 🔴 读原版状态这两步留在本方法里（AtmosphereBuiltins 一个原版类型都不 import，
+        //   理由写在那个类末尾：测试源集没有 MC 类路径，而 javac 做重载决议就要加载形参类型）。
+        //   菜单态恒 0 = 与本条落地前「没供」时的读数一致（链也不在世界外跑）。
+        values.put("timeBrightness", inWorld
+                ? AtmosphereBuiltins.timeBrightness(mc.level.getSkyDarken()) : 0.0F);
+        values.put("screenBrightness",
+                AtmosphereBuiltins.screenBrightness(mc.options.gamma().get()));
+        reportAtmosphereOnce(gapShadowFade, values.get("timeBrightness"), values.get("screenBrightness"));
+
         // ---- 图集 / 眼亮度（亮度为近似 v1，见 04-SPEC 上传注记登记） ----
         values.put("atlasSize", new int[] {
                 atlasSize == null || atlasSize.length < 2 ? 0 : atlasSize[0],
@@ -629,6 +646,32 @@ public final class OfUniformManager {
 
     /** GAP-028 的宏表自报哨兵（与上面那个**分开**：两条讲的是两个不同的能力）。 */
     private static final java.util.concurrent.atomic.AtomicBoolean RENDER_STAGES_REPORTED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * GAP-029 自报：把「这三个量本帧到底供了多少」打进日志一次，并把<b>没供的那批点名</b>。
+     *
+     * <p>🔖 为什么点名缺席：这三个量此前是「包声明了、我方布局里有槽、填充集没有」⇒ 块里恒 0。
+     * 恒 0 在 GLSL 里<b>不报错</b>，只是把 {@code *= shadowFade} 这类乘法安静地变成「全黑/全无」——
+     * 与 {@code evidence/h48 §二十二} 那条「在场的信息没人读；缺席的信息会被读成结论」同族。
+     * 所以这一行必须同时说：供了多少、<b>还剩哪些故意没供</b>、以及我方口径与 Iris 未取证那句。
+     */
+    private static void reportAtmosphereOnce(float shadowFade, Object timeBrightness,
+            Object screenBrightness) {
+        if (!ATMOSPHERE_REPORTED.compareAndSet(false, true)) {
+            return;
+        }
+        dev.vkdisp.VkDisp.LOGGER.info(
+                "vkdisp: [GAP-029] 链上承重内建已供值: shadowFade={} timeBrightness={} screenBrightness={}"
+                        + "（归一化是**我方口径**：timeBrightness 由 Level#getSkyDarken() 映到"
+                        + " 白天=1/夜晚=0，Iris 的实现未取到源码 ⇒ 别把本行读成「与 Iris 数值一致」）。"
+                        + "显式未供 {} 个（0 即安全缺省 / 属于没接的外挂 / 想供但供不了，理由见登记表"
+                        + " GAP-029 与 AtmosphereBuiltins 类头）: {}",
+                shadowFade, timeBrightness, screenBrightness,
+                AtmosphereBuiltins.declaredUnsupplied().size(), AtmosphereBuiltins.declaredUnsupplied());
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean ATMOSPHERE_REPORTED =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /**

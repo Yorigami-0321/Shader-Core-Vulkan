@@ -158,13 +158,24 @@ class ShadowSamplerAliasingTest {
     }
 
     @Test
-    @DisplayName("🔖 桩深度清到 0.0（反向 Z 的远平面 ⇒ 阴影项取「无遮挡」）")
-    void stubDepthIsClearedToFarPlane() {
+    @DisplayName("🔖🔖 桩深度必须清到 1.0 —— 读这张图的是**包**，包按 GL 口径读 shadowtex")
+    void stubDepthIsClearedToNoOccluderForPackConvention() {
         Assumptions.assumeTrue(Files.exists(STUBS), "ShadowStubs 缺失");
         String stubs = read(STUBS);
-        assertTrue(stubs.contains("depthTex, 0.0F"),
-                "🔖 桩深度必须清到 **0.0** —— 反向 Z 下 0.0 = 远平面 ⇒ 阴影判为「无遮挡」，"
-                        + "是可解释的缺省；清成 1.0 会变成「全部遮挡」而把地形涂黑");
+        assertTrue(stubs.contains("depthTex, 1.0F"),
+                "桩深度必须清到 **1.0**。\n"
+                        + "本条此前断言的是 0.0，理由逐字写着「反向 Z 下 0.0 = 远平面 ⇒ 阴影判为无遮挡」——\n"
+                        + "那句对**引擎自己的深度**成立，对 `shadowtex*` 不成立：包读这张图用的是 GL 口径\n"
+                        + "（BSL `shaders/lib/lighting/shadows.glsl:3` 声明 `uniform sampler2DShadow shadowtex0`\n"
+                        + "  → `shadow2D(tex, vec3(uv, z))`，比较方向「我的 z ≤ 图里存的 ⇒ 亮」）\n"
+                        + "⇒ 存 0.0 被读成「贴脸就有遮挡物」= 全场景在影子里。\n"
+                        + "真机证据（evidence/h50g-shadowstub-ab.md）：同一臂、同机位、同配置，只差这一格 ——\n"
+                        + "  0.0 ⇒ 天空与云全黑；1.0 ⇒ 云出现灰白色块状结构。\n"
+                        + "🔖 为什么此前没人发现：GAP-029 之前 `shadowFade` 从来没供 ⇒ 恒 0 ⇒\n"
+                        + "  BSL 逐字 `shadow = mix(vec3(1.0), shadow, shadowFade)`（shadows.glsl:220）\n"
+                        + "  把整个阴影项跳过 ⇒ 桩里存什么都无所谓。两个缺陷互相挡着（本项目第 N 例）。");
+        // 反向断言：不许有人「顺手把 0.0 改回去」（那正是引擎自己深度的清屏值，见下面那条测试）。
+        assertFalse(stubs.contains("depthTex, 0.0F"), "桩深度又变回 0.0 = 全场景在影子里");
     }
 
     @Test
