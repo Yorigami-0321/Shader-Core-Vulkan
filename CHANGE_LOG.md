@@ -6,6 +6,22 @@
 ---
 ---
 
+## 2026-10-10（九十八）— 🩹 从遗留 stash 抢救 X43–X49：纪律**有引用无定义**的断档补回
+
+> **verdict = 工作区本无待提交改动（`origin/master..HEAD` 为空），本轮唯一实产出 = stash 里那份 X42–X49 正文的抢救**
+> 证据：抢救前 `docs/07-CONSTRAINTS.md` 的编号从 `X41` 直接跳到 `X50`，而 `X51` 条目与 `CHANGE_LOG` 都在引用 X46/X49 ⇒ 引用悬空
+> 登记：本文件 + `docs/07-CONSTRAINTS.md` + `docs/AGENT_CONTEXT.md`
+
+- **为什么改**：`stash@{0}`（消息标「勿丢」，基线 `3548b08`，2026-10-04）里存着 X43–X49 的条文正文。2026-10-04 那次「删除 §9/§10 约 2187 行」的清理（`99e1904`）连带把这份定义抹掉了，只留下对它的引用 ⇒ 纪律表出现 `X42→X50` 空档，`X46`/`X49` 变成**只有别名、没有定义**的规矩。
+- **本次改了什么**（纯增量，`git diff --numstat` = 19 插 0 删）：
+  1. `docs/07-CONSTRAINTS.md`：从 stash 的 blob 里**逐字节取回** X43–X49 七条（含 `~~X47~~` 作废条）插回纪律表，并补回对应的七条自检项 —— 未手抄、未改写。
+  2. `docs/AGENT_CONTEXT.md`：把原 §10.6 里 HEAD 已丢失、且**至今仍在用**的三条判读规则补进「取证纪律（持续有效）」块：X46 的可数日志行判据、黑色像素占比阈值（`>90%` 全黑 / `<60%` 有内容 / 对照组上界 ~20%）+「唯一哈希」尺子作废、`viewSlot` 观测面分工与 X49 单变量对照。
+- **刻意**没有**做的**：不 `git stash apply`。stash 的 `AGENT_CONTEXT.md` 是 10-04 的**整份旧快照**，直接 apply 会把 10-05～10-09（h43–h52、GAP-023/027 收口、MCP 通道更正）的新内容改回旧写法 —— 与「只抢救独有内容」相反。被删的逐轮正文也没复活：它完整存在于历史 `3548b08:docs/AGENT_CONTEXT.md`，已在文档里留指针。
+- **影响的文档**：`07-CONSTRAINTS.md`（纪律表 + 自检清单）、`AGENT_CONTEXT.md`（取证纪律块）、本文件。`13-GAP-REGISTRY.md` 未动（本轮不涉及任何 GAP 状态）。
+- **测试结果**：编号连续性核对 `X41 → X43…X49 → X50…X55`（`X47` 以作废形式保留）；两文件 diff 全为新增；`git stash list` 确认 **stash 原样未动**（等用户复核后再决定 drop）；顺带把本地 `master` 从 `3c8fee8` 快进到 `f126d1a`（无分叉，`merge --ff-only`）。纯文档改动，未跑构建与客户端。
+- **是否已提交**：见本次提交。
+
+
 ## 2026-10-09（九十七）— 🔧 Windows 车道 `runclient` 免参数化：`vulkanPreflight` 加 OS 分流 + `PrepareRun` 声明不兼容配置缓存
 
 > **verdict = `.\gradlew.bat runclient` 无需再带 `-PvulkanSkipCheck=true` / `--no-configuration-cache`**
