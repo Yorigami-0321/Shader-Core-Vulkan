@@ -563,7 +563,10 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 | **判据** | 离线：`gbuffers_skybasic` 的 vsh 转译 + 编译**不再报 undeclared identifier**（这条本身就是加载期判据，日志里那两条 `compile FAILED` 必须归零）；运行侧：`[uniforms]`/新自报行里出现 `renderStage=` 的实际值；画面侧：星星与月亮按 BSL 语义该淡出的时候淡出（`alpha=0` 那两支真的走到） |
 | **影响面** | `glsl/preprocess/DefineProcessor`（常量集合）+ `pack/uniform/` 与 `render/OfUniformManager`（新增一条供值）+ `render/` 的「按程序供值」路径（与 GAP-022 的按族供值**同一个挂载点**） |
 | **开关 / 回退条件** | 与 `MC_VERSION` 同族 ⇒ 走「引擎宏」那条既有路径，不新增开关（**塞真值**不是「开特性」）；回退条件 = 原版/Iris 侧这条约定变成引擎自动注入且与本引擎口径一致时，删除我方常量表 |
-| **状态** | ⏳ **待实现**（本轮只登记 + 把根因链钉清楚，未动代码） |
+| **✅ h49 第一步落地（宏表 + 接线 + 真机验收）** | ① 新增 `glsl/preprocess/RenderStages.java`：**24 个**阶段宏（含 Iris 自己标「当前未使用」的那几个 —— 给了不伤，不给则引用它的包直接编译失败）；② `DefineProcessor.engineMacros()` 在 `MC_VERSION` 之后把它们塞进宏表；③ 自报：`[GAP-028] 引擎宏 MC_RENDER_STAGE_* 已进预处理宏表: count=24 NONE=0 numbering=vkdisp-own-ABI(Iris-numbers-unverified)`（**不受 `debugLog` 门**，与 `[MC_VERSION]` 同族）；④ 单测 `RenderStagesTest` 5 条（宏名合法且唯一 / 值互不相同 / 自报行要说出口径 / **真接线**：BSL 那三行形态现在选中 STARS 支且包的兜底 `#define` 被 `#ifndef` 跳过 / STARS≠MOON）。<br>✅ **真机判据达成**（2026-10-09 09:23–09:27，两臂同验）：`compile FAILED` 计数 **2 → 0**，改为打出 `program=world0/gbuffers_skybasic stage=VERTEX file=… spvBytes=928` 与 `world1/… spvBytes=915` ⇒ **顶点阶段真的编出 SPIR-V 了**；`Render thread/ERROR` 总数 4 → 2（剩下两条是 `text2speech.Narrator` 与 `SoundEngine`，与渲染无关）。水接线不受影响（`renderGroup(TRANSLUCENT) issued` 仍 1 条、`builtins ring is null` 仍 0 条）。 |
+| 🔴 **数值口径这条不许被读成「与 Iris 一致」** | 编号 = **我方自己的 ABI**（`NONE=0`，其余按文档列出的阶段顺序递增）。Iris 的数值本轮**未核实到源码**（文档站只给名字与语义）。之所以可以这样：包侧用法是**宏名比较**（BSL 逐字 `renderStage == MC_RENDER_STAGE_STARS`），只要「同名同值 + 值互不相同」就成立 —— 反证也拿到了：**BSL 自己给 `MC_RENDER_STAGE_MOON` 的兜底是 1，而我方按文档顺序给 5**，连包作者的猜测都不一致 ⇒ 数字本来就不是包的比较依据。<br>⚠️ **已知不受支持面**：若某包**硬编码** `renderStage == 14` 这类数字，它在本引擎会拿错阶段 ⇒ 真遇到时把本表回填成核实过的 Iris 口径（这条是**待办**，不是已解决）。 |
+| 🔴 **本条不关：`renderStage` 的逐 draw 供值仍未做** | 现在这个 uniform 在块里属于「布局有、填充集没有」⇒ 恒 0（`WriteStats.missing` 计数 + `missingNames` 点名，不静默）。后果要说清：**编译得过但分支恒假** —— 包所有「这一批几何是 X 阶段」的淡出（BSL 用它把星星与月亮的 alpha 归 0）一律判「不是该阶段」= 与原版行为一致的**中性缺省**，不是「已支持」。⇒ 关闭条件 = ① `renderStage` 进 `OfUniformManager` 的供值路径（**按程序 / 按 draw** 给，天空那一条要能区分 SKY / SUN / MOON / STARS —— 与 GAP-027 的「按程序供值」是同一个挂载点）；② 画面侧判据：BSL 的星星/月亮在该淡出的时候真的淡出。 |
+| **状态** | 🟡 **第一步已落地并真机验收（宏表 + 编译恢复）；`renderStage` 供值与数值口径核对未做 ⇒ 本条不关** |
 
 ---
 

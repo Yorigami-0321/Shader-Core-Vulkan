@@ -6,6 +6,56 @@
 ---
 ---
 
+## 2026-10-09（七十七）— ✅ GAP-028 第一步：`MC_RENDER_STAGE_*` 宏表进引擎 ⇒ `gbuffers_skybasic` 从「编译失败」变成「真的产出 SPIR-V」
+
+> **verdict = 一条被 `MC_VERSION` 「叫醒」的老缺陷，终于补上了它的一半（宏），另一半（供值）如实标为未做**
+> 证据：`/tmp/opencode/h49b-arms/{OFF,ON}/latest.log`（两臂同验，逐字见登记表）+ 单测 5 条
+
+**本次改了什么**
+
+1. ✅ 新增 `glsl/preprocess/RenderStages.java`：**24 个** `MC_RENDER_STAGE_*` 阶段宏
+   （连 Iris 自己标「当前未使用」的那几个一起给 —— 给了不伤，不给则引用它的包**直接编译失败**），
+   并在 `DefineProcessor.engineMacros()` 里紧跟 `MC_VERSION` 之后塞进宏表。
+2. ✅ **自报**（`[GAP-028]`，与 `[MC_VERSION]` 同族、**不受 `debugLog` 门**）：
+   `引擎宏 MC_RENDER_STAGE_* 已进预处理宏表: count=24 NONE=0 numbering=vkdisp-own-ABI(Iris-numbers-unverified)`。
+   哨兵放在 `MC_VERSION` 那条 early-return **之前** —— 挂在它后面就等于永远不打（又一个
+   「写了但没生效」的形状，本轮自己差点踩上）。
+3. ✅ **真机判据达成**（A11：改主源码必须真机取证；OFF/ON 两臂都跑了一遍）：
+   `pack program compile FAILED` 计数 **2 → 0**，同一位置改打
+   `program=world0/gbuffers_skybasic stage=VERTEX … spvBytes=928` 与 `world1/… spvBytes=915`
+   ⇒ 顶点阶段**真的编出 SPIR-V**；`Render thread/ERROR` 总数 **4 → 2**
+   （剩下两条是 `text2speech.Narrator` 与 `SoundEngine`，与渲染无关）。
+   水那条路不受影响（`renderGroup(TRANSLUCENT) issued` 仍 1 条、`builtins ring is null` 仍 0 条）。
+4. **单测 +5**（`RenderStagesTest`）：宏名合法且唯一 / 值互不相同且 `NONE=0` / 自报行必须把
+   「编号是我方 ABI」说出来 / **真接线**（逐字取 BSL 那三行形态：STARS 那一支现在被选中，
+   且包自己的兜底 `#define MC_RENDER_STAGE_MOON 1` 被 `#ifndef` 跳过）/ `STARS ≠ MOON`。
+
+**为什么改**：上一轮登记时它是「两臂都在」的加载期失败 —— 一条程序编译不过 = 支柱①（兼容）直接失分，
+而它的根因与 `MC_VERSION` 完全同族：**包假定加载器会塞的引擎侧常量，我方一个都不塞**。
+
+**🔴 两条不许被读过头的地方**：
+① **数值口径是我方自己的 ABI**（`NONE=0`，其余按文档顺序递增）。Iris 的数值本轮**未核实到源码**
+（文档站只给名字与语义）。反证：BSL 自己给 `MOON` 的兜底是 `1`，我方按文档顺序给 `5`
+⇒ 连包作者的猜测都不一致 ⇒ 数字本来不是包的比较依据。**已知不受支持面** = 某包硬编码
+`renderStage == 14` 这类数字时会给错阶段，真遇到再回填核实过的口径。
+② **`renderStage` 这个 uniform 的逐 draw 供值仍未做** ⇒ 它在块里属于「布局有、填充集没有」= 恒 0
+（`WriteStats.missing` + `missingNames` 点名，不静默）。后果是**编译得过但分支恒假**：
+包所有「这批几何是 X 阶段」的淡出（BSL 用它把星星与月亮 alpha 归 0）一律判「不是该阶段」。
+⇒ **GAP-028 不关**，关闭条件写进登记表（供值挂到 GAP-027 的「按程序供值」那个同一点上）。
+
+**影响的文档**：`docs/13-GAP-REGISTRY.md` GAP-028 的落地行 / 数值口径行 / 「本条不关」行 / 状态改 🟡。
+
+**测试结果**：全量 **1071 / 0 失败 / 0 错误**（1066 + 5）。运行侧：两臂各验一次，见上。
+
+**是否已提交**：见本条目对应提交（本地提交，未推送）。
+
+**⛔ 仍未完成**：① `renderStage` 逐 draw 供值（GAP-028 的第二半）；
+② Iris 数值口径未核实 ⇒ 遇到硬编码数字的包要回填；
+③ GAP-023 ②/③ 三张时刻快照（`depthtex*` 仍同绑 1×1 桩）；④ 水的画面判据仍缺观测面（聊天注入）；
+⑤ 云 / 实体 / 手 / 天气 / `shadow` 未接。
+
+---
+
 ## 2026-10-09（七十六）— 🔴🔴 水的 `renderGroup` 第一次真的发出去；它当场掉出「实现了但没接上」的第四例，而**判据卡在观测面**上
 
 > **verdict = 「接线达成」与「画面达成」是两件事：本轮拿到前者，后者**没有观测面**可拿**

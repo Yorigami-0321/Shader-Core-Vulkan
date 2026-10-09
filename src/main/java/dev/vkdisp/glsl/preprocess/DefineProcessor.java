@@ -81,6 +81,13 @@ public final class DefineProcessor {
             macros.put(dev.vkdisp.McVersion.MACRO,
                     new Macro(MacroKind.OBJECT, List.of(), Integer.toString(mcVersion.getAsInt())));
         }
+        // 🔴 GAP-028：`MC_RENDER_STAGE_*` 同样是「包假定加载器会塞」的引擎侧常量。
+        //   不塞的后果不是「效果不对」而是**整条 gbuffers_skybasic 编译失败**
+        //   （真机逐字：`vsh:243: error: 'MC_RENDER_STAGE_STARS' : undeclared identifier`）。
+        //   编号口径是我方自己的 ABI（理由与不受支持面写在 RenderStages 的类注释里）。
+        for (Map.Entry<String, String> macro : RenderStages.macros().entrySet()) {
+            macros.put(macro.getKey(), new Macro(MacroKind.OBJECT, List.of(), macro.getValue()));
+        }
         return macros;
     }
 

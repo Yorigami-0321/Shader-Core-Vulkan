@@ -509,6 +509,20 @@ public final class OfUniformManager {
     private static void reportConventions(DepthConventionPair convention, int frameNo) {
         DepthConventionPair.reportThrottled(convention.glConvention(), frameNo,
                 dev.vkdisp.VkDisp.LOGGER::info);
+        // 🔴 GAP-028 的自报放在 MC_VERSION 那条**之前**：下面那条用 early-return 做一次性，
+        //   挂在它后面就等于永远不打（「写了但没生效」同族，本项目反复付学费的那一种）。
+        if (RENDER_STAGES_REPORTED.compareAndSet(false, true)) {
+            dev.vkdisp.VkDisp.LOGGER.info(
+                    "vkdisp: [GAP-028] 引擎宏 MC_RENDER_STAGE_* 已进预处理宏表: {}"
+                            + " ⇒ 包按 `renderStage == MC_RENDER_STAGE_STARS` 这类比较写的分支**编译得过了**"
+                            + "（修前真机逐字：gbuffers_skybasic.vsh:243: error:"
+                            + " 'MC_RENDER_STAGE_STARS' : undeclared identifier，world0/world1 各一条）。"
+                            + "⚠️ 两件事没做，不许把本行读成「天空阶段已支持」："
+                            + "① 编号是**我方 ABI**，Iris 的数值口径未核实；"
+                            + "② `renderStage` 这个 uniform 的**逐 draw 供值**仍未接"
+                            + "（缺值 ⇒ 块里恒 0 ⇒ 包所有「是某阶段」的分支都判否），见登记表 GAP-028 ③",
+                    dev.vkdisp.glsl.preprocess.RenderStages.describe());
+        }
         if (!MC_VERSION_REPORTED.compareAndSet(false, true)) {
             return;
         }
@@ -527,6 +541,10 @@ public final class OfUniformManager {
     }
 
     private static final java.util.concurrent.atomic.AtomicBoolean MC_VERSION_REPORTED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /** GAP-028 的宏表自报哨兵（与上面那个**分开**：两条讲的是两个不同的能力）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean RENDER_STAGES_REPORTED =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /**
