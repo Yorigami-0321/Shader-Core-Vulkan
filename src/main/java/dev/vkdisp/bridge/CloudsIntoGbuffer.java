@@ -124,28 +124,7 @@ public final class CloudsIntoGbuffer {
         //   放在之前读到的是上一帧的（首帧必然 0 ⇒ 会把「正常的首帧」报成「网格坏了」）。
         reportMeshOnce(renderer);
 
-        // 🔬 诊断档：按 CLEAR 洋红打开（默认关）。它切的正是「云的 draw 不对」与
-        //   「我方挂的 view 和被读的代次不是同一张图」—— 两者在 LOAD 档下读数完全一样。
-        boolean diagnosticClear = VkDispConfig.MRT_CLOUDS_DIAGNOSTIC_CLEAR.get();
-        if (diagnosticClear && !clearWarned) {
-            clearWarned = true;
-            VkDisp.LOGGER.warn("vkdisp: [GAP-027/clouds] mrt.cloudsDiagnosticClear=true ⇒ 云 pass 按"
-                    + " **CLEAR 洋红** 打开 ⇒ 本帧 colortex0 的**地形内容被毁掉**，这是取证档不是产品档；"
-                    + "判读：c0@afterClouds 读到洋红 ⇒ pass/代次口径对、问题在云的 draw；"
-                    + "仍读到地形的值 ⇒ 我方挂的 view 与被读的代次不是同一张图");
-        }
-        RenderPassDescriptor descriptor = RenderPassDescriptor
-                .builder(() -> "vkdisp gbuffer clouds (1 color attachment, "
-                        + (diagnosticClear ? "DIAGNOSTIC CLEAR" : "LOAD") + ")")
-                .withColorAttachment(color, clearValue(diagnosticClear))
-                .withDepthAttachment(depth, OptionalDouble.empty())
-                .build();
-        try (RenderPass renderPass = RenderSystem.getDevice().createCommandEncoder()
-                .createRenderPass(descriptor)) {
-            // 原版在 CloudRenderer#render 内部自己调 bindDefaultUniforms（第 201 行），
-            // 这里**不**重复调：多调一次不报错，但会让人以为云依赖我方绑的东西。
-            renderer.render(status, renderPass);
-        }
+        drawThroughOwnPass(renderer, status, color, depth);
         // 🔬 判据：云写完之后的 colortex0（与 `c0@afterTerrain` 同臂同机位对比才有意义）。
         dev.vkdisp.bridge.TargetReadback.probeAfterClouds();
     }
@@ -185,6 +164,38 @@ public final class CloudsIntoGbuffer {
         meshReported = true;
         VkDisp.LOGGER.info("vkdisp: [GAP-027/clouds] 网格状态（prepare 之后、render 之前）: {}",
                 meshState(renderer));
+    }
+
+    /**
+     * 开我方自己的云 pass 并把云画进去。
+     *
+     * <p>单独成方法只为两件事：① 本仓 QD-04 那条「&gt;60 行方法」棘轮（**靠提取降，不靠放宽基线**）；
+     * ② 让「诊断档会毁掉本帧地形内容」这个判断只出现在一处。
+     */
+    private static void drawThroughOwnPass(CloudRenderer renderer, CloudStatus status,
+            GpuTextureView color, GpuTextureView depth) {
+        // 🔬 诊断档：按 CLEAR 洋红打开（默认关）。它切的正是「云的 draw 不对」与
+        //   「我方挂的 view 和被读的代次不是同一张图」—— 两者在 LOAD 档下读数完全一样。
+        boolean diagnosticClear = VkDispConfig.MRT_CLOUDS_DIAGNOSTIC_CLEAR.get();
+        if (diagnosticClear && !clearWarned) {
+            clearWarned = true;
+            VkDisp.LOGGER.warn("vkdisp: [GAP-027/clouds] mrt.cloudsDiagnosticClear=true ⇒ 云 pass 按"
+                    + " **CLEAR 洋红** 打开 ⇒ 本帧 colortex0 的**地形内容被毁掉**，这是取证档不是产品档；"
+                    + "判读：c0@afterClouds 读到洋红 ⇒ pass/代次口径对、问题在云的 draw；"
+                    + "仍读到地形的值 ⇒ 我方挂的 view 与被读的代次不是同一张图");
+        }
+        RenderPassDescriptor descriptor = RenderPassDescriptor
+                .builder(() -> "vkdisp gbuffer clouds (1 color attachment, "
+                        + (diagnosticClear ? "DIAGNOSTIC CLEAR" : "LOAD") + ")")
+                .withColorAttachment(color, clearValue(diagnosticClear))
+                .withDepthAttachment(depth, OptionalDouble.empty())
+                .build();
+        try (RenderPass renderPass = RenderSystem.getDevice().createCommandEncoder()
+                .createRenderPass(descriptor)) {
+            // 原版在 CloudRenderer#render 内部自己调 bindDefaultUniforms（第 201 行），
+            // 这里**不**重复调：多调一次不报错，但会让人以为云依赖我方绑的东西。
+            renderer.render(status, renderPass);
+        }
     }
 
     /**
