@@ -1096,11 +1096,25 @@ public final class FrameApi {
             throw new IllegalStateException(
                     "vkdisp: drawPostChain called while chain not ready (调用方必须先查 isPostChainReady)");
         }
+        // 🔴 GAP-020 代次读数（h50j 之后加的）：链**开跑前**先抄一份各槽被读代。
+        //   为什么打在这里而不是 `drawPostChain` 里加一行：那一格已经被 QD-04 棘轮顶满
+        //   （>60 行的方法数有基线），而本方法**每帧恰好被调一次**、且它就是「链开跑前」那一刻。
+        //   读数本身在 `reportChainGenerations()`（链尾）打，start/end 同一行才可比。
+        snapshotChainStartGenerations();
         GpuTextureView colorView = main.getColorTextureView();
         if (colorView == null) {
             throw new IllegalStateException("vkdisp: main target color texture view is null (can't open post chain)");
         }
         return colorView;
+    }
+
+    /** 链开跑前那一刻各槽的「被读代」（0/1）；-1 = 还没建。 */
+    private static int[] chainStartGens = {-1, -1, -1, -1, -1, -1, -1, -1};
+
+    private static void snapshotChainStartGenerations() {
+        for (int slot = 0; slot < chainStartGens.length; slot++) {
+            chainStartGens[slot] = MrtTerrainPass.poolGeneration(slot);
+        }
     }
 
     public static FrameSize drawPostChain(String label) {
@@ -1173,12 +1187,19 @@ public final class FrameApi {
      */
     private static void reportChainGenerations() {
         chainFrames++;
-        if (chainFrames % 120L != 0L) {
+        // 🔴 探针开着 ⇒ **每帧一行**（h50j 之后加的）：黑帧是逐帧事件，120 帧一行的节流
+        //   永远对不到探针的帧号上 —— 那条读数只能回答「代次整体在不在翻」，
+        //   回答不了「黑的那 1/3 帧是不是落在某一个代次相位上」。
+        //   生产档（探针关）保持原来的 120 帧一行，热路径日志 I/O 纪律不变（h34 那一族）。
+        if (!dev.vkdisp.VkDispConfig.MRT_PIXEL_PROBE.get() && chainFrames % 120L != 0L) {
             return;
         }
-        dev.vkdisp.VkDisp.LOGGER.info("vkdisp: [GAP-020/parity] chainFrame={} 被读代 c0={} c1={} c2={} c4={}"
-                        + "（一帧内写次数 c0=6 c1=5 c2=3 c4=2 ⇒ 奇数次的槽每帧翻代）",
-                chainFrames, MrtTerrainPass.poolGeneration(0), MrtTerrainPass.poolGeneration(1),
+        dev.vkdisp.VkDisp.LOGGER.info("vkdisp: [GAP-020/gen] chainFrame={} 开跑前 c0={} c1={} c2={} c4={}"
+                        + " | 链尾 c0={} c1={} c2={} c4={}（一帧内写次数 c0=6 c1=5 c2=3 c4=2"
+                        + " ⇒ 奇数次的槽每帧翻代；探针的 c0@chainStart 取的是「开跑前」这一格）",
+                chainFrames,
+                chainStartGens[0], chainStartGens[1], chainStartGens[2], chainStartGens[4],
+                MrtTerrainPass.poolGeneration(0), MrtTerrainPass.poolGeneration(1),
                 MrtTerrainPass.poolGeneration(2), MrtTerrainPass.poolGeneration(4));
     }
 

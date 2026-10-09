@@ -121,7 +121,53 @@ colortex4 = `cloudViewLength`（`:618`）、colortex5 = 反射色 + mask（`:622
 🔖 纪律：派生臂脚本只能 `cp` 之后再改副本，**不许 `sed -i` 改母本**；
 臂脚本的 `DIR` 应当在脚本内**自证**（打印出来）而不是靠外部改名。
 
-## 七、仓库现在的状态与下一步（按价值排序）
+## 八、h50k：新加的「每帧代次索引」**否证了我上一条的推论**
+
+h50j 的读数是「链采到的图是 0，而探针读同一槽有内容」，我据此写下的下一步是
+「**绑定的视图不是被写的那一张** ⇒ 去查代次」。h50k 就是去量这个的：
+`FrameApi.requireChainReady` 里抄一份链开跑前的各槽被读代，链尾再抄一份，
+`[GAP-020/gen]` 在**探针开着时每帧一行**（探针关着时保持原来 120 帧一行，热路径日志纪律不变）。
+
+同一臂复现：`main` 黑帧 **57/170 = 33.5%**、间隔逐字 `[3,3,3,…]`。
+
+```
+chainFrame=283 开跑前 c0=1 c1=0 c2=0 c4=0 | 链尾 c0=0 c1=1 c2=0 c4=0
+chainFrame=284 开跑前 c0=1 c1=1 c2=0 c4=0 | 链尾 c0=0 c1=0 c2=0 c4=0
+chainFrame=285 开跑前 c0=1 c1=0 c2=0 c4=0 | 链尾 c0=0 c1=1 c2=0 c4=0
+chainFrame=286 开跑前 c0=1 c1=1 c2=0 c4=0 | 链尾 c0=0 c1=0 c2=0 c4=0
+```
+
+⇒ **槽 0 的被读代在链开跑前恒等于 1、逐帧不变**（与「一帧内槽 0 被写 6 次 = 偶数 ⇒ 不翻代」的预测一致），
+槽 1 按预测以**周期 2** 翻（写 5 次 = 奇数）。
+⇒ 🔴 **「链把 colortex0 绑到了错的那一代」这条推论作废**：代次连 2 相位都不动，谈不上 3 相位。
+h50j 那句「探针读到的与着色器采到的不是同一张」**仍然可能对**，但**原因不是代次**。
+
+顺手再排除一条（读源码，不花机时）：**深度也没有环** ——
+`com/mojang/blaze3d/pipeline/RenderTarget.java` 的 `depthTexture` / `depthTextureView`
+都是**单个字段**（第 27-28 行），`resize` 时整体重建（第 98-100 行），
+`getDepthTextureView()` 直接返回那一个视图（第 137-139 行）
+⇒ `MrtTerrainPass.depthView()` 每帧都是同一张图，**「深度为 3 的环形资源」这条候选不存在**。
+
+⇒ 现在唯一还站得住的「3」是 **`MappableRingBuffer` 的 `BUFFER_COUNT=3`**（uniform 块环；
+原版 `VulkanCommandEncoder` 允许 3 个 submit 在飞 ⇒ 环深 3 正好是「CPU 可覆写 GPU 还在读的槽」的临界值）。
+但**它解释不了 h50j 的形状**（uniform 被覆写只会让值变旧，不会让 `c0` 与 `c5` 同时精确为 0）。
+
+## 九、下一刀（想清楚了再动手，别再猜）
+
+h50j 那三条读数里，**唯一能同时解释「c0=0 且 c5=0 而 c4 不变」**的是分支形状：
+`deferred1.glsl:358 if (z < 1.0) { …材质/反射/AO/Fog… }` —— 写 `gl_FragData[2]`（=colortex5）
+的反射那段**整个在这个 if 里面**，而 `gl_FragData[1] = cloudViewLength`（=colortex4）在外面。
+⇒ **黑帧 = 那一帧 `depthtex0` 处处读到 1.0** ⇒ `z < 1.0` 恒假 ⇒ 反射槽保持 0、颜色走天空支路。
+
+要证它需要一个**把链的 depthtex0 变成可读颜色**的观测面：
+`vkdisp:pipeline/depthviz`（`PipelineApi:193/499-503`；片元 `assets/vkdisp/shaders/depthviz.fsh:13`
+逐字就是 `texture(InSampler, vUv).r`）**已经注册但不在本帧链里执行**（`FrameApi:853` 明写）。
+⇒ 下一刀 = 探针开着时把 depthviz 作为**额外一级**画进一个 RGBA8 池槽并逐帧取数，
+判据一句话：**黑帧那一帧的 depth 读数是不是恒等 1.0**。
+🔴 不要拿 `DepthGlProxy` 那张 R32F 直接喂现有探针 —— 探针的字节布局按 RGBA8 算，
+格式不对会产出「看起来像数字」的垃圾（X37 那一族）。
+
+## 十、仓库现在的状态与下一步（按价值排序）
 
 - `AtmosphereBuiltins` + 三条 `values.put` + `[GAP-029]` 自报：**保留**（§三 证明它进了 uniform 块，
   §一 证明它对黑帧中性）。
