@@ -515,21 +515,28 @@ public final class MrtTerrainPass {
             //     sampler 清单与地形不是同一套（8 个 vs 5 个，X39）。照抄地形那次 ⇒ 水的每个
             //     draw 都被 validateDraw 以 Missing uniform 拦下。
             //   ⚠️ OFF 档（`mrt.packWater=false`，默认）这条分支整个不进 ⇒ 与今天逐字一致。
-            if (TerrainPipelineApi.waterWiredInFrozenPlan()) {
-                TerrainPipelineApi.bindPackGbufferUniforms(renderPass, atlasSampler, atlas,
-                        colortexDepth.getDepthTextureView(), slotView(0),
-                        dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM);
-                draws.renderGroup(ChunkSectionLayerGroup.TRANSLUCENT, renderPass,
-                        atlasSampler, atlas, false);
-                reportWaterGroup(draws);
-            }
+            // 🔴 GAP-023 第二格：半透明（水）**不再挂在同一个 pass 里**，改由 pass B 画
+            //   （见 drawWaterSegment）。理由不是整洁：`depthtex1` 的语义是「半透明之后的深度」，
+            //   而要在那一刻取快照就必须在那一刻**关掉一个 pass** 才能发 blit
+            //   （blit 是 encoder 命令，render pass 打开期间不能发 —— h10 实测规则）。
+            //   ⚠️ OFF 档（mrt.packWater=false，默认）仍然整个不走 ⇒ 与 h50m 逐字一致（回归基线）。
             drainDeviceDebugMessages();
         } finally {
             // 🔖 必须在 finally 清：漏清会让后续**原版** pass 也拿到多附件管线 ⇒ 立刻 validation error。
             inMrtPass = false;
         }
 
+        // 🔴 GAP-023 第一时刻：**不透明段刚关** ⇒ 这一刻的深度就是 `depthtex0` 该含的东西。
+        //   取在云之前是**语义要求**，不是顺手：Iris 的 depthtex0 = 不透明之后，
+        //   云/天气那些后续 gbuffer 阶段的深度属于 depthtex2。
+        DepthSnapshots.take(DepthSnapshots.OPAQUE, depthTexture());
+        if (TerrainPipelineApi.waterWiredInFrozenPlan()) {
+            drawWaterSegment(encoder, draws);
+        }
         // 🔬 GAP-019 定位档：**地形 pass 刚画完**就取一次（h49p 把它从翻代之后挪到这里）。
+        //   🔴 h50n 起这条要在 pass B **之后**：它的含义是「地形 + 水都写完、云之前」，
+        //   水挪出 pass A 之后如果还留在 pass A 之前取，`c0@afterTerrain` 就悄悄少了水 ⇒
+        //   而水/云两条判据正是靠这个标签切的（GAP-027）。
         //   为什么必须在云之前：云那一格也写 colortex0 ⇒ 留在后面这个标签就名不副实，
         //   而水/云两条判据都靠「c0@afterTerrain vs c0@afterClouds」切责任侧。
         TargetReadback.probeAfterTerrain();
@@ -549,8 +556,11 @@ public final class MrtTerrainPass {
         //      （云那一格开着 `mrt.cloudsNoDepthWrite=false` 时就会写深度）。
         //   ⚠️ 本格**不关** GAP-023：`depthtex1/2` 要真正不同源，必须把地形 pass 拆成
         //      「不透明一段 + 半透明一段」并各取一格 —— 那一步登记在 GAP-023 的「下一步」。
-        DepthSnapshots.take(DepthSnapshots.OPAQUE,
-                colortexDepth == null ? null : colortexDepth.getDepthTexture());
+        // 🔴 GAP-023 第三时刻：云（以及以后接进来的实体/天气）写完之后的深度 = `depthtex2`。
+        //   今天只有云会写到这里，所以 2 号 = 「不透明 + 云」；等 GAP-027 把实体/天气接进来，
+        //   这一格的含义会自动跟着变宽 —— 那是对的（OF 的 depthtex2 就是「常驻顶层之后」），
+        //   但**取点位置不能动**：必须在翻代之前（翻代之后「待写那一代」就换了，GAP-018 同一条）。
+        DepthSnapshots.take(DepthSnapshots.TOP_LAYER, depthTexture());
 
         // 🔴 GAP-018：本 pass 写过的池槽**翻代** ⇒ 之后第一个读者（链的第一步）看到的就是刚写的内容。
         //   toMain 档的槽 0 打的是主目标（不是池）⇒ 不参与翻代。
@@ -613,6 +623,50 @@ public final class MrtTerrainPass {
      *
      * <p>⚠️ 反射探针失败只 WARN（同 {@link #probeDrawCounts}）：取证手段不该把功能拖挂。
      */
+    /**
+     * GAP-023 第二格：把半透明（水）单独开成 <b>pass B</b>，好让「不透明之后」与「半透明之后」
+     * 这两个时刻之间有一次 pass 关闭 —— blit 只能在 pass 之外发（h10 实测规则）。
+     *
+     * <p>🔴 三条不能错的语义：
+     * <ul>
+     *   <li><b>颜色附件全 LOAD</b>：不透明段写进去的内容必须留着，否则水等于从零开始画，
+     *       {@code c0@afterTerrain} 这个标签就悄悄少了地形；</li>
+     *   <li><b>深度也 LOAD</b>（{@code OptionalDouble.empty()}）：把深度清成 0.0 等于抹掉不透明段的
+     *       深度，而本引擎是反向 Z（0.0 = 远平面）⇒ 水会画到地形<b>后面</b>去；</li>
+     *   <li><b>必须重绑一次包 uniform</b>（X39）：水的自由 sampler 清单与地形不是同一套
+     *       （真机逐字 8 个 vs 5 个），照抄地形那次 ⇒ 水的每个 draw 都被 validateDraw 拦下。</li>
+     * </ul>
+     *
+     * <p>附件集合与 pass A <b>逐字相同</b>（同一批 {@code views}），所以派生管线的颜色目标数
+     * 恒等这条约束不动（X42：不匹配就是当场抛）。
+     */
+    private static void drawWaterSegment(com.mojang.renderpearl.api.commands.CommandEncoder encoder,
+            ChunkSectionsToRender draws) {
+        RenderPassDescriptor.Builder second = RenderPassDescriptor
+                .builder(() -> "vkdisp gbuffer water (TRANSLUCENT, " + actualSlots + " attachments, all LOAD)");
+        for (int slot = 0; slot < actualSlots; slot++) {
+            second.withColorAttachment(view(slot), Optional.empty());
+        }
+        second.withDepthAttachment(colortexDepth.getDepthTextureView(), OptionalDouble.empty());
+        inMrtPass = true;
+        try (RenderPass renderPass = encoder.createRenderPass(second.build())) {
+            RenderSystem.bindDefaultUniforms(renderPass);
+            TerrainPipelineApi.bindPackGbufferUniforms(renderPass, atlasSampler, blockAtlas(),
+                    colortexDepth.getDepthTextureView(), slotView(0),
+                    dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM);
+            draws.renderGroup(ChunkSectionLayerGroup.TRANSLUCENT, renderPass,
+                    atlasSampler, blockAtlas(), false);
+            reportWaterGroup(draws);
+            drainDeviceDebugMessages();
+        } finally {
+            inMrtPass = false;
+        }
+        // 🔴 第二时刻：半透明写完之后的深度 = OF 的 `depthtex1`。
+        //   有了这一格，BSL 的 `composite.glsl:333 z1 > z0`（半透明/水体识别）才第一次
+        //   有可能读到**两个不同的数** —— 那正是 GAP-023 一直缺的东西。
+        DepthSnapshots.take(DepthSnapshots.TRANSLUCENT, depthTexture());
+    }
+
     private static void reportWaterGroup(ChunkSectionsToRender draws) {
         if (waterGroupLogged) {
             return;

@@ -6,6 +6,57 @@
 ---
 ---
 
+## 2026-10-09（九十二）— ✅ GAP-023 第二格：地形 pass 拆成两段 ⇒ `depthtex0/1/2` 三个时刻**各有一张真快照**；顺带立了 X55（黑帧率本机不可当正确性判据）
+
+> **verdict = `packWater=false ⇒ taken=[0,2]/3`、`packWater=true ⇒ taken=[0,1,2]/3`，且三组深度/链读数与拆段前逐位相同；但本条仍不关（包有没有用上还没判）**
+> 证据：`evidence/h50n-pass-split.md`
+> 登记：GAP-023 第二格行、GAP-020 节奏行、`07-CONSTRAINTS.md` 新增 **X55**
+
+### 改了什么
+
+1. **`bridge/MrtTerrainPass.java`** —— 水段从 pass A 里抽出来，新增 `drawWaterSegment(...)` = **pass B**：
+   颜色附件与深度**全部 LOAD**，段间发 blit。取点变成
+   `pass A 关 → take(OPAQUE) →（水接进来）pass B 关 → take(TRANSLUCENT) → 云 → take(TOP_LAYER)`。
+   为什么必须拆：**blit 是 encoder 命令，render pass 打开期间不能发**（h10 实测规则），
+   而「不透明之后」这一刻正好处在原 pass 里面。
+2. **`MrtTerrainPassWiringTest`** —— 守卫「不得对自建深度用 `OptionalDouble.empty()`」**收窄而不是删掉**：
+   第一段仍必须 `of(0.0)`，续接段恰好允许一处 `empty()`（多于一次 = 又开了一段却忘了清屏语义）。
+3. **`docs/07-CONSTRAINTS.md`** —— 新增 **X55**：本机是 lavapipe，黑帧率/闪烁率随「每帧 CPU 侧录制工作量」
+   移动，**不许**用它自证好坏；§九 自检清单同步加一条。
+
+### 测到了什么（h50n 两臂，闸门 A 各 ✓ 15 键一致）
+
+- ✅ **机制**：`packWater=false ⇒ taken=[0, 2]/3`（没有半透明几何就**不声称** 1 号存在 ——
+  正是 `DepthSnapshotsTest` 钉的那条性质）；`packWater=true ⇒ taken=[0, 1, 2]/3`
+  ⇒ `depthtex1` 第一次成为与 0 号**不同来源**的图。
+- ✅ **没弄坏别的**：`gbuffers_water outputs=2 declaredSlots=[0,1] samplers=8` 仍在（X39 的重绑约束还满足）；
+  `depthviz {16.1362}`、`c0@chainStart {18.0286, 27.0276}`、`trace1deferred1:c4 {54.213}` 与拆段前**逐位相同**。
+- 🔴 **黑帧率这一臂 0/173 与 0/174 —— 但明确不许读成「修好了」**。四臂并排：
+  h50k 33.5% → h50l 66.5% → h50m 66.5% → h50n 0%，差异只有「每帧多做一点录制工作」，
+  而**周期 3 从头到尾没动**。⇒ 被测量对**节奏**敏感、对**内容**不敏感，
+  这是 GAP-020「环深 3 + 3 个 submit 在飞」那条嫌疑目前最强的一次正向支持；
+  也是 X55 的由来。真要判 GAP-020，得换有真 ICD 的机器，或把「CPU 领先几帧」变成可读量。
+
+### 影响的文档
+
+`docs/13-GAP-REGISTRY.md`（GAP-023 第二格行、GAP-020 节奏行）、`docs/07-CONSTRAINTS.md`（X55 + §九 一条）、
+新增 `evidence/h50n-pass-split.md`。
+
+### 测试结果
+
+`./gradlew test -PquickPlay` → **BUILD SUCCESSFUL，1088 项 0 失败**
+（含被收窄的 `MrtTerrainPassWiringTest`；QD-04 棘轮仍绿 —— 拆段把大方法缩短了）。
+真机（A11）：h50n 两臂。已提交（本地 master，未 push）。
+
+### ⛔ 下一步
+
+1. **GAP-023 的关闭条件**：`packWater=true` + **机位里有水** + 看图，判 BSL `composite.glsl:333 z1 > z0`
+   现在是否真能读到两个不同的数（本臂机位 pitch=-60 没有水面，`c1@afterTerrain` 全 0 只是
+   「没人写 ⇒ 停在清屏值」—— 这是解释不是判据）。
+2. `cloudsPass=true` 时 2 号快照会含云深度（OF 语义下是对的），没测过。
+3. GAP-020：换真 ICD 复测黑帧是否还在（X55 写明的两条出路之一）。
+
+
 ## 2026-10-09（九十一）— ✅ GAP-023 第一格落地：`depthtex0` 从「活深度」变成**不可变快照**，并且证明这一换逐位无损
 
 > **verdict = 机制到位 + 忠实拷贝（h50l vs h50m 三个值集逐位相同）；`depthtex1/2` 仍同源 ⇒ 本条不关**

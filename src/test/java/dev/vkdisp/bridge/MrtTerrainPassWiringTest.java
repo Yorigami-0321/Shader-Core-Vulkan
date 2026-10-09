@@ -173,8 +173,21 @@ class MrtTerrainPassWiringTest {
                 "自建深度必须清到 0.0（反向 Z 的远平面），与原版 clear pass 一致");
         assertEquals(0, countCode(pass, "OptionalDouble.of(1.0)"),
                 "不得把深度清成 1.0 —— 那是反向 Z 的**近**平面，会把地形全部深度测试掉");
-        assertEquals(0, countCode(pass, "withDepthAttachment(colortexDepth.getDepthTextureView(), OptionalDouble.empty())"),
-                "不得对自建深度用 empty()（= 不清）");
+        // 🔴 h50n 把这条从「一处都不许」改成「只许出现在**续接段**里，且恰好一处」：
+        //   GAP-023 第二格要求把半透明（水）单独开成 pass B，好在不透明段与半透明段之间发 blit
+        //   （blit 是 encoder 命令，pass 打开期间不能发 —— h10 规则）。
+        //   pass B 的深度**必须** LOAD（empty()）：清成 0.0 就把不透明段的深度抹掉了，
+        //   而反向 Z 下 0.0 = 远平面 ⇒ 水会画到地形**后面**去。
+        //   ⇒ 原话「不得对自建深度用 empty()」在只有一段的时候是对的，拆段之后会误伤正确的写法。
+        //   真正要禁的是**第一段**用 empty()（那等于本帧从上一帧的深度开始画）。
+        int segmentB = pass.indexOf("private static void drawWaterSegment");
+        assertTrue(segmentB > 0, "拆段之后的 pass B（drawWaterSegment）必须存在");
+        assertEquals(0, countCode(pass.substring(0, segmentB),
+                        "withDepthAttachment(colortexDepth.getDepthTextureView(), OptionalDouble.empty())"),
+                "第一段（本帧开头那个 pass）不得对自建深度用 empty() —— 它必须清到 0.0");
+        assertEquals(1, countCode(pass.substring(segmentB),
+                        "withDepthAttachment(colortexDepth.getDepthTextureView(), OptionalDouble.empty())"),
+                "续接段（pass B）的深度必须恰好 LOAD 一次；多于一次 = 有人又开了一段却忘了清屏语义");
     }
 
     @Test
