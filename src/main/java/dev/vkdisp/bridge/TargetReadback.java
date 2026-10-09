@@ -55,10 +55,18 @@ package dev.vkdisp.bridge;
  *    按用户指令本轮不做性能结论。
  */
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline;
+import com.mojang.renderpearl.api.textures.FilterMode;
+import com.mojang.renderpearl.api.textures.GpuSampler;
 import com.mojang.renderpearl.api.textures.GpuTexture;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import dev.vkdisp.VkDisp;
 import dev.vkdisp.VkDispConfig;
 import dev.vkdisp.config.PackOptionStore;
@@ -70,7 +78,10 @@ import dev.vkdisp.pipeline.model.PixelProbeVerdict;
 import dev.vkdisp.pipeline.model.PixelStats;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.joml.Vector4f;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -292,7 +303,70 @@ private static final long WARMUP_FRAMES = 600L;
     public static void probeChainStart() {
         if (samplingFrame && VkDispConfig.MRT_PIXEL_PROBE_AFTER_TERRAIN.get()) {
             submit("c0@chainStart", MrtTerrainPass.slotTexture(0));
+            probeDepthAsGray();
         }
+    }
+
+    // ── GAP-020（h50k→）：把链将要采到的 depthtex0 画成一张可读的 RGBA8 灰度图 ──────────
+    //
+    // 为什么要这一格：h50j 量到黑帧上 `deferred1` 的**颜色输出**（colortex0）与**反射输出**
+    // （colortex5）同时精确为 0，而它自己算的 `cloudViewLength`（colortex4）逐位不变。
+    // 唯一能同时解释这三条的是分支形状 —— `deferred1.glsl:358 if (z < 1.0) {…材质/反射/AO…}`：
+    // 反射写在 if 里、云长写在外面。⇒ 假设是「**黑帧那一帧 depthtex0 处处 = 1.0**」。
+    // 这个假设现在**只能被量**，不能被继续推：本方法把链的源深度画进一张 RGBA8 目标，
+    // 于是「深度是不是恒 1.0」变成一个探针读数（`depthviz` 标签），而不是又一轮猜测。
+    //
+    // 🔴 为什么新建一张 RGBA8 目标、而不是直接回读 `DepthGlProxy` 那张 R32F：
+    //   本类的字节布局按 **RGBA8** 算（`PixelStats` 一路如此），喂进去浮点深度会产出
+    //   「看起来像数字」的垃圾（X37 那一族）。灰度写进 RGBA8 之后 `mean_luma` 就是深度本身
+    //   的 0~255 线性刻度 ⇒ `mean_luma=255` ⇔ 深度恒 1.0。
+    // 🔴 为什么这里可以新建资源：本方法跑在 `probeChainStart()` 那一刻 ——
+    //   地形 pass 已关、链第一级还没开（`FrameApi` 的顺序），所以不违反
+    //   「render pass 打开期间不许新建 encoder 命令」（h10 实测规则）。
+
+    private static @Nullable TextureTarget depthVizTarget;
+    private static boolean depthVizWarned;
+
+    private static void probeDepthAsGray() {
+        GpuTextureView depth = MrtTerrainPass.depthView();
+        if (depth == null) {
+            return;
+        }
+        CompiledRenderPipeline pipeline =
+                RenderSystem.getCompiledPipelineNullable(PipelineApi.depthVisPipeline());
+        if (pipeline == null) {
+            if (!depthVizWarned) {
+                depthVizWarned = true;
+                VkDisp.LOGGER.warn("vkdisp: [GAP-020/depthviz] 探针档要跑深度可视化，但"
+                        + " vkdisp:pipeline/depthviz 没编出来 ⇒ 本帧跳过（不静默：这一格缺席会被读成"
+                        + "「深度已判」）");
+            }
+            return;
+        }
+        int width = depth.getWidth(0);
+        int height = depth.getHeight(0);
+        if (depthVizTarget == null || depthVizTarget.width != width || depthVizTarget.height != height) {
+            depthVizTarget = new TextureTarget(
+                    "vkdisp depthviz probe", width, height, GpuFormat.RGBA8_UNORM, null);
+        }
+        GpuTextureView dst = depthVizTarget.getColorTextureView();
+        GpuTexture dstTexture = depthVizTarget.getColorTexture();
+        if (dst == null || dstTexture == null) {
+            return;
+        }
+        GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+        try (RenderPass pass = encoder.createRenderPass(
+                () -> "vkdisp [GAP-020] depthviz probe (chain depthtex0 -> RGBA8 gray)",
+                dst, Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)), null, OptionalDouble.empty())) {
+            pass.setPipeline(pipeline);
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, depth, nearest);
+            pass.draw(3, 1, 0, 0);
+        }
+        // 🔖 判据读法：mean_luma=255 ⇒ 链这一帧采到的深度**处处 1.0**（假设成立）；
+        //   与非黑帧的读数相同 ⇒ 深度不是那条分支的开关（假设被否，回到 uniform 环那一支）。
+        submit("depthviz", dstTexture);
     }
 
     /**
