@@ -6,6 +6,21 @@
 ---
 ---
 
+## 2026-10-09（九十七）— 🔧 Windows 车道 `runclient` 免参数化：`vulkanPreflight` 加 OS 分流 + `PrepareRun` 声明不兼容配置缓存
+
+> **verdict = `.\gradlew.bat runclient` 无需再带 `-PvulkanSkipCheck=true` / `--no-configuration-cache`**
+> 证据：`:vulkanPreflight` → 「Windows 车道：系统 loader 就绪 C:\Windows\System32\vulkan-1.dll」BUILD SUCCESSFUL；`runClient --dry-run` 任务图完整、配置缓存自动丢弃
+> 登记：本文件；⚠️ `build.gradle` 属 §7.2 共享文件，本次为**用户点名的一次性改动**（非并行线越界，同 P0.2 守卫那段先例）
+
+- **本次改了什么**（仅 `build.gradle`，两处）：
+  1. `vulkanPreflight` 增加 OS 分流——新增 `vkIsWindows`（读 `os.name`）；守卫在 Windows 下改判 `System32\vulkan-1.dll`（路径配置期固化为 `vkWinLoader`，不在任务动作里读环境变量）。**Linux 分支一字未改。**
+  2. 新增 `tasks.configureEach`，把 `prepare*Run`（NeoForge moddev `PrepareRun`）标 `notCompatibleWithConfigurationCache` ⇒ Gradle 只对本构建丢弃配置缓存，不再抛序列化错；`build/test/datagen` 仍照常用缓存。
+- **为什么改**：① `vulkanPreflight` 是 env-1（Linux）专属守卫，判定键全是 Linux 路径且**无 OS 判定** ⇒ Windows 上恒假、误中止 `runClient`；② `PrepareRun` 无法被配置缓存序列化 ⇒ 每次 `runClient` 都得手写 `--no-configuration-cache`。
+- **影响的文档**：仅本文件。`docs/18 §7.2` 的共享文件清单本条**未改**（留 env-1 同步）；旧记载「Windows 车道 runClient 必须带 `-PvulkanSkipCheck=true`」**作废**（旁路本身仍有效）。
+- **测试结果**：`:vulkanPreflight` BUILD SUCCESSFUL（Windows 分支命中）；`prepareClientRun --dry-run` → `Configuration cache entry discarded because incompatible task was found`；`runClient --dry-run` 任务图完整。**未启动完整客户端**（本机显卡侧待用户自跑确认）。
+- **是否已提交**：否。
+- **对 env-1 的影响**：零行为变化——Linux 下 `vkIsWindows=false`，OS 分支不进，其下逻辑逐字保留；配置缓存声明对 Linux 是等价声明（不再需要那条 flag，非破坏）。
+
 ## 2026-10-09（九十六）— 🔬 GAP-027 云：用 MCP 复测黑帧率 ⇒ 云开/关都是 ~33%，**云不是黑帧源**（否证旧「67%」，归因到 GAP-026 残留档）
 
 > **verdict = 三臂都在 [STORE_RESIDUE_NONE]（包默认档）下测：云开(A)=188/562=33.5%、云关(C)=12/36=33.3%，误差内相同 ⇒ 云不是黑帧源；周期 3 按 X55 不作正确性结论**

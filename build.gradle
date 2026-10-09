@@ -172,6 +172,12 @@ def vkLibDir = new File(vkPrefixDir, 'usr/lib')
 def vkIcdFile = new File(vkPrefixDir, 'usr/share/vulkan/icd.d/lvp_icd.json')
 def vkScript = file('tools/vulkan-local/preflight.sh')
 def vkSkipCheck = project.findProperty('vulkanSkipCheck')?.toString()?.toBoolean() ?: false
+// —— OS 分流（2026-10-09）：本守卫的判定键全部是 Linux 产物（preflight.sh / /usr/lib/libvulkan.so.1 /
+//    本地 prefix 的 libvulkan.so.1），在 Windows 上必然全假 ⇒ 会把 Windows 车道误判成「缺 loader」而中止。
+//    Windows 走系统 vulkan-1.dll，故单独分流；⚠️ env-1（Linux）不进该分支，原逻辑一字未改。
+def vkIsWindows = System.getProperty('os.name')?.toLowerCase(Locale.ROOT)?.contains('windows') ?: false
+// Windows 车道的系统 loader 路径在配置期固化，避免在任务动作里读环境变量（configuration-cache 友好）
+def vkWinLoader = vkIsWindows ? new File(System.getenv('SystemRoot') ?: 'C:\\Windows', 'System32/vulkan-1.dll') : null
 
 // —— 配置期判定：不 exec、不在任务动作里引用 project ⇒ configuration-cache 安全
 def vkPrefixReady = vkLibDir.isDirectory() && new File(vkLibDir, 'libvulkan.so.1').exists() && vkIcdFile.isFile()
@@ -226,11 +232,24 @@ def vulkanPreflight = tasks.register('vulkanPreflight') {
     def sysLoader = vkSystemLoader
     def scriptFile = vkScript
     def skip = vkSkipCheck
+    def win = vkIsWindows
+    def winLoader = vkWinLoader
     dependsOn vulkanProbe
 
     doLast {
         if (skip) {
             logger.lifecycle('[vulkan] -PvulkanSkipCheck=true ⇒ 跳过自检（可能静默退回 OpenGL，后果自负）')
+            return
+        }
+        // —— Windows 车道（2026-10-09）：上面的 ready / sysLoader 判定键全是 Linux 路径，
+        //    Windows 上恒为假。这里改判系统 loader System32\vulkan-1.dll。
+        //    ⚠️ Linux（env-1）绝不到达此分支，其下原有逻辑保持原样。
+        if (win) {
+            if (winLoader != null && winLoader.isFile()) {
+                logger.lifecycle("[vulkan] Windows 车道：系统 loader 就绪 ${winLoader.absolutePath}（Linux prefix 检查不适用，已跳过）")
+            } else {
+                logger.warn("[vulkan] Windows 车道未找到 ${winLoader?.absolutePath ?: 'System32/vulkan-1.dll'}；若客户端静默退回 OpenGL，请重装显卡驱动或安装 Vulkan Runtime。继续启动。")
+            }
             return
         }
         if (ready) {
@@ -368,5 +387,30 @@ idea {
     module {
         downloadSources = true
         downloadJavadoc = true
+    }
+}
+
+// ============================================================================
+// configuration-cache 兼容性声明（2026-10-09）
+//
+// 现象：gradle.properties 开着 org.gradle.configuration-cache=true，直接 `runClient`
+//   会因 NeoForge moddev 的 PrepareRun 任务无法被序列化而直接失败：
+//     field `__runTypeTemplatesSource__` of task `:prepareClientRun` …
+//     Could not resolve all files for configuration ':neoForgeConfigOnly'
+//   过去一直靠命令行 `--no-configuration-cache` 绕过。
+//
+// 做法：把 PrepareRun 系列任务显式声明为「不兼容配置缓存」。Gradle 在任务图里遇到
+//   它们时会**只对本次构建**停用配置缓存，其余任务（build / test / datagen）仍照常
+//   享用缓存 —— 影响面比全局 org.gradle.configuration-cache=false 小得多。
+//
+// 影响面：这是对插件既有事实的声明，不改变 Linux（env-1）行为；env-1 也因此无需再
+//   手写 `--no-configuration-cache`。二者等价，不产生分叉。
+// ⚠️ build.gradle 属 docs/18-PARALLEL.md §7.2 的共享文件，本次为**应用户要求的一次性改动**
+//   （§7.1 的禁令针对并行线，不适用；同上方 P0.2 守卫那段先例），已记 CHANGE_LOG 九十七。
+// ============================================================================
+tasks.configureEach { t ->
+    if (t.name.startsWith('prepare') && t.name.endsWith('Run')) {
+        t.notCompatibleWithConfigurationCache(
+                "NeoForge moddev PrepareRun 无法被配置缓存序列化（__runTypeTemplatesSource__ / neoForgeConfigOnly）")
     }
 }
