@@ -541,6 +541,17 @@ public final class MrtTerrainPass {
         //   ⚠️ 默认关（{@code mrt.cloudsPass=false}）⇒ 这一行整个不进，与今天逐字一致。
         CloudsIntoGbuffer.render();
 
+        // 🔴 GAP-023 第一格：把**此刻的活深度**存成 `depthtex0` 的快照。
+        //   为什么取在「地形 pass 已关、云已画完、翻代之前」这一刻：
+        //   ① blit 是 encoder 命令，pass 开着不能发（h10 规则）；
+        //   ② 这一刻的内容与今天链直接绑活深度所看到的**逐字相同** ⇒ 本格不改变画面，
+        //      它买到的是一条今天没有的性质：**之后任何写深度的东西都改不了链看到的深度**
+        //      （云那一格开着 `mrt.cloudsNoDepthWrite=false` 时就会写深度）。
+        //   ⚠️ 本格**不关** GAP-023：`depthtex1/2` 要真正不同源，必须把地形 pass 拆成
+        //      「不透明一段 + 半透明一段」并各取一格 —— 那一步登记在 GAP-023 的「下一步」。
+        DepthSnapshots.take(DepthSnapshots.OPAQUE,
+                colortexDepth == null ? null : colortexDepth.getDepthTexture());
+
         // 🔴 GAP-018：本 pass 写过的池槽**翻代** ⇒ 之后第一个读者（链的第一步）看到的就是刚写的内容。
         //   toMain 档的槽 0 打的是主目标（不是池）⇒ 不参与翻代。
         // 🔴 h48p：先轮换 TerrainPipelineApi 的两条 MappableRingBuffer —— 它们**本帧已经画完了**，
@@ -640,6 +651,10 @@ public final class MrtTerrainPass {
      */
     private static void ensureTargets(RenderTarget main) {
         ensureColortex(main);
+        // 🔴 GAP-023：深度快照同样**必须在开任何 pass 之前**就绪 —— 建纹理要新建 encoder，
+        //   而 render pass 打开期间新建 encoder 会被 RenderPearl 拒绝（h10 实测规则）。
+        DepthSnapshots.ensure(main.width, main.height);
+        DepthSnapshots.beginFrame();
         ensureShadowStubs();
         // 🔴🔴 h48y：自定义纹理（GAP-009/GAP-025）**同样必须**在开 pass 之前就绪。
         //   此前这条只在链侧 FrameApi:1105 被调，而**地形 gbuffer pass 早于链**
@@ -725,6 +740,12 @@ public final class MrtTerrainPass {
     /** GAP-018：一个 pass 写完这些槽之后翻代。 */
     public static void advanceWrittenSlots(java.util.Collection<Integer> written) {
         POOL.advanceWritten(written);
+    }
+
+    /** gbuffer 深度的**纹理本体**（GAP-023 的 blit 源；视图给不了拷贝的源参数）。 */
+    @Nullable
+    public static GpuTexture depthTexture() {
+        return colortexDepth == null ? null : colortexDepth.getDepthTexture();
     }
 
     /** gbuffer 深度视图（后处理 depthtex0/1/2 的真值来源）；未建返回 {@code null}。 */

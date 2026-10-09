@@ -4,7 +4,59 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 ---
----## 2026-10-09（九十）— 🔬 深度可视化探针上线：「黑帧那帧 z 处处 1.0」**也被否证**；但探针自身把黑帧率从 33.5% 推到 66.3% ⇒ 周期 3 的嫌疑收窄到 uniform 块环
+---
+
+## 2026-10-09（九十一）— ✅ GAP-023 第一格落地：`depthtex0` 从「活深度」变成**不可变快照**，并且证明这一换逐位无损
+
+> **verdict = 机制到位 + 忠实拷贝（h50l vs h50m 三个值集逐位相同）；`depthtex1/2` 仍同源 ⇒ 本条不关**
+> 证据：`evidence/h50m-depthsnapshots.md`
+> 登记：GAP-023 加 h50m 行与「下一刀」的准确形状
+
+### 改了什么
+
+1. **`bridge/DepthSnapshots.java`（新）** —— 三张 D32 快照（`depthtex0/1/2` 的三个时刻）、
+   `slotOf(name)` 名字→时刻的**纯映射**、`has(int)` 纯谓词、`take()` 走原版
+   `RenderTarget#copyDepthFrom` 同一条 `copyTextureToTexture` API。
+   🔴 GPU 资源放进**嵌套类** `Resources`：数组字段 `GpuTexture[]` 的创建就要加载 GpuTexture，
+   留在外层类的话测试连 `slotOf` 都调不动（类初始化先炸）。
+2. **`bridge/MrtTerrainPass.java`** —— `ensureTargets` 里 `ensure()+beginFrame()`
+   （必须在开任何 pass 之前：建纹理要新 encoder，h10 规则）；pass 关闭、云画完、翻代之前
+   `take(OPAQUE, depthTexture())`；新增 `depthTexture()` 访问器（blit 的源要纹理本体，视图给不了）。
+3. **`bridge/FrameApi.java`** —— `chainResolver` 的 `depthtex*` 分支改成**先要快照、拿不到才回退活深度**，
+   加 `[GAP-023]` 一次性自报（说清 `taken=[0]/3`，即 1/2 号还没就位 —— 不说就会被读成已就位）。
+4. **测试** —— 新增 `DepthSnapshotsTest` 6 条。
+
+### 为什么，以及测到了什么
+
+- 两条自报都在且说真话：`深度快照已建: 854x480 format=D32_FLOAT usage=7（3 张 = 三个时刻）`、
+  `depthtex* 绑定源: depthtex0 ⇒ 快照=有（该时刻） | taken=[0]/3`。
+- ✅ **无损**：h50l（链绑活深度）vs h50m（链绑快照）—— 两臂都带 depthviz 探针 ⇒ 仪器形状相同，
+  才谈得上归因 —— `main {0.0, 57.7745}`、`depthviz {16.1362}`、`c0@chainStart {18.0286, 27.0276}`
+  **三个值集逐位相同** ⇒ blit 忠实。
+  （两臂黑帧率都是 ~66%，与不带探针的 h50k 33.5% 不同 —— 那是已登记的**探针扰动**，不是本条改坏的。）
+- 这一格买到的：`depthtex0` 不可变 ⇒ 之后任何写深度的 pass（云开着 `cloudsNoDepthWrite=false`
+  时就会写深度）都改不了链看到的深度。这条性质今天没有。
+- 没买到的：`depthtex1/2` 仍同源 ⇒ `z1 > z0` 仍恒假、水接进来仍读不到真正的「半透明之后」。
+  缺的机制说清楚了：**blit 是 encoder 命令，render pass 打开期间不能发**，而「不透明之后」
+  这一刻正好处在地形 pass 里面 ⇒ 下一刀必须先把地形 pass 拆成两段。
+
+### 影响的文档
+
+`docs/13-GAP-REGISTRY.md` GAP-023（h50m 行 + 「下一刀」的牵连面清单）；新增
+`evidence/h50m-depthsnapshots.md`。
+
+### 测试结果
+
+`./gradlew test -PquickPlay` → **BUILD SUCCESSFUL，1088 项 0 失败**（1082 + 6）。
+真机（A11）：h50m 一臂（配置闸门 ✓ 15 键一致、进世界 30 秒）。已提交（本地 master，未 push）。
+
+### ⛔ 下一步（GAP-023 的第二格）
+
+拆 `MrtTerrainPass` 那个方法为「不透明一段 + 半透明一段」，中间两次 blit。牵连面逐条列在
+GAP-023 的新行里（附件 LOAD/CLEAR 语义、`skyPrePainted`、水那段的重绑 X39、GAP-018 翻代时机、
+探针取点）⇒ 单独一臂做、单独一臂判。
+
+## 2026-10-09（九十）— 🔬 深度可视化探针上线：「黑帧那帧 z 处处 1.0」**也被否证**；但探针自身把黑帧率从 33.5% 推到 66.3% ⇒ 周期 3 的嫌疑收窄到 uniform 块环
 
 > **verdict = 又排除一条（深度整体出局）+ 拿到一条正向信号（每帧工作量改变「3 个相位里几个坏」，改变不了 3）**
 > 证据：`evidence/h50h-gap029-rerun.md` §十一（h50l）

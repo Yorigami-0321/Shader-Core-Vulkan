@@ -1324,13 +1324,21 @@ public final class FrameApi {
                 return g != null ? g : fallbackView;
             }
             if (name.startsWith("depthtex")) {
+                // 🔴 GAP-023：先取**该时刻的深度快照**，取不到才回退活深度。
+                //   今天只有 0 号有快照（1/2 号要等地形 pass 拆成两段），所以三名目前仍同源 ——
+                //   但同源的理由变了：从「只有一张图可绑」变成「本帧没有半透明几何进 gbuffer，
+                //   ⇒ 半透明之后的深度 ≡ 不透明之后的深度，这是 OF 语义下的**正确退化**」。
+                //   这条区别要能被读出来，所以下面打一次自报（X11：缺席必须点名）。
+                int snapshotSlot = dev.vkdisp.bridge.DepthSnapshots.slotOf(name);
+                GpuTextureView snapshot = snapshotSlot < 0
+                        ? null : dev.vkdisp.bridge.DepthSnapshots.view(snapshotSlot);
+                reportDepthSnapshotOnce(name, snapshotSlot, snapshot != null);
                 // 🔴 GAP-022 ①：开关开着 ⇒ 绑 GL 口径代理（1 − z_en，天空=1.0）；
-                //   开关关着 / 代理缺席 ⇒ 回到今天这张反向 Z 原图，缺席那条由 DepthGlProxy
-                //   自己打一次 WARN（不许静默换绑 —— X11）。
-                //   depthtex1/2 与 0 号同源一起翻，理由见 DepthGlProxy#chooseDepthSource
-                //   （GAP-023「三名一张」是<b>另一条</b>缺陷，本轮不动它的观测面）。
+                //   开关关着 / 代理缺席 ⇒ 回到快照（或今天的反向 Z 原图），缺席那条由
+                //   DepthGlProxy 自己打一次 WARN（不许静默换绑 —— X11）。
+                //   depthtex1/2 与 0 号同源一起翻，理由见 DepthGlProxy#chooseDepthSource。
                 return dev.vkdisp.bridge.DepthGlProxy.chainDepthView(
-                        name, MrtTerrainPass.depthView(), fallbackView);
+                        name, snapshot != null ? snapshot : MrtTerrainPass.depthView(), fallbackView);
             }
             if (name.startsWith("shadowtex")) {
                 GpuTextureView s = ShadowStubs.depthView();
@@ -1344,9 +1352,34 @@ public final class FrameApi {
         };
     }
 
+    /** GAP-023 自报的哨兵：三名各自吃到什么，只打一次（热路径日志 I/O 纪律）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean DEPTH_SNAPSHOT_REPORTED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * 把「{@code depthtexN} 这一帧到底绑的是快照还是活深度」打一次。
+     *
+     * <p>🔖 为什么必须打：本条缺陷（GAP-023）的全部严重性就藏在「三个名字一张图」这件事里，
+     * 而它<b>看起来完全正常</b>（不抛、不报错、画面能亮）。没有这一行，下一轮取证又会把
+     * 「z1 &gt; z0 恒假」读成「包的分支写错了」—— 本项目反复付学费的那一种。
+     */
+    private static void reportDepthSnapshotOnce(String name, int slot, boolean snapshotUsed) {
+        if (!DEPTH_SNAPSHOT_REPORTED.compareAndSet(false, true)) {
+            return;
+        }
+        dev.vkdisp.VkDisp.LOGGER.info("vkdisp: [GAP-023] depthtex* 绑定源: {} ⇒ 快照={} | {}"
+                        + "（快照缺席时回退活深度，<b>不静默换绑</b>）。"
+                        + "⚠️ 本行不等于 GAP-023 已关：1/2 号要真正不同源，必须把地形 pass 拆成"
+                        + "「不透明一段 + 半透明一段」各取一格（blit 在 pass 打开期间不能发），"
+                        + "见登记表 GAP-023 的「下一步」。",
+                name, snapshotUsed ? "有（该时刻）" : "无 ⇒ 回退活深度",
+                dev.vkdisp.bridge.DepthSnapshots.describeFrame());
+    }
+
     /**
      * GAP-022 ①：刷新 GL 口径深度代理（建/重建纹理 + 跑那一趟全屏翻转 pass）。
      *
+
      * <p>🔖 开关<b>关掉</b>时走 {@code release()}，不是「留着但不用」：代理一旦在场，
      * 它就是 {@code depthtex*} 那个分支里「开关开着就用它」的那个「它」—— 留下一张没人维护的旧图
      * 等于给下一轮 A/B 留一个看不见的状态源（h33/h34 那一族的形状）。
