@@ -741,6 +741,36 @@ public final class VkDispConfig {
             .comment("GAP-003：把原版天空重放进 colortex0（地形之前、链之前；需 terrainAfterLevel=true，默认关）。")
             .define("mrt.skyPass", false);
 
+    /**
+     * GAP-027 第二刀：把**云**画进 gbuffer（默认关）。
+     *
+     * <p><b>为什么要这一格</b>：真机画面判读（h48t 的 F2）直接看见「天上没有任何云」，
+     * 而 BSL 默认档云是开的 ⇒ 不是选项问题，是这条 draw 根本没走 gbuffer。
+     * 包的 {@code composite}/{@code final} 会读回 colortex0 ⇒ 云不进 gbuffer 就永远拿不到云的贡献。
+     *
+     * <p><b>机制与天空那一格的区别</b>（这条决定了它更简单）：原版
+     * {@code CloudRenderer#render(CloudStatus, RenderPass)} 是 public 且
+     * <b>自己收 RenderPass</b>（不像 {@code SkyRenderer} 要从 {@code RenderTarget} 取视图）
+     * ⇒ 我方直接开一个<b>只有一个颜色附件</b>的 pass 给它就行。
+     * 🔴 <b>必须 1 个附件</b>：它内部用原版 {@code RenderPipelines.CLOUDS / FLAT_CLOUDS}
+     * （1 个颜色目标），而我方地形 pass 在接了水之后是 2 个附件 ⇒
+     * 附件数 ≠ 颜色目标数会被 frontend 的 {@code setPipeline} 校验<b>当场抛</b>（响亮失败）。
+     *
+     * <p>🔖 <b>顺序 = 地形之后、翻代之前</b>（两件事各自的理由）：
+     * ① 原版序列就是「solid → … → translucent → clouds」（{@code LevelRenderer} 第 727/738 行）；
+     * ② GAP-018 的双代轮转里 {@code advanceWritten} 一翻代，「待写那一代」就换了 ⇒
+     * 云必须和地形写<b>同一代</b>，否则链读到「只有地形、没有云」（h48i 的天空就是踩过这个）。
+     *
+     * <p>⚠️ <b>本格只把云搬进 gbuffer，云用的还是原版着色器</b> ——
+     * 换成包的 {@code gbuffers_clouds} 需要管线替换那条路（GAP-027 登记的
+     * {@code RenderSystem#getCompiledPipelineNullable} 首条语句就是
+     * {@code PIPELINE_MODIFIERS.apply(pipeline)}），那是下一刀。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_CLOUDS_PASS = BUILDER
+            .comment("GAP-027：把原版云画进 gbuffer colortex0（地形之后、链之前；默认关）。"
+                    + "本格只搬几何、不换成包的着色器 —— 换包着色器要走管线替换那一刀。")
+            .define("mrt.cloudsPass", false);
+
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_ATLAS_LOD0 = BUILDER
             .comment("GAP-016 止血：包地形图集采样器 maxLod=0（默认开；关闭即回到实测恒 0 的"
                     + "隐式导数 LOD 路径，仅用于复现/修根对照）。")

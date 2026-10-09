@@ -246,6 +246,20 @@ private static final long WARMUP_FRAMES = 600L;
         }
     }
 
+    /**
+     * GAP-027 云那一格的判据：云写完之后的 colortex0 **待写那一代**。
+     *
+     * <p>🔖 为什么取「待写那一代」而不是 {@link #probeAfterTerrain()} 用的被读那一代：
+     * 本格跑在 {@code advanceWritten} **之前**（必须如此，否则云会写到翻代后的另一代），
+     * 所以此刻「地形 + 云」的内容还在待写那一代里；读另一代会读到上一帧 ⇒
+     * 拿「c0@afterClouds 为 0」去判「云没画」就是自己造的假判据（h48l 同课）。
+     */
+    public static void probeAfterClouds() {
+        if (samplingFrame && VkDispConfig.MRT_PIXEL_PROBE_AFTER_TERRAIN.get()) {
+            submit("c0@afterClouds", MrtTerrainPass.poolWriteTexture(0));
+        }
+    }
+
     /** 天空重放之后、链之前再取一次（GAP-003/sky 判据：地形内容有没有被天空 pass 抹掉）。 */
     public static void probeAfterSky() {
         if (samplingFrame && VkDispConfig.MRT_PIXEL_PROBE_AFTER_TERRAIN.get()) {

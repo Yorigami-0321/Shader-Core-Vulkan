@@ -529,6 +529,14 @@ public final class MrtTerrainPass {
             inMrtPass = false;
         }
 
+        // 🔴 GAP-027 第二刀：把云画进 gbuffer。位置是**硬约束**，不是风格：
+        //   ① 必须在下面那次 {@code POOL.advanceWritten} **之前** —— 翻代之后「待写那一代」就换了，
+        //      云会写进另一代 ⇒ 链读到「只有地形、没有云」（h48i 的天空逐字踩过）；
+        //   ② 必须在 pass A 已关闭之后 —— 它自己开一个**只有一个颜色附件**的 pass，
+        //      而原版云管线只有 1 个颜色目标（地形接了水之后是 2 个附件 ⇒ 附件数不匹配会抛）。
+        //   ⚠️ 默认关（{@code mrt.cloudsPass=false}）⇒ 这一行整个不进，与今天逐字一致。
+        CloudsIntoGbuffer.render();
+
         // 🔴 GAP-018：本 pass 写过的池槽**翻代** ⇒ 之后第一个读者（链的第一步）看到的就是刚写的内容。
         //   toMain 档的槽 0 打的是主目标（不是池）⇒ 不参与翻代。
         // 🔴 h48p：先轮换 TerrainPipelineApi 的两条 MappableRingBuffer —— 它们**本帧已经画完了**，

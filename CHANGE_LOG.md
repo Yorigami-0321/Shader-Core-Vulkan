@@ -6,6 +6,66 @@
 ---
 ---
 
+## 2026-10-09（八十）— 🟡 GAP-027 第二刀落地一半：云的 pass 接上了、draw 真的发了（9865 quad），但对 colortex0 **零写入**
+
+> **verdict = 「云没出现」被切成两半并判掉一半：不是没发 draw，是发了没落地**
+> 证据：`evidence/h49l-clouds-into-gbuffer.md`（A/B 两臂 + 反射自报）
+
+**本次改了什么**
+
+1. ✅ 新增 `bridge/CloudsIntoGbuffer` + 开关 `mrt.cloudsPass`（默认 **false** ⇒ OFF 档逐字不变）：
+   在地形 pass 关闭之后、`POOL.advanceWritten` **之前**，开一个**只有 1 个颜色附件**的 pass
+   （原版 `CLOUDS/FLAT_CLOUDS` 只有 1 个颜色目标 ⇒ 附件数不匹配会被 frontend 的 `setPipeline`
+   当场抛，这是本仓 h02 就量到的响亮失败），把 `CloudRenderer.render(status, renderPass)`
+   画进 colortex0 的**待写那一代**。🔖 位置是硬约束而不是风格：翻代之后「待写那一代」就换 ⇒
+   云会写进另一代，链读到「只有地形、没有云」（h48i 的天空逐字踩过这条）。
+2. ✅ 复用原版 `LevelRenderer#cloudRenderer()`（public）+ `prepare(...)`（public），
+   绘制条件**照原版同一个谓词**（`status != OFF && alpha(cloudColor) > 0`）
+   ⇒ 不另造第二份「什么时候该画云」的口径。
+3. 🔑 **反射原版 private 网格状态**（`quadCount` / `texture` / `utb`）打进自报行 ——
+   手法与本仓 `probeDrawCounts` 同源：`CloudRenderer#render` 里那个
+   `texture != null && quadCount != 0` 是**静默早退**，不量出数字就永远分不开
+   「一条 draw 都没发」与「发了但被拒」。
+4. ✅ **A11 真机 A/B 两臂**（单变量 = `mrt.cloudsPass`，X52 已逐行列出）：
+   ON 臂自报 `status=FANCY cloudColorAlpha=204 cloudHeight=192.33 cloudRange=64` +
+   `quadCount=9865 textureReady=true facesBufferReady=true` ⇒ **draw 确实发出**；
+   两臂 `Render thread/ERROR` 都是 2 条（`Narrator`/`SoundEngine`）⇒ 没引入新异常。
+   ❌ 但 `c0@afterClouds` 与 `c0@afterTerrain` **同帧逐位相同**
+   （`#417 (36.5255,45.6873,56.5242)` = `(36.5255,45.6873,56.5242)`）⇒ **云对 colortex0 零写入**。
+5. 🔴 **顺带更正登记表一条说重了的话**（X37）：GAP-027「现状」原写
+   「`gbuffers_skybasic/skytextured` 经 `SkyIntoGbuffer` 落地」—— 逐字核实
+   `SkyRenderer.java:167,180,256,274,298,314` 取的全是原版
+   `RenderPipelines.SKY/CELESTIAL/STARS/SUNRISE_SUNSET/END_SKY`，我方**从未**把它们换成包的程序
+   ⇒ 天空搬进 gbuffer 的只是**几何**。GAP-028 让 `gbuffers_skybasic` 编译得过，
+   但**编译过 ≠ 有 draw 用它**。
+6. 🔖 一条本轮核实的基础设施事实（下一刀要用）：
+   `RenderSystem.getCompiledPipeline:123` → `getCompiledPipelineNullable:106` 的**首条语句**
+   就是 `PIPELINE_MODIFIERS.apply(pipeline)` ⇒ 管线替换对 `SkyRenderer`/`CloudRenderer`
+   这类「内部自己取管线」的路径**有效**；`PipelineModifier` 必须幂等且返回的管线要换 `location`
+   （否则 `PipelineModifierStack:63-66` 抛）。
+
+**为什么改**：云是 GAP-027 登记的「第二刀」（`CloudRenderer#render` 自收 `RenderPass`，与天空同形），
+而真机画面判读早就直接看见「天上没有任何云」。
+
+**影响的文档**：新证据 `evidence/h49l-clouds-into-gbuffer.md`；
+`docs/13-GAP-REGISTRY.md` GAP-027 新增 h49l 行 + 更正「天空已落地」那半句。
+
+**测试结果**：全量 **1071 / 0 失败 / 0 错误**。运行侧：h49l 两臂 + h49m 一臂（补网格自报）。
+
+**是否已提交**：见本条目对应提交（本地提交，未推送）。
+
+**⛔ 仍未完成**：① **云为什么零写入未判** —— 已排除四个方向（附件数 / 静默早退 /
+「云贴图漏绑」：`clouds.png` 在 reload 期读成 CPU 侧 `TextureData`，这条管线**没有 Sampler0**；
+深度口径按 GREATER 系推理应通过），剩两个候选，
+下一刀 = 诊断档 `mrt.cloudsDiagnosticClear`（云 pass 按 CLEAR 洋红打开）：
+读到洋红 ⇒ 问题在云的 draw 状态；仍读到地形值 ⇒ 我方挂的 view 与被读的那一代不是同一张图
+（那是比云更根本的一格）；② 换成包的 `gbuffers_clouds` / `gbuffers_skybasic` 未做（要走管线替换）；
+③ **生产视图整帧黑**（GAP-019/020 家族）本轮再次挡住画面判据 ⇒ 它现在是水/云/天空
+画面判据的**公共阻塞物**，优先级上升；④ 水为什么读数断续（七十九 ⛔①）；
+⑤ GAP-028 第二半；⑥ GAP-023 ②/③；⑦ 实体 / 手 / 天气 / `shadow` 未接。
+
+---
+
 ## 2026-10-09（七十九）— ✅ 水终于写进了 colortex1；顺手否证自己刚提的假设，并把剩下的问题**换成了那个真问题**（读数为什么断续）
 
 > **verdict = 「水不落地」是假的，「读数断续」是真的 —— 而后者就是 GAP-020 那条周期性空帧**
