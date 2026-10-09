@@ -40,15 +40,49 @@ vkdisp: [GAP-029] 链上承重内建已供值: shadowFade=1.0 timeBrightness=1.0
 对 `shadowtex*` 不成立。守卫测试 `ShadowSamplerAliasingTest.stubDepthIsClearedToFarPlane`
 当时把这句**信念**编成了断言（`depthTex, 0.0F`），本轮改成按测量到的口径断言 1.0。
 
-## 三、A/B：同一臂只差桩的清屏值
+## 三、~~A/B：同一臂只差桩的清屏值~~ —— **本表作废**（原因见 §四bis）
 
-| 跑 | 桩深度 | 配置 | 画面（同机位 pitch=-60） |
-|---|---|---|---|
-| h50g 第 1 跑 | **0.0** | GAP-029 已供 | 天空纯黑、**云完全看不见**（云被算成全黑 ⇒ 与天空同色）、地形暗 |
-| h50g 第 2 跑 | **1.0** | 同上 | 天空仍黑，但**云出现灰白色块状结构**（`evidence/h50-images/h50g2-stub1-up.png`）、地形亮度同量级 |
+原表写下「h50g 第 1 跑（桩 0.0）⇒ 云完全看不见；第 2 跑（桩 1.0）⇒ 云出现灰白色块状结构」，
+并据此说「方向确认」。🔴 **那两跑的配置根本没落地** ⇒ 画面不是「BSL + MRT 地形」的状态，
+那张表**不能当任何判据**。桩 `1.0` 这个改动目前的地位是：**代码级推理成立、真机未验证**。
 
-⇒ 方向确认：**1.0 才是「无遮挡」在包侧的读法**。云的可见性是阴影项的直接消费点，
-这一格从「什么都没有」变成「有云的形状」，是本轮唯一一处**画面侧变好**的差分。
+本轮收尾时工作树已把它**改回 `0.0`** 去补那一格（`h50i` = 「只供 GAP-029、桩仍 0.0」），
+与 `h50h`（GAP-029 + 桩 1.0）合起来才能把「33.8% → ?」这一笔账拆到两个改动头上。
+1.0 保留与否等两格对比出结果再定 —— 见 `evidence/h50h-gap029-rerun.md`。
+
+## 四bis、作废原因：一个没带引号的空串让 **FML 把整份配置按默认值重建**
+
+脚本里逐字写的是 `lane_cfg.py --lane iso "pack.optionOverrides="`（想把 h50f 留下的
+`TAA_MODE=1` 清掉），落盘成 `optionOverrides =`（空值没有引号）。真机日志第 47 行逐字：
+
+```
+[modloading-sync-worker/WARN] [net.neoforged.fml.config.ConfigTracker/CONFIG]:
+Failed to load config vkdisp-client.toml:
+com.electronwill.nightconfig.core.io.ParsingException: Invalid value containing only whitespaces.
+Attempting to recreate
+```
+
+⇒ **FML 的行为是「重建整份配置」**，不是「丢掉这一个键」。事后回读文件确认那一跑实际是：
+
+| 键 | 那一跑的实际值 | 我想设的值 |
+|---|---|---|
+| `shaderPack` | `""` | `BSL_v10.1.8` |
+| `mrt.terrain` | `false` | `true` |
+| `mrt.packTerrainShader` | `false` | `true` |
+| `mrt.pixelProbe` | `false` | `true` |
+
+⇒ 那一跑是**近乎纯原版**：既没有包片元、也没有 MRT 地形 pass，探针更是整个关着。
+所以「`样本=0`」与那两张截图都不是 GAP-029 的判据。
+
+🔖 **三条要记住的形状**：
+1. **「配置没落地」会伪装成「改动没效果」** —— 与 GAP-023（桩被 A/B 开关门住）、GAP-026
+   （持久化 store 泄漏进产品路径）、h49r（档位之间继承配置）同族，这次是**写入侧**产出坏 TOML。
+2. **空串必须写成 `""`**：`lane_cfg.py 'pack.optionOverrides=""'` 才落盘成 `optionOverrides = ""`
+   （本轮把两种写法都实测对比过）。
+3. **判据必须自带落地证明**：从 h50h 起，取证臂在起跑前**逐键回读**配置并与期望值表比对，
+   任一键不符就 `abort`；等待循环里出现 `Failed to load config vkdisp-client` 也 `abort`；
+   采集窗 `样本=0` 同样 `abort`。这道闸门在它**第一次**运行时就抓出了「顶层键 `shaderPack`
+   被我按 section 缩进漏匹配」的 bug，否则又是一臂白跑。
 
 🔴 但**没修好的也说清**：天空仍然应该是蓝的（正午、晴），地形仍然偏暗。
 ⇒ 另开未判项（见 §五），不许把本条读成「GAP-029 之后画面已正确」。

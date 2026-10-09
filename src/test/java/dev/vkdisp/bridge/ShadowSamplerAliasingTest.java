@@ -158,24 +158,20 @@ class ShadowSamplerAliasingTest {
     }
 
     @Test
-    @DisplayName("🔖🔖 桩深度必须清到 1.0 —— 读这张图的是**包**，包按 GL 口径读 shadowtex")
-    void stubDepthIsClearedToNoOccluderForPackConvention() {
+    @DisplayName("🔖 桩深度留 0.0 —— 1.0 被真机测过：黑帧从 32.9% 涨到 66.7%")
+    void stubDepthStaysAtMeasuredBest() {
         Assumptions.assumeTrue(Files.exists(STUBS), "ShadowStubs 缺失");
         String stubs = read(STUBS);
-        assertTrue(stubs.contains("depthTex, 1.0F"),
-                "桩深度必须清到 **1.0**。\n"
-                        + "本条此前断言的是 0.0，理由逐字写着「反向 Z 下 0.0 = 远平面 ⇒ 阴影判为无遮挡」——\n"
-                        + "那句对**引擎自己的深度**成立，对 `shadowtex*` 不成立：包读这张图用的是 GL 口径\n"
-                        + "（BSL `shaders/lib/lighting/shadows.glsl:3` 声明 `uniform sampler2DShadow shadowtex0`\n"
-                        + "  → `shadow2D(tex, vec3(uv, z))`，比较方向「我的 z ≤ 图里存的 ⇒ 亮」）\n"
-                        + "⇒ 存 0.0 被读成「贴脸就有遮挡物」= 全场景在影子里。\n"
-                        + "真机证据（evidence/h50g-shadowstub-ab.md）：同一臂、同机位、同配置，只差这一格 ——\n"
-                        + "  0.0 ⇒ 天空与云全黑；1.0 ⇒ 云出现灰白色块状结构。\n"
-                        + "🔖 为什么此前没人发现：GAP-029 之前 `shadowFade` 从来没供 ⇒ 恒 0 ⇒\n"
-                        + "  BSL 逐字 `shadow = mix(vec3(1.0), shadow, shadowFade)`（shadows.glsl:220）\n"
-                        + "  把整个阴影项跳过 ⇒ 桩里存什么都无所谓。两个缺陷互相挡着（本项目第 N 例）。");
-        // 反向断言：不许有人「顺手把 0.0 改回去」（那正是引擎自己深度的清屏值，见下面那条测试）。
-        assertFalse(stubs.contains("depthTex, 0.0F"), "桩深度又变回 0.0 = 全场景在影子里");
+        assertTrue(stubs.contains("depthTex, 0.0F"),
+                "桩深度留 0.0：h50i(0.0) main 黑帧 55/167 = 32.9%、间隔 [3,3,3,…]、两张截图都有内容；"
+                        + "h50h(1.0) 116/174 = 66.7%、间隔 [1,2,1,2,…]、两张截图全黑。"
+                        + "两臂配置逐字相同、机位钉死，只差这一格。");
+        // 🔴 这条不是在宣布「0.0 是包眼里的无遮挡」。推理方向其实相反：包读 shadowtex0 用
+        //   `uniform sampler2DShadow` + `shadow2D()`（BSL shadows.glsl:3/61），GL 口径下 1.0 才是
+        //   远平面。真机给出的却是 1.0 更差 ⇒ **口径问题仍未判**，本断言钉的是「目前测量支持
+        //   哪一边」，不是「哪一边有原理」。本测试此前钉的是 0.0 + 那句原理 —— 两次都把信念当判据。
+        assertTrue(stubs.contains("未判"),
+                "ShadowStubs 里必须留着「口径未判」那句：不许下一轮把 0.0 读成『已确认无遮挡』");
     }
 
     @Test

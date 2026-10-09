@@ -6,7 +6,69 @@
 ---
 ---
 
+## 2026-10-09（八十八）— 🔴 上一条里「阴影桩改 1.0」被自己的测量否掉：拆成两臂重测 ⇒ 桩**回到 0.0**（1.0 把黑帧从 32.9% 翻到 66.7%）；GAP-029 供值证明「进了 uniform 块且对黑帧中性」；h50g 两跑整臂作废
+
+> **verdict = 一次提交里混了两个改动 ⇒ 无法归因；补两臂拆开之后：GAP-029 留、桩改回 0.0**
+> 证据：`evidence/h50h-gap029-rerun.md`（新）、`evidence/h50g-shadowstub-ab.md`（§三 标记作废 + §四bis 记原因）
+> 登记：GAP-029（三条新行：桩口径被否 / 供值到位且中性 / 取证闸门）
+
+### 改了什么
+
+1. **`bridge/ShadowStubs.java`** —— 深度桩清屏值 **1.0 → 回到 0.0**；注释重写为「这一格是测量选出来的，
+   口径问题**仍未判**」。守卫测试改名 `stubDepthStaysAtMeasuredBest`，钉的是两臂数字，
+   并额外断言源码里必须留着「未判」那句（不许下一轮把 0.0 读成「已确认无遮挡」）。
+2. **取证脚本硬闸门**（`/tmp/opencode/h50h_gap029_rerun.sh`，本轮起为取证臂标准形状）：
+   **A** 起跑前逐键回读 `vkdisp-client.toml` 与期望值表比对，任一键不符 ⇒ `exit 1`；
+   **B** 日志出现 `Failed to load config vkdisp-client` 或采集窗 `样本=0` ⇒ `exit 1`。
+3. **文档**：GAP-029 三行新增/改写、`evidence/h50g-shadowstub-ab.md` §三 作废 + §四bis、
+   `evidence/h50h-gap029-rerun.md` 新建。主源码本轮**只有第 1 条**。
+
+### 为什么
+
+- **h50g 两跑整臂作废**：`lane_cfg.py "pack.optionOverrides="`（空值不带引号）落盘成
+  `optionOverrides =` ⇒ night-config 抛 `ParsingException: Invalid value containing only whitespaces`
+  ⇒ **FML 把整份配置按默认值重建**（那一跑实际 `shaderPack=""`、`mrt.terrain=false`、
+  `pixelProbe=false`）。⇒ 上一条目里「阴影桩 A/B：0.0 ⇒ 云看不见；1.0 ⇒ 云出现形状」那句
+  **不成立**，它读的是近乎纯原版的画面。
+- **归因必须先拆臂**：上一条提交同时改了「GAP-029 供值」与「桩清屏值」，之后测到黑帧
+  33.8% → 66.7%，两笔账混在一起。拆成 h50i（供值 + 桩 0.0）与 h50h（供值 + 桩 1.0）之后：
+  `33.8%（都没改）→ 32.9%（只改供值）→ 66.7%（再改桩）` ⇒ **翻倍的是桩那一格**。
+- **供值确实到位（不是只进 Java 的 Map）**：`[uniforms]` 逐 pass 自报里
+  `shadowFade`/`timeBrightness`/`screenBrightness` 都不在 `unfilled` 名单里，
+  而 `darknessFactor` 在 —— 有对照才有证明。
+- 🔖 **本条第二次把信念当判据**：守卫测试的前身钉「0.0 = 反向 Z 远平面 = 无遮挡」，
+  我改成钉「1.0 = 包按 GL 口径读 = 无遮挡」—— 两句都是推理，两句都被测量打回。
+  现在钉的是数字，并把「口径未判」留在代码里。
+
+### 顺带量出的新未填面（归 GAP-029 下一批）
+
+`isDesert / isMesa / isCold / isSwamp / isMushroom / isSavanna / isJungle` 七个生物群系旗标
+在 post1/post2/post5 上恒未填（BSL 用它们选天气色与植被色）；`darknessFactor` 一族仍未填（那族
+按包设计 0 是安全缺省，已登记）。
+
+### 影响的文档
+
+`docs/13-GAP-REGISTRY.md` GAP-029 三行；`evidence/h50h-gap029-rerun.md`（新）、
+`evidence/h50g-shadowstub-ab.md`（作废标记 + 原因）。
+
+### 测试结果
+
+`./gradlew test -PquickPlay` → **BUILD SUCCESSFUL，1082 项 0 失败**。
+真机（A11）：h50h、h50i 两臂，配置闸门均 ✓ 15 键一致。
+
+### ⛔ 仍未完成
+
+1. **云混合为什么把整帧算成 0**（`CLOUDS=0 ⇒ 0/171` 已确认闸门）—— 需要一个能读 `cloud.a` /
+   `cloud.rgb` 的观测面，不能再靠猜。
+2. **周期 3 的来处**未判（`frameCounter` 已排除；`depthGlProxy`、`AO_STRENGTH`、`TAA_MODE`、
+   桩清屏值都只改变「3 个相位里几个落黑」，不改变周期）。
+3. **天空为什么是黑的、那片暗绿等高线状的云为什么照旧**（h50i 截图：三名供上之后没救回来）。
+4. GAP-029 剩余未填名（7 个生物群系旗标 + `centerDepthSmooth`）。
+5. **阴影桩「哪一侧才是包眼里的无遮挡」口径未判**（三种可能，见 GAP-029 那行）。
+
+
 ## 2026-10-09（八十七）— 🔴 撤回上一条的「根因已找到」：周期 3 的黑帧**活过了 `frameCounter` 修法**；闸门是 BSL 的云混合，顺着它掉出并补上了 **GAP-029**（三个从来没供的 OF 内建），并纠正**阴影桩清屏值的口径**
+> ⚠️ **本条末尾那件「阴影桩口径纠正」已被下一条（八十八）用测量否掉 ⇒ 桩已回到 0.0；本条其余部分（撤回根因、闸门=云混合、GAP-029 供值）仍然成立。**
 
 > **verdict = GAP-029 三名已供并真机验收（`shadowFade=1.0 timeBrightness=1.0 screenBrightness=0.75`）+ 阴影桩 0.0→1.0 让云从「看不见」变成「有形状」；但黑帧闸门从 AO 改判为云混合，周期 3 仍未判，画面仍不对**
 > 证据：`evidence/h50e-period3-black.md`（h50d 看图 / h50e 计数 / h50f 四臂）、`evidence/h50g-shadowstub-ab.md`
