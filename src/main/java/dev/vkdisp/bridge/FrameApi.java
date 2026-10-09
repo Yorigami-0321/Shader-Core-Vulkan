@@ -799,7 +799,10 @@ public final class FrameApi {
                 || (deferredChain && !deferredLayout.isEmpty())
                 || (finalChain && !finalLayout.isEmpty())) {
             builtinsValues = OfUniformManager.gather(
-                    Minecraft.getInstance(), width, height, blockAtlasSize(), lightSpaceList());
+                    Minecraft.getInstance(), width, height, blockAtlasSize(), lightSpaceList(),
+                    // GAP-022：链（composite*/deferred*/final）的顶点是我方 passthrough、
+                    // 不读投影矩阵，而片元按 GL 口径写分支 ⇒ 这一族才吃 mrt.depthGlProxy。
+                    OfUniformManager.Family.CHAIN);
         }
         MappableRingBuffer compositeBuiltins = builtinsCompositeRing(
                 Math.max(BUILTINS_MIN_BYTES, compositeLayout.byteSize()));
@@ -1082,17 +1085,28 @@ public final class FrameApi {
      * @return 主目标尺寸
      * @throws IllegalStateException 未就绪仍被调用（就绪判据是调用方的事，这里绝不静默跳过）
      */
-    public static FrameSize drawPostChain(String label) {
-        RenderSystem.assertOnRenderThread();
+    /**
+     * 链开跑前的两道响亮闸门（抽出来只为守 QD-04 棘轮：{@code drawPostChain} 正好压在 60 行，
+     * 而 GAP-022 给它加了按族供值那一行 ⇒ <b>降线靠提取，不靠放宽棘轮</b>）。
+     *
+     * @return 主目标颜色视图（链的最后一级要写进它）
+     */
+    private static GpuTextureView requireChainReady(RenderTarget main) {
         if (!isPostChainReady()) {
             throw new IllegalStateException(
                     "vkdisp: drawPostChain called while chain not ready (调用方必须先查 isPostChainReady)");
         }
-        RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         GpuTextureView colorView = main.getColorTextureView();
         if (colorView == null) {
             throw new IllegalStateException("vkdisp: main target color texture view is null (can't open post chain)");
         }
+        return colorView;
+    }
+
+    public static FrameSize drawPostChain(String label) {
+        RenderSystem.assertOnRenderThread();
+        RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        GpuTextureView colorView = requireChainReady(main);
         int width = colorView.getWidth(0);
         int height = colorView.getHeight(0);
 
@@ -1108,7 +1122,8 @@ public final class FrameApi {
 
         // 每帧一次采集（各槽布局不同，值集同一来源；与旧三步同款 gather）。
         java.util.Map<String, Object> builtinsValues = OfUniformManager.gather(
-                Minecraft.getInstance(), width, height, blockAtlasSize(), lightSpaceList());
+                Minecraft.getInstance(), width, height, blockAtlasSize(), lightSpaceList(),
+                OfUniformManager.Family.CHAIN);   // GAP-022：链这一族才吃 depthGlProxy
 
         // 🔴 GAP-017（h46 K 臂证伪 maxLod 钳制后改为真做）：链采样保持完整 mip 范围，
         //   高 LOD 采样由 `ColortexPool` 的**真实 mip 链** + 每帧降采样金字塔供给

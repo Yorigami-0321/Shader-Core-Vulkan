@@ -674,7 +674,10 @@ public final class TerrainPipelineApi {
         try {
             java.util.Map<String, Object> values = dev.vkdisp.render.OfUniformManager.gather(
                     net.minecraft.client.Minecraft.getInstance(),
-                    mainTargetWidth(), mainTargetHeight(), blockAtlasSizeOrEmpty(), java.util.List.of());
+                    mainTargetWidth(), mainTargetHeight(), blockAtlasSizeOrEmpty(), java.util.List.of(),
+                    // 🔴 GAP-022：gbuffers_* 这一族<b>永远</b>引擎口径（它的顶点阶段要用这个矩阵写
+                    //   gl_Position，喂 D2·P 会让 clip.z 越界）⇒ 传 GBUFFER 让开关对它无效。
+                    dev.vkdisp.render.OfUniformManager.Family.GBUFFER);
             Object sun = values.get("sunPosition");
             float sx = 0.0F;
             float sy = 1.0F;
@@ -787,7 +790,10 @@ public final class TerrainPipelineApi {
         try {
             java.util.Map<String, Object> values = dev.vkdisp.render.OfUniformManager.gather(
                     net.minecraft.client.Minecraft.getInstance(),
-                    mainTargetWidth(), mainTargetHeight(), blockAtlasSizeOrEmpty(), java.util.List.of());
+                    mainTargetWidth(), mainTargetHeight(), blockAtlasSizeOrEmpty(), java.util.List.of(),
+                    // 🔴 GAP-022：gbuffers_* 这一族<b>永远</b>引擎口径（它的顶点阶段要用这个矩阵写
+                    //   gl_Position，喂 D2·P 会让 clip.z 越界）⇒ 传 GBUFFER 让开关对它无效。
+                    dev.vkdisp.render.OfUniformManager.Family.GBUFFER);
             MappableRingBuffer ring = builtinsRing(program,
                     Math.max(TERRAIN_BUILTINS_MIN_BYTES, layout.byteSize()));
             try (com.mojang.renderpearl.api.buffers.GpuBufferSlice.MappedView view =

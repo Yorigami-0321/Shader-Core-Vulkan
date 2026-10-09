@@ -114,7 +114,7 @@ public final class OfUniformManager {
      * @return 名字 → 值；永不 null
      */
     public static Map<String, Object> gather(Minecraft mc, int width, int height,
-            int[] atlasSize, List<LightSpaceList.Entry> shadowEntries) {
+            int[] atlasSize, List<LightSpaceList.Entry> shadowEntries, Family family) {
         Map<String, Object> values = new HashMap<>();
         LevelRenderState levelState = mc.gameRenderer.gameRenderState().levelRenderState;
         CameraRenderState camera = levelState.cameraRenderState;
@@ -141,25 +141,21 @@ public final class OfUniformManager {
         //   「上一帧存的是引擎口径」这条不变式写在 render/DepthConventionPair。
         boolean worldSwitch = mc.level != previousMatrixLevel;
         previousMatrixLevel = mc.level;
+        // 🔖 开关**一帧只读一次**（DepthConventionPairTest 那条守卫钉的就是这件事）：
+        //   读两次 = 中途热改会出现「深度翻了矩阵没翻」，或自报与实际供值不一致。
+        boolean glProxy = dev.vkdisp.VkDispConfig.MRT_DEPTH_GL_PROXY.get();
         DepthConventionPair convention = putCameraMatrices(values, view, projection,
                 inWorld
                         ? new Vector3f((float) camera.pos.x, (float) camera.pos.y, (float) camera.pos.z)
                         : new Vector3f(),
-                worldSwitch, dev.vkdisp.VkDispConfig.MRT_DEPTH_GL_PROXY.get());
+                worldSwitch, glConventionFor(family, glProxy));
         values.put("near", inWorld ? Camera.PROJECTION_Z_NEAR : 0.1F);
         values.put("far", inWorld ? camera.depthFar : 32.0F);
         values.put("viewWidth", (float) width);
         values.put("viewHeight", (float) height);
 
         // ---- 阴影矩阵（P3.1 LightSpaceList 首级联；空列表 = 单位阵） ----
-        if (shadowEntries != null && !shadowEntries.isEmpty()) {
-            LightSpaceList.Entry first = shadowEntries.getFirst();
-            values.put("shadowModelView", new Matrix4f(first.shadowModelView()));
-            values.put("shadowProjection", new Matrix4f(first.shadowProjection()));
-        } else {
-            values.put("shadowModelView", new Matrix4f());
-            values.put("shadowProjection", new Matrix4f());
-        }
+        putShadowMatrices(values, shadowEntries);
 
         // ---- 天体方向（眼空间，原版天空链；缩放无关性论证见 04-SPEC 上传注记） ----
         // X9（p413 run1 实测反推）：角度/月相/雨量**直读 attributeProbe 与 Level** ——
@@ -200,7 +196,7 @@ public final class OfUniformManager {
         // 🔴 GAP-022 / MC_VERSION 两条自报（两种状态各打一条、每进程一次）。
         //   收进一个 helper 而不摊在 gather() 里：gather() 本来就在 QD-04 棘轮的 60 行边上，
         //   摊开写会把方法推过线，而**降基线只能靠提取、不能靠放宽棘轮**。
-        reportConventions(convention, frameNo);
+        reportConventions(convention, frameNo, family, glProxy);
         // 🔖 QD-02：`vkdisp.debugLog` 的**真实消费点之一**。此前该开关只有定义与热重载快照、
         //   **零消费点**（`grep DEBUG_LOG` 只有 2 处命中）⇒ 开关它没有任何可观察效果，比没有更误导。
         //   这里报「本帧实际写进了哪些键」，用于排查 uniform 缺失（静默失败的头号来源）。
@@ -290,6 +286,39 @@ public final class OfUniformManager {
      * @return 本帧用的口径快照（调用方拿去打 {@code [GAP-022/matrix]} 取证行与自报行，
      *         于是「日志里那一对」与「交给包的那一对」不可能各说各话）
      */
+    /**
+     * 本帧这次 {@code gather} 是<b>谁</b>要的（GAP-022 的「按程序族分别供值」）。
+     *
+     * <p>🔴 <b>为什么必须分族</b>（h48z 接线时抓出来的那环）：
+     * {@code gbufferProjection} 不只被片元读，它<b>同时是顶点阶段的投影矩阵</b> ——
+     * 转译终稿逐字 {@code gl_Position = gbufferProjection * gbufferModelView * position;}
+     * （{@code build/bench-golden/BSL_v10.1.8/world0_gbuffers_terrain.vsh.trans.glsl:450}）。
+     * 而本前端的设备深度值域是 {@code [0,1]}（{@code DeviceInfo.isZZeroToOne=true}），
+     * <b>没有</b> GL 那一步 {@code (ndc+1)/2} 视口映射 ⇒ 给 {@code gbuffers_*} 喂 {@code D2·P}
+     * 会让顶点产出 {@code [-1,1]} 的 clip.z、光栅化深度越界。
+     * 反过来，{@code composite*}/{@code deferred*} 那批全屏步的顶点是我方 passthrough、
+     * 不读这个 uniform，而它们的<b>片元</b>按 GL 口径写分支（AO 拿
+     * {@code GetLinearDepth(z, gbufferProjectionInverse)} 反解距离）
+     * ⇒ 两条需求同时存在且互相冲突，<b>只能按族给</b>。
+     */
+    public enum Family {
+        /** 有顶点阶段、要写 {@code gl_Position} 的 {@code gbuffers_*} ⇒ <b>永远引擎口径</b>。 */
+        GBUFFER,
+        /** 我方 passthrough 顶点 + 包片元的 {@code composite*}/{@code deferred*}/{@code final}。 */
+        CHAIN
+    }
+
+    /**
+     * 「开关开着」与「这一族该翻」是两件事 —— 抽成纯函数是为了能离线单测
+     * （{@code gather} 本身要 {@code Minecraft} 实例，测不了）。
+     *
+     * @param switchOn {@code mrt.depthGlProxy} 的本次读取值
+     */
+    static boolean glConventionFor(Family family, boolean switchOn) {
+        // 🔴 GBUFFER 那一族<b>无视开关</b>：给它 GL 口径不是「效果差」，是把顶点打坏。
+        return switchOn && family == Family.CHAIN;
+    }
+
     static DepthConventionPair putCameraMatrices(Map<String, Object> values, Matrix4f view,
             Matrix4f projection, Vector3f cameraPos, boolean worldSwitch,
             boolean glDepthConvention) {
@@ -354,6 +383,23 @@ public final class OfUniformManager {
         }
         return new WriteStats(written, missing, mismatched, overflow,
                 List.copyOf(missingNames));
+    }
+
+    /**
+     * 阴影两本矩阵进填充集（抽出来只为守住 QD-04 那条棘轮：
+     * {@code gather} 本来就在 60 行边上，加参数/加自报就会越线 ——
+     * <b>降基线只能靠提取，不能靠放宽棘轮</b>）。
+     */
+    static void putShadowMatrices(Map<String, Object> values,
+            List<LightSpaceList.Entry> shadowEntries) {
+        if (shadowEntries != null && !shadowEntries.isEmpty()) {
+            LightSpaceList.Entry first = shadowEntries.getFirst();
+            values.put("shadowModelView", new Matrix4f(first.shadowModelView()));
+            values.put("shadowProjection", new Matrix4f(first.shadowProjection()));
+        } else {
+            values.put("shadowModelView", new Matrix4f());
+            values.put("shadowProjection", new Matrix4f());
+        }
     }
 
     /**
@@ -506,11 +552,23 @@ public final class OfUniformManager {
      * 「日志里没有这行」一旦与「开关是关的」同义，取证时就会把「接线没跑到」读成
      * 「关着，符合预期」（{@code evidence/h48} §二十二：在场的信息没人读；缺席的信息更会被读成结论）。
      */
-    private static void reportConventions(DepthConventionPair convention, int frameNo) {
+    private static void reportConventions(DepthConventionPair convention, int frameNo,
+            Family family, boolean glProxy) {
         DepthConventionPair.reportThrottled(convention.glConvention(), frameNo,
                 dev.vkdisp.VkDisp.LOGGER::info);
         // 🔴 GAP-028 的自报放在 MC_VERSION 那条**之前**：下面那条用 early-return 做一次性，
         //   挂在它后面就等于永远不打（「写了但没生效」同族，本项目反复付学费的那一种）。
+        // 🔴 GAP-022 的**分族**自报：开关开着时，必须有一行说清「gbuffers_* 这一族没被翻」——
+        //   否则取证者看到 [GAP-022] 写着 GL 就会以为全链都是 GL 口径，而顶点那一族刻意留在引擎口径
+        //   （给它 GL 口径不是「效果差」，是把 clip.z 打出值域）。
+        if (family == Family.GBUFFER && glProxy
+                && GBUFFER_ENGINE_NOTED.compareAndSet(false, true)) {
+            dev.vkdisp.VkDisp.LOGGER.warn("vkdisp: [GAP-022/family] mrt.depthGlProxy=true，但"
+                    + " **gbuffers_* 这一族仍按引擎口径供投影矩阵**（Family.GBUFFER 无视开关）——"
+                    + " 它的顶点阶段逐字用 gl_Position = gbufferProjection * gbufferModelView * position;"
+                    + " 喂 D2·P 会让 clip.z 落到 [-1,1] 而本设备深度值域是 [0,1] ⇒ 光栅化深度越界。"
+                    + " 只有链（composite*/deferred*/final）吃这次翻转。");
+        }
         if (RENDER_STAGES_REPORTED.compareAndSet(false, true)) {
             dev.vkdisp.VkDisp.LOGGER.info(
                     "vkdisp: [GAP-028] 引擎宏 MC_RENDER_STAGE_* 已进预处理宏表: {}"
@@ -541,6 +599,10 @@ public final class OfUniformManager {
     }
 
     private static final java.util.concurrent.atomic.AtomicBoolean MC_VERSION_REPORTED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /** GAP-022「分族」自报的哨兵（开关开着时只打一次）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean GBUFFER_ENGINE_NOTED =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /** GAP-028 的宏表自报哨兵（与上面那个**分开**：两条讲的是两个不同的能力）。 */
