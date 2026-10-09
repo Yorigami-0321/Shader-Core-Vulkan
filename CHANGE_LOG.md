@@ -6,7 +6,52 @@
 ---
 ---
 
-## 2026-10-09（八十）— 🟡 GAP-027 第二刀落地一半：云的 pass 接上了、draw 真的发了（9865 quad），但对 colortex0 **零写入**
+## 2026-10-09（八十一）— 🔑 云「搬进 gbuffer 却零写入」的根因判到底了：**背面裁剪**（`CLOUDS` 裁、`FLAT_CLOUDS` 不裁）
+
+> **verdict = 同一份云几何、同一条 shader，只差 `withCull(false)` 一项，就从「一个像素都不写」变成「落地」**
+> 证据：`evidence/h49l-clouds-into-gbuffer.md` §七（h49n）§八（h49o）
+
+**本次改了什么**
+
+1. ✅ 实现上一条条目定下的诊断档：`mrt.cloudsDiagnosticClear`（默认关）——
+   云 pass 的颜色附件按 **CLEAR 洋红** 打开（⚠️ 会毁掉本帧 colortex0 的地形内容 ⇒ 只能当取证档）。
+2. ✅ **h49n 判掉「代次/挂错图」那一支**：洋红**被探针读到了**
+   （`c0@afterTerrain#415` 与 `c0@afterClouds#415` 都是 `meanRGB=(255.0000,0.0000,255.0000)`）
+   ⇒ 云 pass 写的就是探针读的那张图，GAP-018 的代次口径在这一格**是对的**；
+   而 `quadCount=9746` 的 draw 在洋红上**一个像素都没改** ⇒ 只剩「云的 draw 本身」这一支。
+3. 🔑 **h49o 用纯配置判别把根因判出来了**：把取证车道的 `graphicsPreset` 从 `fancy` 改 `fast`
+   （跑完**已改回**）⇒ 原版改走 `FLAT_CLOUDS`，而它逐字带 `withCull(false)`
+   （`RenderPipelines.java:903-904`），`CLOUDS`（:906）**没有**关裁剪。同一套探针：
+   `c0@afterClouds` 从 `(255, 0, 255)` 变成 `(255, **0.2588**, 255)`（下一帧 `0.2657`）
+   ⇒ **云像素落地了** ⇒ 判定：**云几何在我方自建 pass 里被当成背面剔光**。
+   深度那一支同时从源码排除：`DepthStencilState.DEFAULT = (GREATER_THAN_OR_EQUAL, writeDepth=true)`
+   与反向 Z 相容。
+4. ⚠️ **两条明确不许读过头**（都写进登记表了）：
+   a) 覆盖只有 ~0.1% 画面量级 ⇒ 裁剪**不是全部故事**，位姿/相机偏移/云层相对高度还有一格未查；
+   b) **不能**推广成「我方所有 pass 绕序都翻」—— 地形在同一族 pass 里正常出画。
+   所以这条是一整类「实体/手/天气搬进 gbuffer 却不写」的**共同根因候选**，
+   但**本轮没有把它判成通则**。
+
+**为什么改**：上一条目把云那一格停在「发了 draw 但零写入、两个候选未分」。
+诊断档 + 一次纯配置的画质切换就把它们分开了 —— 成本两臂，价值是一整类缺陷的解释。
+
+**影响的文档**：`evidence/h49l-clouds-into-gbuffer.md`（§七/§八）、
+`docs/13-GAP-REGISTRY.md` GAP-027 云那一行（根因 + 两条「别读过头」+ 下一刀两条）、本文件。
+主源码只加诊断档开关（`mrt.cloudsDiagnosticClear`，默认关 ⇒ OFF 态逐字不变）。
+
+**测试结果**：全量 **1071 / 0 失败 / 0 错误**。运行侧：h49n（洋红）+ h49o（FAST）各一臂。
+
+**是否已提交**：见本条目对应提交（本地提交，未推送）。
+
+**⛔ 仍未完成**：① 给云 pass 一条 `withCull(false)` 的派生管线（让 **FANCY** 也落地）；
+② 绕序差异的**来处**未查（同臂把云分别画进主目标与 colortex 比覆盖，或读 `VulkanRenderPass`
+对 swapchain / image 目标的 `frontFace`·视口设置）—— 这条查清才有「实体/手/天气」那一整类的解释；
+③ 云覆盖只有 ~0.1% 的另一半原因；④ 换成包的 `gbuffers_clouds`/`gbuffers_skybasic`（管线替换）；
+⑤ 生产视图整帧黑（GAP-019/020）；⑥ 水读数断续；⑦ GAP-028 第二半；⑧ GAP-023 ②/③。
+
+---
+
+## 2026-10-09（八十）— 🟡 GAP-027 第二刀落地一半：云的 pass 接上了、draw 真的发了（9865 quad），但对 colortex0 零写入
 
 > **verdict = 「云没出现」被切成两半并判掉一半：不是没发 draw，是发了没落地**
 > 证据：`evidence/h49l-clouds-into-gbuffer.md`（A/B 两臂 + 反射自报）

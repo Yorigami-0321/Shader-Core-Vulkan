@@ -78,3 +78,59 @@ Vulkan 1.4.354 / Mesa 26.2.4，帧图 `854x480`，包 `BSL_v10.1.8` 默认档，
    用的仍是原版 `RenderPipelines.SKY/CELESTIAL/STARS/SUNRISE_SUNSET/END_SKY`
    ⇒ 登记表 GAP-027「现状」那一行原来写「`gbuffers_skybasic/skytextured` 已落地」**说重了**，已就地更正。
 4. 生产视图整帧黑（GAP-019/020 家族）未修 —— 它现在是画面侧判据的公共阻塞物。
+
+---
+
+## 七、h49n：诊断档判掉「代次/挂错图」那一支 —— pass 与纹理口径是**对的**
+
+加一档 `mrt.cloudsDiagnosticClear`（默认关）：云 pass 的颜色附件按 **CLEAR 洋红** 打开。
+
+| 读数（同臂同帧） | 逐字 |
+|---|---|
+| `[GAP-027/clouds] 网格状态 … quadCount=9746 textureReady=true facesBufferReady=true` | draw 发了 |
+| `c0@afterTerrain#415 area=FULL meanRGB=(255.0000,0.0000,255.0000)` | 🔴 **洋红被读到了** |
+| `c0@afterClouds#415 area=FULL meanRGB=(255.0000,0.0000,255.0000)` | 云在洋红上**一个像素都没改** |
+
+⇒ §五 的候选 ② （「我方挂的 view 与被读的代次不是同一张图」）**排除** ——
+云 pass 写的就是探针读的那张图，GAP-018 的代次口径在这一格是对的。
+⇒ 剩下的唯一方向：**云的 draw 本身没产生像素**。
+
+## 八、h49o：**根因是背面裁剪**（`CLOUDS` 裁、`FLAT_CLOUDS` 不裁）
+
+纯配置判别（不改代码）：把车道画质从 `fancy` 改成 `fast` ⇒ 原版走 `FLAT_CLOUDS`
+（`RenderPipelines.java:903-904` 逐字 `withCull(false)`），而 `CLOUDS`（:906）**没有**关裁剪。
+
+| 臂 | status | 管线 | `c0@afterClouds` area=FULL |
+|---|---|---|---|
+| h49n | `FANCY` | `CLOUDS`（裁剪开） | `(255.0000, 0.0000, 255.0000)` ⇒ **零写入** |
+| h49o | `FAST` | `FLAT_CLOUDS`（`withCull(false)`） | `(255.0000, **0.2588**, 255.0000)`，下一帧 `0.2657` ⇒ **绿通道离开 0 = 云像素落地了** |
+
+⇒ 🔑 **判定：云在我方 gbuffer pass 里被当成背面剔光。** 同一份几何、同一条 shader，
+只差 `withCull(false)` 一项，就从「零写入」变成「有写入」。
+深度比较那一支也已从源码排除：`DepthStencilState.DEFAULT = (GREATER_THAN_OR_EQUAL, writeDepth=true)`
+（`renderpearl/api/pipeline/DepthStencilState.java`）⇒ 与反向 Z 相容，不是它。
+
+### 这条为什么比「云」本身大
+
+`withCull(true)`（默认）的原版几何管线**不止云**：实体、手、天气、粒子……
+⇒ 「**我方自建的 render pass 里，绕序判定与主目标不一致**」是一整类「几何搬进 gbuffer 却什么都不写」
+的共同根因候选。⚠️ 但**不要顺手推广结论**：地形在同一族 pass 里是**正常出画**的
+（`c0@afterTerrain` 一直有内容），所以「所有 pass 都翻转」不成立 ——
+要么地形那条管线的绕序/裁剪恰好不受影响，要么差异在别处（视口 Y 向、目标类型 swapchain vs texture）。
+**本轮未判这一层。**
+
+### 下一刀（已定，两条各自独立）
+
+1. **让 FANCY 云能落地**：给我方云 pass 用一条 `withCull(false)` 的派生云管线
+   （走 `RegisterRenderPipelinesEvent` 注册，或走本轮核实过的管线替换那条路）。
+   代价小、判据现成（洋红底上绿通道离开 0）。
+2. **查清绕序差异的来处**：同一臂内把云几何画进**主目标**与画进 **colortex** 各一次，
+   比较覆盖面积；或读 `VulkanRenderPass` 对 swapchain 与 image 目标的视口/`frontFace` 设置。
+   这条查清了，实体/手/天气那一整类的「搬进来却不写」才有解释。
+
+### ⚠️ 本轮遗留的两个「别读过头」
+
+- h49o 的覆盖只有 `0.2588/255 ≈ 0.1%` 的画面量级 ⇒ **裁剪不是全部故事**：
+  抬头看天时云本该盖住大片画面，所以还有一格（位姿 / 相机偏移 / 云层在相机之上还是之下）未查。
+- 取证车道被改过又改回：`run/h27/options.txt` 的 `graphicsPreset` 在 h49o 期间是 `"fast"`，
+  跑完已恢复 `"fancy"`（本臂结论只在**明说档位**的前提下成立）。

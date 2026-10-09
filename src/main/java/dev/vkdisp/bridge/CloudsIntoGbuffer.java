@@ -61,6 +61,9 @@ public final class CloudsIntoGbuffer {
     /** 网格状态自报哨兵（与上面那个分开：两条说的是两件不同的事）。 */
     private static boolean meshReported;
 
+    /** 诊断清屏那条 WARN 的哨兵。 */
+    private static boolean clearWarned;
+
     /** 跳过原因的一次性自报集合（「为什么没画」必须看得见，X11）。 */
     private static final java.util.Set<String> SKIP_NOTED =
             java.util.Collections.synchronizedSet(new java.util.LinkedHashSet<>());
@@ -121,9 +124,20 @@ public final class CloudsIntoGbuffer {
         //   放在之前读到的是上一帧的（首帧必然 0 ⇒ 会把「正常的首帧」报成「网格坏了」）。
         reportMeshOnce(renderer);
 
+        // 🔬 诊断档：按 CLEAR 洋红打开（默认关）。它切的正是「云的 draw 不对」与
+        //   「我方挂的 view 和被读的代次不是同一张图」—— 两者在 LOAD 档下读数完全一样。
+        boolean diagnosticClear = VkDispConfig.MRT_CLOUDS_DIAGNOSTIC_CLEAR.get();
+        if (diagnosticClear && !clearWarned) {
+            clearWarned = true;
+            VkDisp.LOGGER.warn("vkdisp: [GAP-027/clouds] mrt.cloudsDiagnosticClear=true ⇒ 云 pass 按"
+                    + " **CLEAR 洋红** 打开 ⇒ 本帧 colortex0 的**地形内容被毁掉**，这是取证档不是产品档；"
+                    + "判读：c0@afterClouds 读到洋红 ⇒ pass/代次口径对、问题在云的 draw；"
+                    + "仍读到地形的值 ⇒ 我方挂的 view 与被读的代次不是同一张图");
+        }
         RenderPassDescriptor descriptor = RenderPassDescriptor
-                .builder(() -> "vkdisp gbuffer clouds (1 color attachment, LOAD)")
-                .withColorAttachment(color, Optional.empty())
+                .builder(() -> "vkdisp gbuffer clouds (1 color attachment, "
+                        + (diagnosticClear ? "DIAGNOSTIC CLEAR" : "LOAD") + ")")
+                .withColorAttachment(color, clearValue(diagnosticClear))
                 .withDepthAttachment(depth, OptionalDouble.empty())
                 .build();
         try (RenderPass renderPass = RenderSystem.getDevice().createCommandEncoder()
@@ -171,6 +185,17 @@ public final class CloudsIntoGbuffer {
         meshReported = true;
         VkDisp.LOGGER.info("vkdisp: [GAP-027/clouds] 网格状态（prepare 之后、render 之前）: {}",
                 meshState(renderer));
+    }
+
+    /**
+     * 云 pass 的颜色附件清屏值：{@code Optional.empty()} = LOAD（保留地形），
+     * 洋红 = 诊断档（**毁掉**本帧地形内容）。
+     * 单独抽一个方法只为一件事：让「诊断档会毁内容」这句判断只出现在一处。
+     */
+    private static Optional<org.joml.Vector4fc> clearValue(boolean diagnosticClear) {
+        return diagnosticClear
+                ? Optional.of(new org.joml.Vector4f(1.0F, 0.0F, 1.0F, 1.0F))
+                : Optional.empty();
     }
 
     /** 反射读云渲染器的私有网格状态（只为自报；失败给出失败原因而不是猜一个值）。 */

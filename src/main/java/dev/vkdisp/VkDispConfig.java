@@ -766,6 +766,26 @@ public final class VkDispConfig {
      * {@code RenderSystem#getCompiledPipelineNullable} 首条语句就是
      * {@code PIPELINE_MODIFIERS.apply(pipeline)}），那是下一刀。
      */
+    /**
+     * 🔬 GAP-027 云那一格的**诊断档**（默认关）：把云 pass 的颜色附件按 CLEAR 成洋红打开。
+     *
+     * <p><b>它切的是什么</b>：h49l 量到「draw 发了（{@code quadCount=9865}）但
+     * {@code c0@afterClouds} 与 {@code c0@afterTerrain} 逐位相同」。这句话有两种完全不同的读法：
+     * ① 云的 draw 状态不对（深度 / 位姿 / 裁剪）⇒ 要修的是云；
+     * ② 我方那个 pass 挂的 view 与被读的代次<b>根本不是同一张图</b>
+     *    （GAP-018 的双代轮转口径错）⇒ 那要先修代次模型，<b>比云更根本</b>。
+     * 洋红是「一定看得见」的颜色：读到洋红 ⇒ ② 排除、问题在云的 draw；
+     * 仍读到地形的值 ⇒ ② 成立。
+     *
+     * <p>⚠️ <b>开启会毁掉本帧 colortex0 的地形内容</b>（CLEAR 而不是 LOAD）⇒
+     * 它只能当取证档用，<b>永不默认开</b>，且结论里必须写明「本臂是诊断档」。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_CLOUDS_DIAGNOSTIC_CLEAR = BUILDER
+            .comment("🔬 GAP-027 诊断：云 pass 按 CLEAR 洋红打开（默认关；开启会毁掉本帧 colortex0 的"
+                    + "地形内容）。判据 = c0@afterClouds 读到洋红 ⇒ 云 pass 与代次口径都对、"
+                    + "问题在云的 draw；仍读到地形值 ⇒ 挂的 view 与被读的代次不是同一张图。")
+            .define("mrt.cloudsDiagnosticClear", false);
+
     public static final ModConfigSpec.BooleanValue MRT_CLOUDS_PASS = BUILDER
             .comment("GAP-027：把原版云画进 gbuffer colortex0（地形之后、链之前；默认关）。"
                     + "本格只搬几何、不换成包的着色器 —— 换包着色器要走管线替换那一刀。")
