@@ -797,6 +797,33 @@ public final class VkDispConfig {
      *
      * <p>⚠️ 它只解决「被剔光」，<b>不</b>解决「覆盖只有 ~0.1%」那一半（位姿/相机偏移未查）。
      */
+    /**
+     * GAP-027：云**不写** gbuffer 深度。默认<b>关</b> —— 🔴 <b>h50b 把它自己的假设否证了</b>：
+     * 开着它跑「云开 + {@code depthGlProxy}=true」那一格，{@code deferred1} 黑帧
+     * <b>50/76 ≈ 66%</b>，与不开时（h50a：52/78 = 67%）在观测误差内相同
+     * ⇒ 「云把深度写进 AO 读的 depthtex」<b>不是</b>那条 67% 黑帧的原因。
+     * 代码留着当对照诊断项（它顺手排除的是「深度内容被云污染」这一整类），
+     * 但<b>不拿一个没被证实的东西去改默认行为</b>。
+     *
+     * <p>🔑 <b>为什么需要它（h49z/h50a 那个 2×2）</b>：原版
+     * {@code RenderPipelines.CLOUDS} 继承 {@code DepthStencilState.DEFAULT}
+     * = 逐字 {@code (GREATER_THAN_OR_EQUAL, writeDepth=true)}
+     * （{@code renderpearl/api/pipeline/DepthStencilState.java}），
+     * 而我方云 pass 挂的是<b>同一张 gbuffer 深度附件</b>（{@code MrtTerrainPass.depthView()}）
+     * ⇒ 云的深度被写进链里 AO 读的那张 {@code depthtex}。
+     * 实测：云关时 GAP-022 的按族供值把 {@code deferred1} 的黑帧从 33% 压到 0.6%，
+     * 云开时两种开关都是 <b>67%</b> ⇒ 修矩阵口径不够，<b>坏的是深度内容本身</b>。
+     *
+     * <p>🔖 <b>只关写入、保留测试</b>：写成「云挂一张私有空白深度」也能让 AO 干净，
+     * 但那样山就再也挡不住云了 —— 那是换一种错。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_CLOUDS_NO_DEPTH_WRITE = BUILDER
+            .comment("GAP-027：云只关深度**写入**、保留深度测试（默认关：h50b 否证了它的假设）。"
+                    + "依据 = CLOUDS 继承 DepthStencilState.DEFAULT(writeDepth=true) 而云 pass 挂的"
+                    + "就是 gbuffer 那张深度 ⇒ 云深被写进 AO 读的 depthtex（h49z/h50a：云开时黑帧 67%，"
+                    + "且与 depthGlProxy 无关）。")
+            .define("mrt.cloudsNoDepthWrite", false);
+
     public static final ModConfigSpec.BooleanValue MRT_CLOUDS_NO_CULL = BUILDER
             .comment("GAP-027：云改用 withCull(false) 的派生管线（默认**开**）。"
                     + "依据 = h49n→h49s 四臂：原版 CLOUDS 带背面裁剪 ⇒ 云在我方 pass 里被剔光"

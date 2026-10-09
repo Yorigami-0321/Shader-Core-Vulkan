@@ -71,6 +71,9 @@ public final class GbufferPipelineSwaps {
      *
      * <p>⚠️ <b>这不是把云画对</b>：它只让云<b>不被剔光</b>。h49o 的覆盖仍只有 ~0.1% 画面量级，
      * 位姿/相机偏移那一半未查（登记表 GAP-027 的 h49l 行写清了）。
+     * 同一个派生管线还按 {@code mrt.cloudsNoDepthWrite} 关掉<b>深度写入</b>
+     * （h49z/h50a：云把自己的深度写进 AO 读的那张 {@code depthtex} ⇒ 链 67% 黑帧，
+     * 且与 {@code depthGlProxy} 无关）⇒ 一条派生管线修两项状态，各自有独立开关。
      */
     public static final ResourceKey<PipelineModifier> CLOUDS_NO_CULL =
             ResourceKey.create(PipelineModifier.MODIFIERS_KEY,
@@ -103,9 +106,16 @@ public final class GbufferPipelineSwaps {
                     + "（原版 CLOUDS 带背面裁剪 ⇒ 我方 pass 里云被剔光；派生版 withCull(false)）",
                     name);
         }
-        return RenderPipeline.builder(RenderPipelines.CLOUDS_SNIPPET)
+        var builder = RenderPipeline.builder(RenderPipelines.CLOUDS_SNIPPET)
                 .withLocation(name)
-                .withCull(false)
-                .build();
+                .withCull(false);
+        if (dev.vkdisp.VkDispConfig.MRT_CLOUDS_NO_DEPTH_WRITE.get()) {
+            // 🔴 只关**写入**，比较函数照抄 DEFAULT 的 GREATER_THAN_OR_EQUAL（本引擎反向 Z）
+            //   ⇒ 山仍然挡云；改掉的只有「云的深度被写进链里 AO 读的那张 depthtex」。
+            builder = builder.withDepthStencilState(new com.mojang.renderpearl.api.pipeline
+                    .DepthStencilState(com.mojang.renderpearl.api.pipeline.CompareOp
+                    .GREATER_THAN_OR_EQUAL, false));
+        }
+        return builder.build();
     }
 }

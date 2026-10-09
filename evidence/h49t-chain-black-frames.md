@@ -188,3 +188,39 @@ AO 那边（`ambientOcclusion.glsl:60 GetLinearDepth(z, projectionInverse)`）
 3. 云那片「暗绿的布」仍未判 —— 它和这条黑帧可能是**同一个根**（AO 把整片乘成暗色），
    也可能是两件事。1 做完再看图才知道。
 
+## 九、h50b：🔴 §八 那条「云写了 gbuffer 深度」的假设**被否证**
+
+实现完 `mrt.cloudsNoDepthWrite`（派生云管线只关深度**写入**、保留测试）后，
+重跑 §八 表格里最坏那一格（云开 + `depthGlProxy=true`）：
+
+| 臂 | 云写深度? | `deferred1` 输出为 0 的帧 |
+|---|---|---|
+| h50a | 写（默认） | 52 / 78 = **67%** |
+| **h50b** | **不写** | **50 / 76 = 66%** |
+
+⇒ 在观测误差内**完全没变** ⇒ 「云的深度污染了 AO 读的 `depthtex`」**不是**这条 67% 黑帧的原因。
+（顺手排除掉的是一整类：`c0@afterClouds` 与 `c0@afterTerrain` 的差依旧只有零点几到几，
+云对颜色缓冲的贡献仍是「加内容」而不是「弄黑」。）
+
+⇒ 处置：**默认值退回 `false`** —— 不拿一个没被证实的东西去改默认行为；
+代码留着当对照诊断项。
+
+### 那么 §八 的 2×2 还剩下什么形状？（本轮的诚实边界）
+
+| `deferred1` 黑帧占比 | `depthGlProxy=false` | `depthGlProxy=true` |
+|---|---|---|
+| 云关 | 33% (h49t) | **0.6%** (h49w) ✅ |
+| 云开 | 67% (h49z) | 67% (h50a) / **66%** (h50b，云不写深度) ❌ |
+
+已排除的原因：云写颜色（0 帧）、云写深度（h50b 否证）、链后段（分类计数 0 帧）、
+回读仪器（h49u 逐位相同）、矩阵口径（本行右上格已修好，右下格却不动）。
+**剩下的共同点是「多了一个写 colortex0 的 pass」这件事本身**，
+而它为什么能把 AO 从 1/3 推到 2/3 —— 本轮**没判**。
+下一刀的两个候选（按代价排）：
+① **uniform 环的在飞相位**：`MappableRingBuffer` 深度 3 + 原版允许 3 个 submit 在飞
+  （`VulkanCommandEncoder:222-223`）⇒ 多一个 pass 会改每帧的提交次数，
+  而 `deferredBuiltins` 每帧只写一次 —— 切法：把 `deferred` 那一步的块环深度临时调到 6 跑一臂；
+② **AO 自己按 `frameCounter` 取 dither**（`ambientOcclusion.glsl:64/66`），
+  而我方 `frameCounter` 是「每次 `gather()` +1」而非「每帧 +1」（h48z 已核实 `gather` 一帧可被调多次）
+  ⇒ 多一个 pass 会改变 `gather` 的调用次数分布。切法：把 `frameCounter` 改成每帧恰好 +1 再跑同一格。
+
