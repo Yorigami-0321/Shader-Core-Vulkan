@@ -6,6 +6,63 @@
 ---
 ---
 
+## 2026-10-09（七十八）— 🔴 撤回一条拦了我一整轮的旧结论（聊天注入其实是通的），于是水的判据终于拿到 —— 拿到的是缺陷
+
+> **verdict = 「没有观测面」从来不是事实，是一条没人重测的旧判据**
+> 证据：`evidence/h49-water-translucent-draw.md` §七/§八/§九 + `evidence/h49-images/`（两张新图）
+
+**本次改了什么**（本轮**零主源码改动**，全部是取证 + 文档 + 车具用法）
+
+1. 🔴🔴 **撤回「每一条以 `/` 开头的注入命令从来没生效过」**（h48 七十二 ⛔⑤、
+   `evidence/h48` §二十七 记的那条）。查法 = **逐步**注入、每步后 F2（此前所有臂只看最终 luma，
+   从没定位过断在哪一步）。三条独立证据：
+   ① HUD 逐字 `Set minecraft:overworld to 6000 tick(s)`（`h49-images/h49g-chat-injection-hud-receipt.png`）；
+   ② 进程内 `clockTime` 从 **8629 回走**到 6387；③ `[CHAT]` 日志行**一直都有**
+   （`Set the weather to clear` / `Successfully filled 27 block(s)`）。
+   ⇒ 旧判据的两条支撑都错了：**「日志里没有 `[CHAT]`」被当成「游戏里没发生」**
+   （bug 版确实没发生，修后没人重测 = X37 那一格），而「`clockTime` 跨天」只证明
+   `doDaylightCycle` **那一臂**没落地 —— 因为它在 26.3 里**已经不叫这个名字**。
+2. 🔖 **一条版本迁移事实**：`GameRuleRegistryFix.java:58` 逐字
+   `renameAndFixField("doDaylightCycle", "minecraft:advance_time", convertBoolean)`
+   ⇒ 26.3 的命令是 `/gamerule advance_time false`。用旧名会回
+   `Incorrect argument for command`，而 **命令失败会把聊天界面留在打开状态**
+   ⇒ 之后每一次 `press F2` 都打进聊天框（h49h 实测：那一臂 `Saved screenshot` = **0**，
+   与「指针焦点丢了」长得一模一样，但是两回事）。
+3. ✅ **水的画面判据拿到**（h49j）：自己造水面
+   `/fill ~2 ~-2 ~2 ~10 ~1 ~10 minecraft:water replace minecraft:air`（**只替换空气** ⇒
+   不破坏取证世界的任何方块）+ 时刻钉死（`clockTime` 连续多条恒 6000）
+   ⇒ `TRANSLUCENT{groups=1,draws=20}`、四张 F2 **画面里全是水**
+   （`h49-images/h49j-water-in-frame-c1-still-zero.png`），
+   而 `c1@afterTerrain#319…#322` 逐位 `meanRGB=(0,0,0) nonBlack=0.000% allZero=true`。
+   包侧对槽 1 写的是 `vec4(vlAlbedo, 1.0)`（alpha=1 ⇒ 混合下应整像素覆盖 dst）
+   ⇒ 🔴 **「水片元没落进 gbuffer」现在是缺陷，不再是「如实的零」**。
+   下一轮要切开的四个候选（深度恒拒 / `discard` / 适配层 14 条 varying / 混合）
+   已连同「最省的一刀」（诊断档把水的深度比较改 `ALWAYS` 跑一臂）写进登记表，
+   **本轮一个都没判**。
+4. **文档同步**：`evidence/h49-…` 新增 §七（撤回 + 为什么旧判据会错 + 连带影响哪些旧结论）/
+   §八（三臂递进 h49h→i→j）/ §九（不覆盖清单刷新：`skybasic` 那条划掉、加「水的槽 0 贡献未切出」）；
+   `docs/13-GAP-REGISTRY.md` GAP-027 的「本条不关」理由**改写**（原因从「造不出观测面」换成
+   「观测面有了、读数是缺陷」）+ 新增 h49j 整行。
+
+**为什么改**：这条撤回不是洁癖 —— 它是**水判据的唯一入口**。留着它，下一轮还会继续用
+「本机不能 /tp / 不能造水块」当理由，而 20 步视角扫描那种绕路成本已经付过两轮了。
+
+**影响的文档**：`evidence/h49-water-translucent-draw.md`、`docs/13-GAP-REGISTRY.md`（GAP-027）、
+`evidence/h49-images/`（+2 张）、本文件。主源码零改动。
+
+**测试结果**：全量 **1071 / 0 失败 / 0 错误**（与上一提交同一份源码，未新增测试）。
+运行侧：h49h / h49i / h49j 三臂，逐字回执见证据文档。
+
+**是否已提交**：见本条目对应提交（本地提交，未推送）。
+
+**⛔ 仍未完成**：① **水为什么没落地**（四候选未切开，GAP-027 的判据已升级为「水要画对」）；
+② GAP-028 第二半：`renderStage` 逐 draw 供值（+ Iris 数值口径未核实）；
+③ GAP-023 ②/③ 三张时刻快照（`depthtex*` 仍同绑 1×1 桩 ⇒ `z1 > z0` 仍不可信）；
+④ 云 / 实体 / 手 / 天气 / `shadow` 未接；⑤ 旧臂里凡拿「注入没落地 ⇒ 世界是夜」当解释的段落
+（GAP-019 h48k 行、`evidence/h48` §二十.1/§二十六）**待重判** —— 本轮只撤掉默认解释，没重测。
+
+---
+
 ## 2026-10-09（七十七）— ✅ GAP-028 第一步：`MC_RENDER_STAGE_*` 宏表进引擎 ⇒ `gbuffers_skybasic` 从「编译失败」变成「真的产出 SPIR-V」
 
 > **verdict = 一条被 `MC_VERSION` 「叫醒」的老缺陷，终于补上了它的一半（宏），另一半（供值）如实标为未做**

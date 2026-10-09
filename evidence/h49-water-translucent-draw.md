@@ -161,15 +161,127 @@ h49f 第二版（同工具，改两处）：先 `look --dy 520 --steps 20` 把�
 
 ---
 
-## 七、本轮**不覆盖**什么（显式清单，别把这些读成已验）
+## 七、h49g：**撤回一条把本轮拦住的旧结论 —— 聊天注入其实是通的**
 
-1. **水的画面效果对不对**未判 —— 那需要 `depthtex1` 的真快照（GAP-023 ②/③ 未做）、
-   水的顶点属性上限（GAP-007）、以及一个**画面里真的有水**的机位。
+> 这一节是本轮最有用的一条：它不是修法，而是**把我自己拦住一整轮的前提判掉了**。
+
+h48 七十二 ⛔⑤ 与 `evidence/h48-flicker-and-readback.md` §二十七 记的是
+「**每一条以 `/` 开头的注入命令从来没生效过**」。本轮水判据「没有观测面」的整段理由
+（§六）就建在那条上面 —— 所以值得单独查一次，而不是继续绕。
+
+查法（`/tmp/opencode/h49g_chat_diag.sh`）：**逐步**注入并在每一步后 F2，
+把「聊天框开没开 / 文本进没进去 / 最后那个 Return 落没落地」三件事分开看
+（此前所有臂都只看最终 luma，从没定位过断在哪一步）：
+
+| 步 | 注入 | 之后读到什么 |
+|---|---|---|
+| A | 只按 `t` | 截图正常 ⇒ 键进得去（F2 同一条通道一直能用） |
+| B | `chat "/time set 6000"`（含 6 个需 Shift 的字符） | **HUD 打出 `Set minecraft:overworld to 6000 tick(s)`**（`h49g-chat/shots/B-after-chat.png`）⇒ **命令真的执行了** |
+| C | 再补一次 `Return` | 无副作用（聊天框已关） |
+
+另有独立的**进程内**佐证（不靠读图）：注入前最近一条 `[GAP-003/sky] 观测面自报` 是
+`clockTime=8629`，注入后变成 `clockTime=6387` —— **时刻往回走了**，而 `/time set 6000` 之后
+自然走 ~387 tick（≈19 秒 × 20 tick/s，正好是两次取样的间隔）就是这个样子。
+
+### 🔴 而且旧判据的那半边也错了：`[CHAT]` **本来就进日志**
+
+h49h 顺着做了一次完整回执核对，日志里逐字出现：
+
+```
+[CHAT] Incorrect argument for command
+[CHAT] gamerule doDaylightCycle false<--[HERE]
+[CHAT] Set minecraft:overworld to 6000 tick(s)
+[CHAT] Set the weather to clear
+[CHAT] Successfully filled 16 block(s)
+```
+
+⇒ 「整份日志里 `[CHAT]` 行数为 0」是 **bug 版**（`/` 被注入成 `7`）观察到的事实，
+修完之后它一直是有的。⇒ **以后每条臂都该拿 `[CHAT]` 回执当命令落地判据**，
+不再需要「读截图猜注入有没有生效」，也不需要拿 luma 当时刻证据。
+
+### 🔴 顺带查出一条 26.3 的版本迁移事实（它同时解释了「那一臂 0 张截图」）
+
+- 数据迁移表逐字（`net/minecraft/util/datafix/fixes/GameRuleRegistryFix.java:58`）：
+  `renameAndFixField("doDaylightCycle", "minecraft:advance_time", convertBoolean)`
+  ⇒ **26.3 里这条 gamerule 叫 `advance_time`**，`/gamerule doDaylightCycle false` 会报
+  `Incorrect argument for command`。
+- 🔖 更值钱的机制：**命令失败会把聊天界面留在打开状态** ⇒ 之后每一次 `press F2`
+  都打进聊天框而不是触发截图（h49h 实测：那一臂 `Saved screenshot` 计数 **0**，
+  而同一套注入在 h49g 拿到 3 张）。
+  ⇒ 「F2 没落地」不一定是指针/焦点问题，**先看最近一条 `[CHAT]` 是不是报错**。
+
+
+### 为什么旧结论会错（这条比结论本身值钱）
+
+旧判据是「日志里 `[CHAT]` 行数为 0」+「`clockTime` 跨过了 24000 进了新的一天」。
+两条都**不成立**：
+1. 玩家自己打的命令的执行结果走的是 **HUD 聊天框**，`/time set` 这类**不落 latest.log**
+   ⇒ 「日志里没有」不等于「游戏里没发生」（本项目反复踩的同一格：`没有数字 ≠ 数字是 0`）；
+2. `clockTime` 跨天只证明 `doDaylightCycle false` **那一臂**没落地，
+   而那一臂跑在 **`key_for()` 丢 Shift 层** 的 bug 版上（`/` 被注入成 `7` ⇒ `7time set …`
+   被当普通聊天发出去）。a729faa 修掉那个 bug 之后，**没有任何一臂重测过这条**
+   ⇒ 一条已经过时的判据继续当结论用，把「给判据造观测面」这件事白白拦了一轮。
+
+### 这条撤回连带影响哪些旧结论（X37：改了共享状态就要重测引用它的结论）
+
+- ✅ **作废**：「本机不能 `/tp`、不能造水块 ⇒ 水的画面判据只能等运气」。
+  观测面现在**可以自己造**（h49h 用 `/fill … minecraft:water replace minecraft:air`，
+  只替换空气 ⇒ 不破坏取证世界的任何方块）。
+- ⚠️ **待重测**：h48 系列里凡是拿「本臂聊天注入没落地，所以世界是夜」当解释的段落
+  （`docs/13-GAP-REGISTRY.md` GAP-019 的 h48k 那一行、`evidence/h48` §二十.1 与 §二十六）——
+  那些臂确实**有可能**是注入没落地（bug 版），但也可能另有原因；
+  本轮**不重判**它们，只把「注入从不生效」这条**默认解释**撤掉。
+- 🔖 「观测面钉成正午 + 晴天」从**愿望**变成**可执行**：h49h 起，每条臂都可以先
+  `/gamerule doDaylightCycle false` + `/time set 6000` + `/weather clear`，
+  并用「HUD 回执 + `clockTime` 不再前进」双判据核验它真的落地了
+  （而不是像旧自检那样拿截图亮度当时刻证据）。
+
+---
+
+## 八、h49h / h49i / h49j：**观测面造出来了**，于是水的判据从「无从判」变成「**这是一个真缺陷**」
+
+有了 §七 那条撤回，就可以自己造水面（`/fill … minecraft:water replace minecraft:air`
+只替换空气 ⇒ **不破坏取证世界的任何方块**），并把时刻钉死。三臂递进：
+
+| 臂 | 发生了什么 | `c1@afterTerrain` |
+|---|---|---|
+| h49h | `/gamerule doDaylightCycle false` 报 `Incorrect argument for command` ⇒ **聊天框留在打开状态** ⇒ 之后 4 次 F2 全打进聊天框（`Saved screenshot` = 0）。但 `/fill` 回执 `Successfully filled 16 block(s)` 说明造水这条路可行 | 全零（且当时还不能判） |
+| h49i | 改用 26.3 的真名 `/gamerule advance_time false` ⇒ 回执 `Game rule advance_time is now set to false`，**`clockTime` 连续三条都是 6000（时刻真的被钉住了）**；`TRANSLUCENT{draws=4}`。但镜头还朝上（`--dy 100` 只有约 15°，抵不过上一轮留下的仰角） | 全零（画面里仍没水） |
+| **h49j** | 先把镜头压平再放水：回执 `Successfully filled 27 block(s)` + `Set the weather to clear`，`TRANSLUCENT{groups=1,draws=20}`，四张 F2 里**画面全是水**（`evidence/h49-images/h49j-water-in-frame-c1-still-zero.png`：大片青色水面 + 雪地 + 正午） | **仍然全零**：`meanRGB=(0,0,0) nonBlack=0.000% allZero=true`（#319…#322 连续四帧） |
+
+### 🔴 定论（这一格本轮终于有权判了）
+
+**水片元没有落进 gbuffer 的 colortex1。** 前提逐条已证：
+`renderGroup(TRANSLUCENT) issued` 1 条、管线换到 `…_water_mrt`、水的 8 条 sampler 全绑上、
+`VkDispBuiltins` 环 768 B 已写、包侧对槽 1 写的是 `vec4(vlAlbedo, 1.0)`（alpha=1 ⇒
+`BlendFunction.TRANSLUCENT` 下应当**整像素覆盖** dst），而画面里确实有水、`TRANSLUCENT` 有 20 条 draw。
+⇒ 「全零」不再是「如实的零」（§六 那一格作废），**是一个缺陷**。
+
+### 下一轮要切开的四种可能（本轮**未**判，别当已知）
+
+| # | 候选 | 已有的旁证 / 反证 | 一刀切开的办法 |
+|---|---|---|---|
+| ① | **深度测试把水全拒**：水的 MRT 管线是 `GREATER_THAN_OR_EQUAL` + **写深度关**（GAP-027 第一步的决定），而水的 `gl_Position` 由我方**顶点适配层**产出 ⇒ 若 clip.z 口径不对就恒不过测试 | 无旁证（本轮没测） | 诊断档把比较改成 `ALWAYS` 跑一臂：槽 1 有内容 ⇒ 就是这一条 |
+| ② | 片元 `discard`（转译稿 `world0_gbuffers_water.fsh.trans.glsl:1904` 确实有一条 `discard`） | 无旁证 | 诊断档把该行短路（与地形那族 `*Probe` 同形） |
+| ③ | 适配层 14 条 varying 与原版 `BLOCK` 顶点格式不匹配 ⇒ 几何退化/零面积 | 地形 9 条能出画（`c0` 有内容）⇒ 机制本身通；水多出的 5 条未证 | 打一条「水的 draw 覆盖了多少像素」的直判据（或先只喂前 9 条做 A/B） |
+| ④ | 混合状态 | 弱：alpha=1 覆盖，理论上不可能给零 | 顺带排除 |
+
+⚠️ 另外本轮**没判**的：水在 colortex0 上有没有内容（`c0@afterTerrain` 两臂都有内容，
+但那是地形 + 链的混合，切不出水那一份）。
+
+---
+
+## 九、本轮**不覆盖**什么（显式清单，别把这些读成已验）
+
+1. **水为什么没落地**未判（§八 那四个候选一个都没切开）；**水的画面效果对不对**也未判 ——
+   那还要 `depthtex1` 的真快照（GAP-023 ②/③ 未做）与水的顶点属性上限（GAP-007）。
 2. **`z1 > z0` 一族判据仍不可信**：`depthtex0/1/2` 本轮依旧同绑那张 1×1 D32@0.0 桩
    （绑定自报行逐字：`depthtex*=1x1 D32@0.0 桩（**不是**本 pass 附件，快照未实现）`）。
 3. **跨臂比亮度（F2 luma）本轮不作判据**：h49 / h49b 两轮的「哪一臂在闪」是**换位**的
    （h49：OFF 闪、ON 不闪；h49b：OFF 不闪、ON 闪），同一配置跨轮次不稳定
    ⇒ 那条周期性暗帧属于呈现/回读侧的已知仪器问题（GAP-020 家族），本轮不据此下任何结论。
 4. 云 / 实体 / 手 / 天气 / `shadow` 仍未接（GAP-027 的其余程序）。
-5. `gbuffers_skybasic` 编译失败（`'MC_RENDER_STAGE_STARS' … error`）两臂都在，
-   **不是本轮引入**，本轮也未修（登记为待办，见 CHANGE_LOG 的 ⛔）。
+5. ~~`gbuffers_skybasic` 编译失败~~ ⇒ **本轮内已修**（GAP-028 第一步：宏表进引擎，
+   两臂各验 `compile FAILED` 2 → 0、顶点阶段产出 `spvBytes=928/915`）。
+   **未修的是另一半**：`renderStage` 这个 uniform 还没有供值 ⇒ 包所有「是某阶段」的分支恒假。
+6. **水的槽 0 贡献**未切出来（`c0@afterTerrain` 混着地形与链的内容，切不出水那一份）。
