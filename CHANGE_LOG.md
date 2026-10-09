@@ -6,6 +6,57 @@
 ---
 ---
 
+## 2026-10-09（九十三）— 🔬 给 GAP-023 加「两个时刻直接比」的探针，跑出来**三张深度图逐位相同** ⇒ 「时刻真的分开了」至今未被证明；顺手抓出自己仪器里的一个覆盖 bug
+
+> **verdict = 机制按语义正确退化（本帧没画出半透明几何），关闭条件仍未达成；另记一条 F2 截图整臂没落地**
+> 证据：`evidence/h50n-pass-split.md` §五
+> 登记：GAP-023 加 h50o 行
+
+### 改了什么
+
+1. **`bridge/TargetReadback.java`** —— 新增 `depthviz0` / `depthviz1` 两个探针：把
+   `DepthSnapshots` 的 0 号、1 号快照各画成一张 RGBA8 灰度图，与 `depthviz`（活深度）共用
+   `vkdisp:pipeline/depthviz`。绘制本体抽成 `drawDepthAsGray(...)`。
+2. 🔴 **自己复查抓出的 bug**：第一版两个标签**共用一张目标** ⇒ 后一次绘制在收数之前把前一次覆盖掉
+   ⇒ 两个标签会**永远**读出同一个数，而「读数相同」正是本臂想问的那件事 ——
+   仪器会自己造出假答案。改成**每标签一张**（`DEPTH_VIZ_TARGETS` 按标签建），
+   与本文件头部那条「两个源同时回读进同一个缓冲会互相覆盖」同源。
+   顺带把 `probeDepthAsGray` 也并进同一套按标签管理，删掉旧的单字段。
+
+### 测到了什么（`packWater=true` + 扫四个朝向，闸门 A ✓ 16 键）
+
+`depthviz {16.1362}` = `depthviz0 {16.1362}` = `depthviz1 {16.1362}`；同帧可比 325 帧里
+**0≠1 的有 0 帧**；`c1@afterTerrain` 325 帧全 0。
+⇒ 两条互相印证：**这一臂根本没画出半透明几何**（玩家 `y=96`、海平面 ≈63，pitch +20 看不到水）
+⇒ 读数是「机制按 OF 语义正确退化」，**不是** GAP-023 的关闭条件达成。
+`z1 > z0` 要真拿到两个不同的数，还差一个**看得见水面**的机位（h49k 用俯视有水的机位曾测到
+`c1` 非黑 18.267% ⇒ 水能写，只是这里没拍到）。
+
+✅ 新探针跑 325 帧不炸：日志里只有三条**已知**的音频/合成器异常（`text2speech` 的 flite、
+`Failed to open OpenAL device`），没有一条来自 `vkdisp`。
+
+🔴 另记一条仪器失败：这一臂 **F2 截图一张都没落地**（注入器逐字 `injected F2 (keycode 68) OK`，
+而 `run/h27/screenshots/` 是空的）⇒ 探针通道有效、画面通道无效，是「注入报成功其实没生效」又一例。
+**不许**把「截图为空」读成「画面黑」。修法候选：`chat` 之后补一次 `Return` 并等一拍
+（**不能**补 `Escape` —— 会开暂停菜单，h48 踩过）。
+
+### 影响的文档
+
+`docs/13-GAP-REGISTRY.md` GAP-023 加 h50o 行；`evidence/h50n-pass-split.md` 加 §五。
+
+### 测试结果
+
+`./gradlew test -PquickPlay` → **BUILD SUCCESSFUL，1088 项 0 失败**。
+真机（A11）：h50o 一臂。已提交（本地 master，未 push）。
+
+### ⛔ 下一步（GAP-023 收尾的具体动作）
+
+1. 先把**画面通道**修回来（`chat` 之后补 `Return`），再跑一臂**看得见水面**的
+   `packWater=true`（机位要么走近水面、要么加大俯角），判据两条：
+   `depthviz0 ≠ depthviz1` 与 `c1@afterTerrain` 非全 0。
+2. 达成之后才谈 GAP-023 的画面侧关闭条件：BSL `composite.glsl:333 z1 > z0` 那支真的走到。
+
+
 ## 2026-10-09（九十二）— ✅ GAP-023 第二格：地形 pass 拆成两段 ⇒ `depthtex0/1/2` 三个时刻**各有一张真快照**；顺带立了 X55（黑帧率本机不可当正确性判据）
 
 > **verdict = `packWater=false ⇒ taken=[0,2]/3`、`packWater=true ⇒ taken=[0,1,2]/3`，且三组深度/链读数与拆段前逐位相同；但本条仍不关（包有没有用上还没判）**

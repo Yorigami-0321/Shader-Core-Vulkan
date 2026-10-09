@@ -304,6 +304,14 @@ private static final long WARMUP_FRAMES = 600L;
         if (samplingFrame && VkDispConfig.MRT_PIXEL_PROBE_AFTER_TERRAIN.get()) {
             submit("c0@chainStart", MrtTerrainPass.slotTexture(0));
             probeDepthAsGray();
+            // 🔴 GAP-023 的收尾判据：两个时刻的深度**到底一样不一样**。
+            //   光看 `[GAP-023] taken=[0,1,2]/3` 只证明「取到了」，不证明「内容不同」——
+            //   水没在画面里的时候两段深度本来就该一样（那才是对的）。
+            //   ⇒ 把 0 号与 1 号快照各画成一张 RGBA8 灰度图，比较它们的 mean_luma：
+            //     相等 = 本帧没有半透明几何写到可见像素上（正常，不是缺陷）；
+            //     不等 = 两个时刻真的分开了 ⇒ z1 > z0 那一支第一次拿到两个不同的数。
+            probeSnapshotAsGray("depthviz0", dev.vkdisp.bridge.DepthSnapshots.OPAQUE);
+            probeSnapshotAsGray("depthviz1", dev.vkdisp.bridge.DepthSnapshots.TRANSLUCENT);
         }
     }
 
@@ -324,7 +332,6 @@ private static final long WARMUP_FRAMES = 600L;
     //   地形 pass 已关、链第一级还没开（`FrameApi` 的顺序），所以不违反
     //   「render pass 打开期间不许新建 encoder 命令」（h10 实测规则）。
 
-    private static @Nullable TextureTarget depthVizTarget;
     private static boolean depthVizWarned;
 
     private static void probeDepthAsGray() {
@@ -345,28 +352,83 @@ private static final long WARMUP_FRAMES = 600L;
         }
         int width = depth.getWidth(0);
         int height = depth.getHeight(0);
-        if (depthVizTarget == null || depthVizTarget.width != width || depthVizTarget.height != height) {
-            depthVizTarget = new TextureTarget(
-                    "vkdisp depthviz probe", width, height, GpuFormat.RGBA8_UNORM, null);
-        }
-        GpuTextureView dst = depthVizTarget.getColorTextureView();
-        GpuTexture dstTexture = depthVizTarget.getColorTexture();
+        GpuTextureView dst = depthVizTargetFor("depthviz", width, height);
+        GpuTexture dstTexture = depthVizTextureFor("depthviz", width, height);
         if (dst == null || dstTexture == null) {
             return;
         }
-        GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
-        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-        try (RenderPass pass = encoder.createRenderPass(
-                () -> "vkdisp [GAP-020] depthviz probe (chain depthtex0 -> RGBA8 gray)",
-                dst, Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)), null, OptionalDouble.empty())) {
-            pass.setPipeline(pipeline);
-            RenderSystem.bindDefaultUniforms(pass);
-            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, depth, nearest);
-            pass.draw(3, 1, 0, 0);
-        }
+        drawDepthAsGray(pipeline, depth, dst,
+                "vkdisp [GAP-020] depthviz probe (chain depthtex0 -> RGBA8 gray)");
         // 🔖 判据读法：mean_luma=255 ⇒ 链这一帧采到的深度**处处 1.0**（假设成立）；
         //   与非黑帧的读数相同 ⇒ 深度不是那条分支的开关（假设被否，回到 uniform 环那一支）。
         submit("depthviz", dstTexture);
+    }
+
+    /**
+     * GAP-023：第 slot 号快照的灰度图（与 {@code depthviz} 同一形状，只是源换成快照）。
+     *
+     * <p>🔴 <b>每个标签必须有自己的一张目标</b>：本类的回读是「先记命令、之后再收」，
+     * 两个标签共用一张图 ⇒ 后一次绘制在收数之前就把前一次的内容覆盖了，
+     * 两个标签会永远读出同一个数（本文件头部就记着这条：「两个源同时回读进<b>同一个</b>缓冲
+     * 会互相覆盖」）。我第一版正是这么写的，被自己复查抓出来。
+     */
+    private static void probeSnapshotAsGray(String label, int slot) {
+        GpuTextureView source = dev.vkdisp.bridge.DepthSnapshots.view(slot);
+        if (source == null) {
+            return;   // 本帧没有这个时刻（例如水没接进来）⇒ 连标签都不打，免得被读成「打了但是 0」
+        }
+        CompiledRenderPipeline pipeline =
+                RenderSystem.getCompiledPipelineNullable(PipelineApi.depthVisPipeline());
+        if (pipeline == null) {
+            return;
+        }
+        GpuTextureView dst = depthVizTargetFor(label, source.getWidth(0), source.getHeight(0));
+        GpuTexture dstTexture = depthVizTextureFor(label, source.getWidth(0), source.getHeight(0));
+        if (dst == null || dstTexture == null) {
+            return;
+        }
+        drawDepthAsGray(pipeline, source, dst,
+                "vkdisp [GAP-023] " + label + " (depth snapshot -> RGBA8 gray)");
+        submit(label, dstTexture);
+    }
+
+    /** 标签 → 专用灰度目标（见上面那条「共用一张图必然互相覆盖」）。 */
+    private static final Map<String, com.mojang.blaze3d.pipeline.TextureTarget> DEPTH_VIZ_TARGETS =
+            new HashMap<>();
+
+    private static com.mojang.blaze3d.pipeline.TextureTarget depthVizTarget(
+            String label, int width, int height) {
+        com.mojang.blaze3d.pipeline.TextureTarget existing = DEPTH_VIZ_TARGETS.get(label);
+        if (existing != null && existing.width == width && existing.height == height) {
+            return existing;
+        }
+        com.mojang.blaze3d.pipeline.TextureTarget created = new com.mojang.blaze3d.pipeline.TextureTarget(
+                "vkdisp " + label, width, height, GpuFormat.RGBA8_UNORM, null);
+        DEPTH_VIZ_TARGETS.put(label, created);
+        return created;
+    }
+
+    private static GpuTextureView depthVizTargetFor(String label, int width, int height) {
+        return depthVizTarget(label, width, height).getColorTextureView();
+    }
+
+    private static GpuTexture depthVizTextureFor(String label, int width, int height) {
+        return depthVizTarget(label, width, height).getColorTexture();
+    }
+
+    /** 那一趟全屏灰度绘制本体（源 = 任意一张深度视图；两张目标共用同一张 RGBA8 是安全的：blit 顺序在提交之前）。 */
+    private static void drawDepthAsGray(CompiledRenderPipeline pipeline, GpuTextureView source,
+            GpuTextureView dst, String passLabel) {
+        GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+        try (RenderPass pass = encoder.createRenderPass(
+                () -> passLabel, dst,
+                Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)), null, OptionalDouble.empty())) {
+            pass.setPipeline(pipeline);
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.setUniform(PipelineApi.SAMPLER_UNIFORM, source, nearest);
+            pass.draw(3, 1, 0, 0);
+        }
     }
 
     /**
