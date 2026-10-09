@@ -218,16 +218,31 @@ private static final long WARMUP_FRAMES = 600L;
     private static String lastPlanNote;
 
     /**
-     * 🔬 地形 MRT pass **刚画完**时打一次 colortex0（标签 {@code c0@afterTerrain}）。
+     * 🔬 地形 MRT pass **刚画完**时打一次「本 pass 声明会写的那些槽」（标签 {@code cN@afterTerrain}）。
      *
      * <p>为什么需要第二个观测点（GAP-019）：帧尾那一槽早被链覆写，「帧尾为 0」分不清是
      * 「地形没画进池」还是「链把它打没了」—— 这两个要修的不是同一个东西。
      * 同一轮里两个标签一比就知道黑在哪一侧。开关 {@code mrt.pixelProbeAfterTerrain} 默认关
      * （它每帧多一次全屏回读，只在定位时用）。
+     *
+     * <p>🔴 <b>GAP-027：取点集合从写死槽 0 改成「冻结契约声明被写的槽」</b>。
+     * 水接上之后水写的是 {@code [0, 1]}（BSL 的 {@code DRAWBUFFERS:01}），
+     * 只看 {@code c0} 无法回答「水到底有没有落进 gbuffer」——
+     * 而「接了但看不见」正是本项目反复付学费的那一族（noisetex 分支、纹理准备顺序、水的块环）。
+     * 槽 0 的标签逐字不变（{@code c0@afterTerrain}）⇒ 历史臂仍然可直接比。
+     * 契约不可得（没接包片元）时回到「至少取槽 0」：原版地形也写它，这一格从来不是空的。
      */
     public static void probeAfterTerrain() {
-        if (samplingFrame && VkDispConfig.MRT_PIXEL_PROBE_AFTER_TERRAIN.get()) {
-            submit("c0@afterTerrain", MrtTerrainPass.slotTexture(0));
+        if (!samplingFrame || !VkDispConfig.MRT_PIXEL_PROBE_AFTER_TERRAIN.get()) {
+            return;
+        }
+        java.util.List<Integer> slots =
+                dev.vkdisp.pipeline.model.MrtPlan.packDeclaredOutputSlots();
+        if (slots.isEmpty()) {
+            slots = java.util.List.of(0);
+        }
+        for (int slot : slots) {
+            submit("c" + slot + "@afterTerrain", MrtTerrainPass.slotTexture(slot));
         }
     }
 

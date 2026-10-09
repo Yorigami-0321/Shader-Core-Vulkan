@@ -738,16 +738,37 @@ public final class TerrainPipelineApi {
     /**
      * 「取方块图集尺寸失败」只报一次（h35 / QD-05）。
      *
-     * <p>🔖 <b>为什么必须一次性</b>：{@code blockAtlasSizeOrEmpty()} <b>每帧</b>被调两次
-     * （{@code updateTerrainBuiltins} 的两个调用点）。不节流就是每帧两条 ERROR ——
+     * <p>🔖 <b>为什么必须一次性</b>：{@code blockAtlasSizeOrEmpty()} 在<b>每条已接上的</b>
+     * gbuffer 程序各写一次块时被调一次（{@link #updateWiredGbufferBuiltins} ⇒ 地形 1 条、
+     * 接上水之后 2 条）。不节流就是每帧多条 ERROR ——
      * 与 `h34` 刚修掉的 499 行刷屏是同一类错误，不能重犯。
      */
     private static final java.util.concurrent.atomic.AtomicBoolean ATLAS_SIZE_FAILURE_NOTED =
             new java.util.concurrent.atomic.AtomicBoolean();
 
-    /** GAP-003：每帧把 OF 内建值写进地形片元的 VkDispBuiltins 环（pass 打开前调用）。 */
-    public static void updateTerrainBuiltins() {
+    /**
+     * GAP-003 / GAP-027：每帧把 OF 内建值写进<b>本 pass 这一帧会画的每一条</b>包 gbuffer 程序
+     * 自己的 {@code VkDispBuiltins} 环（pass 打开前调用）。
+     *
+     * <p>🔴🔴 <b>h49 真机抓出来的缺陷（本方法原来只写地形那一条）</b>：水接线那一臂（ON）日志里
+     * 每帧一条 {@code pack gbuffer builtins ring is null: program=gbuffers_water}，
+     * 一次运行 <b>1032</b> 条 ⇒ 水的块从来没被创建、也从来没被写过。
+     * 「环的建与写」都在 {@link #updateGbufferBuiltins} 里，<b>但调用点只有一个程序名</b> ——
+     * 与 {@code noisetex}（分类表缺分支）、{@code PackTextures.ensureReady}（准备顺序错了）
+     * 同族的<b>第四例「实现了但没接上」</b>。
+     * ⇒ 判据同源：这里用 {@link #waterWiredInFrozenPlan()}，与 {@code MrtTerrainPass}
+     * 决定「要不要发那次 {@code renderGroup(TRANSLUCENT)}」用的是<b>同一个谓词</b>，
+     * 不会出现「画了却没写块」或「写了块却没画」。
+     *
+     * <p>⚠️ 代价（如实登记）：接上水时每帧多做一次 {@code OfUniformManager.gather}
+     * （纯 CPU 取值，不碰 GPU）。水与地形的<b>收编集不同</b>（47 vs 42 个成员）⇒
+     * 共用一份字节就是「按地形的成员表写水的块」= 静默喂垃圾，所以必须逐条各写一次。
+     */
+    public static void updateWiredGbufferBuiltins() {
         updateGbufferBuiltins(dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM);
+        if (waterWiredInFrozenPlan()) {
+            updateGbufferBuiltins(dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM);
+        }
     }
 
     /**

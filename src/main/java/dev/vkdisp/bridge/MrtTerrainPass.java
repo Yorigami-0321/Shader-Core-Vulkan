@@ -408,7 +408,7 @@ public final class MrtTerrainPass {
         //   ① VkDispTerrainParams = 眼空间太阳方向 → 顶点适配层算 sunVec；
         //   ② VkDispBuiltins = OF 内建值 → 包地形片元读的那 40+ 个成员。
         TerrainPipelineApi.updateTerrainParams();
-        TerrainPipelineApi.updateTerrainBuiltins();
+        TerrainPipelineApi.updateWiredGbufferBuiltins();
         //   ③ 中性材质贴图（specular/normals）：贴图上传走 encoder，**pass 打开期间禁止**
         //      ⇒ 懒建会在 pass 内抛 IllegalStateException 且每帧抛（h10 实测踩到）。
         NeutralMaterialMaps.ensureCreated();
@@ -504,6 +504,25 @@ public final class MrtTerrainPass {
                 drawFullscreenProbe(renderPass);
             }
             draws.renderGroup(ChunkSectionLayerGroup.OPAQUE, renderPass, atlasSampler, atlas, false);
+            // 🔴🔴 GAP-027：**水一直只被注册、从来没被画过**（h48 七十四 ③ 记的就是这一条）。
+            //   管线、契约、附件数取 max、逐程序绑定全都到位了，但本方法只发出过一次
+            //   `renderGroup(OPAQUE)` ⇒ `gbuffers_water` 的片元一次都没跑过。
+            //   「实现了但没接上」的第三例（前两例：noisetex 的分支、PackTextures 的准备顺序）。
+            //   🔖 判定只读**冻结计划**（`waterWiredInFrozenPlan`）而不是再读一遍配置：
+            //     管线是按冻结的附件数注册的，绘制侧若各自现算就会出现
+            //     「pass 有 2 个附件却按 1 个附件的管线画」⇒ `setPipeline` 抛（X42）。
+            //   🔖 绑定必须在 renderGroup **之前**重做一次：pass 内后绑覆盖前绑，而水的自由
+            //     sampler 清单与地形不是同一套（8 个 vs 5 个，X39）。照抄地形那次 ⇒ 水的每个
+            //     draw 都被 validateDraw 以 Missing uniform 拦下。
+            //   ⚠️ OFF 档（`mrt.packWater=false`，默认）这条分支整个不进 ⇒ 与今天逐字一致。
+            if (TerrainPipelineApi.waterWiredInFrozenPlan()) {
+                TerrainPipelineApi.bindPackGbufferUniforms(renderPass, atlasSampler, atlas,
+                        colortexDepth.getDepthTextureView(), slotView(0),
+                        dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM);
+                draws.renderGroup(ChunkSectionLayerGroup.TRANSLUCENT, renderPass,
+                        atlasSampler, atlas, false);
+                reportWaterGroup(draws);
+            }
             drainDeviceDebugMessages();
         } finally {
             // 🔖 必须在 finally 清：漏清会让后续**原版** pass 也拿到多附件管线 ⇒ 立刻 validation error。
@@ -556,6 +575,37 @@ public final class MrtTerrainPass {
             probeLogs++;
             VkDisp.LOGGER.info("vkdisp: [GAP-003/A] terrain MRT pass frames={}", framesDrawn);
         }
+    }
+
+    /** 「水那一组确实被画过」的一次性自报哨兵（热路径不刷日志，同 h33 的节流纪律）。 */
+    private static boolean waterGroupLogged;
+
+    /**
+     * GAP-027 自报：{@code renderGroup(TRANSLUCENT)} **确实被发出过**，并带上
+     * 「水的契约」与「这批捕获里 TRANSLUCENT 层到底有几个 draw」。
+     *
+     * <p>🔖 <b>为什么这条不是多余的日志</b>：本项目反复出现「管线注册了、契约也算对了、
+     * 但那条 draw 一次都没发出」。附件数取 max 只保证「发得出」，不保证「发过了」。
+     * 自报行 + draw 计数一起打，才能把「水没出现在画面」拆成
+     * ①没发出 draw（本行会显示 draws=0）②发出了但片元/几何不对（本行正常而画面空）。
+     *
+     * <p>⚠️ 反射探针失败只 WARN（同 {@link #probeDrawCounts}）：取证手段不该把功能拖挂。
+     */
+    private static void reportWaterGroup(ChunkSectionsToRender draws) {
+        if (waterGroupLogged) {
+            return;
+        }
+        waterGroupLogged = true;
+        dev.vkdisp.pipeline.model.PackTerrainProgram water =
+                dev.vkdisp.VkDispVirtualPack.packContract(
+                        dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM);
+        VkDisp.LOGGER.info("vkdisp: [GAP-027] renderGroup(TRANSLUCENT) issued in gbuffer MRT pass:"
+                        + " attachments={} waterDeclaredSlots={} waterSamplers={}"
+                        + " (管线 depth=测试开/写入关；noisetex 与 depthtex* 各自来源见绑定摘要)",
+                actualSlots,
+                water == null ? "[-]" : water.declaredOutputSlots(),
+                water == null ? -1 : water.fragmentSamplers().size());
+        probeDrawCounts(draws);
     }
 
     /**

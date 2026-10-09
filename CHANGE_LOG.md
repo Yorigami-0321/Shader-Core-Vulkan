@@ -6,6 +6,84 @@
 ---
 ---
 
+## 2026-10-09（七十六）— 🔴🔴 水的 `renderGroup` 第一次真的发出去；它当场掉出「实现了但没接上」的第四例，而**判据卡在观测面**上
+
+> **verdict = 「接线达成」与「画面达成」是两件事：本轮拿到前者，后者**没有观测面**可拿**
+> 证据：`evidence/h49-water-translucent-draw.md`（四对臂 h49 / h49b / h49c / h49d + 两轮扫描 h49e / h49f）
+
+**本次改了什么**
+
+1. ✅ **GAP-027 第二步落地**：`MrtTerrainPass.drawTerrain()` 在 OPAQUE 那组之后**再发一次**
+   `renderGroup(TRANSLUCENT, …)`。判据只读**冻结计划**（`waterWiredInFrozenPlan()`）——
+   与管线注册侧同源（X42：附件数与「画不画半透明」若各自现算，就会出现「pass 有 2 个附件
+   却没有对应的多附件管线」⇒ `setPipeline` 抛）。绑定按程序名重做第二次（pass 内后绑覆盖前绑，
+   水 8 条 sampler vs 地形 5 条，X39）。开关 `mrt.packWater` 仍默认 **false** ⇒ OFF 档整条分支不进。
+   🔖 顺带纠正一条**说出去做不到的话**：`mrt.packWater` 的 comment 早就写着「并在同一 pass 里
+   多画一次半透明组」—— 那句话此前**没有实现**，本轮才兑现。
+2. 🔴🔴 **真机当场抓出第四例「机制都在、缺的是那一次调用」**：ON 臂每帧一条
+   `builtins ring is null: program=gbuffers_water`，一次运行 **1032 条**。根因：
+   `updateTerrainBuiltins()` **只写地形那一条**，而「建环 + 写字节」全在
+   `updateGbufferBuiltins(program)` 里面 ⇒ 水的 `VkDispBuiltins`（47 个成员 / 768 B）
+   **既没被创建也没被写过**。修法 = 新增 `updateWiredGbufferBuiltins()` 逐条写
+   「本帧会画的每一条 gbuffer 程序」，且**与决定「要不要发那次 draw」用同一个谓词**
+   ⇒ 结构上不可能出现「画了却没写块」或「写了块却没画」。修后该条计数 **1032 → 0**，
+   ON 臂 `ERROR` 总数回到与 OFF 臂相同的 4 条（都是既有的 OpenAL / flite / `skybasic`）。
+3. ✅ **A11 真机取证四对臂**（同一二进制、单变量 = `mrt.packWater`，X52 已逐行列出差异）：
+   ON 臂逐字 `[GAP-027] renderGroup(TRANSLUCENT) issued … attachments=2
+   waterDeclaredSlots=[0, 1] waterSamplers=8` +
+   `wired (mrt variant): layer=TRANSLUCENT -> …_water_mrt` + `slots=2`；
+   OFF 臂这三条**一条都没有**、`slots=1`。水的片元在真机上编译成功
+   （`outputs=2 samplers=8 varyings=14 bytes=60656`，生成 683–722 ms）。
+4. 🔶 **判据卡在观测面上（这条是本条目最想留下的东西）**：水的画面侧判据（colortex1 有非清屏内容）
+   **拿不到** —— 不是水坏了，是**这台机器现在没有「画面里有水」的帧**：
+   h49e 八步 + h49f 十二步视角扫描（第二轮先把镜头压到地面视角）**没有一帧出现水面**，
+   而 `look` 只能转镜头、不能 `/tp` 也不能造水块（聊天注入至今不通 = h48 七十二 ⛔⑤ 那条未决项）。
+   ⇒ 「`c1@afterTerrain` 全零」在这个前提下是**如实的零**，**不许**读成缺陷证据。
+   为此把探针取点从写死槽 0 改成「**冻结契约声明被写的槽**」
+   （OFF 臂仍只有 `c0@afterTerrain`、标签逐字不变 ⇒ 历史臂可比）。
+5. 🔖 **两条工具/开关事实（都是本轮自己踩的）**：① `mrt.enabled=true` 会**连带**把清屏切成诊断色
+   （`diagnosticClearMode()` 的判据是 `MrtProbe.enabled()` == `mrt.enabled`）⇒ 用它测
+   「槽 1 有没有内容」读到的是那张**诊断蓝**（`meanRGB=(0,0,255)` 三区逐位相同），
+   这是 GAP-026「开关连带改变被测量」的又一例；② `x11_input.py look --dx` 只转偏航、
+   **俯仰沿用上一次的值** ⇒ 只转圈不低头 = 永远扫不到脚下的水。
+6. ⚠️ **跨臂比亮度这条老规矩本轮又用上一次**：h49 与 h49b 里「哪一臂在周期性闪」是**换位**的
+   （h49：OFF 闪 / ON 不闪；h49b：OFF 不闪 / ON 闪）⇒ 周期性暗帧属呈现/回读侧的仪器问题
+   （GAP-020 家族），本轮**不据 luma 下任何结论**。
+
+7. 🔴 **登记 GAP-028（`renderStage` / `MC_RENDER_STAGE_*` 一族引擎侧一个都没供）**：
+   取证时读到的 `gbuffers_skybasic` vsh 编译失败（`'MC_RENDER_STAGE_STARS' : undeclared identifier`，
+   两臂都在）**不是本轮引入**，而是被上一轮 GAP-021 的修法**叫醒**的：
+   `MC_VERSION` 从没定义时 `#if MC_VERSION >= 11605` 恒假 ⇒ 走 `gl_Color` 那支（能编译）；
+   供进 `260300` 之后这一支第一次被真的编译 ⇒ 撞上没来源的常量。
+   已核实包侧 19 处引用（`BSL_v10.1.8.zip` 逐行）、我方 `DefineProcessor.engineMacros()` 只塞
+   `MC_VERSION`、且 `renderStage` 这个 **uniform 本身**也没人供值
+   ⇒ 本条要同时解决「常量」与「每帧给什么阶段值」，**取值必须查权威来源，不许猜**（X9，
+   包自带的兜底是 `MOON=1`，与 Iris 约定是否一致待核实）。
+
+**为什么改**：GAP-027 的水此前只到「管线注册 + 契约冻结」，`renderGroup(TRANSLUCENT)` 一次都没发过
+（h48 七十四 ⛔③ 记的就是这条）。不发出它，水的一切下游判据都是空的。
+
+**影响的文档**：`docs/13-GAP-REGISTRY.md` GAP-027 新增「h49 第二步」整行（含「本条不关」的理由）、
+**新增 GAP-028**（`renderStage` / `MC_RENDER_STAGE_*` 整族缺失 + 上面那条因果链）；
+新证据 `evidence/h49-water-translucent-draw.md`（环境 X53 / 单变量表 X52 / 四对臂逐字自报 / 不覆盖清单）
++ `evidence/h49-images/`（两张「画面里没有水」的 F2，用来钉住「`c1=0` 是如实的零」这句话）。
+
+**测试结果**：全量 **1066 / 0 失败 / 0 错误**（本轮无新增测试：改动是「发出那一次 draw」与
+「逐条写块环」，两者都要 GPU，离线单测拿不到 —— 判据全部落在真机自报行上）。
+
+**是否已提交**：见本条目对应提交。
+
+**⛔ 仍未完成**：① **水的画面侧判据未拿到**，且**先要修观测面**（聊天注入 ⇒ `/tp` 到水面或
+`/setblock` 造水，顺带把「钉正午 + 晴天」变成真判据）；② GAP-023 ②/③ 三张时刻快照未做
+⇒ `depthtex*` 仍同绑那张 1×1 桩、`z1 > z0` 一族仍不可信；③ 水的**遮挡语义**待查：本轮把
+TRANSLUCENT 管线的深度写成「测试开 / 写入关」（GAP-027 第一步的决定），而包按「水写深度」写
+`depthtex1` 语义 ⇒ 两者是否冲突要在**有水的画面**上判，不在没有水的画面上猜；
+④ `gbuffers_skybasic` 编译失败（`'MC_RENDER_STAGE_STARS' … error`）两臂都在、本轮未修 ——
+已**就地登记成 GAP-028**（含「它是被上一轮 `MC_VERSION` 叫醒的」那条因果链），下一轮实现；
+⑤ 云 / 实体 / 手 / 天气 / `shadow` 仍未接。
+
+---
+
 ## 2026-10-08（七十五）— 🔴🔴 接线补齐后的第一次真机取证，当场抓出两个真缺陷：一个是上一轮自己引入的，一个是「决策表全对、资源准备顺序错了」
 
 > **verdict = 离线全绿 ≠ 接上了**：1066 条测试全过，而真机上 `noisetex` 每帧缺席 —— 顺序错了
