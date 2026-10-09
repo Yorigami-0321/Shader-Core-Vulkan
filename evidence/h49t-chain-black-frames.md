@@ -136,3 +136,55 @@ LOAD-结束操作、云写进的那一代与链读的那一代的相位）。**�
 2. `mrt.cloudsPass` **默认仍 false**：它把云搬进画面了，但同时(a)渲染不对、(b)与链互相干扰。
 3. h49w 那条「按族供值压住周期 3 黑帧」的结论**要加限定词**：`cloudsPass=false` 时成立。
 
+---
+
+## 八、h49z + h50a：把「云 vs AO」判开 —— 一个 2×2，外加**撤回我上一条的说法**
+
+h49x 那句「云一开，黑帧从 1/3 涨到 2/3 ⇒ 云与链互相干扰」是**归因归错了**。
+补两臂（同一套逐级观测面：`c0@afterTerrain` / `c0@afterClouds` / `trace1deferred1:c0` / `main`）
+之后，四个配置正好拼成一个 2×2：
+
+| `deferred1` 输出为 0 的帧占比 | `depthGlProxy=false` | `depthGlProxy=true`（按族供值） |
+|---|---|---|
+| **云关**（h49t / h49w） | 62/185 = **33%** | 1/177 = **0.6%** ✅ 修好了 |
+| **云开**（h49z / h50a） | 54/81 = **67%** | 52/78 = **67%** ❌ 修法失效 |
+
+### 🔴 事实 A：云**没有**把颜色缓冲弄黑（撤回「云与链互相干扰」那句）
+
+h49z 的分类计数（四信号齐全的 81 帧）逐字：
+
+```
+云把gbuffer弄黑              0
+gbuffer有内容·AO弄黑          54
+AO有内容·链后段弄黑            0
+全正常                        26
+gbuffer本来就黑               1
+```
+
+而 h50a 里 **77/78 帧 `c0@afterClouds > c0@afterTerrain`**（`131.594 → 135.040`、
+`86.836 → 87.008`）⇒ 云那一格**每一帧都在往 colortex0 加内容**，
+黑帧**全部**发生在 `deferred1`（AO）里，链后段一帧都没弄黑过。
+⇒ 所以「云与链互相干扰」这个措辞**不对**：不是互相干扰，是**云让 AO 的那条老路更常走到黑**。
+
+### 🔑 事实 B：新的机制假设（**未判**，但形状很具体）
+
+`CloudRenderer.render` 用的 `RenderPipelines.CLOUDS` 继承
+`DepthStencilState.DEFAULT = (GREATER_THAN_OR_EQUAL, **writeDepth=true**)`
+（`renderpearl/api/pipeline/DepthStencilState.java` 逐字），
+而我方云 pass 挂的是**同一张 gbuffer 深度附件**（`MrtTerrainPass.depthView()`，LOAD）
+⇒ **云的深度被写进 `depthtex` 读的那张图**。
+AO 那边（`ambientOcclusion.glsl:60 GetLinearDepth(z, projectionInverse)`）
+一旦读到的是云层的深度而不是地形深度，累加就会全落空 ⇒ `float ao = 0.0` 保持 0 ⇒ 写黑。
+这也解释了为什么「按族供值」在云开着时**不再够用**：
+它修的是**矩阵口径**，而这里坏的是**深度内容本身**。
+
+### 下一刀（按代价排，本轮**没做**）
+
+1. **让云不写 gbuffer 深度**：云 pass 改挂一张**私有空白深度**（与 `SkyIntoGbuffer#ensureSkyDepth`
+   同族），或给云一条 `writeDepth=false` 的派生管线（管线替换那条路本轮已走通，加一项状态即可）。
+   判据现成：同一套四信号，看「云开 + glProxy=true」那一格能不能从 67% 掉回 ~0。
+2. 若 1 成立，还要顺手判**云该不该被地形遮挡**（挂私有空白深度 = 云永远盖在地形上，
+   那是另一种错；正解可能是「派生管线只关写入、保留测试」）。
+3. 云那片「暗绿的布」仍未判 —— 它和这条黑帧可能是**同一个根**（AO 把整片乘成暗色），
+   也可能是两件事。1 做完再看图才知道。
+
