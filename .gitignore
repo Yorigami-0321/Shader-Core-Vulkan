@@ -126,3 +126,6 @@ core.*
 # Python 工具的字节码缓存（evidence/tools/*.py 是入库的测量工具）
 __pycache__/
 *.pyc
+
+### 工具生成的文档快照备份（非项目内容；由编辑期钩子产生）###
+*.bak
