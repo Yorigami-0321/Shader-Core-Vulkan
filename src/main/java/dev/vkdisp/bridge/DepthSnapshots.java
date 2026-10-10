@@ -228,6 +228,15 @@ public final class DepthSnapshots {
         return Resources.VIEWS[slot];
     }
 
+    /** 取证：第 slot 号快照的纹理本体（copy 路 float 回读用）；门与 {@link #view(int)} 同。 */
+    @Nullable
+    public static GpuTexture texture(int slot) {
+        if (slot < 0 || slot >= COUNT || !TAKEN_THIS_FRAME.contains(slot)) {
+            return null;
+        }
+        return Resources.TEXTURES[slot];
+    }
+
     private DepthSnapshots() {
     }
 }

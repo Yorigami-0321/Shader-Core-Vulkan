@@ -304,6 +304,15 @@ private static final long WARMUP_FRAMES = 600L;
         if (samplingFrame && VkDispConfig.MRT_PIXEL_PROBE_AFTER_TERRAIN.get()) {
             submit("c0@chainStart", MrtTerrainPass.slotTexture(0));
             probeDepthAsGray();
+            // 🔴 任务 #4 真机根修判据格：深度族在真机有三张图（活深度 / 快照 / 代理），
+            //   采样路（depthviz）在真机恒零，而「内容零」与「采样坏」在采样路上长得一样
+            //   ⇒ 各加一条 **copy 路**回读（颜色回读路已被真机证明可用），按 32 位 float 解码对照。
+            submitDepthFloat("depthcopyLive", MrtTerrainPass.depthTexture());
+            submitDepthFloat("depthcopySnap0",
+                    dev.vkdisp.bridge.DepthSnapshots.texture(dev.vkdisp.bridge.DepthSnapshots.OPAQUE));
+            if (dev.vkdisp.bridge.DepthGlProxy.hasProxy()) {
+                submitDepthFloat("depthcopyProxy", dev.vkdisp.bridge.DepthGlProxy.texture());
+            }
             // 🔴 GAP-023 的收尾判据：两个时刻的深度**到底一样不一样**。
             //   光看 `[GAP-023] taken=[0,1,2]/3` 只证明「取到了」，不证明「内容不同」——
             //   水没在画面里的时候两段深度本来就该一样（那才是对的）。
@@ -830,6 +839,59 @@ private static final long WARMUP_FRAMES = 600L;
         }
     }
 
+    /** 按 32 位 float 解码的源（深度族）：copy 路是真机上唯一被证明可靠的深度读取路径。 */
+    private static final java.util.Set<String> FLOAT_SOURCES = new java.util.HashSet<>();
+
+    private static boolean submitDepthFloat(String label, @Nullable GpuTexture texture) {
+        if (texture == null) {
+            return false;
+        }
+        FLOAT_SOURCES.add(label);
+        return submit(label, texture);
+    }
+
+    /** 把回读缓冲按 little-endian float 解一遍：均值/极值/零壹中三档占比（深度口径一眼可读）。 */
+    private static String floatStats(byte[] pixels) {
+        java.nio.FloatBuffer fb = java.nio.ByteBuffer.wrap(pixels)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
+        int n = fb.remaining();
+        if (n == 0) {
+            return "float n=0";
+        }
+        double sum = 0;
+        float min = Float.POSITIVE_INFINITY;
+        float max = Float.NEGATIVE_INFINITY;
+        long zero = 0;
+        long one = 0;
+        long mid = 0;
+        for (int i = 0; i < n; i++) {
+            float v = fb.get(i);
+            if (Float.isNaN(v)) {
+                continue;
+            }
+            sum += v;
+            if (v < min) {
+                min = v;
+            }
+            if (v > max) {
+                max = v;
+            }
+            if (v == 0.0F) {
+                zero++;
+            } else if (v == 1.0F) {
+                one++;
+            } else {
+                mid++;
+            }
+        }
+        return String.format(java.util.Locale.ROOT,
+                "float n=%d mean=%.4f min=%.4f max=%.4f fracZero=%.3f fracOne=%.3f fracMid=%.3f",
+                n, sum / n,
+                min == Float.POSITIVE_INFINITY ? 0.0F : min,
+                max == Float.NEGATIVE_INFINITY ? 0.0F : max,
+                (double) zero / n, (double) one / n, (double) mid / n);
+    }
+
     /**
      * 收割已落地的回读：回调回来、且距提交至少过了一个完整探针节拍的槽才读。
      *
@@ -886,6 +948,9 @@ private static final long WARMUP_FRAMES = 600L;
             // 🔖 取证件跟在每个数字后面：单看一行数字无法判断它是哪个覆盖配置下测的。
             VkDisp.LOGGER.info("vkdisp: [pixel-probe] {} {} {}", roundTag, stats.format(label),
                     currentEvidence().format());
+            if (FLOAT_SOURCES.contains(label)) {
+                VkDisp.LOGGER.info("vkdisp: [pixel-probe] {} {} {}", roundTag, label, floatStats(pixels));
+            }
             // 🔖④ 同一份像素再按「天空带 / 地形带 / 整屏」分区各取一次数：
             //   单一矩形回答不了「黑的是天空还是地形」（h17 那个混淆的形态）。
             for (PixelStats.AreaSample area : PixelStats.areas(width, height)) {

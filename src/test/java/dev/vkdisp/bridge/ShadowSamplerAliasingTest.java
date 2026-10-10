@@ -158,20 +158,18 @@ class ShadowSamplerAliasingTest {
     }
 
     @Test
-    @DisplayName("🔖 桩深度留 0.0 —— 1.0 被真机测过：黑帧从 32.9% 涨到 66.7%")
+    @DisplayName("🔖 桩深度 = 1.0（真机判据）—— lavapipe 的 0.0 臂作废：当时深度代理恒零，体积分支根本没跑")
     void stubDepthStaysAtMeasuredBest() {
         Assumptions.assumeTrue(Files.exists(STUBS), "ShadowStubs 缺失");
         String stubs = read(STUBS);
-        assertTrue(stubs.contains("depthTex, 0.0F"),
-                "桩深度留 0.0：h50i(0.0) main 黑帧 55/167 = 32.9%、间隔 [3,3,3,…]、两张截图都有内容；"
-                        + "h50h(1.0) 116/174 = 66.7%、间隔 [1,2,1,2,…]、两张截图全黑。"
-                        + "两臂配置逐字相同、机位钉死，只差这一格。");
-        // 🔴 这条不是在宣布「0.0 是包眼里的无遮挡」。推理方向其实相反：包读 shadowtex0 用
-        //   `uniform sampler2DShadow` + `shadow2D()`（BSL shadows.glsl:3/61），GL 口径下 1.0 才是
-        //   远平面。真机给出的却是 1.0 更差 ⇒ **口径问题仍未判**，本断言钉的是「目前测量支持
-        //   哪一边」，不是「哪一边有原理」。本测试此前钉的是 0.0 + 那句原理 —— 两次都把信念当判据。
-        assertTrue(stubs.contains("未判"),
-                "ShadowStubs 里必须留着「口径未判」那句：不许下一轮把 0.0 读成『已确认无遮挡』");
+        assertTrue(stubs.contains("depthTex, 1.0F"),
+                "桩深度 1.0 = GL 口径「远 = 无遮挡」：比较采样（shadow2D z<=texel）与非比较回退"
+                        + "（直接取 r）两种读法下 1.0 都给「全受光」⇒ 两向同果。真机 0.0 被体积云读成"
+                        + "「全遮挡」= 整屏黑纱幔（2026-10-10 用户截图）。旧 0.0 判据出自 h50h/h50i 的"
+                        + "lavapipe 黑帧率臂 —— 节奏指标（X55）且当时体积分支死着，判据不覆盖本格。");
+        // 🔴 旧断言钉「口径未判」+ 0.0；真机把口径判了（两向同果），这句换钉新口径的不可回退理由。
+        assertTrue(stubs.contains("两向同果"),
+                "ShadowStubs 里必须留着「两向同果」那句：不许下一轮拿 lavapipe 旧臂把 1.0 改回 0.0");
     }
 
     @Test

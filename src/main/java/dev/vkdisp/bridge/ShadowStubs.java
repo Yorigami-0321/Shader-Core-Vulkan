@@ -65,20 +65,19 @@ final class ShadowStubs {
                 usage, com.mojang.renderpearl.api.GpuFormat.RGBA8_UNORM, 1, 1, 1, 1);
         depthView = device.createTextureView(depthTex);
         colorView = device.createTextureView(colorTex);
-        // 🔖 桩深度 = 0.0，**这一格是测量选出来的，不是推理想出来的**（h50h / h50i 两臂只差这一格）：
-        //     0.0 ⇒ `main` 黑帧 55/167 = **32.9%**，间隔逐字 [3,3,3,…]，两张截图都有内容；
-        //     1.0 ⇒ `main` 黑帧 116/174 = **66.7%**，间隔 [1,2,1,2,…]，两张截图都是纯黑。
-        //   ⚠️ 但「哪一侧才是包眼里的『无遮挡』」这件事**没有解决**：包读 `shadowtex0` 走
-        //   `uniform sampler2DShadow` + `shadow2D(tex, vec3(uv,z))`（BSL `shadows.glsl:3/61`），
-        //   那是 **GL 口径**（1.0 = 远 = 无遮挡），按口径推理应该清 1.0 —— **真机不支持那个推理**
-        //   （1.0 更差）。⇒ 保留 0.0，口径问题登记为未判，见 `evidence/h50h-gap029-rerun.md`。
-        //   谁要改这一格，先拿出比那两格更强的判据；「按 GL 口径就该是 1.0」这句本身已被测过一次。
+        // 🔖 桩深度 = 1.0（2026-10-10 真机重测臂）。旧决策 0.0 出自 h50h/h50i 两臂，但那是在
+        //     lavapipe + 深度代理恒零的时代测的「黑帧率」判据 —— 节奏类指标（X55），且当时
+        //     体积云/阴影分支根本吃不到深度，两臂差异测的是别的东西。真机上深度族修好后，
+        //     体积云把 0.0 的桩读成「全遮挡」⇒ 整屏黑色云带纱幔（2026-10-10 用户截图复现）。
+        //     GL 口径 1.0 = 远平面 = 无遮挡：比较采样器（shadow2D z<=texel）与非比较回退
+        //     （直接取 r）两种读法下 1.0 都给出「全受光」⇒ 两向同果，判据干净。
+        //   谁要改回 0.0，先拿出真机上比「黑云带消失」更强的判据；lavapipe 那两臂不作数。
         //   🔖 颜色桩仍全 0：它只是占位，本 pass 不做阴影，BSL 不用它算可见性。
         com.mojang.blaze3d.systems.RenderSystem.getDevice().createCommandEncoder()
                 .clearColorAndDepthTextures(colorTex,
-                        new org.joml.Vector4f(0.0F, 0.0F, 0.0F, 0.0F), depthTex, 0.0F);
+                        new org.joml.Vector4f(0.0F, 0.0F, 0.0F, 0.0F), depthTex, 1.0F);
         dev.vkdisp.VkDisp.LOGGER.info(
-                "vkdisp: [GAP-003] shadow stubs ready (1x1 D32@0.0 + RGBA8@0) —— "
+                "vkdisp: [GAP-003] shadow stubs ready (1x1 D32@1.0 + RGBA8@0) —— "
                         + "shadowtex0/1 与 shadowcolor0 **不再绑本 pass 的读写附件**"
                         + "（读写附件 + 采样器同图 = Vulkan UB，且不报 validation error）");
     }

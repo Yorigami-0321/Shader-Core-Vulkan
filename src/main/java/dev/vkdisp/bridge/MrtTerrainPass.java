@@ -190,6 +190,9 @@ public final class MrtTerrainPass {
             // A/B 模式：不在帧图里插 pass，改在 AfterLevel 画（见 drawAfterLevel）。
             return;
         }
+        // 🔴 GAP-027：frameGraph 档里原版 clouds pass 与链无依赖边、排在链之后 ⇒ 不抑制就会
+        //   「gbuffer 云 + 原版云」两层同框（2026-10-10 真机截图）。装配期挂钩子，executes 期生效。
+        dev.vkdisp.bridge.CloudsIntoGbuffer.installSuppression();
         // 🔖🔖 天空 pass 必须**显式声明**成地形的先决条件。h48g 实测：只按顺序 addPass 时
         //   sky 被排到 terrain **之后**执行（执行序由 `FrameGraphBuilder#resolvePassOrder`
         //   按 `requiredPassIds` 与「写→读」边解析，**插入序不是依赖**），于是天空又被
@@ -274,6 +277,15 @@ public final class MrtTerrainPass {
         // 🔖 顺带一条**重要澄清**：RenderPearl 的 frontend **确实**校验附件/目标数并抛异常 ——
         //   所以「附件数不匹配」这一类是**响亮失败**，不是静默失效。
         //   h04 里真正静默的是**深度清屏值**（没有任何一层会检查它）。
+        
+        // 🔴 修复：探针只能在附件数恰好为 3 时使用（mrtPipeline 是硬编码的 3 目标管线）
+        //   其他情况下跳过并输出一条 WARN，避免把诊断工具变成崩溃源。
+        if (actualSlots != 3) {
+            VkDisp.LOGGER.warn("vkdisp: [GAP-003/A] fullscreen probe skipped: actualSlots={} ≠ 3 (mrtPipeline target count)"
+                    + "（探针只能用于 3 附件档，其它档位请改用 pixelProbe 诊断）", actualSlots);
+            return;
+        }
+        
         var compiled = RenderSystem.getCompiledPipelineNullable(PipelineApi.mrtPipeline());
         if (compiled == null) {
             VkDisp.LOGGER.warn("vkdisp: [GAP-003/A] fullscreen probe skipped: vkdisp:mrt pipeline not compiled");
@@ -766,6 +778,24 @@ public final class MrtTerrainPass {
         if (!first && POOL.size() != pool) {
             VkDisp.LOGGER.info("vkdisp: [chain] colortex pool grown to {} slots", pool);
         }
+    }
+
+    /**
+     * 给「排在地形 pass **之前**的重放」（天空）先把池与 gbuffer 深度建出来。
+     *
+     * <p>为什么需要：池是懒建的，唯一的建池点在 {@link #ensureTargets}（地形 pass 体内），
+     * 而两档挂点都让天空跑在地形之前 ⇒ 首帧 {@code poolWriteView(0)} 返回 {@code null}
+     * ⇒ 天空整帧跳过（实测 latest.log:8509 {@code [GAP-003/sky] …gbuffer-view-null}，
+     * 紧跟 8510 行的 {@code targets ready}）。
+     *
+     * <p>🔴 只调 {@link #ensureColortex}，**不**调 {@code ensureTargets}：后者会再走一次
+     * {@code DepthSnapshots.beginFrame()}，把「本帧已取过哪几个时刻」的判定清第二遍 ——
+     * GAP-023 的 {@code depthtex0 ≠ depthtex1} 判据依赖它每帧只清一次。
+     * {@code ensureColortex} 本身幂等（{@code POOL.ensure} 尺寸相同即早退），
+     * 且不含任何会抛的资源，跑在开 pass 之前也符合 h10 那条「建纹理要新 encoder」。
+     */
+    public static void prepareGbufferViews() {
+        ensureColortex(Minecraft.getInstance().gameRenderer.mainRenderTarget());
     }
 
     /** 池尺寸（未建 = 0）。 */

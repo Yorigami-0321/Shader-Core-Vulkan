@@ -237,9 +237,11 @@ class DepthGlProxyTest {
         String branch = frame.substring(start, frame.indexOf("}", frame.indexOf("return", start)));
         assertTrue(branch.contains("DepthGlProxy.chainDepthView"),
                 "这一支必须经过代理决策；直接绑 MrtTerrainPass.depthView() 就是本轮要修的那一行");
-        assertTrue(frame.contains("refreshDepthGlProxy(main, encoder, label)"),
+        assertTrue(frame.contains("refreshDepthGlProxy(main, label)"),
                 "翻转 pass 必须在 drawPostChain 里被调到 —— 链外没有「地形之后、第一级之前」这个位置；"
-                        + "不接线的结果是开关恒无效（QD-02 那一族）");
+                        + "不接线的结果是开关恒无效（QD-02 那一族）。"
+                        + "2026-10-10 真机根修：它用**自己的 encoder**（同 encoder「刚当过附件就采样」"
+                        + "在 NVIDIA 读 0），位置要求不变。");
     }
 
     @Test

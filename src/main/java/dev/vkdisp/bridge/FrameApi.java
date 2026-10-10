@@ -1147,7 +1147,7 @@ public final class FrameApi {
         GpuTextureView sceneView = SceneCaptureApi.hasScene() ? SceneCaptureApi.sceneColorView() : null;
         // InSampler（OF 语义 = 场景色）：链模式采不到 colortex 时才回 scene。
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-        refreshDepthGlProxy(main, encoder, label); // GAP-022 ① 地形之后、链第一级之前（WHY 见下方方法体）
+        refreshDepthGlProxy(main, label); // GAP-022 ① 地形之后、链第一级之前（WHY 见下方方法体）
 
         // 采样名→视图解析器（每帧一条；「按名接 colortex」的机制所在 —— 见 chainResolver 注释）。
         final GpuTextureView fallbackView = MrtTerrainPass.poolView(0) != null
@@ -1384,14 +1384,20 @@ public final class FrameApi {
      * 它就是 {@code depthtex*} 那个分支里「开关开着就用它」的那个「它」—— 留下一张没人维护的旧图
      * 等于给下一轮 A/B 留一个看不见的状态源（h33/h34 那一族的形状）。
      */
-    private static void refreshDepthGlProxy(RenderTarget main, CommandEncoder encoder, String label) {
+    private static void refreshDepthGlProxy(RenderTarget main, String label) {
         if (!dev.vkdisp.VkDispConfig.MRT_DEPTH_GL_PROXY.get()) {
             dev.vkdisp.bridge.DepthGlProxy.release();
             return;
         }
         dev.vkdisp.bridge.DepthGlProxy.ensure(main.width, main.height);
+        // 🔴 真机根修（任务 #4，2026-10-10）：翻转 pass 用**独立 encoder**，不再借链的 encoder。
+        //   借链 encoder 时代理 R32F 是「本 encoder 里刚当过附件」、链各级紧接着采它 ——
+        //   NVIDIA 上这种同 encoder「刚当过附件就采」读 0（与 mip 级联同族，lavapipe 不查）
+        //   ⇒ 代理恒 0 ⇒ AO/体积云/曝光全塌（涂抹与 13:55 黑屏的另一半）。
+        //   独立 encoder 后链采代理 = 跨 encoder 全视图颜色采样 = 真机已证明可用的模式。
+        CommandEncoder own = RenderSystem.getDevice().createCommandEncoder();
         dev.vkdisp.bridge.DepthGlProxy.renderFlipPass(
-                encoder, label, MrtTerrainPass.depthView());
+                own, label, MrtTerrainPass.depthView());
     }
 
     /** 读前重建 + 写后标脏（GAP-017 脏集机制）。 */
@@ -1467,7 +1473,16 @@ public final class FrameApi {
                 }
                 final int mipLevel = level;
                 final int mipSlot = slot;
-                try (RenderPass pass = encoder.createRenderPass(
+                // 🔴 真机根修（任务 #4，2026-10-10）：每级**独立 encoder**。
+                //   同 encoder 级联 blit = 「上一级刚当过附件、下一级立刻采它」—— NVIDIA 上这种
+                //   采样读 0（lavapipe 不查 ⇒ 此前取证全盲），金字塔自 L1 起塌零 ⇒
+                //   BSL 曝光 tap（texture2DLod 高 LOD）塌 0 ⇒ 整帧黑（13:55 黑屏真根因，
+                //   与 mrt.chainSamplerLod0 拐杖互斥印证）。跨 encoder 全视图颜色采样是
+                //   真机上唯一被证明可用的模式（链的 mip0），这里照它办。
+                //   参考实现（Vitrail，LGPL-3.0，只读思路）用 vkCmdBlitImage 转移操作达同一
+                //   隔离；本仓无 transfer blit 公开 API、后端类禁 mixin ⇒ 逐级 encoder 近似。
+                CommandEncoder levelEncoder = RenderSystem.getDevice().createCommandEncoder();
+                try (RenderPass pass = levelEncoder.createRenderPass(
                         () -> label + " mip c" + mipSlot + " L" + mipLevel,
                         dst,
                         Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)),

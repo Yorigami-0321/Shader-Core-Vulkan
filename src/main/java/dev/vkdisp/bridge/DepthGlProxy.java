@@ -212,6 +212,12 @@ public final class DepthGlProxy {
         return view;
     }
 
+    /** 取证：代理纹理本体（copy 路 float 回读用，见 TargetReadback 的 depthcopy 源）；未建 = null。 */
+    @Nullable
+    public static GpuTexture texture() {
+        return texture;
+    }
+
     /** 代理是否在场（决策与自报都读它，字段本身不外露）。 */
     public static boolean hasProxy() {
         return view != null;

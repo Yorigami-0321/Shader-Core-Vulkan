@@ -89,6 +89,9 @@ public final class SkyIntoGbuffer {
             skipOnce("not-in-world");
             return;
         }
+        // 🔴 池是地形 pass 才懒建的，而本方法在两档挂点上都跑在地形**之前** ⇒
+        //   首帧拿到 null、整帧跳过天空（实测 gbuffer-view-null）。先建池再取视图。
+        MrtTerrainPass.prepareGbufferViews();
         GpuTextureView color = MrtTerrainPass.poolWriteView(0);
         if (color == null) {
             skipOnce("gbuffer-view-null");

@@ -50,7 +50,13 @@ import java.util.OptionalDouble;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.CloudRenderer;
+import net.minecraft.client.renderer.oit.OitRenderPassProvider;
+import net.minecraft.client.renderer.oit.OitStage;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
+import net.neoforged.neoforge.client.CustomCloudsRenderer;
+import org.joml.Matrix4f;
+import org.joml.Matrix4fStack;
+import org.joml.Matrix4fc;
 
 /** 原版云 → gbuffer colortex0 的重放器（渲染线程独占，无锁）。 */
 public final class CloudsIntoGbuffer {
@@ -74,6 +80,78 @@ public final class CloudsIntoGbuffer {
     /** 本格的开关（默认关 ⇒ 与今天逐字一致）。 */
     public static boolean enabled() {
         return VkDispConfig.MRT_CLOUDS_PASS.get();
+    }
+
+    /**
+     * 接管原版云 pass 的官方钩子：{@code renderClouds} 回 true = 原版那笔云 draw 本帧不发。
+     *
+     * <p>🔴 <b>为什么必须有它</b>（2026-10-10 真机截图逐字）：云搬进 gbuffer 之后原版那笔
+     * <b>仍然</b>画进 main，而 frameGraph 档里原版 clouds pass 与链无依赖边、排在链之后
+     * ⇒ 屏幕上「gbuffer 云 + 原版云」两层同框。管线替换通道救不了这件事（它只换状态、
+     * 换不了落点），而本钩子是 NeoForge 在 clouds pass 的 {@code executes} 里先问的那一句
+     * （{@code LevelRenderer#addCloudsPass}：{@code customCloudsRenderer.renderClouds(...)}
+     * 回 true 即跳过原版 draw）⇒ 零 mixin 的唯一抑制点。
+     *
+     * <p>🔖 <b>为什么装在装配期而不是这里画</b>：本钩子被调时原版那个 pass 已经开着，
+     * 而 RenderPearl 不许 pass 套 pass（h10）⇒ gbuffer 云照旧在地形后画（{@link #render()}），
+     * 本钩子只负责「让原版那笔闭嘴」。字段每帧由 {@code LevelExtractor} 重置 ⇒ 无残留态。
+     */
+    private static final CustomCloudsRenderer VANILLA_CLOUDS_SUPPRESSOR = new CustomCloudsRenderer() {
+        @Override
+        public boolean renderClouds(LevelRenderState state, CloudStatus status,
+                Matrix4fc modelViewMatrix, RenderPass renderPass) {
+            noteSuppressedOnce();
+            return true;
+        }
+
+        @Override
+        public boolean renderCloudsOit(LevelRenderState state, CloudStatus status,
+                Matrix4fc modelViewMatrix, OitStage stage, GpuTextureView mainDepth,
+                OitRenderPassProvider.Parameters params) {
+            noteSuppressedOnce();
+            return true;
+        }
+    };
+
+    private static boolean suppressionNoted;
+
+    private static void noteSuppressedOnce() {
+        if (!suppressionNoted) {
+            suppressionNoted = true;
+            VkDisp.LOGGER.info("vkdisp: [GAP-027/clouds] 原版云 draw 已由 customCloudsRenderer 钩子抑制"
+                    + "（gbuffer 云在链里 ⇒ 原版那笔必须闭嘴，否则两层同框）");
+        }
+    }
+
+    /**
+     * 装配期挂抑制器（frameGraph 档）。关档 / 链不接管时不挂 ⇒ 原版云是唯一一层。
+     *
+     * <p>🔖 判据与 {@link #render()} 同源再加一条「链真的接管本帧」：链不接管时 main 就是
+     * 原版画面，抑制原版云 = 画面里一条云都没有（比双画更糟）。
+     */
+    public static void installSuppression() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || !enabled() || !FrameApi.isPostChainActive()) {
+            return;
+        }
+        mc.gameRenderer.gameRenderState().levelRenderState.customCloudsRenderer =
+                VANILLA_CLOUDS_SUPPRESSOR;
+    }
+
+    /**
+     * 本帧相机的 modelview（原版云 pass 在 executes 里用的就是它）。
+     *
+     * <p>🔴 <b>为什么必须自己压栈</b>（2026-10-10 真机长条云根因）：{@code CloudRenderer} 的
+     * 云网格定位走 {@code RenderSystem.getModelViewMatrixCopy()}（DynamicTransforms），
+     * 而原版 clouds pass 在 executes 里把<b>装配期捕获的相机矩阵</b>压进全局栈再画；
+     * 我方重放点读的是裸栈（非相机位姿）⇒ 云网格锚错 ⇒ 透视拉成放射长条
+     * （GAP-027 h49l 登记的「位姿/相机偏移那一半未查」就是这一半）。
+     * 矩阵取 {@code CameraRenderState#viewRotationMatrix} —— 与原版云 pass 捕获的是同一个
+     * 公开字段（{@code GameRenderer} 逐字把它当 modelViewMatrix 传下去）。
+     */
+    private static Matrix4fc cameraModelView() {
+        return Minecraft.getInstance().gameRenderer.gameRenderState()
+                .levelRenderState.cameraRenderState.viewRotationMatrix;
     }
 
     /**
@@ -194,18 +272,27 @@ public final class CloudsIntoGbuffer {
                 .createRenderPass(descriptor)) {
             // 原版在 CloudRenderer#render 内部自己调 bindDefaultUniforms（第 201 行），
             // 这里**不**重复调：多调一次不报错，但会让人以为云依赖我方绑的东西。
-            if (VkDispConfig.MRT_CLOUDS_NO_CULL.get()) {
-                // 🔌 管线替换（GAP-027 第一次用这条官方通道）：
-                //   CloudRenderer 内部走 RenderSystem.getCompiledPipeline(...)
-                //   → getCompiledPipelineNullable 的**首条语句**就是 PIPELINE_MODIFIERS.apply
-                //   ⇒ 在它的调用期间 push 我们的 modifier 就够了，不必 mixin、也不必预注册管线
-                //   （PipelineCache#get 未命中会就地编译）。
-                //   renderWithPipelineModifier 自带 push/pop 配对 —— 不用手写 finally：
-                //   漏 pop 会让 ClientHooks 的 ensurePipelineModifiersEmpty() 在帧尾**抛**。
-                RenderSystem.renderWithPipelineModifier(GbufferPipelineSwaps.CLOUDS_NO_CULL,
-                        () -> renderer.render(status, renderPass));
-            } else {
-                renderer.render(status, renderPass);
+            // 🔴 画前把相机位姿压进全局 modelview 栈、画后还原（根因见 {@link #cameraModelView()}）：
+            //   不压 = 云网格锚错 = 放射长条；不还原 = 污染同帧后续读这条栈的原版 pass。
+            Matrix4fStack stack = RenderSystem.getModelViewStack();
+            Matrix4f saved = new Matrix4f(stack);
+            stack.set(cameraModelView());
+            try {
+                if (VkDispConfig.MRT_CLOUDS_NO_CULL.get()) {
+                    // 🔌 管线替换（GAP-027 第一次用这条官方通道）：
+                    //   CloudRenderer 内部走 RenderSystem.getCompiledPipeline(...)
+                    //   → getCompiledPipelineNullable 的**首条语句**就是 PIPELINE_MODIFIERS.apply
+                    //   ⇒ 在它的调用期间 push 我们的 modifier 就够了，不必 mixin、也不必预注册管线
+                    //   （PipelineCache#get 未命中会就地编译）。
+                    //   renderWithPipelineModifier 自带 push/pop 配对 —— 不用手写 finally：
+                    //   漏 pop 会让 ClientHooks 的 ensurePipelineModifiersEmpty() 在帧尾**抛**。
+                    RenderSystem.renderWithPipelineModifier(GbufferPipelineSwaps.CLOUDS_NO_CULL,
+                            () -> renderer.render(status, renderPass));
+                } else {
+                    renderer.render(status, renderPass);
+                }
+            } finally {
+                stack.set(saved);
             }
         }
     }
