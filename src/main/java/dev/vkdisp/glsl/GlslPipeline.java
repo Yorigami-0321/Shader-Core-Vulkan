@@ -128,6 +128,18 @@ public final class GlslPipeline {
     }
 
     /**
+     * 完整管线 + GAP-030 的 post 恒等模式：{@code postIdentity = true} 时
+     * {@code ftransform()} 按恒等 MVP 展开（后处理链族专属）。
+     *
+     * <p>🔴 它是**参数**而不是静态开关：{@link OfGlslTranslator#translate} 不知道自己正在翻
+     * 哪个程序族，静态开关会把这一档泄漏进 gbuffers（同 {@code h45} 采样因子探针那次的形状）。
+     */
+    public static TranslateResult run(ShaderStage stage, String primaryFile, String source,
+            IncludeResolver resolver, boolean postIdentity) {
+        return analyze(stage, primaryFile, source, resolver, postIdentity).result();
+    }
+
+    /**
      * 完整管线（无 {@code #include} 的便捷入口）：等价于传入空解析器。
      *
      * <p>源文本里若含 {@code #include}，会显式报"包含文件不存在" ERROR（T11），
@@ -145,6 +157,14 @@ public final class GlslPipeline {
      */
     public static PipelineReport analyze(
             ShaderStage stage, String primaryFile, String source, IncludeResolver resolver) {
+        return analyze(stage, primaryFile, source, resolver, false);
+    }
+
+    /**
+     * 完整管线 + 选项识别 + {@code postIdentity}（GAP-030）：逻辑同上，多一档 ftransform 语义。
+     */
+    public static PipelineReport analyze(ShaderStage stage, String primaryFile, String source,
+            IncludeResolver resolver, boolean postIdentity) {
         // null 归一：primaryFile 空串化避免 IncludeProcessor 解析相对路径时 NPE，
         // resolver 空解析器化让缺文件走显式 ERROR 而不是 NPE（T11 / 不静默）。
         String file = primaryFile == null ? "" : primaryFile;
@@ -160,7 +180,7 @@ public final class GlslPipeline {
         }
 
         // 预处理成功（可能带 WARN/INFO）→ 进入转译；D 线负责 compose 端到端行号映射。
-        return new PipelineReport(runPreprocessed(stage, pre.result()), pre.options());
+        return new PipelineReport(runPreprocessed(stage, pre.result(), postIdentity), pre.options());
     }
 
     /**
@@ -181,6 +201,19 @@ public final class GlslPipeline {
      * @return 管线结果；永不返回 {@code null}
      */
     public static TranslateResult runPreprocessed(ShaderStage stage, TranslateResult preProcessed) {
+        return runPreprocessed(stage, preProcessed, false);
+    }
+
+    /**
+     * 已持有预处理产物时的入口 + {@code postIdentity}（GAP-030 的 post 恒等档）。
+     *
+     * @param stage        着色器阶段
+     * @param preProcessed {@link GlslPreprocessor} 的产物（诊断已含预处理阶段的）
+     * @param postIdentity true = 后处理链族（deferred / composite / final），ftransform 按恒等 MVP 展开
+     * @return 管线结果；永不返回 {@code null}
+     */
+    public static TranslateResult runPreprocessed(ShaderStage stage, TranslateResult preProcessed,
+            boolean postIdentity) {
         if (preProcessed == null) {
             throw new IllegalArgumentException("vkdisp: runPreprocessed 需要非空的预处理产物");
         }
@@ -189,7 +222,7 @@ public final class GlslPipeline {
             return TranslateResult.failure(
                     preProcessed.text(), preProcessed.lineMap(), preProcessed.diagnostics());
         }
-        TranslateResult translated = OfGlslTranslator.translate(stage, preProcessed);
+        TranslateResult translated = OfGlslTranslator.translate(stage, preProcessed, postIdentity);
         // 诊断合并（入口级契约适配）：D 线不透传上游诊断，这里把 C 线诊断并回同一结果，
         // 否则"选项歧义 WARN"这类预处理诊断会在汇合后静默丢失（T11 违规）。
         List<TranslateDiagnostic> merged = new ArrayList<>(preProcessed.diagnostics());

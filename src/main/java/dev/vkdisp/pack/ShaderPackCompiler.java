@@ -189,10 +189,16 @@ public final class ShaderPackCompiler {
             String qualifiedName = program.dimensionFolder().isEmpty()
                     ? program.name()
                     : program.dimensionFolder() + "/" + program.name();
+            // 🔴 GAP-030：后处理链族（deferred/composite/final）的 ftransform 走**恒等 MVP**，
+            //   与地形族同一条展开式会把全屏 quad 按相机矩阵拧掉。档位来自程序族判定，
+            //   不来自静态开关 —— 见 ProgramStage#isPostChain。
+            boolean postIdentity = program.stage().isPostChain();
             compileStage(plan, resolver, qualifiedName, ShaderStage.VERTEX,
-                    program.vertexShader(), overrides, appliedNames, stages, diagnostics, preprocessSink);
+                    program.vertexShader(), overrides, appliedNames, stages, diagnostics,
+                    preprocessSink, postIdentity);
             compileStage(plan, resolver, qualifiedName, ShaderStage.FRAGMENT,
-                    program.fragmentShader(), overrides, appliedNames, stages, diagnostics, preprocessSink);
+                    program.fragmentShader(), overrides, appliedNames, stages, diagnostics,
+                    preprocessSink, postIdentity);
         }
         // 包级缺失（整包没有任何文件声明该选项名）→ 显式 WARN（T11）。
         for (String name : overrides.keySet()) {
@@ -257,7 +263,8 @@ public final class ShaderPackCompiler {
             Set<String> appliedNames,
             List<CompiledStage> sink,
             List<TranslateDiagnostic> diagnostics,
-            Map<String, TranslateResult> preprocessSink) {
+            Map<String, TranslateResult> preprocessSink,
+            boolean postIdentity) {
         if (sourcePath == null) {
             return;
         }
@@ -282,8 +289,8 @@ public final class ShaderPackCompiler {
             // 保证与原路径**共用同一段合并代码**，不会产生逻辑分叉。
             TranslateResult reused = preprocessSink == null ? null : preprocessSink.get(sourcePath);
             result = reused != null
-                    ? GlslPipeline.runPreprocessed(stage, reused)
-                    : GlslPipeline.run(stage, sourcePath, source, resolver);
+                    ? GlslPipeline.runPreprocessed(stage, reused, postIdentity)
+                    : GlslPipeline.run(stage, sourcePath, source, resolver, postIdentity);
         } catch (RuntimeException e) {
             diagnostics.add(TranslateDiagnostic.of(
                     TranslateDiagnostic.Severity.WARN,

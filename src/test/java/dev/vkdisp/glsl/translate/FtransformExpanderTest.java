@@ -1,6 +1,7 @@
 package dev.vkdisp.glsl.translate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -117,6 +118,32 @@ class FtransformExpanderTest {
 
         FtransformExpander.Result nullStage = FtransformExpander.expand(null, source);
         assertEquals(TranslateDiagnostic.Severity.ERROR, nullStage.diagnostics().get(0).severity());
+    }
+
+    @Test
+    void postIdentityModeExpandsToNdcDirectly() {
+        // 🔴 GAP-030：后处理链族（deferred/composite/final）的 ftransform 是**恒等 MVP** ——
+        //   全屏 quad 的顶点数据本来就是 NDC。乘相机矩阵会把整屏拧掉（地形口径用错族）。
+        String source = "attribute vec3 vaPosition;\nvoid main() {\n    gl_Position = ftransform();\n}\n";
+        FtransformExpander.Result post = FtransformExpander.expand(ShaderStage.VERTEX, source, true);
+        assertEquals(1, post.expandedCount());
+        assertTrue(post.text().contains("vaPosition;"), () -> "实际展开: " + post.text());
+        assertFalse(post.text().contains("gbufferProjection"),
+                "post 档不许出现投影×视图乘积 —— 那正是地形侧的口径");
+        assertFalse(post.text().contains("gbufferModelView"), "同上");
+        assertTrue(post.diagnostics().stream().anyMatch(d -> d.message().contains("post 恒等模式")),
+                "跑了哪一档必须能读出来（X11），不能只靠代码");
+
+        // 未声明位置属性时仍按冻结字面名，但形态是 vec4(Position, 1.0)
+        FtransformExpander.Result defaulted = FtransformExpander.expand(
+                ShaderStage.VERTEX, "void main() {\n    gl_Position = ftransform();\n}\n", true);
+        assertTrue(defaulted.text().contains("vec4(Position, 1.0)"), () -> "实际: " + defaulted.text());
+
+        // 地形档逐字节不变（这一档的改动不许波及 gbuffers）
+        String terrain = "attribute vec3 Position;\nvoid main() {\n    gl_Position = ftransform();\n}\n";
+        assertEquals(FtransformExpander.expand(ShaderStage.VERTEX, terrain).text(),
+                FtransformExpander.expand(ShaderStage.VERTEX, terrain, false).text(),
+                "postIdentity=false 必须与旧行为等价");
     }
 
     @Test

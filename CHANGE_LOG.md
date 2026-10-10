@@ -6,6 +6,87 @@
 ---
 ---
 
+## 2026-10-10（一百零一）— 🎯 GAP-031：「倒影/虚影」定案为 **mip 金字塔的 blit 带了不该带的那次 V 翻转** ⇒ 奇数级上下镜像，被包的 bloom 加回画面
+
+> **verdict = 真机分带读数证明金字塔「只有奇数级是镜像的」（mip0/m2/m4 的 SKY<TERRAIN，而 m1 反着来），去掉那次翻转后四级一致、同机位截图里云的边缘副本消失**
+> 证据：`run/logs/latest.log`（修前 18:55 臂 `CLOUDS=0`、修后 19:0x 臂无覆盖）；`colortex0` 分带 m1 `0.9351/0.6166`（反）→ 修后 m1 `0.6921/0.1316`（与 mip0 `0.7227/0.1318` 同向）
+> 登记：`docs/13-GAP-REGISTRY.md` 新增 **GAP-031**（含热重载竞态那条副产物）；本文件
+
+- **本次改了什么**（一个行为文件 + 一条守卫）：
+  1. **`assets/vkdisp/shaders/blit.fsh`**：`texture(InSampler, vec2(vUv.x, 1.0 - vUv.y))` → `texture(InSampler, vUv)`。
+     那次翻转是给「中间目标 → 主目标」标定的（口径写在 `fullscreen_flipv.vsh` 头注 P-1f：包片元保持 OF 原始 vUv 语义，
+     所以翻转上移到顶点），而本文件全仓**唯一**消费者是 `FrameApi.generateMipPyramids`（`:1517`，grep 核实）
+     —— 那是**同一张图的相邻两个 mip 之间**的拷贝，取向必须逐字相同 ⇒ 每生成一级就镜像一次。
+     注释同步改写成「这里不得加 V 翻转 + 为什么 + 判据」，防止下一个人按旧注释「修回去」。
+  2. **守卫 `MrtTerrainPassWiringTest.mipPyramidBlitMustNotFlipV`**：四条断言 —— blit 片元不含 `1.0 - vUv`、
+     必须直接以 `vUv` 采样、`generateMipPyramids` 仍是它的消费者（消费者换了就要重判取向口径，守卫不许跟着悄悄失效）、
+     `fullscreen_flipv` 的翻转能力必须还在（不能为修这一格把另一格改回上下颠倒）。
+- **为什么改**：用户报「重点排查这个『倒影』『虚影』问题」并给两张真机截图（放射状扇形涂抹 + 屏幕顶部挂着倒置地形）。
+  这条不在 GAP-030 的账上 —— 那一轮判掉的是「太阳方向退化」，本轮画面已经是**修后**状态（日志 `pack=9 adapter=0`、9/9 槽跑包顶点程序）。
+  定位路径：① `CLOUDS=0` 臂证明那些白团是包的体积云、而**地形边缘的重影与云无关**；② `TAA=false` 臂无变化 ⇒ 排除时域历史；
+  ③ 读 `composite4/5` 的 bloom —— 它把 **mip 1..7 七个 LOD 求和**，还过一道 `pow(blur/32, 0.25)`（四次方根把暗部抬一个量级，
+  所以副本只出现在**暗区=天空**，高频高亮的地形上看不出来，这正是「地形清晰、天空挂倒影」那个反直觉组合）；
+  ④ 把 `mrt.pixelProbeMipLevels` 打开成**分带**读数，取向立刻变成一个可数的量 —— 只有奇数级反 ⇒ 交替翻转，指向 blit 的 `1.0 - vUv.y`。
+  🔖 **与 h05 的 `readbackMustUseNoFlipPipeline` 是同一族事故**（那次是回读用了翻转版），也是 GAP-017/020 的下一格：
+  金字塔修成真跑之后，镜像内容才第一次真的被包读到。
+- **影响的文档**：`docs/13-GAP-REGISTRY.md`（新增 GAP-031 全条）。源码侧只有那个 `.fsh` 与一条测试，`VkDispConfig` 未动。
+- **测试结果**：全仓 **1110 项 0 失败**（新增 1 条守卫）。真机两臂见上「证据」行；⚠️ 画面判据只判到「镜像副本消失」这一格。
+- **是否已提交**：否（改动留在工作区，等用户确认）。
+
+### ⛔ 遗留 / 下一步
+
+1. 🔴 **天空与云整体仍不对，但账不在本条**：云与云之间是**黑**而不是蓝天（GAP-029 的 `isSky`/大气那一支）、
+   云形状糊且偏暗绿（GAP-027）。下一刀别从 bloom 走。
+2. 🔴 **本轮量到一格新的、此前只在注释里出现过的怀疑：colortex 池是 `RGBA8_UNORM`**
+   （`ColortexPool.create`）。同帧 `c0@chainStart` FULL luma **0.54** 而 `main` **19.17** ⇒ 包的**线性** gbuffer 值被压进
+   8 bit，暗部整段塌掉，再被 `pow(x,0.25)` 放大成可见结构。这解释「为什么 bloom 的残值能长成形状」，
+   但**本轮没有判它** ⇒ 属新格，登记前不许顺手改格式（会牵连 `mrt.attachments` 与全部包的输出契约）。
+3. 🔴 **热重载竞态（本轮真炸一次）**：`pack.optionOverrides` 改 `CLOUDS` 触发资源重载后，水的包管线声明 `gaux1`
+   而绑定组没给 ⇒ `FrontendRenderPass.validateDraw:553` 抛 `Missing uniform gaux1` **炸整帧**
+   （崩溃报告 `run/crash-reports/crash-2026-10-10_18.46.29-client.txt`）。同一选项**冷启动不炸**（18:52 那一跑 0 ERROR）
+   ⇒ 是重载期的装配不一致，不是静态缺项。已记在 GAP-031 的「不关」行，**另开一条再修**。
+   🔖 取证纪律补一条：改**包选项**的臂要冷启动，别用热重载（本轮因此丢了一跑）。
+4. `mrt.pixelProbeMipLevels` 我留在了 `"1,2,4"`（取向判据就靠它，且它是只读探针、不改画面）；
+   `optionOverrides` 已清回 `""`。下一轮若要别的臂请显式说明，别继承这两个值。
+5. 🔖 **本轮踩到两次「把不可比的读数当对照」**：① 第一次切 `LIGHT_SHAFT=false` 的臂同时改了 `time`/`weather` ⇒ 那格作废，
+   后面所有臂都在钉死的 `time 6000 + clear + 同一机位` 上重取；② `CLOUDS=false` 被包**拒绝**（它是整数选项，原值 2），
+   日志 `OPTION_OVERRIDE_SET_REJECTED` 说得很清楚 —— 覆盖「写了」不等于「生效」，每条臂起跑后必须回读这一行。
+6. ⚠️ 工作区里仍有一份**不是我产出的未跟踪目录 `architecture/`**（上一轮已登记）⇒ 提交时按文件名点加，别卷进来。
+
+---
+## 2026-10-10（一百）— 🎯 GAP-030 方案 2 落地：后处理链各级开始跑**包自己的** post 顶点程序；真机 A/B 判掉「太阳方向退化」这一格
+
+> **verdict = 链 9 级全部改跑包的 post VSH（`pack=9 adapter=0`，9 个源逐槽过驱动编译、整份日志 0 ERROR）；真机单变量对照证明天空第一次随太阳位置变化（日出朝东天区 26.89 > 朝西 16.43，而适配层臂是 8.61 < 50.29 反的）**
+> 证据：`run/logs/latest.log`（ON 臂 18:0x 与 19:0x 两跑、OFF 臂一跑）；`build/vkdump/{on,off}-{horizon,zenith,sunrise-east,sunrise-west}.png` + `bandstats.py` 的分带数
+> 登记：`docs/13-GAP-REGISTRY.md` 新增 **GAP-030**（含三条引擎硬约束的取证行号）；本文件
+
+- **本次改了什么**（12 个源码文件 + 3 个测试文件 + 2 个新类）：
+  1. **`glsl/translate/FtransformExpander`**：新增 **post 恒等档** —— `ftransform()` → `vec4(Position, 1.0)`（OF 语义：post 顶点数据本来就是 NDC，固定功能 MVP 在这一族是单位阵）。
+     档位是**参数**不是静态开关，由 `ShaderPackCompiler` 按 `ProgramStage#isPostChain()`（新增）传入并一路穿到 `OfGlslTranslator` / `GlslPipeline.run|analyze|runPreprocessed`（旧签名全部保留为委托，地形档逐字节不变，有测试钉）。
+  2. **新增 `glsl/translate/PostVertexLinker`**（本轮的地基）：把包的 post VSH 对齐到 required 管线的三条硬规则上 ——
+     ① **属性归一**：VS 的 `in` 必须落在冻结名单内且基类型为浮点，名单外/整型 ⇒ 整行改 `const` 零值 + **ERROR**（引擎 `PipelineBuilder:139` 对查不到同名缓冲元素的属性直接抛，代价是整次重载）；
+     ② **varying 按名字对齐 location**：引擎跨阶段**只看 location 不看名字**（`PipelineBuilder:197-256`），所以把 VS 每个 `out` 的 location 改成片元契约里同名 `in` 那号；片元要而顶点没产的 ⇒ 逐条合成（uv 名取注入属性、世界向量走**声明为我方口径**的公式、其余零值 + ERROR）；没被消费的顶点输出**搬到空闲号**（不删，删声明要连带删赋值）；
+     ③ **`VkDispBuiltins` 块统一**：顶点的块整体换成片元那份，只有顶点声明的成员**追加**到块尾并同步进片元源 —— 引擎对同名块只比 `resourceType`/`dimensions`（`PipelineBuilder:286-292`），不统一就是**静默喂垃圾**。统一后复核两阶段成员表必须逐条相等。
+  3. **`pack/PackPostChain`**：`Pass` 增 `vertexSource` + `hasPackVertexSource()`；顶点选源只认**限定名逐字相等**那条（跨维度凑 = 一个维度的顶点算法配另一个维度的片元）；自报行逐槽带 `vertex=pack|adapter`，另加一行可数的 `[GAP-030] post 顶点程序来源: pack=N adapter=M`。
+  4. **`bridge/PipelineApi` + `bridge/FrameApi`**：post 管线声明 `withVertexBinding(0, POST_VERTEX_FORMAT)`（元素名取自链接器冻结名单，全 `RGBA32_FLOAT`）；新增 3 顶点全屏缓冲（大三角形，逐字复刻适配层已验证的 p416 屏幕 uv 取向）；`runPostPass` 每级绑缓冲后再 `draw(3)`（`FrontendRenderPass:537-547`：声明了 format 就必须绑）。
+  5. **`VkDispVirtualPack`**：包顶点源**逐槽过一次 `ShaderCompileApi`** 再落地（静态对齐挡不住「包自己用了未声明的名字」那一族），失败 ⇒ 整槽回落适配层 + ERROR 原文；适配层的 `worldVectorZeros()` 命中即 `LOGGER.error`。
+  6. **防复发闸**：`PackPostVertexAdapter.Result` 增 `worldVectorZeros()` —— 该类注释一直写着「每条零值都出一行 WARN」，而 `zeroSupplied` **在生产代码里从没被读过**（grep 核实），这正是 X11 定义的「静默占位」事故形态；现在它既是数据也是启动 ERROR。
+  7. **新增开关 `pack.postVertexProgram`（默认开）** + `pack/PackPostVertexSwitch`（沿用 `PackChainGatingSwitch` 的「配置键名 ≠ Java 字段名」双常量形状，h33 那一族）。
+- **为什么改**：上一轮真机把深度族修好后暴露的下一格 —— 用户报「不镜像天空镜像地面了…一侧体积云正常，是长条状的云，间隔大致固定长度」。彻查结案到 `PackPostVertexAdapter` 把 `sunVec/upVec/eastVec` 按**零向量**供（退化轴 ⇒ 体积光径向抹成镜像虚影、云噪声沿退化轴采样成长条）。用户拍板「做 2，把地基一次性打好」，不做逐名兜值的方案 1（逐名永远慢包一步，X27）。
+- **影响的文档**：`docs/13-GAP-REGISTRY.md`（新增 GAP-030 全条）、本文件。`VkDispConfig` 的开关注释即口径说明，`04-SPEC`/`07-CONSTRAINTS` 本轮无改动。
+- **测试结果**：全仓 **1109 项 0 失败**（含新增 `PostVertexLinkerTest` 9 条、`PostVertexWiringTest` 7 条源码接线守卫、真包端到端 `PostChainPackVertexTest` 5 条、`FtransformExpanderTest` 恒等档 1 条）。
+  真机三臂见上「证据」行；⚠️ **画面判据只判到「太阳方向不再退化」这一格**，天空/云整体观感仍不对 ⇒ GAP-030 **不关**，剩余面归 GAP-029/022/027。
+- **是否已提交**：否（改动全部留在工作区，等用户确认）。
+
+### ⛔ 遗留 / 下一步
+
+1. 🔴 **天空与云整体仍然不对**（正午抬头是灰白涂抹、日出高空仍是暗带）⇒ 下一刀按 GAP-029 的「不关」清单走，不要把它记成本轮已修。
+2. `gl_ModelViewProjectionMatrix` 在 post 档的恒等语义本轮**只做了 `ftransform()`**；矩阵旧名仍映射成 `gbufferProjection*gbufferModelView` ⇒ 真遇到再补（X9 不猜）。
+3. 包的 post 顶点程序若引用冻结名单外的属性，本轮按 `const` 零值降级 + ERROR ⇒ 那条包路径仍不成立（GAP-030「不关的部分」①）。
+4. 🔖 **本轮踩到两个「看起来对」的实现缺陷并被自家闸门拦下**（逗号多成员只取一个名字、同行两条 `out` 看不见）—— 记在 GAP-030 的落地行里；教训是：**按行认声明的层，输入前提必须由自己保证**，不能假设上游的拆语句会换行。
+5. ⚠️ **工作区里有一份不是我产出的未跟踪目录 `architecture/`**（4 个文件，17:05–17:13 生成：`system-model.*.md` / `vkdisp-dependency.dot` / `vkdisp.structurizr.dsl`）⇒ 提交时**按文件名点加**，别把它卷进来；要不要留由用户定。
+
+---
 ## 2026-10-10（九十九）— 🧹 文档梳理收尾：CHANGE_LOG 压缩修好（93–97 恢复 + 摘要层归位 + 断句补完），版本 / mixin 镜像全仓同步
 
 > **verdict = CHANGE_LOG 恢复「最新条目在最上方」且不再留下无指引的空洞；`26.3.0.51-beta` / MDG `2.0.148` / `MIXIN_CONFIG_COUNT = 1` 三组事实在 `docs/*`、根目录手册与源码注释里对齐；三个会读文档正文的守卫 11 项 0 失败**

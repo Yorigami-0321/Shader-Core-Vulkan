@@ -60,7 +60,8 @@ public final class PackPostChain {
             List<String> samplerNames,
             List<PostPassContract.FragmentInput> inputs,
             List<Integer> mipEnabledSlots,
-            String renumberedSource) {
+            String renumberedSource,
+            String vertexSource) {
 
         public Pass {
             attachmentSlots = attachmentSlots == null ? List.of() : List.copyOf(attachmentSlots);
@@ -72,6 +73,16 @@ public final class PackPostChain {
         /** final 步（族序 6）—— 它的附件 0 在运行期换成主目标视图。 */
         public boolean isFinal() {
             return programName.equals("final");
+        }
+
+        /**
+         * 🔴 GAP-030：本步是否有<b>包自己的</b>顶点程序源（已按片元契约对齐过）。
+         *
+         * <p>{@code null} = 本步用我方顶点适配层（世界向量按零值供 = 镜像虚影那一档），
+         * 调用方<b>必须</b>把这一格打进自报行 —— 不许让「包顶点没接上」读起来像「包没有顶点程序」。
+         */
+        public boolean hasPackVertexSource() {
+            return vertexSource != null && !vertexSource.isBlank();
         }
     }
 
@@ -231,9 +242,12 @@ public final class PackPostChain {
                         pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
                 continue;
             }
+            // 🔴 GAP-030：接**包自己的** post 顶点程序；接口对不齐就整槽回落适配层（不半套）。
+            VertexLink link = linkVertex(program, compiled, preferredDimension, selection,
+                    contract, renumbered, diagnostics);
             passes.add(new Pass(program.name(), selection.qualifiedName(),
                     contract.outputSlots(), contract.samplerNames(), contract.inputs(),
-                    contract.mipEnabledSlots(), renumbered));
+                    contract.mipEnabledSlots(), link.fragmentSource(), link.vertexSource()));
         }
         if (!passes.isEmpty()) {
             StringBuilder summary = new StringBuilder("vkdisp: post chain ready: passes=[");
@@ -243,12 +257,17 @@ public final class PackPostChain {
                 }
                 Pass pass = passes.get(i);
                 summary.append(pass.programName()).append("{slots=").append(pass.attachmentSlots())
-                        .append(",samplers=").append(pass.samplerNames().size()).append('}');
+                        .append(",samplers=").append(pass.samplerNames().size())
+                        // 🔴 GAP-030：这一格决定该级顶点是「包自己写的」还是「我方适配层（零向量档）」，
+                        //   必须逐槽打进日志 —— 否则「包顶点没接上」与「包没有顶点程序」读起来一样。
+                        .append(",vertex=").append(pass.hasPackVertexSource() ? "pack" : "adapter")
+                        .append('}');
             }
             summary.append("] maxSlot=").append(new Chain(passes, List.of()).maxSlot());
             diagnostics.add(TranslateDiagnostic.info(summary.toString(), pack.name(),
                     TranslateDiagnostic.UNKNOWN_LINE));
         }
+        reportPostVertexSources(pack, passes, diagnostics);
         return new Chain(passes, diagnostics);
     }
 
@@ -289,6 +308,98 @@ public final class PackPostChain {
 
     /** 一次程序选中的结果：转译终稿 + 其限定名。 */
     private record Selection(String source, String qualifiedName) {}
+
+    /** GAP-030 的一次顶点链接结果：本槽最终用的片元源（可能因追加块成员而变）+ 顶点源（可空）。 */
+    private record VertexLink(String fragmentSource, String vertexSource) {}
+
+    /**
+     * 🔴 GAP-030：取<b>同一条程序</b>的顶点终稿并对齐接口。
+     *
+     * <p>回落条件有三条，每一条都<b>点名</b>（X11：缺席必须可读出）：
+     * ① 总开关 {@code pack.postVertexProgram} 关着（= 已知错的适配层档，只用于 A/B）；
+     * ② 该程序<b>没有</b>成功编译的顶点终稿；③ {@link PostVertexLinker} 判定接口对不齐
+     * （缺共用块 / 统一后两阶段布局仍不一致）。
+     *
+     * <p>🔖 <b>顶点必须与片元同名同维度，不按维度优先级另挑一条</b>：多维度包里
+     * {@code world-1/composite.vsh} 与 {@code world0/composite.fsh} 拼一起 = 一个维度目录的
+     * 顶点算法配另一个维度的片元 —— 与 {@link #selectFragment} 的串链教训同源，只是这次
+     * 串的是阶段。所以这里只认<b>限定名逐字相等</b>那一条。
+     */
+    private static VertexLink linkVertex(Program program, ShaderPackCompiler.CompileResult compiled,
+            String preferredDimension, Selection fragment, PostPassContract contract,
+            String renumbered, List<TranslateDiagnostic> diagnostics) {
+        String packName = program.name();
+        if (!PackPostVertexSwitch.enabled()) {
+            diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.ERROR,
+                    "vkdisp: [GAP-030] 开关 " + PackPostVertexSwitch.CONFIG_KEY + "=false ⇒ post 程序 '"
+                            + fragment.qualifiedName() + "' 用<b>顶点适配层</b>（世界向量按零值供 ="
+                            + " 2026-10-10 镜像虚影 / 长条云的已定案根因档，仅供 A/B 取证）",
+                    packName, TranslateDiagnostic.UNKNOWN_LINE));
+            return new VertexLink(renumbered, null);
+        }
+        Selection vertex = selectVertex(compiled, fragment.qualifiedName());
+        if (vertex == null) {
+            diagnostics.add(TranslateDiagnostic.info(
+                    "vkdisp: [GAP-030] post 程序 '" + fragment.qualifiedName() + "' 没有成功编译的"
+                            + "顶点终稿（包未提供 .vsh，或该阶段转译失败）⇒ 本槽用顶点适配层",
+                    packName, TranslateDiagnostic.UNKNOWN_LINE));
+            return new VertexLink(renumbered, null);
+        }
+        dev.vkdisp.glsl.translate.PostVertexLinker.Result linked =
+                dev.vkdisp.glsl.translate.PostVertexLinker.link(fragment.qualifiedName(),
+                        vertex.source(), renumbered, contract.inputs());
+        diagnostics.addAll(linked.diagnostics());
+        if (!linked.packVertexSupplied()) {
+            return new VertexLink(linked.fragmentSource(), null);
+        }
+        return new VertexLink(linked.fragmentSource(), linked.vertexSource());
+    }
+
+    /**
+     * 取<b>限定名逐字相等</b>的顶点终稿（与 {@link #selectFragment} 的维度择优不同：这里不许跨维度凑）。
+     */
+    private static Selection selectVertex(ShaderPackCompiler.CompileResult compiled,
+            String qualifiedName) {
+        for (ShaderPackCompiler.CompiledStage stage : compiled.stages()) {
+            if (stage.stage() == ShaderStage.VERTEX && stage.isSuccess()
+                    && qualifiedName.equals(stage.programName())) {
+                return new Selection(stage.result().text(), stage.programName());
+            }
+        }
+        return null;
+    }
+
+    /**
+     * GAP-030 的每装配一次自报：几个槽接了包顶点、几个回落、回落的是谁。
+     *
+     * <p>🔖 为什么单独一行而不去翻 {@code vertex=} 那些字段：这一族的事故形态就是
+     * 「画面不对但每行日志都正常」，可数的一行（{@code pack=7 adapter=3}）才读得出「没接全」。
+     */
+    private static void reportPostVertexSources(ShaderPack pack, List<Pass> passes,
+            List<TranslateDiagnostic> diagnostics) {
+        if (passes.isEmpty()) {
+            return;
+        }
+        List<String> adapters = new ArrayList<>();
+        for (Pass pass : passes) {
+            if (!pass.hasPackVertexSource()) {
+                adapters.add(pass.programName());
+            }
+        }
+        diagnostics.add(TranslateDiagnostic.info("vkdisp: [GAP-030] post 顶点程序来源: pack="
+                + (passes.size() - adapters.size()) + " adapter=" + adapters.size()
+                + (adapters.isEmpty() ? "" : " 回落适配层=" + adapters)
+                + "（适配层 = 世界向量零值供值档，见 PackPostVertexAdapter）", pack.name(),
+                TranslateDiagnostic.UNKNOWN_LINE));
+        String switchFailure = PackPostVertexSwitch.reflectionFailure();
+        if (switchFailure != null) {
+            diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.ERROR,
+                    "vkdisp: [GAP-030] 开关 " + PackPostVertexSwitch.CONFIG_KEY + " 读取失败："
+                            + switchFailure + " ⇒ 它将**恒为 " + PackPostVertexSwitch.DEFAULT_ENABLED
+                            + "（默认开）**，即该配置写了也不生效。这是真错误不是正常状态。",
+                    pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+        }
+    }
 
     /**
      * 按维度偏好（preferred → world0 → 根；**其它维度一律不进链**）取 FRAGMENT 终稿。

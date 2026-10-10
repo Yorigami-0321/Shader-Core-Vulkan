@@ -51,6 +51,9 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *   <li>位置属性名优先用包内已声明的 {@code Position} / {@code vaPosition} / {@code gl_Vertex}；
  *       未声明时用 04-SPEC §4 的冻结字面名 {@code Position} 并出 WARN；</li>
  *   <li>属性类型为 {@code vec4} 时直接用名字（不补 {@code 1.0}），否则按 {@code vec4(name, 1.0)}。</li>
+ *   <li>🔴 {@code postIdentity = true}（GAP-030 的后处理链族）时展开成**恒等**形态
+ *       {@code vec4(<位置属性>, 1.0)} —— OF 里全屏 quad 的顶点数据本来就是 NDC，
+ *       固定功能 MVP 在这一族是单位阵；乘投影/视图会把整屏按相机拧掉。</li>
  * </ul>
  *
  * <p><b>不改的东西</b>：{@code #include} / {@code #define}（C 线）、位置属性声明本身
@@ -112,6 +115,26 @@ public final class FtransformExpander {
      * @return 展开结果；永不返回 {@code null}
      */
     public static Result expand(ShaderStage stage, String source) {
+        return expand(stage, source, false);
+    }
+
+    /**
+     * 展开全部 {@code ftransform()} 调用。
+     *
+     * <p>🔖 <b>GAP-030 post 恒等模式</b>（{@code postIdentity = true}）：展开成
+     * {@code vec4(<位置属性>, 1.0)} 而**不是**投影×视图乘积。依据是 OF/Iris 的后处理语义 ——
+     * 全屏 quad 的顶点数据本身就是 NDC 坐标，固定功能 MVP 在这一族是单位阵；
+     * 照地形口径乘 {@code gbufferProjection * gbufferModelView} 会把整屏按相机矩阵拧掉。
+     * 模式由调用方按 {@link dev.vkdisp.pack.ProgramStage#isPostChain()} 传入（**不是**静态开关：
+     * {@code OfGlslTranslator.translate} 不知道自己正在翻哪个程序，静态开关必然泄漏到别的族，
+     * 那条教训见 {@code h45} 的采样因子探针登记）。
+     *
+     * @param stage        着色器阶段；只有 {@link ShaderStage#VERTEX} 允许 ftransform
+     * @param source       输入 GLSL（{@code null} 按空串处理）
+     * @param postIdentity true = 后处理链族，按恒等 MVP 展开
+     * @return 展开结果；永不返回 {@code null}
+     */
+    public static Result expand(ShaderStage stage, String source, boolean postIdentity) {
         SourceLines lines = SourceLines.of(source);
         List<String> raw = lines.lines();
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
@@ -131,9 +154,12 @@ public final class FtransformExpander {
 
         BuiltinUniform projection = UniformCatalog.find(PROJECTION_UNIFORM);
         BuiltinUniform modelView = UniformCatalog.find(MODELVIEW_UNIFORM);
-        String expression = projection == null || modelView == null
-                ? null
-                : "(" + projection.name() + " * " + modelView.name() + " * " + operand + ")";
+        // post 档不需要那两个矩阵：操作数本身就是齐次 NDC（vec4 形态，见上）。
+        String expression = postIdentity
+                ? operand
+                : projection == null || modelView == null
+                        ? null
+                        : "(" + projection.name() + " * " + modelView.name() + " * " + operand + ")";
 
         List<TranslateDiagnostic> expansionDiagnostics = new ArrayList<>();
         List<String> expanded = new ArrayList<>(raw.size());
@@ -149,6 +175,13 @@ public final class FtransformExpander {
             expandedCount += outcome.expanded();
         }
         diagnostics.addAll(expansionDiagnostics);
+        if (postIdentity && expandedCount > 0) {
+            // X11：这一档改的是 gl_Position 的算法，必须能在日志里读出来跑了哪一档。
+            diagnostics.add(TranslateDiagnostic.info(
+                    "ftransform() 按 **post 恒等模式**展开为 " + operand
+                            + "（GAP-030：后处理链族的固定功能 MVP = 单位阵，顶点数据即 NDC）",
+                    null, 0));
+        }
         return new Result(SourceLines.join(expanded, lines.endsWithNewline()), diagnostics,
                 expandedCount, expandedCount == 0 ? null : operand);
     }

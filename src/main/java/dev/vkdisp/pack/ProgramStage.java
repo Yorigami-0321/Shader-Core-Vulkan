@@ -79,6 +79,16 @@ public enum ProgramStage {
     }
 
     /**
+     * 是否属于 OF 的**后处理链**族（{@code deferred* → composite*（含无号）→ final}）。
+     *
+     * <p>🔖 单点真源：{@link PackPostChain} 的候选筛选与 GAP-030 的 post 恒等顶点语义都读这一条，
+     * 两处各写一遍就会出现「按 A 编、按 B 跑」（QD-02 同族）。
+     */
+    public boolean isPostChain() {
+        return this == DEFERRED || this == COMPOSITE || this == FINAL;
+    }
+
+    /**
      * 按程序名归族（前缀匹配；{@code shadowcomp} 必须先于 {@code shadow} 判定）。
      * 未识别 → {@link #UNKNOWN}：显式暴露，不静默归类（T11）。
      *

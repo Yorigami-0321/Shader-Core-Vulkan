@@ -580,15 +580,59 @@ public final class VkDispVirtualPack {
             return out;
         }
 
-        /** 由链生成 post 槽的 **VS 适配层**（h46：片元声明了第 4 条输入而 fullscreen.vsh 只有
-         *  0..2 ⇒ required 管线链接失败会砸整次资源重载 —— 按契约逐 location 生成）。 */
+        /**
+         * 由链生成 post 槽的<b>顶点源</b>（🔴 GAP-030：优先<b>包自己的</b> post VSH，逐槽过驱动编译再落地）。
+         *
+         * <p>🔖 <b>为什么静态对齐之后还要再编一次</b>：{@code PostVertexLinker} 挡掉的是「接口对不上」
+         * 那一族（属性名 / varying location / 跨阶段块布局 —— 三条都是 required 管线的硬抛），
+         * 挡不掉「包自己用了个没声明的名字」那一族。后者若直接进管线，代价是<b>整次资源重载失败</b>；
+         * 先在这里编一次，失败就<b>整槽</b>回落适配层（片元与顶点同生共死，不留半套）。
+         *
+         * <p>🔴 每一条回落都必须读得出来（X11）：适配层把 {@code sunVec/upVec/eastVec} 按<b>零向量</b>供
+         * = 2026-10-10 真机「屏幕双向镜像虚影 + 固定间隔长条云」的已定案根因档。
+         */
         static String[] postVerticesFrom(dev.vkdisp.pack.PackPostChain.Chain chain) {
             String[] out = fallbackPostVertices();
+            int packSlots = 0;
             for (int i = 0; i < chain.passes().size() && i < POST_SLOT_COUNT; i++) {
-                out[i] = dev.vkdisp.glsl.translate.PackPostVertexAdapter
-                        .generate(chain.passes().get(i).inputs()).glsl();
+                dev.vkdisp.pack.PackPostChain.Pass pass = chain.passes().get(i);
+                if (pass.hasPackVertexSource() && packVertexCompiles(i, pass)) {
+                    out[i] = pass.vertexSource();
+                    packSlots++;
+                } else {
+                    out[i] = adapterVertexSource(pass);
+                }
             }
+            int chainSize = Math.min(chain.passes().size(), POST_SLOT_COUNT);
+            VkDisp.LOGGER.info("vkdisp: [GAP-030] post 顶点源已落地: pack={} adapter={} chain={}"
+                    + "（adapter = 世界向量零值供值档）", packSlots, chainSize - packSlots, chainSize);
             return out;
+        }
+
+        /** 包顶点源过一次驱动级 shaderc（与原版管线同一条编译路径，见 {@code bridge/ShaderCompileApi}）。 */
+        private static boolean packVertexCompiles(int slot, dev.vkdisp.pack.PackPostChain.Pass pass) {
+            dev.vkdisp.bridge.ShaderCompileApi.StageResult result =
+                    dev.vkdisp.bridge.ShaderCompileApi.compileStage(
+                            "vkdisp_pack:shaders/post" + slot + ".vsh", pass.vertexSource(), true);
+            if (result.success()) {
+                return true;
+            }
+            VkDisp.LOGGER.error("vkdisp: [GAP-030] post 槽 {} 的包顶点程序编译失败 -> 整槽回落顶点适配层"
+                            + "（'{}'）: {}", slot, pass.qualifiedName(), result.error());
+            return false;
+        }
+
+        /** 适配层顶点源（按该片元的输入契约生成）；零值供到世界向量时打 ERROR（GAP-030 防复发闸）。 */
+        private static String adapterVertexSource(dev.vkdisp.pack.PackPostChain.Pass pass) {
+            dev.vkdisp.glsl.translate.PackPostVertexAdapter.Result generated =
+                    dev.vkdisp.glsl.translate.PackPostVertexAdapter.generate(pass.inputs());
+            for (String name : generated.worldVectorZeros()) {
+                VkDisp.LOGGER.error("vkdisp: [GAP-030] post 槽 '{}' 的片元要 '{}'，而顶点走的是适配层"
+                        + " -> 该 varying 按**零向量**供，依赖它的效果（体积光 / 体积云 / 天空投影）"
+                        + "会退化成屏幕镜像虚影与固定间隔长条。正路 = 接上包自己的 post 顶点程序",
+                        pass.programName(), name);
+            }
+            return generated.glsl();
         }
     }
 

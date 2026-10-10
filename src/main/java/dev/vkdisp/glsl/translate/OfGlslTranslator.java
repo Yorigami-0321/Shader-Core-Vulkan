@@ -128,6 +128,19 @@ public final class OfGlslTranslator {
      * @return 转译结果；永不返回 {@code null}
      */
     public static TranslateResult translate(ShaderStage stage, TranslateResult input) {
+        return translate(stage, input, false);
+    }
+
+    /**
+     * 契约入口 + {@code postIdentity}（GAP-030：后处理链族的 ftransform 走恒等 MVP）。
+     *
+     * @param stage        着色器阶段；{@code null} 按 UNKNOWN 处理
+     * @param input        C 线输出
+     * @param postIdentity true = {@code ProgramStage.isPostChain()} 那三族
+     * @return 转译结果；永不返回 {@code null}
+     */
+    public static TranslateResult translate(ShaderStage stage, TranslateResult input,
+            boolean postIdentity) {
         TranslateResult upstream = input == null ? TranslateResult.success("") : input;
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         if (stage == null) {
@@ -142,7 +155,8 @@ public final class OfGlslTranslator {
         // ①–④ 行内 / 等行数变换：输出行号与输入行号一一对应，诊断行号 = C 线输出行号。
         AttributeRewriter.Result rewritten = AttributeRewriter.rewrite(stage, upstream.text());
         TextureFunctionRenamer.Result renamed = TextureFunctionRenamer.rename(rewritten.text());
-        FtransformExpander.Result transformed = FtransformExpander.expand(stage, renamed.text());
+        FtransformExpander.Result transformed =
+                FtransformExpander.expand(stage, renamed.text(), postIdentity);
         VersionAdapter.Result versioned = VersionAdapter.upgrade(transformed.text());
 
         // ⑤ 旧内建声明注入（可能插入行）：本级输入 = C 线输出坐标，诊断行号仍是 C 线输出行号。

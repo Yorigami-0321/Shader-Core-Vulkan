@@ -424,6 +424,22 @@ public final class VkDispConfig {
             .define("pack.chainEnableGating", true);
 
     /**
+     * 🔴 GAP-030：后处理链各级<b>顶点</b>用包自己的 post 顶点程序（默认开）。
+     *
+     * <p>关着跑的是「我方适配层把 {@code sunVec/upVec/eastVec} 按<b>零向量</b>供」那一档 ——
+     * 那是 2026-10-10 真机「屏幕双向镜像虚影 + 固定间隔长条云」的已定案根因，
+     * 所以<b>「关」是回到一个已知错的行为</b>，不是保守行为；本键只保留给 A/B 取证。
+     *
+     * <p>读取侧与反射常量的口径见 {@code pack/PackPostVertexSwitch}（h33 那一族的教训：
+     * 配置键名 ≠ Java 字段名，混用会让开关静默失效而日志全正常）。
+     */
+    public static final ModConfigSpec.BooleanValue PACK_POST_VERTEX_PROGRAM = BUILDER
+            .comment("GAP-030：后处理链各级顶点跑包自己的 post 顶点程序 + 标准全屏顶点缓冲（默认开）。"
+                    + "关闭 = 回到我方顶点适配层（世界向量按零值供）= 已定案的「镜像虚影/长条云」根因档，"
+                    + "仅供 A/B 取证；单槽接口对不齐时不分开关都按整槽回落并打 ERROR。")
+            .define("pack.postVertexProgram", true);
+
+    /**
      * 🔬 A/B 开关：**故意**用高对比逐槽诊断色（绿 / 蓝 / 品红）清地形 MRT pass 的各槽。
      *
      * <p>🔴 <b>默认关，且不建议打开</b>。背景（实测见 {@code evidence/h27b-…} §六）：

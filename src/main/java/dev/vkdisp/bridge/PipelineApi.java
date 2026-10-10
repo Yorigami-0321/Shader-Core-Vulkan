@@ -289,6 +289,11 @@ public final class PipelineApi {
                     //     屏幕 uv 语义 + 其余零值逐条 WARN，见 PackPostVertexAdapter）。
                     .withVertexShader(dev.vkdisp.VkDispVirtualPack.postShaderId(slot))
                     .withFragmentShader(dev.vkdisp.VkDispVirtualPack.postShaderId(slot))
+                    // 🔴 GAP-030：链各级的顶点现在可能是**包自己**写的 post VSH，它要按名读到
+                    //   Position / UV0 这些属性 ⇒ 管线必须声明顶点绑定（引擎按 element.name() 配对，
+                    //   见 POST_VERTEX_FORMAT 的注释）。适配层不读任何属性，但绑定声明了就必须绑
+                    //   （FrontendRenderPass.java:537-547），所以执行侧对 16 槽一律绑同一张全屏缓冲。
+                    .withVertexBinding(0, POST_VERTEX_FORMAT)
                     .withBindGroupLayout(postBindGroupLayout())
                     .withColorTargetStates(0, POST_FRAME_WIDTH - 1, () -> ColorTargetState.DEFAULT)
                     .build();
@@ -573,6 +578,41 @@ public final class PipelineApi {
     // 曾误传 28（按字节数理解），导致属性按每 28 顶点推进一次 → 读出错误偏移 →
     // 画出退化三角形，且**没有任何报错**（静默失败的典型样本）。
     // 顶点大小由 addAttribute 累加得出（Position 12 + Color 16 = 28），不需要在此声明。
+
+    /**
+     * 🔴 GAP-030：后处理链的<b>冻结全屏顶点格式</b>——名字集合直接取自
+     * {@link dev.vkdisp.glsl.translate.PostVertexLinker#servableAttributes()}（<b>唯一真源</b>），
+     * 每个元素都是 {@code RGBA32_FLOAT}（4 个浮点分量）。
+     *
+     * <p>为什么全用 4 分量：引擎的判定是「shader 声明的分量数 ≤ 格式分量数」且基类型必须一致
+     * （{@code PipelineBuilder.java:167} / {@code :154}）——包写 vec2/vec3/vec4 都收得下，
+     * 而整型声明（{@code ivec2} 之类）收不下，那一族由链接器改成常量并打 ERROR。
+     *
+     * <p>为什么必须<b>逐名</b>供：{@code PipelineBuilder.java:125-147} 对顶点着色器反射出的每个
+     * input 都要在格式里找到同名元素，找不到就抛 {@code does not have a matching vertex buffer
+     * element} —— 那是 required 管线，代价是<b>整次资源重载失败</b>。
+     */
+    private static final VertexFormat POST_VERTEX_FORMAT = buildPostVertexFormat();
+
+    private static VertexFormat buildPostVertexFormat() {
+        VertexFormat.Builder builder = VertexFormat.builder(0);
+        for (String name : dev.vkdisp.glsl.translate.PostVertexLinker.servableAttributes()) {
+            builder.addAttribute(name, GpuFormat.RGBA32_FLOAT);
+        }
+        return builder.build();
+    }
+
+    /** post 顶点格式字节数（执行侧建缓冲用同一数，不许两处各算一遍）。 */
+    public static int postVertexStride() {
+        return POST_VERTEX_FORMAT.getVertexSize();
+    }
+
+    /** post 顶点格式的元素名清单（与 {@code PostVertexLinker.servableAttributes()} 同序，自检用）。 */
+    public static List<String> postVertexAttributeNames() {
+        return POST_VERTEX_FORMAT.getElements().stream()
+                .map(com.mojang.renderpearl.api.vertex.VertexFormatElement::name)
+                .toList();
+    }
 
     /** 已注册管线集合（P1.2「注册数 == 编译成功数」断言的计数来源）。 */
     private static final List<RenderPipeline> REGISTERED_PIPELINES = new java.util.ArrayList<>();

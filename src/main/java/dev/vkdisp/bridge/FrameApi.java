@@ -603,6 +603,68 @@ public final class FrameApi {
     }
 
     /**
+     * 🔴 GAP-030：后处理链的<b>全屏顶点缓冲</b>（一个大三角形，3 顶点），懒创建。
+     *
+     * <p><b>顶点数据逐字复刻适配层已验证的屏幕 uv 取向</b>（p416：
+     * {@code PackPostVertexAdapter} 由 {@code gl_VertexIndex} 生成的三顶点是
+     * {@code (ndc=-1,-1 / uv=0,0)}、{@code (ndc=+3,-1 / uv=2,0)}、{@code (ndc=-1,+3 / uv=0,2)}）。
+     * 换成显式缓冲后取向一个字节都不许动 —— 动了就是「深度修好后画面上下反」那一族重演。
+     *
+     * <p><b>为什么 uv 取 0..2 而不是 0..1</b>：屏幕内的插值结果与标准 quad <b>完全一致</b>
+     * （{@code uv = (ndc + 1) / 2}），多余部分落在裁剪区外没有片元 ⇒ 既保住 OF 的 0..1 uv 语义，
+     * 又保住「不依赖索引、无退化边」的大三角形覆盖。
+     *
+     * <p>属性顺序与元素名取自 {@link PipelineApi#postVertexAttributeNames()}（= 管线声明的那份格式，
+     * <b>不在这里另列一张表</b>）。只有 {@code Position}（NDC）与 {@code UV0}（屏幕 uv）是真值，
+     * 其余元素供 0：包的 post 顶点程序如果去读它们，画面表现会错但日志已点名（链接器不报，
+     * 因为它们确实在格式里 —— 这一条写在 GAP-030 的「不关的部分」）。
+     */
+    private static GpuBuffer postVertexBuffer;
+
+    /** 链各级的 3 顶点：{@code {ndcX, ndcY, uvX, uvY}}（顺序 = 适配层 p416 的顶点序）。 */
+    private static final float[][] POST_FULLSCREEN_VERTICES = {
+            {-1.0F, -1.0F, 0.0F, 0.0F},
+            {3.0F, -1.0F, 2.0F, 0.0F},
+            {-1.0F, 3.0F, 0.0F, 2.0F},
+    };
+
+    static GpuBuffer postVertexBuffer() {
+        GpuBuffer buffer = postVertexBuffer;
+        if (buffer != null) {
+            return buffer;
+        }
+        List<String> names = PipelineApi.postVertexAttributeNames();
+        int stride = PipelineApi.postVertexStride();
+        // ⚠️ 必须是**直接缓冲**（同 geometryBuffer）：createBuffer 走 LWJGL 本地内存路径，
+        //   传堆 ByteBuffer 会读到非法地址 → JVM 原生崩溃（实测 SIGSEGV）。
+        java.nio.ByteBuffer data = java.nio.ByteBuffer
+                .allocateDirect(POST_FULLSCREEN_VERTICES.length * stride)
+                .order(java.nio.ByteOrder.nativeOrder());
+        for (float[] vertex : POST_FULLSCREEN_VERTICES) {
+            for (String name : names) {
+                putPostVertexAttribute(data, name, vertex);
+            }
+        }
+        data.flip();
+        buffer = RenderSystem.getDevice()
+                .createBuffer(() -> "vkdisp post fullscreen", GpuBuffer.USAGE_VERTEX, data);
+        postVertexBuffer = buffer;
+        dev.vkdisp.VkDisp.LOGGER.info(
+                "vkdisp: [GAP-030] post 全屏顶点缓冲已建: size={} stride={} attributes={}",
+                buffer.size(), stride, names.size());
+        return buffer;
+    }
+
+    /** 写一个属性（每个元素固定 4 个 float = RGBA32_FLOAT，见 {@code PipelineApi.POST_VERTEX_FORMAT}）。 */
+    private static void putPostVertexAttribute(java.nio.ByteBuffer data, String name, float[] vertex) {
+        switch (name) {
+            case "Position" -> data.putFloat(vertex[0]).putFloat(vertex[1]).putFloat(0.0F).putFloat(1.0F);
+            case "UV0" -> data.putFloat(vertex[2]).putFloat(vertex[3]).putFloat(0.0F).putFloat(1.0F);
+            default -> data.putFloat(0.0F).putFloat(0.0F).putFloat(0.0F).putFloat(0.0F);
+        }
+    }
+
+    /**
      * P1.2 断言用：已注册管线中「编译成功」的数量（纯整数视图）。
      *
      * <p>与 {@link PipelineApi#registeredPipelineCount()} 比较，二者不等说明有管线静默编译失败
@@ -1259,6 +1321,9 @@ public final class FrameApi {
             pass.setUniform(PipelineApi.SAMPLER_UNIFORM,
                     sceneView != null ? sceneView : fallbackView, sampler);
             PipelineApi.setPostSamplerUniforms(pass, resolver, sampler);
+            // 🔴 GAP-030：链各级的顶点缓冲（包自己的 post VSH 要按名读 Position/UV0；
+            //   管线声明了顶点绑定 ⇒ STRICT_VALIDATION 要求**每槽都绑**，见 FrontendRenderPass:537-547）。
+            pass.setVertexBuffer(0, postVertexBuffer().slice());
             pass.draw(3, 1, 0, 0);
         }
         ring.rotate();

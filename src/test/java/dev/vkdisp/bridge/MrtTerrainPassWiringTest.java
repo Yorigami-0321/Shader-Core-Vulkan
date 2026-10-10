@@ -154,6 +154,36 @@ class MrtTerrainPassWiringTest {
     }
 
     @Test
+    @DisplayName("🔴 mip 金字塔的 blit 不得带 V 翻转 —— 带了就是奇数级上下镜像（GAP-031 真机定案）")
+    void mipPyramidBlitMustNotFlipV() {
+        // 事故形态：`blit.fsh` 曾经是「中间目标 → 主目标」那一步的**翻转版**，而它全仓唯一的
+        //   消费者是 `FrameApi.generateMipPyramids`（mip L-1 → mip L = 同一张图的两个层级）
+        //   ⇒ 每生成一级镜像一次 ⇒ 奇数级上下颠倒。
+        // 🔖 与上面 readbackMustUseNoFlipPipeline 是同一族：那次是回读，这次是金字塔。
+        //   判据不是「看起来怪」而是可数的分带读数（GAP-031）：m1 的 SKY_BAND 0.9351 >
+        //   TERRAIN_BAND 0.6166，而 mip0/m2/m4 都是 SKY < TERRAIN —— 只有奇数级反，
+        //   正是「每级翻一次」的签名。
+        String blit = readOrSkip(Path.of(
+                "src/main/resources/assets/vkdisp/shaders/blit.fsh"));
+        assertEquals(0, countCode(blit, "1.0 - vUv"),
+                "金字塔 blit 不得 V 翻转：同类目标之间的拷贝必须保持取向");
+        assertTrue(countCode(blit, "texture(InSampler, vUv)") >= 1,
+                "blit 必须是原样拷贝（直接以 vUv 采样），不是某种坐标补偿");
+
+        // 消费者锚点：这条守卫断的是「谁在用这条管线」。消费者换了（尤其换成跨目标取向的一步），
+        //   取向口径就要重判 —— 不许让守卫跟着代码悄悄失效。
+        assertTrue(readOrSkip(BRIDGE.resolve("FrameApi.java")).contains("PipelineApi.blitPipeline()"),
+                "generateMipPyramids 仍是 blit 管线的消费者；它变了就必须重判本守卫的取向前提");
+
+        // 翻转能力本身必须还在：那是「中间目标 → 主目标」的补偿（P-1f 标定），
+        //   不能为了修金字塔把它一起删掉 —— 那会把另一格改回上下颠倒。
+        String flip = readOrSkip(Path.of(
+                "src/main/resources/assets/vkdisp/shaders/fullscreen_flipv.vsh"));
+        assertTrue(flip.contains("1.0 - uv.y"),
+                "fullscreen_flipv 仍负责中间目标→主目标的 V 翻转（GAP-031 修的是金字塔，不是这条约定）");
+    }
+
+    @Test
     @DisplayName("🔖 两条模式（帧图内 / AfterLevel）共用同一条回读路径，不再分叉")
     void bothModesShareOneReadbackPath() {
         // h05 已证实帧图内插 pass 同样是通的 ⇒ terrainAfterLevel 只是 A/B 诊断开关。
