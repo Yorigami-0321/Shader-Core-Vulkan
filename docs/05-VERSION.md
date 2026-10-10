@@ -32,6 +32,7 @@
 | Gradle | **9.4.1**（wrapper） | 以 `gradle/wrapper/gradle-wrapper.properties` 为准 |
 | Mixin | 随 NeoForge | 不要 MixinGradle 插件 |
 | MixinExtras | 随 NeoForge | `@WrapOperation` / `@Local` 等 |
+| （**非依赖**）原版自带的 LWJGL 线 | **3.4.3** —— 🔴 登记为**事实**，本项目当前不引用任何 LWJGL 坐标 | 26.3 版本清单声明 `org.lwjgl:lwjgl-*:3.4.3`（本机复算：`~/.gradle/caches/neoformruntime/artifacts/minecraft_26.3_version_manifest.json`）。⚠️ **同一坐标 26.2 是 3.4.1** ⇒ 一旦按 `07-CONSTRAINTS` §5.1 以 `compileOnly` 引用游戏自带坐标（`19-IMPROVEMENT-PATHS` §7-2 的 shaderc 差分 oracle，**待判**），版本须随本表复核，走 `06-MIGRATION` §3 **V6** |
 
 **唯一数据源是仓库根的 `gradle.properties`**，本表只作镜像，冲突时以文件为准。
 

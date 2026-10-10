@@ -22,6 +22,7 @@ package dev.vkdisp.glsl.translate;
  * 5. 性能基线：冷路径（每阶段一次线性扫描），不做优化（18-PARALLEL §7.7、T14）。
  */
 import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.glsl.lexer.GlslTokens;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -154,7 +155,7 @@ public final class DrawBuffersSlotAdapter {
         List<String> raw = lines.lines();
         // 声明判定走**代码视图**（无注释无字符串），否则注释里的同形文本会骗到；
         // 标记扫描走**原始行**（标记本身就在注释里）—— 两条路必须分开。
-        List<String> code = GlslTextScan.codeViews(raw, diagnostics);
+        List<String> code = GlslTokens.codeViews(raw, diagnostics);
         Map<Integer, Integer> lineOfLocation = new LinkedHashMap<>();
         for (int i = 0; i < raw.size(); i++) {
             Matcher decl = OUT_DECL.matcher(code.get(i).trim());
@@ -247,7 +248,7 @@ public final class DrawBuffersSlotAdapter {
     /** 源里是否仍看得见未求值的 {@code #if} 族指令（只看行首，且走代码视图排除注释）。 */
     private static boolean hasLiveConditionals(String input) {
         List<String> raw = SourceLines.of(input).lines();
-        List<String> code = GlslTextScan.codeViews(raw, new ArrayList<>());
+        List<String> code = GlslTokens.codeViews(raw, new ArrayList<>());
         for (String line : code) {
             String trimmed = line.strip();
             if (trimmed.startsWith("#if") || trimmed.startsWith("#ifdef")

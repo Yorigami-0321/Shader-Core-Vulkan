@@ -240,4 +240,29 @@ class IoLocationAdapterTest {
         assertEquals(0, IoLocationAdapter.locate(ShaderStage.FRAGMENT, null).locatedCount());
         assertTrue(IoLocationAdapter.locate(ShaderStage.FRAGMENT, null).diagnostics().isEmpty());
     }
+
+    // ---------------------------------------------------------------- A0 止血（19 §2.6-A0 判据②）
+
+    @Test
+    void crossLineIoDeclarationAtGlobalScopeMustWarn() {
+        // 行首是 in/out、声明却跨行 ⇒ 本阶不补 location。旧代码这一支**完全静默**，
+        // 「我方没补」和「包写得不对」在日志里长得一样。
+        IoLocationAdapter.Result r =
+                IoLocationAdapter.locate(ShaderStage.VERTEX, "in vec3\n      aNormal;\n");
+
+        assertTrue(r.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.WARN
+                                && d.message().contains("跨行")),
+                "全局作用域上的跨行 in/out 声明必须 WARN：" + r.diagnostics());
+    }
+
+    @Test
+    void wrappedFunctionParametersStaySilent() {
+        // 函数参数折行走同一分支，对它出 WARN 是误报 ⇒ 判别量 = 行首括号深度。
+        IoLocationAdapter.Result r = IoLocationAdapter.locate(ShaderStage.FRAGMENT,
+                "float f(in vec3 p,\n          out vec3 q)\n{\n    return 1.0;\n}\n");
+
+        assertTrue(r.diagnostics().stream().noneMatch(d -> d.message().contains("跨行")),
+                "函数参数折行不得被报成跨行 IO 声明：" + r.diagnostics());
+    }
 }

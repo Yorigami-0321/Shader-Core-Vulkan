@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.glsl.lexer.GlslTokens;
 
 /**
  * 【参考调研】D 线二期顶点内建展开 / GLSL 1.20 ftransform 的公开语义 + 04-SPEC §3.2 / §4
@@ -138,8 +139,8 @@ public final class FtransformExpander {
         SourceLines lines = SourceLines.of(source);
         List<String> raw = lines.lines();
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
-        List<String> codes = GlslTextScan.codeViews(raw, diagnostics);
-        boolean[] skip = GlslTextScan.preprocessorSkipLines(raw, codes);
+        List<String> codes = GlslTokens.codeViews(raw, diagnostics);
+        boolean[] skip = GlslTokens.preprocessorSkipLines(raw, codes);
 
         String[] declared = declaredPosition(codes, skip);
         String operand;

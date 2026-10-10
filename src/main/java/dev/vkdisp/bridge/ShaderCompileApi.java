@@ -33,6 +33,8 @@ import com.mojang.renderpearl.api.pipeline.ShaderType;
 import com.mojang.renderpearl.backend.api.SpvModule;
 import com.mojang.renderpearl.frontend.shaders.GlslCompiler;
 import com.mojang.renderpearl.util.ShaderCompileException;
+import dev.vkdisp.glsl.LineDirectiveInjector;
+import dev.vkdisp.glsl.SourceLineMap;
 import java.util.Objects;
 import net.minecraft.client.renderer.ShaderDefines;
 import net.minecraft.resources.Identifier;
@@ -94,20 +96,34 @@ public final class ShaderCompileApi {
      * @param vertex    true = 顶点阶段，false = 片元阶段
      */
     public static StageResult compileStage(String debugName, String source, boolean vertex) {
+        return compileStage(debugName, source, null, vertex);
+    }
+
+    /**
+     * 带行号映射的编译入口（A3）：注入 `#line` 后再送 shaderc，驱动错误因此指向包内原文件:行。
+     *
+     * <p>🔖 `#line` 只存在于送 shaderc 的**临时副本**里，不改变调用方持有的转译产物
+     * （幂等性不受影响）。映射为 null / unmapped 时退化为无 `#line` 的旧行为。
+     *
+     * @param lineMap 端到端行号映射（`TranslateResult.lineMap()`）；null = 不注入
+     */
+    public static StageResult compileStage(String debugName, String source,
+            SourceLineMap lineMap, boolean vertex) {
         Objects.requireNonNull(debugName, "vkdisp: debugName 不许为 null");
         if (source == null || source.isBlank()) {
             return new StageResult(false, 0, "源文本为 null/空白，无法编译");
         }
+        String compileSource = lineMap != null
+                ? LineDirectiveInjector.inject(source, lineMap) : source;
         GpuDevice device = RenderSystem.tryGetDevice();
         if (device == null) {
             return new StageResult(false, 0, "GPU 设备未就绪（RenderSystem.tryGetDevice() == null）");
         }
         DeviceInfo info = device.getDeviceInfo();
-        // 构造参数与原版 PipelineBuilder 完全同源（javap 核实），不猜默认值（X9）。
         try (GlslCompiler compiler = new GlslCompiler(
                 info.isZZeroToOne(), info.features().shaderDrawParameters())) {
             ShaderType type = vertex ? ShaderType.VERTEX : ShaderType.FRAGMENT;
-            SpvModule module = compiler.compileToSpv(debugName, source, type, ShaderDefines.EMPTY, NO_INCLUDES);
+            SpvModule module = compiler.compileToSpv(debugName, compileSource, type, ShaderDefines.EMPTY, NO_INCLUDES);
             try {
                 int bytes = module.spv() == null ? 0 : module.spv().remaining();
                 if (bytes <= 0) {
@@ -118,7 +134,6 @@ public final class ShaderCompileApi {
                 module.close();
             }
         } catch (ShaderCompileException e) {
-            // 原版错误原文（含 file:line:col）原样回传，不改写不吞（T11）。
             String message = e.getMessage();
             return new StageResult(false, 0, message == null ? e.getClass().getName() : message);
         } catch (RuntimeException e) {

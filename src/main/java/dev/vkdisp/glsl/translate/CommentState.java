@@ -34,8 +34,13 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *
  * <p><b>边界</b>：GLSL 的块注释不支持嵌套，本状态机按同一规则处理；
  * 文件结束时仍处于块注释 → 由调用方按 {@link #blockCommentStartLine()} 报 ERROR（T11）。
+ *
+ * <p>🔖 <b>2026-10-10（A0）可见性上调为 public</b>：C 线（{@code glsl/preprocess}）的
+ * {@code IncludeProcessor} 开始复用<b>同一套</b>注释状态机，而不是自建第二套判断逻辑
+ * （那正是 {@code 19-IMPROVEMENT-PATHS.md} §2.2 病根 (a) 与 X43/X44 两起事故的形态）。
+ * A1 建 L1 单一词法源后，本类并入 {@code GlslTokens}，届时这条跨包引用一起消失。
  */
-final class CommentState {
+public final class CommentState {
 
     /** 是否位于块注释内部（跨行保持）。 */
     private boolean inBlockComment;
@@ -44,12 +49,12 @@ final class CommentState {
     private int blockCommentStartLine = TranslateDiagnostic.UNKNOWN_LINE;
 
     /** 是否正处于块注释内部（文件结束时为 true 说明块注释未闭合）。 */
-    boolean inBlockComment() {
+    public boolean inBlockComment() {
         return this.inBlockComment;
     }
 
     /** 未闭合块注释的起始行号（1 起）；没有未闭合块注释时为 {@link TranslateDiagnostic#UNKNOWN_LINE}。 */
-    int blockCommentStartLine() {
+    public int blockCommentStartLine() {
         return this.blockCommentStartLine;
     }
 
@@ -60,7 +65,7 @@ final class CommentState {
      * @param lineNumber 行号（1 起），用于记录块注释起始行
      * @return 等长的"无注释视图"
      */
-    String stripComments(String line, int lineNumber) {
+    public String stripComments(String line, int lineNumber) {
         char[] view = line.toCharArray();
         int pos = 0;
         while (pos < line.length()) {

@@ -47,7 +47,7 @@ package dev.vkdisp.render;
 import java.util.List;
 
 /** 只在渲染线程调用；本类全是纯函数（见文件末尾那条「不许 import 原版类型」）。 */
-final class AtmosphereBuiltins {
+public final class AtmosphereBuiltins {
 
     /** 夜晚的 {@code skyDarken}（= 15 − 4）：低于这个值不再往下压 {@code timeBrightness}。 */
     static final int SKY_DARKEN_NIGHT = 11;

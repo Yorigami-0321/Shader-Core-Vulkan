@@ -1363,7 +1363,7 @@ public final class FrameApi {
      * {@code noisetex} 已从该清单毕业：包声明的 {@code texture.noise} 是真值，
      * 取不到时由 {@link PackTextures} 兜内置噪声并**一次性点名**（GAP-025 / X11）。
      */
-    private static PipelineApi.PostSamplerViewResolver chainResolver(GpuTextureView fallbackView) {
+    static PipelineApi.PostSamplerViewResolver chainResolver(GpuTextureView fallbackView) {
         return name -> {
             // 🔴 GAP-009 素材线：包自带的自定义纹理（BSL 的 noisetex/dirt 等）优先 ——
             //   不接真值 = 这些效果采一张别的图，画面能亮但语义错。

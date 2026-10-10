@@ -45,22 +45,22 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *
  * <p>所有方法都不接受 {@code null}（调用方在进入本类之前已按 F3 语义完成 null 归一）。
  */
-final class GlslTextScan {
+public final class GlslTextScan {
 
     private GlslTextScan() {}
 
     /** 标识符首字符：{@code _} 或字母（GLSL 公开词法事实）。 */
-    static boolean isIdentifierStart(char c) {
+    public static boolean isIdentifierStart(char c) {
         return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
     }
 
     /** 标识符后续字符：首字符集 + 数字。 */
-    static boolean isIdentifierPart(char c) {
+    public static boolean isIdentifierPart(char c) {
         return isIdentifierStart(c) || (c >= '0' && c <= '9');
     }
 
     /** 跳过空格与制表符（注释 / 字符串已在视图中变成空格）。 */
-    static int skipWhitespace(String code, int from) {
+    public static int skipWhitespace(String code, int from) {
         int pos = Math.max(0, from);
         while (pos < code.length() && (code.charAt(pos) == ' ' || code.charAt(pos) == '\t')) {
             pos++;
@@ -73,7 +73,7 @@ final class GlslTextScan {
      *
      * @return {@code [start, end)} 二元组；当前位置不是标识符起始（或越界）时返回 {@code null}
      */
-    static int[] identifierAt(String code, int from) {
+    public static int[] identifierAt(String code, int from) {
         int pos = Math.max(0, from);
         if (pos >= code.length() || !isIdentifierStart(code.charAt(pos))) {
             return null;
@@ -91,7 +91,7 @@ final class GlslTextScan {
      * <p>用于避免把 {@code xgl_FragColor} / {@code obj.texture2D} 这类更长标识符或成员名
      * 误判成内建 / 旧函数名。
      */
-    static boolean atTokenStart(String code, int index) {
+    public static boolean atTokenStart(String code, int index) {
         if (index <= 0) {
             return true;
         }
@@ -107,7 +107,7 @@ final class GlslTextScan {
      * 这条边界在文本级转译器上是可断言的性质，而不是靠「语法上不该出现」的假设。
      * 未闭合的引号按「到行尾都是字符串」处理（不抛异常）。
      */
-    static String blankStrings(String line) {
+    public static String blankStrings(String line) {
         char[] view = line.toCharArray();
         int pos = 0;
         while (pos < view.length) {
@@ -145,7 +145,7 @@ final class GlslTextScan {
      *
      * @return 配对右括号下标；未配对 / 起点不是左括号时返回 {@code -1}
      */
-    static int matchCloseParen(String code, int openIndex) {
+    public static int matchCloseParen(String code, int openIndex) {
         if (openIndex < 0 || openIndex >= code.length() || code.charAt(openIndex) != '(') {
             return -1;
         }
@@ -174,7 +174,7 @@ final class GlslTextScan {
      * @param codeLines 与 {@code rawLines} 等长的无注释视图（用于判断是否 {@code #} 行）
      * @return 与行数等长的标记数组，{@code true} = 本行属于被跳过的预处理指令
      */
-    static boolean[] preprocessorSkipLines(List<String> rawLines, List<String> codeLines) {
+    public static boolean[] preprocessorSkipLines(List<String> rawLines, List<String> codeLines) {
         boolean[] skip = new boolean[rawLines.size()];
         boolean continuation = false;
         for (int index = 0; index < rawLines.size(); index++) {
@@ -196,7 +196,7 @@ final class GlslTextScan {
      * @param diagnostics 诊断收集列表（未闭合块注释的 ERROR 插到最前）
      * @return 与 {@code rawLines} 等长的视图列表
      */
-    static List<String> codeViews(List<String> rawLines, List<TranslateDiagnostic> diagnostics) {
+    public static List<String> codeViews(List<String> rawLines, List<TranslateDiagnostic> diagnostics) {
         CommentState comments = new CommentState();
         List<String> codes = new ArrayList<>(rawLines.size());
         for (int index = 0; index < rawLines.size(); index++) {
@@ -216,7 +216,7 @@ final class GlslTextScan {
      * <p>与 04-SPEC §3.3 / GLSL 硬性要求一致：注入的全局声明必须落在 {@code #version} /
      * {@code #extension} 之后、首条代码之前。
      */
-    static int headerEnd(List<String> sourceLines) {
+    public static int headerEnd(List<String> sourceLines) {
         CommentState comments = new CommentState();
         int index = 0;
         while (index < sourceLines.size()) {

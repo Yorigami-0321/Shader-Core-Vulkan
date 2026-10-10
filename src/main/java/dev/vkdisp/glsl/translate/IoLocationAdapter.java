@@ -8,6 +8,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.glsl.lexer.GlslTokens;
 
 /**
  * 【参考调研】D 线 in/out location 补写器（P4.1.2 驱动层）/ 04-SPEC §4 顶点属性名字绑定 + shaderc 实测原文
@@ -110,8 +111,8 @@ public final class IoLocationAdapter {
         SourceLines lines = SourceLines.of(source);
         List<String> rawLines = lines.lines();
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
-        List<String> codeLines = GlslTextScan.codeViews(rawLines, diagnostics);
-        boolean[] skip = GlslTextScan.preprocessorSkipLines(rawLines, codeLines);
+        List<String> codeLines = GlslTokens.codeViews(rawLines, diagnostics);
+        boolean[] skip = GlslTokens.preprocessorSkipLines(rawLines, codeLines);
 
         // 占号种子：已有 layout(location = K) 的 in/out 先占号。
         Set<Integer> usedIn = new HashSet<>();
@@ -128,6 +129,9 @@ public final class IoLocationAdapter {
         }
 
         int located = 0;
+        // 🔴 A0：跨行括号深度。用它把「函数参数折行」和「真的跨行 in/out 声明」分开 ——
+        //    旧代码两类一起静默跳过，后者漏掉的 location 只能等驱动报错（19 §2.6-A0 判据②）。
+        int parenDepth = 0;
         List<String> adapted = new ArrayList<>(rawLines.size());
         for (int index = 0; index < rawLines.size(); index++) {
             if (skip[index]) {
@@ -136,6 +140,8 @@ public final class IoLocationAdapter {
             }
             String code = codeLines.get(index);
             String raw = rawLines.get(index);
+            int depthAtLineStart = parenDepth;
+            parenDepth += netParenDelta(code);
             GlslDeclaration declaration = GlslDeclaration.parse(code);
             if (declaration == null
                     || (!"in".equals(declaration.keyword) && !"out".equals(declaration.keyword))) {
@@ -154,8 +160,17 @@ public final class IoLocationAdapter {
                 continue;
             }
             if (declaration.type == null || declaration.name == null || !declaration.terminated) {
-                // 跨行 / 半截声明：不改写、不 WARN —— 函数参数折行（out vec3 x)）走同一分支，
-                // 对它出 WARN 是误报；真正漏 location 的残缺声明由驱动显式报错（T11）。
+                // 跨行 / 半截声明：不改写（改法属语法级，19 §2.6-A4）。🔴 A0 起分两类处理，
+                // 旧代码两类一起静默：
+                //   · 行首括号深度 > 0 ⇒ 函数参数折行（`out vec3 x)`）—— 对它出 WARN 是误报，保持安静；
+                //   · 深度 = 0 且本行以 in/out 起头 ⇒ 真的跨行/半截 IO 声明，**我方必须先可见**（T11），
+                //     不能把「我方没补 location」这件事全部外包给驱动。
+                if (depthAtLineStart == 0) {
+                    diagnostics.add(TranslateDiagnostic.warn(
+                            "跨行 / 未闭合的 " + declaration.keyword + " 声明：本阶不补 layout(location)"
+                                    + "（语法级解析属 19 §2.6-A4；漏 location 最终由驱动显式报错）",
+                            null, index + 1));
+                }
                 adapted.add(raw);
                 continue;
             }
@@ -221,5 +236,22 @@ public final class IoLocationAdapter {
             candidate++;
         }
         return candidate;
+    }
+
+    /**
+     * 一行的括号净增减（只在<b>无注释无字符串视图</b>上数 —— 注释与字符串在视图里已被剥成空格，
+     * 所以 {@code f(/* ) *\/)} 这类不会污染深度）。仅供 A0 的「函数参数折行 vs 真跨行 IO 声明」判别用。
+     */
+    private static int netParenDelta(String codeView) {
+        int delta = 0;
+        for (int i = 0; i < codeView.length(); i++) {
+            char c = codeView.charAt(i);
+            if (c == '(') {
+                delta++;
+            } else if (c == ')') {
+                delta--;
+            }
+        }
+        return delta;
     }
 }

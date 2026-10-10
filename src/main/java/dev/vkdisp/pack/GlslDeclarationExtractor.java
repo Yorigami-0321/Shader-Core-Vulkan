@@ -165,6 +165,16 @@ final class GlslDeclarationExtractor {
 
     // ------------------------------------------------------------------ 别名表
 
+    /**
+     * 别名表收录的**全部拼写**（C3 一致性报告要拿它和包实际用的属性名对差，§4.1 第 7 项）。
+     *
+     * <p>🔖 只读快照：本表是 `private static final`，报告不许改它（改了会让「同一名字映射到哪个属性」
+     * 随加载顺序变化 —— 上面 {@code alias(...)} 的冲突抛错就是为了挡这件事）。
+     */
+    static Set<String> attributeAliasNames() {
+        return ATTRIBUTE_ALIASES.keySet();
+    }
+
     private static Map<String, VertexAttribute> buildAliases() {
         Map<String, VertexAttribute> aliases = new LinkedHashMap<>();
         // 位置：核心档 vaPosition / 兼容档 gl_Vertex（Iris「OpenGL Profiles」；Ftx 先例同口径）/ §4 内部名
@@ -262,48 +272,16 @@ final class GlslDeclarationExtractor {
     /**
      * 把源码逐行转成**等长**的无注释视图：注释区间替换为空格，行数与列宽都不变。
      *
-     * <p>等长是为了让行号在诊断里始终对得上原文；跨行块注释由 {@code inBlock} 状态跨行跟进。
+     * <p>🔴 **A1 的合并点**（2026-10-10）：本方法原先自带**第二套**注释状态机（35 行，
+     * 与 {@code glsl/translate} 的那份同义不同源 —— 类注释里自认的重复就是这一处）。
+     * 现在它只是 {@link dev.vkdisp.glsl.lexer.GlslTokens#codeViews} 的一层薄封装：
+     * **全仓只有一个地方决定什么叫注释/字符串**（`19` §2.2 病根 (a)）。
+     * 顺带得到的两处口径统一：① 字符串内容也被抹平（旧实现不抹 ⇒ 字符串里的 {@code uniform ...;} 会被
+     * 当成声明）；② 未闭合块注释由词法源出 ERROR —— 本阶**先不把那条诊断接进来**，
+     * 免得改变现有包的判定结果（接它属 A2 的语义轮，见 {@code 19} §2.6）。
      */
     private static List<String> stripComments(String source) {
-        List<String> out = new ArrayList<>();
-        boolean inBlock = false;
-        for (String raw : source.split("\n", -1)) {
-            StringBuilder sb = new StringBuilder(raw.length());
-            int i = 0;
-            while (i < raw.length()) {
-                if (inBlock) {
-                    int end = raw.indexOf("*/", i);
-                    int stop = end < 0 ? raw.length() : end + 2;
-                    for (int k = i; k < stop; k++) {
-                        sb.append(' ');
-                    }
-                    i = stop;
-                    inBlock = end < 0;
-                } else {
-                    int lineComment = raw.indexOf("//", i);
-                    int blockComment = raw.indexOf("/*", i);
-                    if (lineComment >= 0 && (blockComment < 0 || lineComment < blockComment)) {
-                        sb.append(raw, i, lineComment);
-                        for (int k = lineComment; k < raw.length(); k++) {
-                            sb.append(' ');
-                        }
-                        i = raw.length();
-                    } else if (blockComment >= 0) {
-                        sb.append(raw, i, blockComment);
-                        for (int k = blockComment; k < blockComment + 2; k++) {
-                            sb.append(' ');
-                        }
-                        i = blockComment + 2;
-                        inBlock = true;
-                    } else {
-                        sb.append(raw, i, raw.length());
-                        i = raw.length();
-                    }
-                }
-            }
-            out.add(sb.toString());
-        }
-        return out;
+        return dev.vkdisp.glsl.lexer.GlslTokens.codeViews(source, null);
     }
 
     /** 跳过空格与制表符（注释已在无注释视图里变成空格）。 */

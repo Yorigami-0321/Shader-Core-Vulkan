@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 
 import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.glsl.lexer.GlslTokens;
 
 /**
  * 【参考调研】D 线二期旧纹理函数改名 / GLSL 1.20 → 330 core 的公开差异 + 04-SPEC §3.3
@@ -143,8 +144,8 @@ public final class TextureFunctionRenamer {
         List<String> raw = lines.lines();
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         State state = new State(diagnostics);
-        List<String> codes = GlslTextScan.codeViews(raw, diagnostics);
-        boolean[] skip = GlslTextScan.preprocessorSkipLines(raw, codes);
+        List<String> codes = GlslTokens.codeViews(raw, diagnostics);
+        boolean[] skip = GlslTokens.preprocessorSkipLines(raw, codes);
 
         List<String> renamed = new ArrayList<>(raw.size());
         for (int index = 0; index < raw.size(); index++) {
@@ -252,7 +253,7 @@ public final class TextureFunctionRenamer {
      */
     private static void resolveTargetConflicts(List<String> lines, boolean[] skip) {
         // 独立重建视图：阶段一已把块注释等诊断报进真实列表，这里传临时列表丢弃，避免重复上报。
-        List<String> codes = GlslTextScan.codeViews(lines, new ArrayList<>(0));
+        List<String> codes = GlslTokens.codeViews(lines, new ArrayList<>(0));
         Set<String> used = new LinkedHashSet<>();
         Set<String> declared = new HashSet<>();
         Set<String> called = new HashSet<>();

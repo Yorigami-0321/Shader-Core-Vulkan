@@ -357,6 +357,40 @@ LOGGER.info("vkdisp: stage timing: scan={}ms parse={}ms preprocess={}ms translat
 
 ⇒ **「渲染正确」列的填充需要前两行 + 用户目检三者交叉**，单靠任何一项都不算数。
 
+### 10.2 包一致性报告（C3，2026-10-10 新增）—— 兼容矩阵的「名单漂移」那一维
+
+> 上面那张矩阵只能回答「这个包跑没跑起来」，回答不了「**换个包，我方哪些假设开始不准了**」。
+> `19` §4.1 把这类假设数成 10 张硬编码名单；C3 的 `pack/PackConformanceReport` 在**每次包生成期**
+> 把这 10 张名单逐一与「包实际声明/引用了什么」对差，产出一份逐名报告。
+> 🔖 报告**不改任何行为**，只读各子系统已有的真源（超集表 / 声明快照 / 链 / 内建目录 / 公开常量），
+> 因此它同时是**兼容矩阵的一列**与**未来 C2a/C4 的输入**。
+
+| 名单（`Section.list`） | 对差的两侧 | 什么算「漂」 |
+|---|---|---|
+| `fragment-sampler` | `PackSamplerSuperset.NAMES`（OF 命名规则生成）vs 三条全屏步转译终稿的 `uniform samplerX` | 包声明了超集之外的名 ⇒ `PACK_ONLY`（驱动会抛 `Unable to find shader defined uniform`） |
+| `post-sampler` | `PostSamplerSuperset.NAMES` vs 链各级 `Pass.samplerNames()` | 同上；这一族的旧处置是「踢出链 + WARN」，报告把它变成可数的 |
+| `light-direction` | 引擎常量（`FrameApi` 的 `LIGHT_DIRECTION`，无公开读路径） | 无包侧数据 ⇒ 只登记为 `ASSUMPTION`（真角度属 C2a） |
+| `cascade-ortho` | `LightSpaceList` 的公开常量（级联数 / 正交半宽 / 眼距） | 包侧的 `shadowDistance`/`shadowIntervalSize`/`sunPathRotation` **目前没有读取路径** ⇒ 报告如实写「属 C2a」 |
+| `builtin-uniform-catalog` | `UniformCatalog.uniforms()` vs 各程序 `VkDispBuiltins` 块成员 | 包引用而目录没有 ⇒ `PACK_ONLY`（走 GAP-021 的包自写 uniform 供值） |
+| `declared-unsupplied` | `AtmosphereBuiltins.declaredUnsupplied()`（DH/Voxy/blindFactor 一族）vs 包引用 | 包引用了而我方**声明不供值** ⇒ `PACK_ONLY`（读到未初始化值） |
+| `attribute-alias` | `GlslDeclarationExtractor` 的别名表 vs 包写顶点程序实际用到的属性 | 未命中的原始名由提取器以 INFO 逐条暴露（报告不二次解析文本，避免两处口径） |
+| `sampler-name-routing` | `SamplerDimensionPlan` 每条判定的 `reason` | 逐名给出「这次是按**类型**还是按**名字**定的」⇒ 按名占比可数 |
+| `post-vertex-attributes` | `PostVertexLinker.servableAttributes()` vs 各级包顶点输入 | 不可服务的属性 ⇒ 链接器已出 ERROR；两张只暴露判定函数的表（UV 名 / 世界向量黑名单）**不复制内容** |
+| `chain-limits` | `PackPostChain.MAX_POST_PASSES` / `FRAME_WIDTH` vs 本包链长 / 最大 DRAWBUFFERS 槽 | 超界 ⇒ `PACK_ONLY`（该级会被丢或写不到槽） |
+
+**日志判据（X46：可数的行，不是观感）**：
+
+```bash
+grep -a "\[C3\] 包一致性报告" run/logs/latest.log      # 每次包生成一行，10 段以 " ;; " 分隔
+grep -a "\[C3\] 一致性报告" run/logs/latest.log        # WARN：包声明了引擎名单之外的项（逐名）
+grep -a "\[C1\] 全屏步 sampler 快照" run/logs/latest.log # 声明数 / 超集之外 / 未用条目
+```
+
+**填矩阵的规矩**：给某个包填「一致性」这一列时，**先跑一次真机取上面三行**贴进表；
+`PACK_ONLY > 0` 的格子不许标 ✅（那意味着换包会漂），只能标 🟡 并在 `13-GAP-REGISTRY` 里指到对应 GAP。
+🔴 数值纪律（`19` §5.1）：本节的**任何计数都不许手抄**进文档 —— 数值出处 = 当场那条 `[C3]` 日志，
+或 `PackConformanceReportTest` 的断言。
+
 ### 10.1 外部金标准与对照图（2026-10-06 新增）
 
 | 文件 | 内容 |

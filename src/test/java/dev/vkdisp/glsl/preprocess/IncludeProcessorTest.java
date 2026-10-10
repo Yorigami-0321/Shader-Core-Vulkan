@@ -149,4 +149,22 @@ class IncludeProcessorTest {
         assertEquals("main.glsl", o4.sourceFile());
         assertEquals(3, o4.sourceLine());
     }
+
+    // ---------------------------------------------------------------- A0 止血（19 §2.6-A0 判据③）
+
+    @Test
+    void includeInsideBlockCommentMustWarnButKeepsOldBehaviour() {
+        Map<String, String> files = new LinkedHashMap<>();
+        files.put("lib/hidden.glsl", "int fromHidden;\n");
+        String src = "// 主文件\n/*\n#include \"lib/hidden.glsl\"\n*/\nvoid main(){}\n";
+
+        IncludeProcessor.Result r = IncludeProcessor.process("main.fsh", src, map(files));
+
+        assertTrue(r.diagnostics().stream().anyMatch(d ->
+                        d.severity() == TranslateDiagnostic.Severity.WARN
+                                && d.message().contains("注释内")),
+                "注释里的 #include 必须 WARN（旧行为全程静默）：" + r.diagnostics());
+        assertTrue(r.text().contains("int fromHidden;"),
+                "A0 不改语义：现状仍按真指令展开，改成「不展开」属 19 §2.6-A2");
+    }
 }

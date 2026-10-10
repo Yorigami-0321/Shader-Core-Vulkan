@@ -9,6 +9,7 @@ import java.util.Set;
 import java.util.TreeMap;
 
 import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.glsl.lexer.GlslTokens;
 
 /**
  * 【参考调研】D 线二期片元输出适配 / GLSL 1.20 → 330 core 的内建输出差异 + 04-SPEC §3.3
@@ -119,8 +120,8 @@ public final class FragmentOutputAdapter {
         SourceLines lines = SourceLines.of(source);
         List<String> raw = lines.lines();
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
-        List<String> codes = GlslTextScan.codeViews(raw, diagnostics);
-        boolean[] skip = GlslTextScan.preprocessorSkipLines(raw, codes);
+        List<String> codes = GlslTokens.codeViews(raw, diagnostics);
+        boolean[] skip = GlslTokens.preprocessorSkipLines(raw, codes);
 
         List<OutDecl> outs = new ArrayList<>();
         Set<String> declaredNames = new LinkedHashSet<>();
@@ -172,7 +173,7 @@ public final class FragmentOutputAdapter {
         if (declarations.isEmpty()) {
             return new Result(adaptedText, diagnostics, rewritten, 0, 0, List.of());
         }
-        int insertIndex = GlslTextScan.headerEnd(raw);
+        int insertIndex = GlslTokens.headerEnd(raw);
         if (insertIndex >= raw.size()) {
             diagnostics.add(TranslateDiagnostic.warn("输入不含任何代码行，无法插入合成的片元输出声明（"
                     + String.join(" ", declarations) + "）", null, 0));

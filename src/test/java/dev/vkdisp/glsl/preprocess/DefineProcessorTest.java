@@ -140,4 +140,34 @@ class DefineProcessorTest {
         assertTrue(r.text().contains("#version 150"), "#version 应保留");
         assertTrue(r.text().contains("precision highp float;"), "#precision 应保留");
     }
+
+    // ---------------------------------------------------------------- A0 止血（QD-09 ① / 19 §2.6-A0）
+    //   这两类输入过去的形态是「不报错、不告警、直接产生错误展开」⇒ 断言的是**必须 WARN**，
+    //   不是「展开结果正确」（语义修复属 A2，届时由三路差分对表当门）。
+
+    @Test
+    void lineContinuationOnDirectiveMustWarnNotStaySilent() {
+        // Java 字面量里的 "\\\n" = GLSL 源里的「行尾反斜杠 + 换行」，即 C 预处理的续行。
+        // 旧行为：#define 的宏体在行尾被截断成空、下一行 "1" 当普通代码输出 —— 全程静默。
+        String src = "#define A \\\n1\nint x = A;\n";
+        DefineProcessor.Result r = DefineProcessor.process(src, identityMap("x.fsh", 3));
+
+        assertTrue(containsWarn(r, "续行"),
+                "行尾 \\ 的指令必须 WARN（不得静默错展开）：" + r.diagnostics());
+    }
+
+    @Test
+    void directiveInsideBlockCommentMustWarn() {
+        // 「宏体内旧内建名」这一族的根因之一：/* */ 里的 #define 被当真指令吃下。
+        String src = "/* 说明文字\n#define A 1\n*/\nint x = A;\n";
+        DefineProcessor.Result r = DefineProcessor.process(src, identityMap("x.fsh", 4));
+
+        assertTrue(containsWarn(r, "注释内"),
+                "注释里的指令必须 WARN（本阶仍按指令处理，语义留给 A2）：" + r.diagnostics());
+    }
+
+    private static boolean containsWarn(DefineProcessor.Result r, String needle) {
+        return r.diagnostics().stream().anyMatch(d ->
+                d.severity() == TranslateDiagnostic.Severity.WARN && d.message().contains(needle));
+    }
 }

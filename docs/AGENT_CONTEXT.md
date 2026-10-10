@@ -57,7 +57,7 @@
 
 | 对象 | 结论 | 影响 |
 |---|---|---|
-| **glslang + SPIRV-Tools** | **Apache-2.0 / BSD-3，可合法并入 MIT 工程**（Fedora/openEuler/Arch 打包元数据三处一致） | 登记 **GAP-005**：是否用成熟 GLSL 前端替/辅自研 8 段转译器。本轮不执行 |
+| **glslang + SPIRV-Tools** | **Apache-2.0 / BSD-3，可合法并入 MIT 工程**（Fedora/openEuler/Arch 打包元数据三处一致） | 登记 **GAP-005**：是否用成熟 GLSL 前端替/辅自研 8 段转译器。本轮不执行。🔖 **2026-10-10 两处收窄**：glslang 的**预处理槽不成立**（头文件自述非官方支持），且其 `Pp*` 是 **BSD-3 + 非标 `AML-glslang`** ⇒ 并码前须逐条核实；细节见 `19-IMPROVEMENT-PATHS.md` §2.3/§2.4 与 `13-GAP-REGISTRY.md` GAP-005a/005b |
 | **naga**（Rust） | GLSL→SPIR-V 约比 glslang 快 **30×**（kvark 2022 基准）；但**不支持 `#include` 与完整 `GL_*` 语义**，对 OF 方言包会编译失败 | 仅作「Rust 在转译类负载有数量级潜力」的证据；**禁止当本项目选型结论**（X32） |
 | **FFM vs JNI** | FFM 于 Java 22 正式，Java 25 可直接用；`jextract` 自动生成绑定 | 选定 FFM，禁用 JNI（T19） |
 | **Rust panic × FFI** | 官方 Nomicon：`extern "C"` 收到 panic 会终止进程，必须 `catch_unwind` | T17 / GAP-006 |
@@ -140,7 +140,10 @@
 > 每一部分的实现最好都先去找参考。**」
 
 **新定位**：一个**独立**的 NeoForge 客户端模组 —— 基于**原版自带的 Vulkan 渲染后端**，
-实现一个能加载 **OptiFine / Iris 格式** 着色器包的引擎。**许可证 MIT，完全自研。**
+实现一个能加载 **OptiFine / Iris 格式** 着色器包的引擎。
+**许可证 MIT；🔖 旧文案「完全自研」已于 2026-10-10 更正**（那是早期文档自己加的限制，不是 MIT 的要求），
+准确表述 = **代码 100% 来自 MIT / Apache-2.0 / BSD 族或我们自己，并保留上游署名与改动声明**
+（权威条款 `07-CONSTRAINTS.md` §〇 / §1.3；口径实例 `03-DIRECTION.md` §0、`19-IMPROVEMENT-PATHS.md` §7-1）。
 
 ### 版本基线（已明确，权威文档 `05-VERSION.md`）
 
@@ -159,7 +162,9 @@
 - 自研的部分：① OF/Iris 格式解析器 ② pass 编排 ③ GLSL 转译 ④ 选项 GUI
 - **遇到原版 Vulkan 不支持的特性可以自行补充**，但必须先登记、必须收敛在 `platform/`、
   必须能在官方补上后一处回退（策略见 `12-GAP-STRATEGY.md`，登记表 `13-GAP-REGISTRY.md`）
-- **MIT ⇒ 完全自研**：不得并入任何 LGPL / GPL / ARR 代码（`07-CONSTRAINTS.md` §〇）
+- **MIT 的红线是「不越界」，不是「完全自研」**（2026-10-10 用户更正）：**不得并入** LGPL / GPL / ARR 代码；
+  MIT / Apache-2.0 / BSD 族**可以并入**，条件是保留其 `LICENSE`（及 `NOTICE`，若有）并**声明改动**
+  （`07-CONSTRAINTS.md` §〇 / §1.3；已裁决实例 = `19-IMPROVEMENT-PATHS.md` §7-1 的 jcpp）
 - **开发循环**：改代码 → `./gradlew build` → `./gradlew runClient` 看真实产物 → 按错误修 →
   重跑，直到任务完成（`01-DEV-LOOP.md`）
 - **两条前置纪律**：**参考先行**（每部分开工前先调研，`17-NATIVE.md` §1）+

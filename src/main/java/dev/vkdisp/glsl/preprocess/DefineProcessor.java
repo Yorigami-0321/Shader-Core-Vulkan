@@ -106,12 +106,17 @@ public final class DefineProcessor {
 
         Deque<Frame> stack = new ArrayDeque<>();
         boolean ok = true;
+        // 🔖 A0：复用 translate/CommentState 这**同一套**注释状态机（不造第二套判断逻辑，19 §2.2 病根 (a)）。
+        //    本阶只用它把「注释里的指令」变可见，输出与旧实现逐字一致。
+        dev.vkdisp.glsl.translate.CommentState comments = new dev.vkdisp.glsl.translate.CommentState();
 
         for (int idx = 0; idx < count; idx++) {
             int inputLineNo = idx + 1;
             String line = rawLines[idx];
             String trimmed = line.strip();
+            String codeView = comments.stripComments(line, inputLineNo).strip();
             if (trimmed.startsWith("#")) {
+                warnIfDirectiveInComment(codeView, line, inputLineNo, inputLineMap, diagnostics);
                 boolean handled = handleDirective(
                         trimmed, line, inputLineNo, macros, stack, diagnostics, inputLineMap);
                 if (!handled) {
@@ -145,6 +150,18 @@ public final class DefineProcessor {
         return new Result(out.toString(), lineMap, List.copyOf(diagnostics));
     }
 
+    // ---------------------------------------------------------------- A0 止血：注释内指令可见化
+
+    private static void warnIfDirectiveInComment(
+            String codeView, String line, int inputLineNo,
+            SourceLineMap inputLineMap, List<TranslateDiagnostic> diagnostics) {
+        if (!codeView.startsWith("#")) {
+            diagnostics.add(warnAt(
+                    "形如预处理指令的行位于注释内 ⇒ 本实现仍按真指令处理（语义修复属 19 §2.6-A2）",
+                    line, inputLineNo, inputLineMap));
+        }
+    }
+
     // ---------------------------------------------------------------- 指令分发
 
     private static boolean handleDirective(
@@ -157,6 +174,15 @@ public final class DefineProcessor {
         }
         String keyword = dm.group(1);
         String rest = dm.group(2) == null ? "" : dm.group(2).strip();
+        // 🔴 A0 止血（QD-09 ① / 19 §2.6-A0）：本处理器**逐行**扫描，行尾 `\` 续行会把宏体/条件在行尾
+        //    截断 ⇒ 静默产生错误展开（不报错、不告警）。续行拼接的语义修复属 A2（jcpp 的 JoinReader），
+        //    本阶只承诺「不静默」，**不改变**已有输出。
+        if (MANAGED_DIRECTIVES.contains(keyword) && endsWithLineContinuation(trimmed)) {
+            diagnostics.add(warnAt(
+                    "指令以 \\ 结尾（续行）：本处理器逐行扫描，宏体/条件会在行尾被截断并按截断结果继续展开，"
+                            + "其后被续行的行会当普通代码输出（语义修复见 19 §2.6-A2）",
+                    originalLine, inputLineNo, inputLineMap));
+        }
         switch (keyword) {
             case "define":
                 handleDefine(rest, macros);
@@ -329,6 +355,13 @@ public final class DefineProcessor {
             String message, String line, int inputLineNo, SourceLineMap inputLineMap) {
         SourceLineMap.LineOrigin origin = inputLineMap.originOf(inputLineNo);
         return TranslateDiagnostic.error(message, origin.sourceFile(), origin.sourceLine());
+    }
+
+    /** 与 {@link #errorAt} 同一条归因路，级别换成 WARN（T11：降级/风险必须可见，不许静默）。 */
+    private static TranslateDiagnostic warnAt(
+            String message, String line, int inputLineNo, SourceLineMap inputLineMap) {
+        SourceLineMap.LineOrigin origin = inputLineMap.originOf(inputLineNo);
+        return TranslateDiagnostic.warn(message, origin.sourceFile(), origin.sourceLine());
     }
 
     // ---------------------------------------------------------------- 宏展开
@@ -716,4 +749,25 @@ public final class DefineProcessor {
      */
     private static final Pattern FUNC_DEFINE =
             Pattern.compile("^([A-Za-z_]\\w*)\\(([^)]*)\\)\\s*(.*)$");
+
+    /**
+     * 本处理器管辖的指令。只有它们的行尾 {@code \} 会造成**静默错展开**（其余指令原样透传，
+     * 续行与否都不改变我方行为）。
+     */
+    private static final Set<String> MANAGED_DIRECTIVES =
+            Set.of("define", "undef", "ifdef", "ifndef", "if", "elif", "else", "endif");
+
+    /**
+     * 是否为「行尾续行」的指令行。
+     *
+     * <p>🔴 **A1 的合并点**（2026-10-10）：口径原先在本类与 {@code GlslTextScan.preprocessorSkipLines}
+     * 各写一份，两处注释都承诺「A1 建单一词法源后合并」⇒ 现在唯一实现是
+     * {@link dev.vkdisp.glsl.lexer.GlslTokens#endsWithLineContinuation}（本类只留这层命名封装）。
+     *
+     * <p>🔖 已知过度报警的形态：宏体本身以反斜杠字符结尾（GLSL 里写不出这种合法字面量）⇒ 宁可按
+     * 「可见」处理（T11），不在本阶做词法级判别（那属于 A2 的职责）。
+     */
+    private static boolean endsWithLineContinuation(String trimmedDirective) {
+        return dev.vkdisp.glsl.lexer.GlslTokens.endsWithLineContinuation(trimmedDirective);
+    }
 }

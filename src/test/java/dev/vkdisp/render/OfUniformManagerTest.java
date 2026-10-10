@@ -21,10 +21,14 @@ import dev.vkdisp.glsl.translate.BuiltinsBlockLayout;
 import dev.vkdisp.glsl.translate.UniformInjector;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class OfUniformManagerTest {
@@ -174,5 +178,30 @@ class OfUniformManagerTest {
             head[i] = dst.get(i);
         }
         assertArrayEquals(new byte[16], head, "缓冲前 16 字节全零");
+    }
+
+    @Test
+    @DisplayName("🔴 cloudHeight 必须走 attributeProbe，不得回落到 LevelRenderState 字段（GAP-033 真机定案）")
+    void cloudHeightMustComeFromAttributeProbe() throws java.io.IOException {
+        // 事故形态（真机 [GAP-033] 自报行量到）：`levelState.cloudHeight` 在我方取值时机是
+        //   **0.0** —— 它要等 LevelExtractor:223 才写进 render state，而 gather() 在提取之前。
+        //   后果：包里 atmospherics/clouds.glsl:329 与 lighting/shadows.glsl:308 都拿它当
+        //   **云层底高** ⇒ 云层被压到 y=0、相机在层上方 ⇒ 真机「长条云 / 放射指状条带」，
+        //   且正上方完全没有云（两个症状同源，修后两格一起消失）。
+        // 🔖 这条与 probeAngle 的注释是同一条教训的第二次落地（「SkyRenderState 字段在提取前
+        //   为默认值」p413）⇒ 守卫钉的是**取法**，不是数值，因为数值对不对由真机自报行判。
+        String source = Files.readString(Path.of(
+                "src/main/java/dev/vkdisp/render/OfUniformManager.java"));
+        assertTrue(source.contains("EnvironmentAttributes.CLOUD_HEIGHT"),
+                "cloudHeight 必须从 EnvironmentAttributes.CLOUD_HEIGHT 取（原版默认 192.33，"
+                        + "见 data/worldgen/DimensionTypes.java:38）");
+        Assumptions.assumeTrue(source.contains("values.put(\"cloudHeight\""),
+                "找不到 cloudHeight 的供值点，本守卫的前提变了，请重判而不是让它空过");
+        assertTrue(!source.contains("values.put(\"cloudHeight\", inWorld ? levelState.cloudHeight"),
+                "cloudHeight 不得再读 levelState.cloudHeight —— 那个字段在 LevelExtractor "
+                        + "跑之前恒为 0，正是 GAP-033 长条云的根因");
+        // 取法必须与同文件里已验证可用的那条 probe 路径同形状（不另造一套读数机制）
+        assertTrue(source.contains("probeFloat(probe, EnvironmentAttributes.CLOUD_HEIGHT"),
+                "cloudHeight 必须走 probeFloat(probe, …) —— 与 probeAngle 同一个 probe 来源");
     }
 }

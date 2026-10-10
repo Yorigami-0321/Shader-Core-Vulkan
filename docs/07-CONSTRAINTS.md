@@ -41,10 +41,18 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 | **P2** | **不得并入任何 ARR 内容** | All Rights Reserved 的内容无权再分发 |
 | **P3** | **分发时 jar 内必须带 `LICENSE`** | MIT 的署名要求：许可声明须随副本或实质部分一并提供 |
 
-> 换句话说：**MIT 选了就得完全自研。** 这也意味着 `L7`（移植 VulkanMod）**已作废** ——
-> 不再允许移植 VulkanMod 的代码，只能读思路、读它的做法，不能搬代码。
+> 换句话说：**选 MIT 不等于「必须完全自研」**。
+> 🔖 **2026-10-10 用户更正**：本节旧文案写的是「MIT 选了就得完全自研」，那是**早期文档自行加的自我限制，
+> 不是 MIT 的要求**。合规底线只有一条：**完全遵守 MIT、不越界**。真实规则就是 §1.3 的判定表 ——
+> **MIT / Apache-2.0 / BSD 族可以并入代码**（条件是保留其 `LICENSE`/`NOTICE` 并**声明改动**），
+> LGPL / GPL / ARR 仍然一行不搬、只读思路。
+> ⇒ 所以 `L7`（移植 VulkanMod）**依然作废** —— 因为它是 **LGPL-3.0**，与「能不能用第三方库」无关。
 >
-> 好处是干净：不用维护 `NOTICE`、不用逐文件加 LGPL 头、不担心许可传染。
+> 代价（诚实登记，别再写成"零维护"）：一旦引入带 `NOTICE` 的上游，产物里要**同时**有
+> 我们的 `LICENSE`（P3）**和**上游的 `LICENSE`/`NOTICE` 副本 + 改动声明（Apache-2.0 §4）。
+> 已列入 §七 自检清单的一条。已裁决的实例：`docs/19-IMPROVEMENT-PATHS.md` §7-1（**jcpp，Apache-2.0，允许移植核心**）。
+>
+> 好处仍然成立：**不会有许可传染**，不用逐文件加 LGPL 头，不用维护上游的 copyleft 义务。
 
 ---
 
@@ -184,7 +192,8 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 
 | 参考的许可证 | 能否并入本项目 | 能带走 | 不能带走 |
 |---|---|---|---|
-| MIT / Apache-2.0 | ✅ 可以（保留署名） | 代码 + 思路 | — |
+| MIT / Apache-2.0 | ✅ 可以（保留署名） | 代码 + 思路 | 🔴 丢掉其 `LICENSE`/`NOTICE`；改了却不**声明改动**（Apache-2.0 §4(b)）|
+| BSD-2-Clause / BSD-3-Clause | ✅ 可以（保留署名） | 代码 + 思路 | 🔴 丢掉版权声明与条件列表；**用作者名义为衍生作品做广告/背书**（BSD-3 的第三条） |
 | LGPL-3.0 | ❌ 不可并入 | ✅ 思路、做法、事实 | ❌ 代码行 |
 | GPL-3.0 | ❌ 传染 | ✅ 思路、做法、事实 | ❌ 代码行 |
 | PolyForm Shield / 非竞争类 | ❌ 不可 | ⚠️ 连"借鉴"都谨慎（L11） | ❌ 代码，且不得集成 |
@@ -405,6 +414,17 @@ mod_group_id             = dev.vkdisp
 > `build.gradle` 属性注入表里 `neo_version_range` 必须存在的原因 ——
 > 模板里引用了它，少一个属性 `expand` 就会报错。
 
+### 5.1 引入第三方坐标时的附加规则（2026-10-10，配合 §〇 的更正）
+
+§〇 更正后「并码」重新可行，于是本项目第一次出现「可能要往依赖表里加第三方坐标」的情形。两个候选，锁法不同：
+
+| 场景 | 坐标 | 锁法 | 附加义务 |
+|---|---|---|---|
+| GLSL 预处理**实现臂**（`19` §2.6-A2，✅ 已裁决允许） | `org.anarres:jcpp:1.4.14`（**Apache-2.0**） | 版本入 `gradle.properties`（新键，例如 `jcpp_version`），`build.gradle` 只引用变量 | 🔴 它的传递依赖含 guava / slf4j / ant / logback ⇒ 要么**只移植核心**，要么写**排除表**；两种方式都属 §1.3「可并」列，须随产物保留上游 `LICENSE`/`NOTICE` 并**声明改动**（Apache-2.0 §4(b)） |
+| GLSL 预处理**差分 oracle**（`19` §7-2，✅ **2026-10-10 已裁决允许**，但**只限测试/离线工具**） | `org.lwjgl:lwjgl-shaderc`（LWJGL 绑定 = **BSD-3**） | 🔴 **不新增分发** —— 该坐标**游戏自带**；只作 `testImplementation` / `compileOnly`，版本入 `gradle.properties` 的 `lwjgl_shaderc_version`（当前 **3.4.3**）。🔴 **运行期代码不得 import 它、不得进发布 jar** | 🔴 **实测会漂**：本机核到 **26.2 = 3.4.1 / 26.3 = 3.4.3**（同一坐标随 MC 小版本抬版本）⇒ 必须进 `06-MIGRATION.md` §3 的易变点清单（V6），**每次升 MC 复核**，否则「编译期写的版本」与「游戏实际自带的版本」静默分歧 |
+
+⚠️ 本节只登记「并码/引用时的锁法」，**不代表依赖已落地** —— 键与坐标在真正动手那一轮才写进 `gradle.properties` / `build.gradle`。
+
 ---
 
 ## 六、Git 规范
@@ -457,6 +477,8 @@ mod_group_id             = dev.vkdisp
 [ ] mixins.json 是 JAVA_25，且 neoforge.mods.toml 的 [[mixins]] 已取消注释
 [ ] 无硬编码版本号（都走 gradle.properties）
 [ ] 无复制来的第三方代码（MIT 下尤其严格 —— 不许并入 LGPL/GPL/ARR）
+[ ] 🔴 若本轮并入了 **MIT / Apache-2.0 / BSD 族**的上游源码或依赖：产物内保留了它的 `LICENSE`（及 `NOTICE`，若有），
+    且**已声明改动**（§〇 / §1.3；Apache-2.0 §4(b)）—— 「许可证兼容」不等于「署名义务消失」
 [ ] 对外文字里没有「Sodium 替代品 / Iris 兼容 / OptiFine 官方」类表述
 [ ] 构建脚本里没有任何 `sodium` / `caffeinemc` 坐标，也没有运行时探测/集成分支（X18 / L11）
 [ ] 代码里出现的 `sodium` 只可能出现在「划清界限」的否定式语句里（L11 §1.2 判据）

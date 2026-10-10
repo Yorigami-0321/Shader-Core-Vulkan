@@ -76,7 +76,7 @@ private void hook(FrameGraphBuilder builder, /* ... */ CallbackInfo ci) {
 
 ## 3. 26.3 已知的易变点清单
 
-升级时**优先复查**这 5 类（按 26.3 的实际变动推断，风险从高到低）：
+升级时**优先复查**这 6 类（V1–V5 按 26.3 的实际变动推断，风险从高到低；V6 是 2026-10-10 新加的「今天为空、引入 LWJGL 依赖后立刻生效」项）：
 
 | # | 易变点 | 26.3 的事实 | 复查方法 |
 |---|---|---|---|
@@ -85,6 +85,7 @@ private void hook(FrameGraphBuilder builder, /* ... */ CallbackInfo ci) {
 | V3 | **`LevelRenderer` 渲染方法签名** | 本方案帧图插入点依赖 `render(...)` / `addMainPass(...)` | `javap -p` 看参数列表 |
 | V4 | **`RenderPipeline.Builder` 链式 API** | `.withVertexShader` / `.withBindGroupLayout` / `.withShaderDefine` | 编译报错会直接指出 |
 | V5 | **帧图 pass 的**执行序**** | 执行序由 `FrameGraphBuilder#resolvePassOrder` 按**资源依赖**解析；**插入序不是依赖**，`FramePass#disableCulling()` 只保证「不被剔除」、不保证顺序。🔴 实测踩过（h48g）：先插 sky 再插 terrain，结果 sky 排在 terrain **之后**执行 ⇒ 天空又被地形盖回去（`c0@afterSky` 0.0611） | 用**同帧两个取点**验序（本项目的做法：`c0@afterSky` vs `c0@chainStart`）；不要读 API 猜。若要真正控序，先核实 `FramePass` 有没有声明依赖的公开入口（**未核实**，别当成存在） |
+| V6 | **游戏自带的 LWJGL 坐标版本** | 🔴 **实测会漂**（2026-10-10 为 `19` §7-2 核实的副产品）：同一坐标 `org.lwjgl:lwjgl-shaderc` 在 **26.2 = 3.4.1**、**26.3 = 3.4.3**。本项目**依赖表里没有任何 LWJGL 坐标**（`build.gradle` / `gradle.properties` 零命中）⇒ 这条今天是空的；一旦按 `07` §5.1 以 `compileOnly` 引用游戏自带坐标，它就是必查项 | 逐字比对两处版本：<br>`grep -o '"org.lwjgl:<artifact>:[0-9.]*"' ~/.gradle/caches/neoformruntime/artifacts/minecraft_<ver>_version_manifest.json \| sort -u` vs `gradle.properties`。🔴 不要只信 maven 中央仓库的「最新版」 |
 
 **快速对比新旧 API 的手段**（本工作区已验证可用）：
 
@@ -105,7 +106,7 @@ JAVAP="/c/Program Files/Java/jdk-25.0.4.1/bin/javap.exe"
 2. 改 gradle.properties 的版本号
 3. ./gradlew compileJava  → 收集全部符号缺失错误
 4. 只改 bridge/ 与 mixin/，逐条消错
-5. 复查 §3 的 V1–V4 四类易变点
+5. 复查 §3 的 V1–V6 六类易变点（🔖 原文写「V1–V4 四类」是 V5 入表时漏改的引用，2026-10-10 修正）
 6. 【4.5 步】逐行复查 docs/13-GAP-REGISTRY.md：
      官方补上了吗？→ 补上了就打开开关做 A/B，一致则删掉自己的实现、改调原版、
                       状态改 🔁，并回填「官方更新复查记录」

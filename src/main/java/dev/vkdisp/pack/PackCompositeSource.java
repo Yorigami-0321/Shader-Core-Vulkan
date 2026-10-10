@@ -383,6 +383,16 @@ public final class PackCompositeSource {
                                     + packUniforms.size() + " names=" + packUniforms.allNames(),
                             pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
                 }
+                // 🔴 C1：把「这三条全屏步的转译终稿**实际声明**了哪些 sampler」装进快照。
+                //   布局（绑定组条目）在启动期一次定死、不随包变，但**视图按类型路由**与
+                //   「包声明了超集之外的名字」的点名都读这份快照 ⇒ 换包漂移第一次变成可数的事
+                //   （`19` §4.2 / §4.4，QD-11①）。
+                for (String samplerWarning : installSamplerSuperset(composite.source(),
+                        deferredSource, finalSource, chain, tex.bindings(), diagnostics, pack.name())) {
+                    diagnostics.add(TranslateDiagnostic.of(
+                            TranslateDiagnostic.Severity.WARN, samplerWarning,
+                            pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+                }
                 return new Result(composite.source(), deferredSource, hasDeferred,
                         finalSource, hasFinal, pack.name(), false, profile, diagnostics, chain,
                         tex.bindings(), packUniforms);
@@ -418,8 +428,70 @@ public final class PackCompositeSource {
 
     /** 统一兜底出口：三源全 passthrough、链路开关全 false、{@code packName=null}（T11 诊断由调用方先落）。 */
     private static Result fallbackResult(String profile, List<TranslateDiagnostic> diagnostics) {
+        // 🔴 C1：兜底路径**也必须**重算快照 —— 上一张包的声明留在快照里 = 换包不失效的那一族
+        //   （QD-12；症状是「关掉包之后视图还按上一张包的类型路由」）。
+        installSamplerSuperset(FALLBACK_GLSL, FALLBACK_GLSL, FALLBACK_GLSL,
+                PackPostChain.Chain.EMPTY, Map.of(), diagnostics, null);
         return new Result(FALLBACK_GLSL, FALLBACK_GLSL, false, FALLBACK_GLSL, false,
                 null, true, profile, diagnostics, PackPostChain.Chain.EMPTY);
+    }
+
+    /**
+     * C1 + C3：装「包在全屏步实际声明的 sampler」快照，并就地出一份**包一致性报告**。
+     *
+     * <p>🔖 为什么两件事都在同一个地方做：这里是三条全屏步的转译终稿 + 已建好的链 + 包的
+     * {@code texture.<sampler>=路径} 表**同时**在手的唯一位置；报告绕去读静态视图就会拿到
+     * 「上一张包的」数据（QD-12 那一族）。
+     *
+     * @return 需要以 WARN 落地的诊断文本（超集之外的声明 + 跨步类型冲突 + 报告里「包有、引擎名单没有」的项）
+     */
+    private static List<String> installSamplerSuperset(String compositeSource, String deferredSource,
+            String finalSource, PackPostChain.Chain chain, Map<String, String> textureBindings,
+            List<TranslateDiagnostic> diagnostics, String packName) {
+        dev.vkdisp.pipeline.model.PackSamplerSuperset.install(
+                compositeSource, deferredSource, finalSource);
+        dev.vkdisp.pipeline.model.PackSamplerSuperset.Snapshot snapshot =
+                dev.vkdisp.pipeline.model.PackSamplerSuperset.current();
+        diagnostics.add(TranslateDiagnostic.of(
+                TranslateDiagnostic.Severity.INFO,
+                "vkdisp: [C1] 全屏步 sampler 快照: " + snapshot.summary()
+                        + " 超集条目=" + dev.vkdisp.pipeline.model.PackSamplerSuperset.NAMES.size()
+                        + " 超集之外=" + snapshot.outsideSuperset(),
+                packName, TranslateDiagnostic.UNKNOWN_LINE));
+        List<String> warnings = new ArrayList<>();
+        for (String name : snapshot.outsideSuperset()) {
+            String detail = snapshot.declared(name)
+                    .map(d -> d.declaredType() + " @" + d.origin())
+                    .orElse("(未知)");
+            warnings.add("vkdisp: [C1] 包在全屏步声明了超集之外的 sampler '" + name + "'（" + detail
+                    + "）—— 启动期定死的绑定组里没有这一条，驱动会抛 "
+                    + "'Unable to find shader defined uniform'；补法 = 加进 PackSamplerSuperset 的规则表，"
+                    + "或确认这是包自造名（OF/Iris 未定义）");
+        }
+        warnings.addAll(snapshot.planWarnings());
+
+        // 🔴 C3：包一致性报告（`19` §4.4）—— 把 §4.1 那张表里的**每张**硬编码名单都与包对差一遍。
+        //   矩阵只打**一行** INFO（每单一段）：本函数会被库存里每张被扫描的包走到，
+        //   一单一行会把日志冲垮（h33 那 2702 行的同族教训）。
+        PackConformanceReport.Report report = PackConformanceReport.build(
+                new PackConformanceReport.Facts(packName, compositeSource, deferredSource,
+                        finalSource, chain, textureBindings));
+        StringBuilder matrix = new StringBuilder();
+        for (PackConformanceReport.Section section : report.sections()) {
+            if (matrix.length() > 0) {
+                matrix.append(" ;; ");
+            }
+            matrix.append(section.list()).append(" 条目=").append(section.entries().size())
+                    .append(" 命中=").append(section.count(PackConformanceReport.Status.HIT))
+                    .append(" 包有引擎无=").append(section.count(PackConformanceReport.Status.PACK_ONLY))
+                    .append(" 引擎有包未用=").append(section.count(PackConformanceReport.Status.ENGINE_ONLY));
+        }
+        diagnostics.add(TranslateDiagnostic.of(
+                TranslateDiagnostic.Severity.INFO,
+                "vkdisp: [C3] 包一致性报告 pack=" + packName + " | " + matrix,
+                packName, TranslateDiagnostic.UNKNOWN_LINE));
+        warnings.addAll(report.warnings());
+        return warnings;
     }
 
     /**

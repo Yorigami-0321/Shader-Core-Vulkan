@@ -30,6 +30,7 @@ package dev.vkdisp;
  */
 
 import dev.vkdisp.bridge.ShaderCompileApi;
+import dev.vkdisp.glsl.LineDirectiveInjector;
 import dev.vkdisp.glsl.TranslateDiagnostic;
 import dev.vkdisp.glsl.translate.ShaderStage;
 import dev.vkdisp.pack.Option;
@@ -220,7 +221,8 @@ public final class VkDispPackScan {
                 // 诊断名与原版 Identifier.toString() 同构，会出现在 shaderc 错误原文里。
                 String debugName = "vkdisp:pack/" + packName + "/" + stage.sourceFile();
                 ShaderCompileApi.StageResult driver = ShaderCompileApi.compileStage(
-                        debugName, stage.result().text(), stage.stage() == ShaderStage.VERTEX);
+                        debugName, stage.result().text(), stage.result().lineMap(),
+                        stage.stage() == ShaderStage.VERTEX);
                 if (driver.success()) {
                     ok++;
                     VkDisp.LOGGER.info(
@@ -229,14 +231,22 @@ public final class VkDispPackScan {
                             driver.spvBytes());
                 } else {
                     failed++;
-                    VkDisp.LOGGER.error(
-                            "vkdisp: pack program compile FAILED: pack={} program={} stage={} file={}: {}",
-                            packName, stage.programName(), stage.stage(), stage.sourceFile(),
-                            driver.error());
+                    logCompileFailure(packName, stage, driver);
                 }
             }
         }
         VkDisp.LOGGER.info("vkdisp: pack compile done: stages={} ok={} failed={}", stages, ok, failed);
+    }
+
+    /** A3 因果归属：转译产物不可编译 = 本项目 ERROR（§2.2-c），不是「包的问题」。 */
+    private static void logCompileFailure(String packName,
+            ShaderPackCompiler.CompiledStage stage, ShaderCompileApi.StageResult driver) {
+        LineDirectiveInjector.Attribution attribution =
+                LineDirectiveInjector.attributeError(driver.error(), stage.result().lineMap());
+        VkDisp.LOGGER.error(
+                "vkdisp: pack program compile FAILED: pack={} program={} stage={} file={}: {} | {}",
+                packName, stage.programName(), stage.stage(), stage.sourceFile(),
+                driver.error(), attribution.summary());
     }
 
     /**

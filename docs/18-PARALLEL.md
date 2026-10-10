@@ -101,7 +101,7 @@
 | **F1** | ✅ **已落地** | `bridge/` 5 接口齐：`DeviceApi`（P0.2）+ `PipelineApi`/`FrameApi`（P0.3）+ `ContractVersion`/`RenderApi`/`TextureApi`/`MixinTargets`（F1）；`ContractVersion.VERSION=1` 承载 §3.2 版本流程 |
 | **F2** | ✅ **已落地** | `pack/` 8 类冻结：`ShaderPack`/`Program`/`ProgramStage`/`Option`/`OptionType`/`Dimension`/`VertexAttribute`/`UniformDecl`（contract-pack 交付，compileJava exit=0、红线 NO MATCH） |
 | **F3** | ✅ **已落地** | `glsl/` 三件套：`TranslateResult`/`TranslateDiagnostic`/`SourceLineMap`（contract-glsl 交付，compileJava exit=0、35 条行为断言全绿） |
-| **F4** | ✅ **已落地** | `build.gradle` 接 JUnit 5（BOM 5.13.4）+ JUnit Platform；`src/test/` 骨架 + `F4InfraSmokeTest` **2/2 PASSED** |
+| **F4** | ✅ **已落地** | `build.gradle` 接 JUnit 5（BOM 5.13.4）+ JUnit Platform；`src/test/` 骨架 + `F4InfraSmokeTest` **2/2 PASSED**（该冒烟测试为一次性闸门工具，闸门关闭后已于 2026-10-10 清理删除） |
 
 **闸门状态：F1–F4 全部 ✅ → 并行线已放行**（2026-09-29 本轮落地）。
 

@@ -320,6 +320,11 @@ dependencies {
     // P3.1：业务类（shadow/LightSpaceList）与被测管线持 joml 类型，测试源集需要同一 jar 才能编译。
     // 版本 = MC 26.3 运行时自带的 joml（gradle 缓存 org.joml:joml:1.10.9），与主源集来自同一构件。
     testImplementation 'org.joml:joml:1.10.9'
+    // A2 差分探针（19 §2.6-A2 / §7-1 裁决允许）：jcpp = Apache-2.0 纯 Java C 预处理器，
+    // 只进测试源集（生产路径不引入），用作「现自研 vs jcpp」逐字节 diff 的第二臂。
+    // 🔖 用 libs/ 文件依赖：本机 Gradle 全局代理（127.0.0.1:12334）未运行时 Maven Central 不可达，
+    //    jar 由 curl --noproxy 手动下载（与 memory 里「jar 只能从 WSL 拷」同一族处置）。
+    testImplementation files('libs/jcpp-1.4.14.jar', 'libs/slf4j-api-1.7.12.jar', 'libs/java-semver-0.8.0.jar')
 }
 
 // F4：启用 JUnit Platform；测试失败 = build 失败（并行线证据规范 §7.3 要求单测全绿）

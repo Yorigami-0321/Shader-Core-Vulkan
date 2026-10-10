@@ -6,6 +6,259 @@
 ---
 ---
 
+## 2026-10-10（一百零六）— 🎯 阶梯 **C1**（全屏步 sampler 改由包声明派生 + 按类型路由视图）+ **C3**（`PackConformanceReport` 覆盖 §4.1 全部 10 张名单）；真机两轮取证
+
+> **verdict = 代码轮 + 真机取证**：`./gradlew build` 退出码 0（全套测试绿，新增 10 条）；
+> Windows / NVIDIA 真机跑了两轮（C1 一轮、C1+C3 一轮），**编译计数与改前逐位相同**
+> （`stages=654 ok=182 failed=472`，与 19:29 / 19:57 / 20:22 / 20:30 / 20:35 / 20:48 六份归档日志同数）
+> ⇒ **472 条失败是既态**（来自库存里被扫描的 Complementary/Euphoria，不是本轮引入），
+> 且 `Missing uniform` / `Unable to find shader defined uniform` **各 0 条**。
+> **本轮走 C 轨**（C0→C1→C3）；A 轨（A0 已由另一条会话线落地，见一百零四）本轮未碰。
+
+- **C1 做了什么**（`19` §4.2 / §4.5，QD-11①）：
+  1. **名单来源换根**：新增 `pipeline/model/PackSamplerSuperset` —— 全屏步（composite / deferred / final）
+     绑定组的名单由 **OF 命名规则生成**（colortex0..15 / depthtex0..2 / shadowtex0..1 / shadowcolor0 /
+     gaux1..4 / noisetex + 已接线的 DH/Voxy 通道），取代「扫 BSL 得到的 18 名」；
+     🔖 旧 18 名**全部**仍在新表里（`PackSamplerSupersetTest` 逐条钉），新表另补同族里「这个包恰好没用」的 15 条。
+  2. **包声明快照**：`PackCompositeSource` 在生成期对三条全屏步的**转译终稿**跑
+     `SamplerDimensionPlan.fromFragmentSource`，装成 `AtomicReference` 快照（兜底路径也重装 ⇒ 不留上一张包的），
+     并逐名点名「包声明了超集之外的名字」（`InSampler` 按链侧同口径豁免 —— 这条是单测抓出来的，
+     否则每张包都吃一条假告警）。
+  3. **视图按类型路由**：新增 `bridge/PackSamplerViews` —— 旧实现只认 `gaux1`，其余 17 名一律 `colorView` 占位，
+     于是 `lighttex0/1`（`sampler3D`）被喂 **2D 视图 = Vulkan 静默 UB**、`depthtex*` 被当颜色读；
+     现在 3D / 中性材质 / 图集三类按声明类型取对应维度视图，其余**照抄后处理链那条已取证的路**
+     （`FrameApi.chainResolver` 由 private 放宽到包内可见，同一个名字在两条链上不会给不同答案）。
+     `UNSUPPORTED`（原版 26.3 没有的维度）⇒ **不绑 + 每名点名一次**，不拿错维度凑（与 gbuffer 那条同判据）。
+  4. 🔴 **一条如实的边界**：绑定组在**启动期**随 required 管线注册一次定死（`registered≠compiled` 计数断言要求
+     无条件注册）⇒ **布局不可能按包变**。所以 C1 的「派生」= 布局用规则生成的超集 + 视图按声明类型选 +
+     超集之外的名字点名，**不是**「布局跟着包变」。这条限制已登记为 **`GAP-035`**。
+- **C3 做了什么**（`19` §4.4 / §4.5，QD-11④）：新增 `pack/PackConformanceReport` ——
+  包生成期把 §4.1 那张表的 **10 张名单逐一**与「包实际声明/引用了什么」对差，产出逐名
+  `HIT / PACK_ONLY / ENGINE_ONLY / ASSUMPTION` 判定 + 每单一行的矩阵文本 + 「包有引擎无」的 WARN。
+  报告**不改任何行为**，只读各子系统已有真源（超集表 / 快照 / 链 / `UniformCatalog` /
+  `BuiltinsBlockLayout` / `LightSpaceList` 公开常量 / `PostVertexLinker.servableAttributes()`），
+  **不新建第二份名单**；🔖 表体是 `private` 的（UV 名 / 世界向量黑名单）只报「经哪个公开判定」，不抄内容
+  （`19` §5.1 的「可被脚本算出的数字不许手抄」）。为它放宽了两处可见性：`AtmosphereBuiltins` 类改 `public`、
+  `GlslDeclarationExtractor.attributeAliasNames()` 新增只读访问器。
+  矩阵的用法与判据写进 **`08-TESTING.md` §10.2**（含「`PACK_ONLY > 0` 的格子不许标 ✅」这条规矩）。
+- **真机取证（两轮，Windows / NVIDIA RTX 40 系 / Vulkan 1.4.325 / 驱动 591.86 / BSL_v10.1.8）**：
+  - `[C1] 全屏步 sampler 快照: declared=6 outside=0 unused=27 超集条目=33 derived=true`；
+  - `[C3] 包一致性报告 pack=BSL_v10.1.8 | fragment-sampler 条目=33 命中=6 包有引擎无=0 引擎有包未用=27 ;;
+    post-sampler 条目=24 命中=9 包有引擎无=0 ;; builtin-uniform-catalog 条目=47 命中=23 **包有引擎无=24** ;;
+    declared-unsupplied 条目=16 命中=0 引擎有包未用=16 ;; …`（10 段全在）；
+  - 唯一一条 `[C3]` WARN = 内建目录那 24 个包自写 uniform（GAP-021 那一族，正是报告该暴露的东西）；
+  - 画面：同机位连拍（白天两帧 + 夜间一帧 + `time set 6000` 后一帧）地形/手持物/物品栏与 C1 前一致，
+    **天空与云之间的黑带仍在** ⇒ 属既态（GAP-029 的 `isSky`/大气支 + GAP-027 的/cloud 糊），
+    本轮不关也不邀功；C3 是只读 ⇒ 两轮画面无像素差（预期成立）。
+- **为什么这么改**：`19` §6 的排序图把 C1/C0 放在 A 轨之前，C3 是「换个包就漂移」第一次变成可数的事；
+  C2a/C2b（阴影族）按 §7-4 排在 C3 之后且要单独一轮取证。
+- **影响的文档**：`docs/19-IMPROVEMENT-PATHS.md`（§4.1 若干项的状态、§4.4 落地注记、§4.5 的 C1/C3 行）、
+  `docs/08-TESTING.md`（新 §10.2）、`docs/QUALITY-DEBT.md`（QD-11 状态）、`docs/13-GAP-REGISTRY.md`（新 `GAP-035`）、本文件。
+- **测试结果**：`./gradlew build` **退出码 0**；新增测试 `PackSamplerSupersetTest` 5 条、
+  `PackConformanceReportTest` 5 条（含「§4.1 十项必须各有节」这条**验收断言**）。
+  棘轮：`ClassLineRatchetTest`（本轮把 `PipelineApi` 的行数**净降**到上限内，未抬基线）、
+  `StaticFieldRatchetTest`（基线 175 未动 —— 新快照用 `static final AtomicReference` 承载，
+  类注释里写明「这是同一份全局状态的两种写法，真正去处是 B2/B3 的 `PackSession`」，不假装债还掉了）。
+- **未解决 / 存疑**：① `GAP-035`（全屏步布局启动期定死 ⇒ 包自造 sampler 名绑不上）本轮只做到「点名」，
+  修法（按包派生 required 管线 / 放宽注册计数断言）未选型；② 报告目前覆盖三条全屏步 + 链各级，
+  **gbuffer 各条程序**的内建/sampler 对差仍走绑定期日志（`[GAP-027] pack gbuffer uniforms bound`），
+  要不要并进同一份报告待判；③ B0 的第三条棘轮（`StaticHolderResetTest` + 三个 reset 钩子）未做 ——
+  `OfUniformManager` 正被另一条线改，撞车风险高，故意留后。
+- **是否已提交**：⏳ 未提交（等用户点头）。⚠️ 工作区仍混着**另一条会话线**的 A 轨改动与
+  非本轮在制品（`OfUniformManager` 及其测试、两条已 staged 的测试删除）⇒ 提交时按文件名逐个 `git add`。
+
+---
+## 2026-10-10（一百零五）— ✅ 阶梯 **C0**（原版 SPIR-V 反射面核实 + 只读探针）+ **B0 的两条棘轮**落码
+
+> **verdict = 代码轮，但零行为改动**：新增 `bridge/SpvReflectionProbe`（**无生产调用点**，调用点属 C1）
+> 与两条棘轮测试；`src/main` 里原有的任何一类输出/绑定路径**一字未动**。
+> **本轮走的是 C 轨（C0 → C1 → C3）而不是 A 轨**：另一条会话线正在同一批文件上落 A0/A1
+> （实测 `DefineProcessor`/`IncludeProcessor`/`CommentState` 在 21:36–21:42 被人改过、
+> `CHANGE_LOG` 的一百零四条目与 `QUALITY-DEBT` QD-09 行也在同时更新）⇒ 为避免互相覆盖，
+> 本轮只碰**对方没碰的文件**（`bridge/` 新类 + 两条新测试 + `19` 的 §4.2/§4.5 C0 两处）。
+
+- **本次改了什么**：
+  1. **C0 · `javap -p` 核实反射面**（`build/moddev/artifacts/minecraft-patched-26.3.0.51-beta-merged.jar`）：
+     `SpvModule.reflect() / getReflectionInfoIfAvailable()`、`Reflection.{inputs,outputs,descriptors(),descriptors(int),pushConstants}`、
+     `Descriptor.{name,type,resourceType,descriptorSetIndex(+setter),binding(+setter)}`、
+     `Type.{baseType,dimensions,vectorSize,arrayDimensions,arrayLength}`。
+     `resourceType` 数值用**两处独立一致的来源**钉死：lwjgl-spvc 3.4.1 的 `Spvc.SPVC_RESOURCE_TYPE_*`
+     常量（`sampled_image=7 / separate_image=10 / separate_sampler=11 / storage_image=6 / uniform_buffer=1`）
+     与原版 `frontend/shaders/SpvUtil.resourceType(UniformType)`；`baseType` 数值出处 = 原版 `SpvUtil.baseTypeString`。
+  2. **C0 · 两条如实的限制**（都改变后续做法，不是脚注）：
+     🔴 ① `Type.dimensions()` **拿不到任何公开常量表**（lwjgl-spvc 的 `Spvc`/`Spv` 里搜不到 `*DIM*`，
+     原版也没暴露枚举）⇒ **不许当 3D/Cube 的唯一判据**（X9），维度仍以包声明的 `sampler3D/samplerCube` 为准；
+     🔴 ② `testCompileClasspath` **取不到二级嵌套类型**（`SpvModule.Reflection.Descriptor` 在 `src/main` 编译通过、
+     在 `src/test` 报「程序包SpvModule.Reflection不存在」，实测 45 个错只出现在测试源集）
+     ⇒ 探针的「原版对象→快照」适配层**不能**用假实现单测 ⇒ **注册期日志自证列入 C1 取证项**。
+  3. **C0 · 新增 `bridge/SpvReflectionProbe.java`**（只读快照 `Descriptor` record + `samplers()` 过滤 +
+     `describe()` 逐行摘要 + 两张名称表；未知数值**保留数字不猜语义**）与 `SpvReflectionProbeTest`（4 条）。
+  4. **B0 · 两条棘轮**（`19` §3.4 方案 3，照 `MethodLengthRatchetTest` 的先例）：
+     `ClassLineRatchetTest` —— 基线**不是总数而是每个巨类一个上限**（6 个：1675/1573/1163/1131/1112/1069），
+     超上限红灯、比上限少超 `SLACK=40` 也红灯（拆小了就强制把上限降下来 = 把进步锁住）；
+     `StaticFieldRatchetTest` —— 静态非 final 字段基线 **175**，只许降，失败信息按**包分布**排序。
+     两条各带「扫描器自身必须能找到东西」的元测试（`19` §3.4 点名的两种失败模式之一）。
+  5. 🔖 本轮**实测抓到两处口径坑并当场改正**（都是「数字看起来对但错」的那一族）：
+     ① `split("\n",-1).length` 对以换行收尾的文件**多算一行**，首跑把 6 个巨类全误报成「长了 1 行」
+     ⇒ 改成数换行符；② `MrtTerrainPass`/`TargetReadback` **文件末尾没有换行符**（`tail -c 1` 是 `}`）
+     ⇒ 本口径的真实行数比 `wc -l`（`19` 附录 A-A2）多 1，已在测试里写明差别与补齐办法。
+- **为什么这么改**：`19` §4.2 明文「未核实的 API 表面不许当设计地基」（X41/X9），而 C1 的整个「按类型路由视图」
+  都压在反射面上；B0 的两条棘轮是「之后任何拆分都在不许变差的护栏内」的前提（§6 排序图）。
+- **影响的文档**：`docs/19-IMPROVEMENT-PATHS.md`（§4.2 新增「✅ C0 已核实并落码」表 + 两条限制；§4.5 的 C0 行改 ✅）、
+  `docs/QUALITY-DEBT.md`（QD-10 → 棘轮已落地；QD-11① 的「先核实反射表面」前置已结）、本文件。
+- **测试结果**：`./gradlew build` **退出码 0**（全套测试含新增 11 条全绿）。
+  分测试类：`SpvReflectionProbeTest` 4/4、`ClassLineRatchetTest` 4/4、`StaticFieldRatchetTest` 3/3。
+  ⚠️ **本轮未跑 `runClient`** —— 理由是**本轮零行为改动**（新类无调用点、棘轮只在测试源集），
+  不构成任何功能证据；C1 动到注册期与每帧绑定后**必须**跑真机（`01` §1.2 的 Windows 车道）。
+- **是否已提交**：⏳ 未提交（等用户点头）。⚠️ 工作区仍另有**非本轮**的在制品：
+  `OfUniformManager.java` 及其测试、两条已 staged 的测试删除、以及另一条会话线的 A 轨改动
+  ⇒ 提交时按文件名逐个 `git add`，别 `git add -A`。
+- **下一步**：**C1**（`PipelineApi.PACK_FRAGMENT_SAMPLERS` 的 18 名硬编码改为「包 composite/deferred/final
+  转译终稿声明派生」，硬编码表降为 fallback + 不符必 WARN，视图按 `SamplerDimensionPlan.ViewKind` 路由）；
+  落点后是 **C3**（`PackConformanceReport` 覆盖 §4.1 全部名单并接 `08` §10 兼容矩阵）。
+
+---
+
+## 2026-10-10（一百零四）— ✅ 裁决 §7-2（允许引用游戏自带 `lwjgl-shaderc`，只作差分 oracle）+ **阶梯 A0 落地**（三处静默盲区变可见，零语义变化）
+
+> **verdict = 代码轮（只动冷路径的诊断，不改任何输出）**：`./gradlew test` 全套绿，新增 5 条负样本单测全绿。
+> **用户裁决**：「引用游戏自带 lwjgl-shaderc。然后按照 A0 到 C3 开始改进」
+> ⇒ `19` §7-2 取**方案 (b)**：生产路仍是 jcpp，shaderc **只当差分 oracle**；同时开出执行序列 A0→B0→C1/C0→A1→A3→A2→C2a→C3。
+
+- **裁决登记（四处文档，都是「把放行边界写死」）**：`19` §7-2 改为 ✅ 并补一张边界表（只进 `testImplementation`/`compileOnly`、
+  🔴 不得进 `implementation`/发布 jar、运行期代码不得 `import`、版本入 `gradle.properties` 的 `lwjgl_shaderc_version`、
+  拿不到 natives 时**必须显式跳过并自证**、对表时忽略行标记差异）；`19` §2.7 的「不引入任何原生依赖」原判同步改写为
+  「生产路不变，放行的是测试期 oracle」；`07-CONSTRAINTS` §5.1 第二行 ⏳→✅；`13-GAP-REGISTRY` GAP-005 的
+  「待 §7-2 确认」→ 已确认，并把它那处 **3.4.1 的过期版本号更正为 26.3 = 3.4.3**。
+- **A0 改了什么（4 个主源码 + 3 个测试类）**：
+  1. `glsl/preprocess/DefineProcessor.java` —— 指令行行尾 `\` → WARN（`warnAt` 与既有 `errorAt` 共用同一条
+     「输入行 → 包内文件/行号」归因路）；**新增**「原文是指令行、无注释视图里不是」→ WARN。
+  2. `glsl/translate/CommentState.java` —— 类与 `inBlockComment()/blockCommentStartLine()/stripComments()`
+     可见性由包私有上调为 **public**，让 C 线复用**同一套**注释状态机。🔴 这是本阶唯一的结构让步：
+     A1 建 L1 单一词法源后本类并入 `GlslTokens`，这条跨包引用随之消失（已写进类注释）。
+  3. `glsl/preprocess/IncludeProcessor.java` —— 每行先取无注释视图；注释内的 `#include` → WARN，
+     **展开行为逐字照旧**（改成不展开是语义变更，留给 A2）。
+  4. `glsl/translate/IoLocationAdapter.java` —— 跨行/半截 in-out 那支旧代码**两类一起静默**；现按**行首括号深度**分流：
+     深度 0 ⇒ WARN，>0（函数参数折行 `out vec3 x)`）⇒ 保持安静。深度只数无注释视图上的 `(`/`)`（新增 `netParenDelta`）。
+  5. 测试：`DefineProcessorTest`（续行、注释内指令）、`IncludeProcessorTest`（注释内 include，且**断言行为未变**）、
+     `IoLocationAdapterTest`（跨行必 WARN + 参数折行不得误报）—— 共 5 条，判据统一为「必须 WARN，不得静默」。
+- **为什么这么改**：QD-09 的病不是「文本级方案有盲区」（那是既定取舍），而是**盲区静默产出错误结果** ——
+  和 QD-08 那族「配置被读了、某条链静默走偏、日志无异常」同形。A0 之后的 A1/A2/A4 才有地方挂守卫。
+- **对原判的三处事实修正**（已回写进 `19` §2.6 的 A0 行，下一轮别按旧措辞做）：
+  ① 「宏体内 `gl_` 名」的可见性**不在** `LegacyBuiltinInjector`（转译跑在预处理之后，宏体展开后已是代码文本），
+     真正的静默根因是 `/* */` 内的 `#define` ⇒ WARN 落在 `DefineProcessor`；
+  ② `IncludeProcessor` 本阶照旧展开；③ `IoLocationAdapter` 必须按括号深度分流，否则函数参数折行全是误报。
+- **影响的文档**：`docs/19-IMPROVEMENT-PATHS.md`、`docs/07-CONSTRAINTS.md`、`docs/13-GAP-REGISTRY.md`、
+  `docs/QUALITY-DEBT.md`（QD-09 → 🔁 部分闭环）、本文件。
+- **测试结果**：`./gradlew --offline compileJava compileTestJava` 通过；`./gradlew --offline test --tests "dev.vkdisp.glsl.*"` 全绿；
+  `./gradlew --offline test`（全套）**BUILD SUCCESSFUL**，无 FAILED ⇒ A0 的「零语义变化」由既有幂等/输出断言共同守住。
+  ⚠️ 未跑 `runClient`（本阶不碰 GPU、不碰每帧路径 ⇒ 真机不作为本阶判据；取证轮按 §7-4 留给 C2b）。
+- **下一阶（已建待办）**：**B0**（三条棘轮 + `@TestOnly resetState` 契约，闭环 QD-03/QD-12）→ **C1/C0** → **A1**。
+- **是否已提交**：⏳ **未提交**（等用户点头）。工作区另有**非本轮**在制品（`render/OfUniformManager.java` 与其测试、
+  两条已 staged 的测试删除）⇒ 提交时按文件名逐个 `git add`，别把两条线混进同一个 commit。
+
+---
+
+## 2026-10-10（一百零三）— 📄 接上一轮把 `19` 附录 C 的剩余同步做完 + 一条「待查」实测结掉（26.3 自带 shaderc = 3.4.3）
+
+> **verdict = 纯文档轮：零代码改动、零行为改动**（`src/**` 一个字节未动）。
+> **起点**：用户对 `弱点改进方案调研` 那轮说「继续上一条消息」⇒ 接着把 `19-IMPROVEMENT-PATHS.md` 附录 C
+> 那张同步表里**上一轮没覆盖的最后一行**（依赖版本锁定）落到可执行约束上，并回写同步状态。
+> 🔴 **必须如实登记一件事**：本轮与 **一百零二** 是同一裁决在**两条会话线上并发写同一批文件**。
+> 实测表现在：`03`/`07`/`13`/`QUALITY-DEBT`/本文件的改动落地时间落在本轮工作过程中（文件在两次读取之间变了内容）。
+> ⇒ 本轮的处置 = **每次 Edit 前先重读目标文件的当前内容**，只做对方没覆盖的三处（`AGENT_CONTEXT`、
+> `07` §五、`06`/`05` 的版本登记），并把自己改过的段落写成「就地更正」而非整段重写，避免互相覆盖。
+
+- **新事实（本机可复算，命令见 `19` 附录 A-A5）**：`19` §7-2 挂着的「26.3 清单里的 shaderc 版本号待查」结掉了 ——
+  26.3 版本清单声明的是 **`org.lwjgl:lwjgl-shaderc:3.4.3`**（本机缓存的 26.2 清单是 **3.4.1**），
+  且 3.4.3 的 `org/lwjgl/util/shaderc/Shaderc.class` **确实含** `shaderc_compile_into_preprocessed_text`。
+  🔖 顺带用这条实测**推翻了「按 26.2 数字写文档」的做法**：同一坐标随 MC 小版本漂移 ⇒ 必须进升版核查表。
+- **本次改了什么（五个文档，全部是补上一轮的同步欠账，不改任何结论）**：
+  1. `docs/AGENT_CONTEXT.md` §0 三处（**上一轮没动这个文件，而它是跨会话自动加载的上下文源** —— 留着旧表述，
+     下一个会话会按「100% 自研」这条伪约束做取舍）：新定位那句改为「代码 100% 来自 MIT/Apache-2.0/BSD 族或我们自己，
+     并保留上游署名与改动声明」；硬约束那条改为「**MIT 的红线是不越界，不是完全自研**」并写明并码三条件；
+     glslang 那行加两条收窄注记（预处理槽不成立 / `Pp*` 带非标 `AML-glslang`）指向 `19` §2.3–§2.4。
+  2. `docs/07-CONSTRAINTS.md` 新增 **§5.1 引入第三方坐标时的附加规则**：`org.anarres:jcpp`（版本入
+     `gradle.properties` + 传递依赖含 guava/slf4j/ant/logback ⇒ 只移植核心或写排除表 + 留 `LICENSE`/`NOTICE` 并声明改动）、
+     `org.lwjgl:lwjgl-shaderc`（**游戏自带 ⇒ 只 `compileOnly`、不新增分发** + 版本必须与 MC 清单逐字一致）。
+     ⚠️ **两个依赖都还没引入**，本节只登记「放行后怎么锁」；§7-2 那句待判**仍然待判**。
+  3. `docs/06-MIGRATION.md` §3 新增易变点 **V6 = 游戏自带的 LWJGL 坐标版本**（含复算命令与「本项目依赖表里零
+     LWJGL 坐标 ⇒ 这条今天为空、一旦 `compileOnly` 就立刻生效」的如实说明），引言「5 类」改「6 类」。
+     🔴 并修掉一处**陈旧引用**：§4 第 5 步原写「复查 §3 的 V1–V4 四类」，而表里早有 V5 ⇒ 改 V1–V6。
+  4. `docs/05-VERSION.md` §2 版本锁定表加一行**标成「非依赖」的事实登记**（原版自带 LWJGL 线 = 3.4.3，26.2 = 3.4.1），
+     并把引用去处指向 `07` §5.1 与 `06` V6 —— 版本权威文档只登记事实，不代表项目已依赖它。
+  5. `docs/19-IMPROVEMENT-PATHS.md` 按上面的事实回写：§2.3 shaderc 行、§7-2、附录 A-A5、附录 B shaderc 行
+     全部从「3.4.1 / 26.3 待查」改为「26.3 = 3.4.3，且这是漂移证据」；§7-1 与状态头的「文档债未动」改为已同步并
+     **更正一处出处错误**（本文原写 `03-DIRECTION.md` §4，那句实际在 **§0**）；附录 C 第七行 ⏳→✅。
+     🔖 本文**结论未变**：`lwjgl-shaderc` 仍定位为差分 oracle，不进生产、不进热路径。
+- **为什么这么改**：附录 C 那行不做完，「允许并码」就只停在结论上 —— 没有一条写得出的约束规定
+  「第三方坐标进 `gradle.properties` 的哪个键、升 MC 时查什么」。而 26.2→26.3 这次**实测漂移**恰好是漏登记的后果样本。
+- **影响的文档**：`docs/AGENT_CONTEXT.md`、`docs/07-CONSTRAINTS.md`、`docs/06-MIGRATION.md`、`docs/05-VERSION.md`、
+  `docs/19-IMPROVEMENT-PATHS.md`、本文件。
+- **测试结果**：**未跑 `gradlew build`**（纯文档轮，`src/**` 未动 ⇒ 不构成功能证据，也不借它自证）。
+  文档内数字与结论的可复算依据：`19` 附录 A-A1（静态非 final 字段 = **175**，本轮重跑确认）、A-A5（shaderc 版本与符号）。
+- **待判（不要自行决定）**：`19` §7-2（测试/离线工具**可否**引用游戏自带的 `org.lwjgl:lwjgl-shaderc`）、
+  §7-4（C2b 阴影 pass 装配排哪一轮真机取证）。本轮只是把「若放行怎么锁版本」写清楚，**没有替用户决定**。
+- **是否已提交**：⏳ **未提交**（等用户点头）。⚠️ 工作区另有**非本轮**的在制品：
+  `src/main/java/dev/vkdisp/render/OfUniformManager.java` 与其测试的改动、两条已 staged 的测试文件删除
+  （`F4InfraSmokeTest` / `FfmBoundaryProbe`）⇒ 提交时**按文件名逐个 `git add`**，别 `git add -A`，
+  也别把这两条线的产物混进同一个 commit。
+
+---
+
+## 2026-10-10（一百零二）— 📄 弱点改进方案落地成文（新 `docs/19-IMPROVEMENT-PATHS.md`）+ 按用户裁决更正四处许可/缺口文档
+
+> **verdict = 纯文档轮：零代码改动、零行为改动**（`src/**` 一个字节未动）。四条结论性更正 + 一份方案书。
+> **裁决入口**：用户判「`100% 自研` 是早期文档自己加的限制，**不是 MIT 的要求**；合规底线只是完全遵守 MIT、不越界」
+> ⇒ **移植 jcpp（Apache-2.0）获准**。
+> 证据：本文所有数字/行号由 `19` 附录 A 的命令复算得出（本机可跑）；外部结论逐条带仓库 `LICENSE` 文件 URL（附录 B）。
+
+- **新增 `docs/19-IMPROVEMENT-PATHS.md`**（441→531 行，方案书，**未执行**）：四类原型弱点（= `QUALITY-DEBT` QD-09~14）
+  各自的「现状取证 → 病根 → 调研 → 阶梯 → 验收」，并给出跨弱点的执行顺序与三条硬依赖
+  （A1 单一词法源挡在 A2/A4 前；B0 棘轮挡在 B3 前；C0 `javap` 核实挡在「把原版反射面当设计地基」前）。
+- **本次改了什么（五个文档，逐处都是「原判不成立所以更正」，不是补充说明）**：
+  1. `07-CONSTRAINTS.md` §〇：删掉「MIT 选了就得完全自研」这句**不是 MIT 要求**的自我限制，改为 §1.3 判定表的真实规则
+     （MIT/Apache-2.0/BSD 族**可并入代码**，条件是保留其 `LICENSE`/`NOTICE` 并**声明改动**）；
+     §1.3 判定表补 **BSD-2/BSD-3** 一行并写清各自的「不能带走」；§七 自检清单新增一条署名核对。
+     🔴 **P1/P2/P3 与 L5–L8（LGPL / GPL / ARR 一律不并入）未动** —— `L7` 作废 VulkanMod 移植的理由是它是 LGPL-3.0，与「能否用第三方库」无关。
+  2. `03-DIRECTION.md` §0 共同结论：「本项目 MIT，100% 自研代码」改写为上述准确表述。
+  3. `13-GAP-REGISTRY.md` **GAP-005 原地更正 + 拆两槽**：005a 预处理槽（jcpp 实现 / shaderc 差分 oracle）、
+     005b 解析槽（glslang 全量）。🔴 两条推翻原判的新事实：① glslang 头文件自述「只做预处理以取预处理串」
+     **不是官方支持或完全可用的路**；② 其 `REUSE.toml` 把 `preprocessor/Pp*` 钉为 **BSD-3 + NVIDIA `AML-glslang`（非标文本）**
+     ⇒ 按 §1.3「拿不准 = 只读思路」，并码前须逐条读完。另加 **jcpp = Apache-2.0（纯 Java、token 级、已实现 `\` 续行拼接）**
+     与 **shaderc 预处理入口游戏自带**两条低成本臂。
+  4. `13-GAP-REGISTRY.md` **新增 `GAP-034`「包的 `shadow` 程序从未被装配 / 渲染」**（四条 grep 可复算的事实：
+     `ProgramStage.SHADOW` 零消费者 / `shadowtex0/1`+`shadowcolor0` 绑 `ShadowStubs` 1×1 桩 / 全仓无阴影目标贴图 /
+     `vkdisp:pipeline/shadowed` 是我方三步演示链而非包的 shadow）。
+     ⇒ 这同时**推翻了 QD-11② 的「接太阳方向即可」**：角度接上去也不会有像素变化。已把该族拆成
+     **C2a（光空间数学，可单测、不碰 GPU，1 天）**与 **C2b（pass 装配，独立大项）**，并写明
+     **C2a 不得单独上真机**（会得到一个不可归因的空结果，X46/X49 形态）；级联（4 级）**暂不做** ——
+     OF/Iris 格式**没有** loader 级 CSM/`frustumSplit` API，级联是包在一张深度图内部自切的惯例。
+  5. `QUALITY-DEBT.md`：QD-03 的「95」→ **175**（口径 = 静态非 final 单行声明；分布 `bridge` 123 / `render` 20 / `pack` 10 / `glsl/translate` 7），
+     并立规「脚本能算的数字不再手抄」；QD-11 就地更正两条（② 不完整、① 偏贵 —— 派生机制**已在仓**：
+     `PostPassContract.SAMPLER_DECL:51,97` + `SamplerDimensionPlan.SAMPLER_DECL:186,206` + `PackPostChain:223-232` 已跑通「派生+对差+WARN+排除」；
+     且 `SamplerDimensionPlan:28-32` 早已按 **X39** 明文否决过按名字硬编码 ⇒ 本条实质是「原则没贯彻」）；
+     §0 新增 QD-09~14 ↔ `19` 各小节映射表。
+- **为什么这么改**：①「100% 自研」这条**伪约束**正在实际挡住最省力的正确解（Apache-2.0 的现成 token 级预处理器），
+  且让反射开关等 workaround 有了不该有的借口；②QD-11② 的错判会把一个「几周量级的 pass 装配」
+  登记成「1 小时可闭环」，属本项目反复消灭的那类**会把下一轮引错的记录**。
+- **影响的文档**：`docs/19-IMPROVEMENT-PATHS.md`（新建）、`docs/00-INDEX.md`、`docs/16-READING.md`、
+  `docs/07-CONSTRAINTS.md`、`docs/03-DIRECTION.md`、`docs/13-GAP-REGISTRY.md`、`docs/QUALITY-DEBT.md`、本文件。
+- **测试结果**：✅ 跑了 `./gradlew.bat test --offline` ⇒ **BUILD SUCCESSFUL**，`build/test-results/test` 共 **115 个套件 / 1109 条 / 0 失败 / 0 错误**。
+  🔖 诚实口径：本轮**实跑**的是三条扫文档的守卫 —— `GapRegistryStatusFieldTest`(3) / `VulkanEvidenceDisciplineTest`(4) /
+  `MethodLengthRatchetTest`(4)，改完 `13-GAP-REGISTRY` 与 `00/07/16` 之后跑的，验证「新增 GAP-034 没把状态棘轮撑红、
+  文档措辞守卫没被改松」；其余套件由 Gradle 判定 up-to-date（**本轮零代码改动，这是合理的**，但不等于我逐条重跑过）。
+  ⛔ 纯文档轮**不构成功能证据**，也不据此自证任何画面结论。
+  🔴 **工作区另有非本轮改动**（`src/main/java/dev/vkdisp/render/OfUniformManager.java`、`src/test/.../OfUniformManagerTest.java`，
+  以及**已 staged 的两个删除** `F4InfraSmokeTest.java` / `glsl/FfmBoundaryProbe.java`）⇒ 提交时**按文件名逐个 `git add`**，
+  绝不用 `git add -A`（X12：别把别人的活混进这条 commit）。
+- **待判（不要自行决定）**：`19` §7-2（测试/离线工具可否引用游戏自带的 `org.lwjgl:lwjgl-shaderc`，
+  🔖 本条原挂的「**26.3** 清单里的版本号待查，本机只核到 26.2」**已于同日结掉**：26.3 = **3.4.3**、26.2 = 3.4.1，
+  见 `19` 附录 A5 的复算命令与下一轮条目 **一百零三**）、§7-4（C2b 排哪一轮真机取证）。
+- **是否已提交**：⏳ **未提交**（等用户点头；本轮工作区另有他物，提交时按文件名逐个 `git add`，别 `git add -A`）。
+
+---
+
 ## 2026-10-10（一百零一）— 🎯 GAP-031：「倒影/虚影」定案为 **mip 金字塔的 blit 带了不该带的那次 V 翻转** ⇒ 奇数级上下镜像，被包的 bloom 加回画面
 
 > **verdict = 真机分带读数证明金字塔「只有奇数级是镜像的」（mip0/m2/m4 的 SKY<TERRAIN，而 m1 反着来），去掉那次翻转后四级一致、同机位截图里云的边缘副本消失**

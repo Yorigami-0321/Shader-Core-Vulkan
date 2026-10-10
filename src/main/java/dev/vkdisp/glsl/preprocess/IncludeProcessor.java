@@ -9,6 +9,7 @@ import java.util.regex.Pattern;
 
 import dev.vkdisp.glsl.SourceLineMap;
 import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.glsl.translate.CommentState;
 
 /**
  * 【参考调研】C 线 — #include 展开器
@@ -111,12 +112,27 @@ public final class IncludeProcessor {
             if (count > 0 && lines[count - 1].isEmpty()) {
                 count--;
             }
+            // 🔖 A0：注释状态机复用 translate/CommentState（同一份实现，不造第二套判断逻辑 ——
+            //    19 §2.2 病根 (a)；A1 后随 GlslTokens 收编）。每个文件一份实例：块注释跨行只在本文件内成立。
+            CommentState comments = new CommentState();
             for (int i = 0; i < count; i++) {
                 int lineNo = i + 1;
                 String line = lines[i];
                 String trimmed = line.strip();
+                // 🔴 A0 止血（19 §2.6-A0）：先看**无注释视图**再判这行是不是指令。
+                //    原文形如 #include 而视图里不是 ⇒ 它落在注释里。本阶**只补可见性**，
+                //    展开行为与旧实现逐字一致（改语义属 A2 —— 那时由 jcpp 的注释状态机一次性做对，
+                //    并带三路差分对表当门）。
+                String codeView = comments.stripComments(line, lineNo).strip();
                 Matcher m = INCLUDE_PATTERN.matcher(trimmed);
-                if (m.find()) {
+                boolean isDirective = m.find();
+                if (isDirective && !INCLUDE_PATTERN.matcher(codeView).find()) {
+                    diagnostics.add(TranslateDiagnostic.warn(
+                            "形如 #include 的行位于注释内 ⇒ 本实现仍按真指令展开（这是错的，"
+                                    + "但语义修复属 19 §2.6-A2；本行只为可见性而报）",
+                            currentFile, lineNo));
+                }
+                if (isDirective) {
                     String includePath = m.group(1);
                     String resolved = resolvePath(includePath, currentFile);
                     if (resolved == null) {

@@ -260,7 +260,18 @@ public final class OfUniformManager {
         //   取法与天空重放同源：`gameRenderer.gameRenderState().levelRenderState`。
         //   为什么值得补：BSL 的体积云 `DrawCloudVolumetric` 用它当云层底高，
         //   恒 0 ⇒ 云层被压到海平面以下 ⇒ 一个像素都看不见（GAP-007 清单项）。
-        values.put("cloudHeight", inWorld ? levelState.cloudHeight : 0.0F);
+        // cloudHeight：🔴 必须直读 attributeProbe，**不能**读 `LevelRenderState.cloudHeight`。
+        //   实测（[GAP-033] 自报行）：那个字段在我方取值时机是 **0.0** —— 它要等
+        //   `LevelExtractor:223` 才写进 render state，而本方法的取点在提取之前。这与
+        //   `probeAngle` 当初为 SkyRenderState 记下的同一条教训（「字段在提取前为默认值」p413）。
+        //   原版真值 = 维度属性 `EnvironmentAttributes.CLOUD_HEIGHT`，主世界默认 **192.33**
+        //   （`data/worldgen/DimensionTypes.java:38` + `DimensionDefaults.OVERWORLD_CLOUD_HEIGHT`），
+        //   且 `LevelRenderer:554/563` 把它交给原版云渲染 ⇒ 读同一个属性就是与原版同源，不是我方口径。
+        //   为什么这一格承重：包里两支拿它当**云层底高** ——
+        //   `atmospherics/clouds.glsl:329`（`lowerY`）与 `lighting/shadows.glsl:308`（`cloudLowerY`）。
+        //   恒 0 ⇒ 云层被压到 y=0、相机在层上方 ⇒ 真机「长条云 / 放射指状条带」（GAP-033）。
+        values.put("cloudHeight", inWorld
+                ? probeFloat(probe, EnvironmentAttributes.CLOUD_HEIGHT, partialTicks) : 0.0F);
         // bedrockLevel / nightVision：取值隔离在 `NightVisionSupply`（实体/注册表类在测试
         // 运行时里会 NoClassDefFoundError），语义出处与那条「不能直接喂 nightVisionScale，
         // 否则 BSL 的 `*= 1.0 + nightVision` 会变全屏永久 ×2」的陷阱写在那个类的注释里。
@@ -283,6 +294,7 @@ public final class OfUniformManager {
         values.put("screenBrightness",
                 AtmosphereBuiltins.screenBrightness(mc.options.gamma().get()));
         reportAtmosphereOnce(gapShadowFade, values.get("timeBrightness"), values.get("screenBrightness"));
+        reportCloudInputsOnce(inWorld, values);
 
         // ---- 图集 / 眼亮度（亮度为近似 v1，见 04-SPEC 上传注记登记） ----
         values.put("atlasSize", new int[] {
@@ -674,6 +686,35 @@ public final class OfUniformManager {
     private static final java.util.concurrent.atomic.AtomicBoolean ATMOSPHERE_REPORTED =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
+    /** GAP-033 取证：体积云输入量的一次性自报闩（世界内才落闩，理由见调用点）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean CLOUD_INPUTS_REPORTED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * 🔴 GAP-033：把包的体积云路径**真正读到**的那几个量打出来一次。
+     *
+     * <p>为什么要这条：云被渲染成从一点放射的指状条带，而包侧那支的几何全部由
+     * {@code cloudHeight / cameraPosition / near / far / viewSize} 决定（
+     * {@code atmospherics/clouds.glsl} 的 {@code lowerY/upperY/sampleLength/xzNormalizeFactor}）。
+     * 逐臂截图每次两分钟且被地形与云的时域相位干扰 —— 先把输入钉成一行数，
+     * 才能算出退化落在哪一项，而不是靠猜（X9）。
+     *
+     * <p>🔴 为什么必须「世界内」才落闩：菜单态这些量恒 0，而 {@code gather()} 一帧可被调多次
+     * ⇒ 在菜单就 latch 的话，这一行永远只报一组假的 0（GAP-029「样本=0 被读成 0%」同族）。
+     */
+    private static void reportCloudInputsOnce(boolean inWorld, Map<String, Object> values) {
+        if (!inWorld || !CLOUD_INPUTS_REPORTED.compareAndSet(false, true)) {
+            return;
+        }
+        dev.vkdisp.VkDisp.LOGGER.info(
+                "vkdisp: [GAP-033] 体积云输入: cloudHeight={} cameraPosition={} near={} far={}"
+                        + " view={}x{} sunPosition(eye)={}",
+                values.get("cloudHeight"), values.get("cameraPosition"),
+                values.get("near"), values.get("far"),
+                values.get("viewWidth"), values.get("viewHeight"),
+                values.get("sunPosition"));
+    }
+
     /**
      * GAP-022 取证用：把矩阵按**行**摊平成一行可读文本（走 {@code get(row, col)} 显式点名行列，
      * 不用 {@code get(float[])} —— 那个的行列序还要先查，而本行的全部意义就是让元素序没有歧义）。
@@ -698,6 +739,19 @@ public final class OfUniformManager {
             EnvironmentAttribute<Float> attribute, float partialTicks) {
         Float degrees = probe.getValue(attribute, partialTicks);
         return degrees == null ? 0.0F : degrees * ((float) Math.PI / 180.0F);
+    }
+
+    /**
+     * probe 取**原始浮点**属性（不换算成弧度 —— 与 {@link #probeAngle} 的唯一差别）。
+     *
+     * <p>取不到回 0 且不抛：与本方法所有 probe 读数同一条纪律。真出现 null 时
+     * {@code [GAP-033]} 那行自报会把 0 打出来 ⇒ 不会静默（0 恰好也是本格的事故值，
+     * 所以读那行时必须连同 `far`/`cameraPosition` 一起看，确认不是又落回提取前的默认值）。
+     */
+    private static float probeFloat(EnvironmentAttributeProbe probe,
+            EnvironmentAttribute<Float> attribute, float partialTicks) {
+        Float value = probe.getValue(attribute, partialTicks);
+        return value == null ? 0.0F : value;
     }
 
     /** 世界方向 → 眼空间单位方向（viewRotation 正交，变换后归一防数值漂移）。 */

@@ -1058,7 +1058,7 @@ public final class MrtTerrainPass {
     }
 
     /** 方块图集视图（与原版 {@code LevelRenderer:531} 同一条公开路径）。 */
-    private static GpuTextureView blockAtlas() {
+    static GpuTextureView blockAtlas() {
         GpuTextureView atlas = Minecraft.getInstance().getTextureManager()
                 .getTexture(TextureAtlas.LOCATION_BLOCKS).getTextureView();
         if (atlas == null) {

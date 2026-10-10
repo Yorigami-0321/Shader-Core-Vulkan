@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.glsl.lexer.GlslTokens;
 
 /**
  * 【参考调研】D 线旧内建名替换与属性声明注入（141 阶段矩阵修复）/ shaderc 实测原文 + GLSL/OpenGL 公开语义
@@ -205,8 +206,8 @@ public final class LegacyBuiltinInjector {
         SourceLines lines = SourceLines.of(source);
         List<String> rawLines = lines.lines();
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
-        List<String> codeLines = GlslTextScan.codeViews(rawLines, diagnostics);
-        boolean[] skip = GlslTextScan.preprocessorSkipLines(rawLines, codeLines);
+        List<String> codeLines = GlslTokens.codeViews(rawLines, diagnostics);
+        boolean[] skip = GlslTokens.preprocessorSkipLines(rawLines, codeLines);
 
         // 使用驱动的门（替换前统计：替换会消灭旧名 token）。
         boolean vertexStage = stage == ShaderStage.VERTEX;
@@ -271,7 +272,7 @@ public final class LegacyBuiltinInjector {
         if (toInject.isEmpty()) {
             return new Result(substituted, diagnostics, 0, 0);
         }
-        int insertIndex = GlslTextScan.headerEnd(subRaw);
+        int insertIndex = GlslTokens.headerEnd(subRaw);
         if (insertIndex >= subRaw.size()) {
             // 没有代码行（用而未声明必须发生在代码行上，此分支理论不可达）：不注入，交驱动报错（T11）。
             return new Result(substituted, diagnostics, 0, 0);

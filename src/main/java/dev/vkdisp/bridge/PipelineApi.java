@@ -113,10 +113,14 @@ public final class PipelineApi {
      * sampler，因此库存包 composite/deferred 的 sampler 必须逐一注册；反向（布局条目多于
      * SPIR-V）字节码无校验 —— 多注册无害（fixture/blit 不声明 Globals 仍可绘制的既有实测）。
      *
-     * <p>清单来源 = 库存 BSL_v10.1.8 的 world0/composite + world0/deferred include 闭包
-     * 实测（18 名，run/shaderpacks/BSL_v10.1.8.zip 程序化扫描；colortex/depthtex/noisetex
-     * 等命名与 OptiFine 官方 Uniforms 表同源 —— UniformDecl 的既有参考口径）。换包扩充按
-     * 同法闭包扫描（P4.2 切包回归登记）。
+     * <p>🔴 **C1 之后的来源**（2026-10-10）：= {@link dev.vkdisp.pipeline.model.PackSamplerSuperset#NAMES}，
+     * 由 **OF 命名规则生成**（colortex0..15 / depthtex0..2 / shadowtex0..1 / shadowcolor0 / gaux1..4
+     * / noisetex + 已接线的 DH/Voxy 通道）。布局在启动期定死 ⇒ **不随包变**；包实际声明了什么走
+     * {@link PackSamplerViews} 的类型路由，超集之外的名字在生成期点名 WARN（`19` §4.4 的报告输入）。
+     *
+     * <p>清单来源沿革（保留作证据）：旧 18 名 = 库存 BSL_v10.1.8 的 world0/composite + world0/deferred
+     * include 闭包实测（run/shaderpacks/BSL_v10.1.8.zip 程序化扫描；colortex/depthtex/noisetex
+     * 等命名与 OptiFine 官方 Uniforms 表同源 —— UniformDecl 的既有参考口径）。
      *
      * <p>draw 侧实测（P4.1.2 首轮 runClient，javap {@code FrontendRenderPass.validateDraw}
      * :553 取证）：STRICT_VALIDATION 下 {@code draw()} 传空排除集 → **布局每个条目都必须
@@ -124,14 +128,8 @@ public final class PipelineApi {
      * 的值须为未关闭的 TextureViewAndSampler（视图 usage 含采样位）。故 {@link
      * #setPackSamplerUniforms} 一并绑定，见该方法 javadoc 的占位口径。
      */
-    private static final String[] PACK_FRAGMENT_SAMPLERS = {
-            "colortex0", "colortex1", "colortex6", "colortex8", "colortex9",
-            "depthtex0", "depthtex1", "noisetex",
-            "shadowcolor0", "shadowtex0", "shadowtex1",
-            "gaux1", "lighttex0", "lighttex1",
-            "vxDepthTexOpaque", "vxDepthTexTrans",
-            "dhDepthTex0", "dhDepthTex1",
-    };
+    private static final java.util.List<String> PACK_FRAGMENT_SAMPLERS =
+            dev.vkdisp.pipeline.model.PackSamplerSuperset.NAMES;
 
     /**
      * P4.1.2 draw 侧：把 {@link #PACK_FRAGMENT_SAMPLERS} 全部 setUniform（按名分视图）。
@@ -140,18 +138,18 @@ public final class PipelineApi {
      * —— validateDraw 按**布局**逐条校验（不是按 SPIR-V 引用），缺一条即抛（首条缺的是
      * colortex0，实测 15k+ 次/帧）。
      *
-     * <p>视图映射（OF 合成语义，BSL 源实测定的口径）：
+     * <p>视图映射（🔴 C1 之后 = **先看包这条转译终稿声明的类型**，再落链侧那张已取证的名字表，
+     * 见 {@link PackSamplerViews}）：
      * <ul>
-     *   <li>{@code colortex0} := {@code colorView} —— OF 里 composite 的彩色主输入；
-     *       deferred 的 {@code DRAWBUFFERS:4} **不写 0 号**，场景色跨 deferred 步不变
-     *       （首跑把 colortex0 绑成 deferred 输出 = AO/NaN 缓冲 → composite 读 color
-     *       全黑，p412_world.png 实测根因）；</li>
-     *   <li>{@code gaux1} := {@code auxView} —— OF 身份 {@code gaux1 = colortex4}
-     *       = deferred 的输出缓冲（我们单输出链里 deferred 的 AO 就落在这里）；</li>
-     *   <li>其余 16 名（含 lighttex0/1 sampler3D、shadowtex0/1 sampler2DShadow，
-     *       布局均登记 COMBINED_IMAGE_SAMPLER） := {@code colorView} 占位 —— 采到何值不
-     *       承诺（真值随 OfUniformManager 上传链 / MRT 后补，18-PARALLEL §5 P4.1 ⑤）；
-     *       驱动层对维数/比较采样若报错，按实测原文迭代（X9 不猜）。</li>
+     *   <li>类型要 3D / 中性材质 / 图集 ⇒ 喂对应维度的视图（旧实现把 {@code lighttex0}（sampler3D）
+     *       喂成 2D {@code colorView} = <b>Vulkan 静默 UB</b>，本机没装 validation layer ⇒ 不报错）；</li>
+     *   <li>{@code colortex0} := {@code colorView} —— OF 里 composite 的彩色主输入；deferred 的
+     *       {@code DRAWBUFFERS:4} **不写 0 号**，场景色跨 deferred 步不变（首跑把 colortex0 绑成
+     *       deferred 输出 = AO/NaN 缓冲 → composite 读 color 全黑，p412_world.png 实测根因）；</li>
+     *   <li>{@code gaux1} := {@code auxView}（OF 身份 {@code gaux1 = colortex4} = deferred 输出），
+     *       {@code depthtex*} / {@code shadowtex*} / {@code noisetex} 与后处理链**同源**
+     *       —— 同名在两条链上给不同答案，是本仓反复吃过的那一族；</li>
+     *   <li>这张包没声明的超集条目 ⇒ 仍绑占位（布局每条都必须绑满，见上）。</li>
      * </ul>
      *
      * @param pass 当前 render pass（包片元管线已 setPipeline）
@@ -165,10 +163,12 @@ public final class PipelineApi {
             com.mojang.renderpearl.api.textures.GpuTextureView auxView,
             com.mojang.renderpearl.api.textures.GpuSampler sampler) {
         for (String name : PACK_FRAGMENT_SAMPLERS) {
-            // colortex0 与其余 16 名 → colorView；仅 gaux1 → auxView（OF 身份 colortex4）。
-            com.mojang.renderpearl.api.textures.GpuTextureView view =
-                    name.equals("gaux1") ? auxView : colorView;
-            pass.setUniform(name, view, sampler);
+            // 🔴 C1：视图按「包这条转译终稿声明的**类型**」取（旧实现只认 gaux1，其余一律 colorView
+            //   占位 ⇒ sampler3D 被喂 2D 视图 = Vulkan 静默 UB、depthtex* 被当颜色读），见 PackSamplerViews。
+            if (!PackSamplerViews.bindable(name)) {
+                continue;
+            }
+            pass.setUniform(name, PackSamplerViews.resolve(name, colorView, auxView), sampler);
         }
     }
 

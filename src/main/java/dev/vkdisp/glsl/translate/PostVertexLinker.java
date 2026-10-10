@@ -1,6 +1,7 @@
 package dev.vkdisp.glsl.translate;
 
 import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.glsl.lexer.GlslTokens;
 import dev.vkdisp.pipeline.model.PostPassContract;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -551,7 +552,7 @@ public final class PostVertexLinker {
      */
     private static String splitIoStatements(String source) {
         List<String> lines = split(source);
-        List<String> codeViews = GlslTextScan.codeViews(lines, new ArrayList<>());
+        List<String> codeViews = GlslTokens.codeViews(lines, new ArrayList<>());
         List<String> out = new ArrayList<>(lines.size());
         for (int index = 0; index < lines.size(); index++) {
             String raw = lines.get(index);
@@ -648,7 +649,7 @@ public final class PostVertexLinker {
 
     /** 单行无注释视图（复用 D 线的扫描器，不自己再写一套注释状态机）。 */
     private static String codeView(String line) {
-        return GlslTextScan.codeViews(List.of(line), new ArrayList<>()).get(0);
+        return GlslTokens.codeViews(List.of(line), new ArrayList<>()).get(0);
     }
 
     /** 去掉行尾注释（成员名提取用）。 */
