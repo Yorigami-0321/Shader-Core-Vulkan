@@ -2,7 +2,7 @@
 
 > 工程：`vkdisp`（Vulkan Shader Dispatcher）· 许可证：**MIT**
 > 定位：基于 Minecraft **原版 Vulkan 渲染后端**的、兼容 **OptiFine / Iris 格式**着色器包的引擎。
-> 最后整理：2026-10-10（从遗留 stash 抢救 X43–X49 纪律正文；详见 `CHANGE_LOG.md` 顶部条目）
+> 最后整理：2026-10-10（文档梳理收尾：CHANGE_LOG 压缩修复 + 版本/mixin 镜像全仓同步；详见 `CHANGE_LOG.md` 顶部条目）
 
 ---
 
@@ -12,13 +12,17 @@
 >
 > 🔴🔴 **取证铁律（2026-10-05 用户指令，与三支柱并列）**
 >
-> 1. **只验证功能，不考虑性能。** 本机设备是 **lavapipe（CPU 软件 Vulkan）**，
->    帧率**不代表任何真实硬件** ⇒ 支柱③ B1–B7 **一律不下结论**。
-> 2. **每轮取证必须在 Vulkan 上。** 入口是 `bash tools/vulkan-local/run-client.sh`
->    —— **不是** `./gradlew runClient`：本机系统级无 Vulkan ICD，Minecraft 在 loader
->    缺失时**不崩也不退出**，只打两行然后静默退回 OpenGL 继续跑满取证帧数
->    ⇒ `h33` / `h34` / `h35` **三轮证据全是 OpenGL 产物**。详见 `01-DEV-LOOP.md` §1.2。
+> 1. **只验证功能，不考虑性能。** 取证日志里的设备是 **llvmpipe/lavapipe（CPU 软件 Vulkan）**
+>    （`h36`、`h51`、`h52` 三条日志都这么打），帧率**不代表任何真实硬件** ⇒ 支柱③ B1–B7 **一律不下结论**。
+> 2. **每轮取证必须在 Vulkan 上，且起跑后必须断言后端。** 入口按车道取（详见 `01-DEV-LOOP.md` §1.2）：
+>    - **Linux/WSL2 车道**：`bash tools/vulkan-local/run-client.sh`（启动前 preflight 硬失败，不会静默降级）。
+>      ⚠️ `/tools/` **整目录 gitignored**（`.gitignore:80`，本地免 root Vulkan 前缀）⇒ **不随仓库走**，
+>      新克隆或换到 Windows 工作区时这些脚本**不存在**，别照着路径找。
+>    - **Windows 车道**（2026-10-09 `f126d1a` 起免参数化）：`.\gradlew.bat runClient`。
+>    裸跑的风险是实测过的：loader 缺失时 Minecraft **不崩也不退出**，只打两行然后静默退回 OpenGL
+>    继续跑满取证帧数 ⇒ `h33` / `h34` / `h35` **三轮证据全是 OpenGL 产物**。
 > 3. 上面两条有构建期守卫：`VulkanEvidenceDisciplineTest`（规范被删或改松就红）。
+>    ⚠️ 该守卫只检查**文档措辞**，不检查脚本是否存在 ⇒ 第 2 条的车道差异得到 §1.2 看，别以为脚本一定在。
 
 | 你想知道 | **唯一真源** | ⛔ 不要看 |
 |---|---|---|
@@ -67,18 +71,17 @@
 
 ```
 00-INDEX.md           ← 本文
-02-OVERVIEW.md        ← 是什么、三支柱、要自研哪四件事、为什么必须开 mixin
+02-OVERVIEW.md        ← 是什么、三支柱、要自研哪四件事
 01-DEV-LOOP.md        ← 怎么干活（开发测试流程，动手前必读）
 05-VERSION.md         ← 版本权威（支持 26.3 及之后，主线 26.3）
 07-CONSTRAINTS.md     ← 红线，不可违反（三支柱条款 / M1 mixin 边界 / T17 FFI 安全）
 17-NATIVE.md          ← 性能预算 B1–B7 + 原生准入闸门（G 系列）+ FFM 接线
-18-PARALLEL.md        ← ⛔ 已过时（旧轮次编号），仅并行拆分方法论仍可用
 08-TESTING.md         ← 验收细则（性能 / 原生 / 稳定 / 兼容矩阵）
-03-DIRECTION.md       ← 为什么需要它 + 要自研的四件事 + 性能目标 + 成功标准分级
-04-SPEC.md            ← 技术规格书（含组件清单）
+03-DIRECTION.md       ← 为什么需要它 + 参考模组借鉴分析
+04-SPEC.md            ← 技术规格书（含组件清单 + mixin 注入点登记表）
 06-MIGRATION.md       ← 版本迁移预案
 12-GAP-STRATEGY.md    ← 原版不支持时的自行补充策略
-13-GAP-REGISTRY.md    ← 缺口登记表
+13-GAP-REGISTRY.md    ← 缺口登记表（当前开发主线）
 15-ITERATION.md       ← 三层防乱协议
 16-READING.md         ← 按读者类型的阅读路径
 AGENT_CONTEXT.md      ← 跨会话记忆

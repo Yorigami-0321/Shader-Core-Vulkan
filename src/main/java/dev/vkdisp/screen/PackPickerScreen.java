@@ -26,7 +26,8 @@ import net.neoforged.neoforge.client.gui.ConfigurationScreen;
  * <p><b>定位与边界</b>（改动前必读）：
  * <ul>
  *   <li>🟡<b>临时工具，非最终形态</b>：真正的入口应当像 Iris 那样挂在视频设置里；
- *       本项目当前 {@code MIXIN_CONFIG_COUNT = 0}（零 mixin 红线），不碰原版菜单，
+ *       本项目的 mixin 预算全部留给管线装配层（{@code MIXIN_CONFIG_COUNT = 1}，
+ *       注入点登记表见 {@code docs/04-SPEC.md} §5.0），不改原版菜单，
  *       故先落在模组配置页位置做测试用。</li>
  *   <li>替换掉 NeoForge 自动生成的 {@code ConfigurationScreen}（该类 {@code final}，
  *       无法继承加选项卡）—— 所以本屏内附一个「完整 TOML」按钮回原配置页，

@@ -26,16 +26,16 @@ bridge/
   DeviceApi.java          // GpuDevice / CommandEncoder 获取
   FrameApi.java           // LevelRenderer / FrameGraphBuilder 插入
   TextureApi.java         // GpuTexture / GpuTextureView / RenderTarget
-  MixinTargets.java       // 所有 mixin 目标的类名常量（便于集中改；当前 mixin 数 = 0）
+  MixinTargets.java       // 所有 mixin 目标的类名常量（便于集中改；当前 MIXIN_CONFIG_COUNT = 1）
 ```
 
 **规矩**：
-- **现状**：主线不走 mixin——帧注入用 NeoForge 官方 `RenderLevelStageEvent.AfterLevel`（P4.3 起，原因见 05-VERSION 帧注入点行）
-  （`render/FullscreenPassHook`）；mixin **有条件开闸**（`07-CONSTRAINTS` M1，2026-10-02 成文），
-  当前 `MixinTargets.MIXIN_CONFIG_COUNT = 0`，`mixin/` 包未建立。
-  **开闸后唯一允许的注入点** = `net.minecraft.client.renderer.chunk.ChunkSectionsToRender#renderLayers`（private），
-  且受 M1 五项编码约束 + X22–X26 约束。升级排查时**只改 `bridge/MixinTargets` 的常量**，
-  注入方法体本身不含业务逻辑（X25）
+- **现状**：帧注入走 NeoForge 官方 `RenderLevelStageEvent.AfterLevel`（`render/FullscreenPassHook`）；
+  管线装配层 mixin 已开闸（`07-CONSTRAINTS` M1 松绑，2026-10-02 成文，2026-10-03 落地），
+  当前 `MixinTargets.MIXIN_CONFIG_COUNT = 1`，`vkdisp.mixins.json` 已启用，
+  3 个 client mixin（M-01 `ChunkSectionLayerPipelineMixin` / M-01b `ChunkSectionsToRenderMixin` /
+  M-05 `LevelRendererChunkCaptureMixin`），注入点登记表见 `04-SPEC.md` §5.0。
+  升级排查时**只改 `bridge/MixinTargets` 的常量**，注入方法体本身不含业务逻辑（X25）
 - `pack/` / `glsl/` / `config/` / `screen/` 等业务包 **一律不得** `import com.mojang.renderpearl.*`
 - 只有 `bridge/` 允许 import 原版渲染类型（若将来启用 `mixin/`，同样只允许转发）
 - **`accel/`（加速层）例外说明**：它的接口只用纯 Java 类型，实现里若需触碰原版类型，
@@ -48,11 +48,12 @@ bridge/
 
 ### 2.2 mixin 只转发，不写业务
 
-> **历史路线已弃用，当前不使用 mixin。** 主线帧注入走 NeoForge 官方
-> `RenderLevelStageEvent.AfterLevel`（`render/FullscreenPassHook`），`neoforge.mods.toml` 的
-> `[[mixins]]` 保持注释，`MixinTargets.MIXIN_CONFIG_COUNT = 0`。
+> **当前已启用 3 个管线装配层 mixin**（M1 松绑后登记制）：
+> `ChunkSectionLayerPipelineMixin` / `ChunkSectionsToRenderMixin` / `LevelRendererChunkCaptureMixin`，
+> 登记表见 `04-SPEC.md` §5.0。每个注入点均可独立关闭（X29）、首行打 `hit` 日志（T10）、
+> 且受 M1 五项编码约束。
 
-**若将来启用 mixin**，规矩不变——mixin 只转发、不写业务（目标签名一变全废）：
+mixin 规矩——只转发、不写业务（目标签名一变全废）：
 
 ```java
 // ✅ 对：只转发
@@ -164,6 +165,7 @@ JAVAP="/c/Program Files/Java/jdk-25.0.4.1/bin/javap.exe"
 | 26.3 | 2026-09-29 | —（基线） | 基线建立；工程已换成官方 MDK（NeoForge 26.3.0.23-beta） | — |
 | 26.3 | 2026-10-02 | `gradle.properties` + 7 份文档镜像 | **同 MC 线跟进**：NeoForge 23→41（beta），MC 仍为 26.3，故 §4 迁移流程的「符号缺失」步骤为空 —— 编译零错。`mods.toml` 的 `versionRange` 随模板 `${neo_version}` 自动抬到 `[26.3.0.41-beta,)`，**装包侧也需 ≥ .41** | 20min（首次为新版重反编译 + 重编译 7301 个 MC 源文件；缓存命中后 7s） |
 | 26.3 | 2026-10-03 | `gradle.properties` + `neoforge.mods.toml` + `build.gradle` + 2 份文档 | **上一行那个坑的修法**：模板里 `versionRange` 引用 `${neo_version}` 会把 beta 序号一起锁死。拆出 `neo_version_range=[26.3.0,)` 专管运行时声明，`neo_version` 只管编译期。**坑点**：`build.gradle` 的 `replaceProperties` 必须同步加键 —— 模板引用了未注入的属性，`expand` 会直接失败。这是 Gradle 模板方案的固有陷阱 | 15min（`generateModMetadata` 45s + 编译测试 19s） |
+| 26.3 | 2026-10-06 | `gradle.properties`（`neo_version` 41→51）+ `build.gradle`（MDG 2.0.147→2.0.148）+ `04`/`05`/`13` | **同 MC 线内的 beta 序号跟进**，夹在 h48 功能提交里一并升（`cbb33a3`）。🔖 **两个遗留**：① 当时没回填本日志，也没同步 `00`/`06`/`07`/`AGENT_CONTEXT` 的版本镜像 ⇒ 2026-10-09 文档梳理时补齐；② 涉及原版签名的源码级核实仍以 `26.3.0.41-beta` 的 sources / patched jar 为据（`04` §5.0、`13` GAP-015），**在 .51 上尚未重核** —— 下次碰原版签名前先按 §4 重跑一遍核实 | —（未单独计时） |
 
 > 回填格式：一行一个版本，坑要写"现象 + 根因 + 修法"，便于下次查阅。
 

@@ -2,7 +2,7 @@
 
 > 配套：`03-DIRECTION.md`（必读前置）、`07-CONSTRAINTS.md`
 > **版本权威：`05-VERSION.md`**（支持范围 = MC 26.3 及之后；当前主线 26.3）
-> 版本锁定：MC **26.3** / NeoForge **26.3.0.41-beta** / Java **25** / MDG **2.0.147** / Gradle **9.4.1**
+> 版本锁定：MC **26.3** / NeoForge **26.3.0.51-beta** / Java **25** / MDG **2.0.148** / Gradle **9.4.1**
 > （工程已是官方 MDK `NeoForgeMDKs/MDK-26.3-ModDevGradle`，实际值以 `gradle.properties` 为准）
 
 ---
@@ -309,11 +309,11 @@ OF/Iris 包依赖额外的顶点属性。原版 `VertexFormat` 需要通过 `Ver
 ```gradle
 // build.gradle 要点（官方 MDK 结构，ModDevGradle）
 plugins {
-    id 'net.neoforged.moddev' version '2.0.147'
+    id 'net.neoforged.moddev' version '2.0.148'
 }
 
 neoForge {
-    version = project.neo_version          // = 26.3.0.41-beta，取自 gradle.properties
+    version = project.neo_version          // = 26.3.0.51-beta，取自 gradle.properties
 }
 
 dependencies {
@@ -353,7 +353,7 @@ displayName = "${mod_name}"         # → Vulkan Shader Dispatcher
 > `displayTest` 用默认值（**不要** `IGNORE_ALL_VERSION`）。本模组为纯客户端模组，
 > 不需要额外声明服务端依赖；若将来要在服务端做硬拒绝，再加 `side = "CLIENT"` 的依赖表。
 
-`vkdisp.mixins.json`（**Phase 0 还没有 mixin，等第一个 mixin 落地时再建这个文件**）：
+`vkdisp.mixins.json`（**管线装配层 mixin 已启用，登记表见 §5.0**）：
 
 ```json
 {

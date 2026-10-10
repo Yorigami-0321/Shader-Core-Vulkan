@@ -381,7 +381,7 @@ if (DEBUG) { LOGGER.info("cull kept={}", kept); }
 ```properties
 minecraft_version        = 26.3
 minecraft_version_range  = [26.3,)
-neo_version              = 26.3.0.41-beta
+neo_version              = 26.3.0.51-beta
 neo_version_range        = [26.3.0,)
 mod_id                   = vkdisp
 mod_group_id             = dev.vkdisp
@@ -393,11 +393,11 @@ mod_group_id             = dev.vkdisp
 
 | 用途 | 用哪个 | 语义 |
 |---|---|---|
-| 编译期依赖（`build.gradle` → `neoForge.version`） | `neo_version` | 精确锁 `26.3.0.41-beta` |
+| 编译期依赖（`build.gradle` → `neoForge.version`） | `neo_version` | 精确锁 `26.3.0.51-beta` |
 | 运行时依赖声明（`neoforge.mods.toml` → `versionRange`） | `neo_version_range` | 只锁下限 `[26.3.0,)` |
 
 理由：26.3 仍在 beta 期，官方每周发新版且版本号带 `-beta` 后缀。若把
-`versionRange` 写成 `[26.3.0.41-beta,)`，用 41 之前任一 beta 的用户会被
+`versionRange` 写成 `[26.3.0.51-beta,)`，用 51 之前任一 beta 的用户会被
 **直接拒载**；等 26.3 转正，版号变成无后缀的 `26.3.0`，字符串不等，
 不同加载器的版本序处理不一致，存在「明明装了却被判不满足」的风险。
 

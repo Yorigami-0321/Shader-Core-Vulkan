@@ -28,11 +28,12 @@
 4. 04-SPEC.md              ← 全文，组件清单在这（含每块的参考去向与热度）
 5. 07-CONSTRAINTS.md       ← 红线 X1–X21，不可违反
 6. 08-TESTING.md           ← 验收与回归清单（含性能硬指标）
-7. 17-NATIVE.md            ← 开工前必读：参考先行 + 性能预算（C++/Rust 是未验证的可选项）
+7. 17-NATIVE.md            ← 开工前必读：参考先行 + 性能预算（冷路径 Java/Rust 实测候选，热路径 Java 为主）
 8. 06-MIGRATION.md §2      ← bridge 包隔离（从第一天就落实）
 9. 12-GAP-STRATEGY.md      ← 遇到原版没有的特性时怎么办
 10. 13-GAP-REGISTRY.md     ← 上面那份的登记表
 11. 15-ITERATION.md        ← 迭代维护协议
+12. CHANGE_LOG.md          ← 变更记录（根目录：最近若干轮全文 + 更早的阶段摘要；第 76 轮及以前见 git log 与 evidence/）
 ```
 
 ### 若你是「做技术评审的人」
@@ -96,7 +97,7 @@
 | `13-GAP-REGISTRY.md` | ✅ | 特性缺口登记表 |
 | `15-ITERATION.md` | ✅ | 迭代维护协议（A1–A17） |
 | `16-READING.md` | ✅ | 本文 |
-| `17-NATIVE.md` | ✅ **新增** | 性能预算 + 参考先行（C++/Rust 仅作未验证的可选项） |
+| `17-NATIVE.md` | ✅ **新增** | 性能预算 + 参考先行（冷路径 Java/Rust 实测候选，热路径 Java 为主） |
 | `AGENT_CONTEXT.md` | ✅ | 跨会话记忆 |
 
 > 旧方向（改写第三方渲染器）的文档已于 **2026-09-29 全部删除**，不留归档副本，不要尝试恢复。

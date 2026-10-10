@@ -43,18 +43,18 @@
 
 | 键 | 值 | 用途 |
 |---|---|---|
-| `neo_version` | `26.3.0.41-beta` | **编译期**依赖（`build.gradle` → `neoForge.version`），精确锁死 |
+| `neo_version` | `26.3.0.51-beta` | **编译期**依赖（`build.gradle` → `neoForge.version`），精确锁死 |
 | `neo_version_range` | `[26.3.0,)` | **运行时**依赖声明（`neoforge.mods.toml` → `versionRange`），只锁下限 |
 
 **为什么不能把 `versionRange` 写成 `[${neo_version},)`**：
 
 1. **拒载旧 beta 用户**。26.3 仍在 beta 期，官方几乎每周发新版。锁成
-   `[26.3.0.41-beta,)` 意味着任何用 41 之前 beta 的用户装这个 jar 会被直接拒绝。
+   `[26.3.0.51-beta,)` 意味着任何用 51 之前 beta 的用户装这个 jar 会被直接拒绝。
 2. **转正后有误判风险**。26.3 正式发布时版号是 `26.3.0`（**无 `-beta` 后缀**）。
    Maven 版本序里 `26.3.0-beta < 26.3.0`，但字符串不等；不同加载器对
    带/不带后缀的混合比较实现不一致，存在「明明装了却被判不满足」的风险。
 
-**边界**：下限取 `26.3.0` 而非 `26.3.0.41-beta`，意味着**不保证** 26.3 线早期
+**边界**：下限取 `26.3.0` 而非当前的 `neo_version`（现为 `26.3.0.51-beta`），意味着**不保证** 26.3 线早期
 beta 上可用 —— 但项目铁律已定「不支持 26.2 及之前」，26.3 线内的向后兼容由
 NeoForge 自身保证（同一 MC 版本的 beta 之间不应有破坏性变更），且
 `05-VERSION.md` §4 已规定不做前瞻兼容设计。
@@ -88,7 +88,7 @@ NeoForge 自身保证（同一 MC 版本的 beta 之间不应有破坏性变更�
 | 隔离层 | 做法 | 目的 |
 |---|---|---|
 | **渲染 API 访问** | 所有原版渲染 API 调用集中在一个 `bridge` 包，业务代码不直接 import `com.mojang.renderpearl.*` | 升级时只改 bridge |
-| **帧注入点** | 当前走 NeoForge 官方 `RenderLevelStageEvent.AfterLevel`（`render/FullscreenPassHook`；P4.3 从 `RenderFrameEvent.Post` 迁移 —— Post 在 GUI 合成之后触发会整屏覆盖 GUI，实测否决）；mixin 路线**有条件开闸**（`07-CONSTRAINTS` M1：默认零 mixin，全局只许 1 个注入点 = `ChunkSectionsToRender#renderLayers`），当前 `MIXIN_CONFIG_COUNT = 0`、未建 `mixins.json`。若将来启用：集中登记、只转发不写业务 | 事件签名变化时改动集中在 hook 类；mixin 目标签名变化时只改 `bridge/MixinTargets` |
+| **帧注入点** | 帧注入走 NeoForge 官方 `RenderLevelStageEvent.AfterLevel`（`render/FullscreenPassHook`）；管线装配层 mixin 已开闸（`07-CONSTRAINTS` M1 松绑：登记制 + 可关闭制 + 逐个开启），当前 `MIXIN_CONFIG_COUNT = 1`，`vkdisp.mixins.json` 已启用（3 个 client mixin：`ChunkSectionLayerPipelineMixin` / `ChunkSectionsToRenderMixin` / `LevelRendererChunkCaptureMixin`），注入点登记表见 `04-SPEC.md` §5.0 | 事件签名变化时改动集中在 hook 类；mixin 目标签名变化时只改 `bridge/MixinTargets` |
 | **着色器格式解析** | 解析层完全独立，不依赖任何原版类型 | OF/Iris 格式本身不随 MC 变 |
 | **版本常量** | 版本号只出现在 `gradle.properties`（当前未建 `Versions.java`，也不做运行时版本判断） | 单一数据源 |
 

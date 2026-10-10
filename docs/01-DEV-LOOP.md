@@ -93,9 +93,9 @@ JDK 升级/重装覆盖了 `cacerts`、或构建再次报 `PKIX` / `SSLHandshake
 > **正确做法永远是 `fix-java-proxy-ca`（导入 JDK 信任库），不是改 Gradle 配置。**
 > 这个改动还会污染仓库 —— 代理 CA 的信任路径是本机特有的，提交上去对别人只有害处。
 
-### 1.2 🔴 取证必须走 `run-client.sh`，不要裸跑 `./gradlew runClient`（2026-10-05）
+### 1.2 🔴 取证必须走预检脚本，不要裸跑 `runClient`（2026-10-05）
 
-> **背景（实测，`h36`）**：本机（WSL2）**系统级没有 Vulkan ICD**。
+> **背景（实测，`h36`）**：本机（WSL2/Linux）**系统级没有 Vulkan ICD**。
 > 而 `runClient` 带了 `--graphicsBackend VULKAN` 时，Minecraft 在 loader 缺失时
 > **不会崩也不会退出** —— 它只打两行
 > ```
@@ -108,15 +108,27 @@ JDK 升级/重装覆盖了 `cacerts`、或构建再次报 `PKIX` / `SSLHandshake
 
 **正确入口**：
 
+**Linux/WSL2 车道**：
 ```bash
 bash tools/vulkan-local/preflight.sh        # 自检：Vulkan 可用 → 退出码 0
 bash tools/vulkan-local/run-client.sh -PquickPlay   # 主车道；会硬失败而不是静默降级
 bash tools/vulkan-local/run-client.sh iso -PquickPlay  # 隔离车道（run/h27）
 ```
 
-`run-client.sh` 做四件裸跑不会做的事：① 启动前 preflight 硬失败；
-② 查残留客户端（两会话共享 `run/` 会互相顶掉，见 `build.gradle` 隔离车道注释②）；
-③ 接上 prefix 环境（免 root loader + lavapipe ICD）；④ 起跑后**断言后端**。
+⚠️ **这三条脚本在仓库里取不到**：`/tools/` 整目录是 gitignored（`.gitignore:80`「本地运行环境（免 root Vulkan 前缀等，不入库）」），
+所以它们只存在于跑过 env-1 的那台机器上。**新克隆 / 当前这个 Windows 工作区里没有**（实测 `tools/vulkan-local/` 只剩 `env.sh`、`vk_smoke.py`、`pkg/`、`prefix/`）。
+换车道时的硬要求不变：**起跑后必须在日志里断言到 `Using graphics backend Vulkan`**，读不到就作废这一臂。
+
+**Windows 车道**（2026-10-09 entry 97）：
+```bash
+# 无需参数化，直接运行
+.\gradlew.bat runClient
+```
+Windows 车道已免参数化：`vulkanPreflight` 任务自动检测系统 Vulkan loader（`C:\Windows\System32\vulkan-1.dll`），
+无需再带 `-PvulkanSkipCheck=true` 或 `--no-configuration-cache`。
+
+Linux 车道脚本做四件事：① 启动前 preflight 硬失败；② 查残留客户端；③ 接上 prefix 环境（免 root loader + lavapipe ICD）；④ 起跑后**断言后端**。
+Windows 车道由 `vulkanPreflight` 任务完成类似检查。
 
 **P0.2 当前状态（2026-10-05）**：✅ **已达成**
 （`vkdisp: backend=Vulkan, device=llvmpipe (LLVM 23.1.8, 256 bits)`，证据 `evidence/h36-…`）。
@@ -433,7 +445,8 @@ grep -nE "ERROR|Exception|Mixin apply failed|validation error" run/logs/latest.l
 > | ~~P4.2~~ | 切包回归 | ✅ 已落地（2026-10-01） |
 > | ~~P4.3~~ | 选项 GUI | ✅ 已落地（2026-10-01） |
 
-**当前工作主线**：按 `13-GAP-REGISTRY.md` 逐条关闭缺口，每次变更前先登记（T12）。
+**当前工作主线**（2026-10-09）：按 `13-GAP-REGISTRY.md` 逐条关闭缺口，每次变更前先登记（T12）。
+> 主要未决项：GAP-022 周期 3 黑帧归因、GAP-023 深度时刻快照、GAP-027 云/实体/手/天气/shadow 剩余程序接水。
 
 ---
 

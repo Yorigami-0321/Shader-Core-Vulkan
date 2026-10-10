@@ -138,7 +138,7 @@ import zipfile;print(zipfile.ZipFile('run/mods/mcpfabric-neoforge-0.5.0+26.3.jar
  .read('META-INF/neoforge.mods.toml').decode())"
 ```
 
-应看到 `version = \"0.5.0+26.3\"`、`versionRange = \"[26.3.0.10-beta,)\"`（vkdisp 是 `26.3.0.41-beta`，满足下限）。
+应看到 `version = \"0.5.0+26.3\"`、`versionRange = \"[26.3.0.10-beta,)\"`（vkdisp 是 `26.3.0.51-beta`，满足下限）。
 
 ---
 
@@ -412,7 +412,7 @@ pitch 会被 `Mth.clamp` 钳到 [-90, 90]。返回 `{yaw, pitch, x, y, z, ...}`�
   —— 🔖 **2026-10-03 实测 CDN 可下载**（HTTP 200 / 185206 字节），
   与本节原先「CDN 被拦截」的记载相反，见 §0.1
 - jar 内 `META-INF/neoforge.mods.toml` 声明 `versionRange = "[26.3.0.10-beta,)"`，
-  vkdisp 是 `26.3.0.41-beta` ⇒ 满足
+  vkdisp 是 `26.3.0.51-beta` ⇒ 满足
 - 上游 `LICENSE` = MIT；`mcp-server/package.json` license = MIT
 - 截图实现：`Screenshot.takeScreenshot(mainRenderTarget(mc), ...)` —— 直接抓渲染目标。
   ✅ 已用 §8.3 的两级判据实证：抓到的确实是 vkdisp 接管后的目标
