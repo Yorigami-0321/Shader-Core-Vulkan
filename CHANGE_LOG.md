@@ -6,6 +6,202 @@
 ---
 ---
 
+## 2026-10-11（一百零九）— 🧱 包的 `gbuffers_skybasic` 真的在画了（零错误、零 mixin），但当前写进 colortex0 的是**黑** ⇒ 默认仍关，本条不关
+
+> **verdict = 代码轮 + 真机取证（Windows / RTX 4060），🔴 功能未达成**：接线全通、`Missing uniform`
+> 与 `Couldn't compile pipeline` **各 0 条**，画面也确实换成了包算的那一版（不再是原版平面蓝），
+> 但判据数字说清楚它还不对：`c0@afterSky` 的 SKY_BAND = **`(0,0,0) allZero=true`**
+> （对照：上一轮原版重放档同一取点 = `(128,160,255) nonBlack=100%`）。
+> ⇒ **`mrt.skyPackShader` 的代码默认保持 `false`**，产品画面仍是一百零七定案的那一版。
+
+- **落了多少**（5 个文件 + 1 个新类，全部 `./gradlew build` 退出码 0 / **1164 项 0 失败**）：
+  1. **`pack/GbufferVertexSources`（新类）** —— 「一条 gbuffer 程序的顶点源从哪来」的唯一出口。
+     建它的直接原因是 `ClassLineRatchetTest`：`VkDispVirtualPack` 正好压在 1573 上限，
+     把天空的接线直加进去 = 1590 被拦 ⇒ 按棘轮的裁决落到独立类（QD-10 方向）。
+     顺手把 `generateGbufferAdapter` 从虚拟包搬进来（虚拟包回到 1551）。
+  2. **`PackTerrainSource`**：`SKY_PROGRAM` + post 顶点路线（复用 `PostVertexLinker`，
+     配不上对就**整条不接线**，不留「片元是包的、顶点不是」的半接线）。
+  3. **`VkDispConfig`**：新闸门 `mrt.skyPackShader`（默认**关**）+ 把上一条 `mrt.skyPass` 的
+     默认翻成开（一百零七的定案落地；本轮一度被 `git checkout` 连带回退，已恢复并复验）。
+  4. **`VkDispConfigHotReload`**：`skyPackShader` 进**边沿判定**与自报行 —— 生成期只读一次的开关
+     不进这里就是个死开关（QD-08「写了但没生效」那一族，与 `packWater` 同例）。
+  5. **`bridge/SkyPackGbuffer`（新类）** + `SkyIntoGbuffer` 的互斥挂点 + `TerrainPipelineApi`
+     按程序分族供矩阵（见下）。零 mixin。
+- **三条实测掉出来的事实**（都是「不量就会猜错」的那一类）：
+  1. 🔴 **`getCompiledPipeline` 抛的「Failed to find or load pipeline」是措辞陷阱**：它内部走
+     `PipelineCache.get` = **未命中就地编译**，所以回 null 的真实含义是**编译失败**，不是「没注册」。
+     照字面读会去做「注册管线」那件根本不需要的事。真因在 renderpearl 自己的 ERROR 行里：
+     `vertex shader ... attrib (Position) does not have a matching vertex buffer element`
+     ⇒ 缺 `.withVertexBinding(0, POST_VERTEX_FORMAT)`（链各级同一条事实，见其注释）。
+  2. 🔴 **`noisetex` 少绑一条**：`PackTextures.ensureReady()` 此前只在**地形 pass 内部**调，
+     而天空跑在地形**之前** ⇒ 首帧回落 `builtinNoiseView()`、而它在 pass 打开期间建 encoder ⇒ 抛
+     （h48y 同一条实测的复刻）。修法照抄地形那条：开 pass 前 `PackTextures.ensureReady()` + `VolumeStubs.init()`。
+  3. 🔴 **深度口径的分族判据是「程序拿矩阵干什么」，不是程序名前缀**：`gbuffers_skybasic` 名字在
+     gbuffer 族，但它的片元从 `gl_FragCoord` 反解 `viewPos` ⇒ 与链同形。按 `gbuffers_*` 一律喂引擎口径
+     时它算出来是黑的 ⇒ `GbufferVertexSources.builtinsFamily()` 让屏幕空间那几条走 `Family.CHAIN`。
+     **改完仍然黑**（见上面 verdict 的数字）⇒ 这一条是必要条件、不是充分条件。
+- **影响的文档**：`docs/13-GAP-REGISTRY.md`（GAP-027 天空行新增「已接线但画面未达成」一条）、本文件。
+- 🔴 **本轮把「包天空写 0」判到了底，并且推翻了自己上一版的结论**（三步，每步都有数）：
+  1. **先否证「颜色数学坏」**：把探针包的 skybasic 片元改成**常数色** `albedo = vec3(1.0, 0.0, 0.5)`
+     （`alpha` 保持包原值 = 单变量）。真机 `c0@afterSky` SKY_BAND 仍是 **`(0,0,0) allZero=true`**
+     ⇒ 坏在**写入通路**，不在数学。🔖 顺带否证了我上一版写进本文件的「因 = `skyColor` 没供」——
+     那条**作废**：`skyColor` 只在 `#ifdef SKY_VANILLA` 分支里被读，而 BSL 把它注释掉了
+     （`lib/settings.glsl:411`），默认档走的是 `#else` 的 `SKY_R/G/B` 常量。
+     **教训形态**：从「包里有这个 uniform + 我方没供」直接跳到「所以天空是黑的」，中间没量过。
+  2. **再否证「深度附件挡了片元」**：先加显式 `DepthStencilState(ALWAYS_PASS, write=false)` ⇒ 仍 `(0,0,0)`；
+     再把那条 pass 的深度附件改成 **null** ⇒ 客户端**以 exit 1 直接死掉**（日志最后一行就是本类的
+     builtins 上传）。⇒ 深度附件既不是因、也不能省（记进 `SkyPackGbuffer` 的 `@param depth`）。
+  3. **真因 = `ftransform()` 的展开档位按「程序名前缀」选，而不是按「程序拿矩阵干什么」**：
+     `ShaderPackCompiler:195` 原来是 `postIdentity = program.stage().isPostChain()`
+     ⇒ `gbuffers_skybasic` 落进**地形族**，顶点被展开成
+     `gl_Position = gbufferProjection * gbufferModelView * vec4(Position, 1.0)`
+     —— 而我方给它的是 **NDC 全屏三角形** ⇒ 再乘一次相机矩阵 = 退化到零面积 ⇒ **一个片元都不落**。
+     这条 GAP-030 的注释自己就写着「与地形族同一条展开式会把全屏 quad 按相机矩阵拧掉」，
+     只是判据没覆盖到「名字在 gbuffer 族、几何却是屏幕空间」的这一条。
+- ✅ **修法 + 复判**：`postIdentity = isPostChain() || GbufferVertexSources.postVertexRoute(program)`
+  （与 `gbufferProjection` 的供值分族**同一个判据**，两处不再各说各话）。
+  离线守卫：`PackTerrainSourceTest` 新增断言「配对后的天空顶点里不许出现 `gbufferProjection *` 与
+  `gbufferModelView *`」—— 它先**红**（抓到真因）再绿，是这条修法的验收仪器。
+  真机复判（常数色档）：`c0@afterSky` SKY_BAND = **`(255.0000, 0.0000, 127.0000)`**
+  = 探针常数 ×255 **逐位吻合**、`nonBlack=100.000%` ⇒ **写入通路打通**。
+  换回真包 BSL：`c0@afterSky` SKY_BAND = `(58.12, 73.71, 83.78)`（蓝主导、非平坦）
+  ⇒ colortex0 里的天空已经是**包算的那一版**；正午画面 = 包的天空渐变 + 日 glare，
+  与原版档的平面 `(128,160,255)` 明显不同。
+- **未解决 / 下一刀**：① 🔴 **夜里那一档还不对**（`time set 18000`、`pitch −85`）：天顶出现一圈
+  **明显的环状不连续**，且**看不到星**（BSL 的 `STARS` 默认开、`skybasic.glsl:100` 的 `DrawStars`
+  应当画）。候选按信息量排：(a) `gl_FragCoord.z` 在恒等 MVP 下 = **0.5**（顶点写 `vec4(Position,1)`、
+  `Position.z=0`），而包把它当屏幕深度用（`screenPos.z`）⇒ 反解出的 `viewPos` 距离固定，
+  `GetSkyColor`/`DrawStars` 里任何依赖 `length(viewPos)` 或未归一化 `viewPos` 的分支都会走错；
+  (b) `moonVisibility` 依赖的 `sunVec` 是否真从顶点供到（本轮 `PostVertexLinker` 的
+  `synthesizedVaryings` 要读出来）；(c) 环 = 地平线处的分支边界 ⇒ 与 (a) 同源。
+  **判据 = 还是那件探针仪器**（常数色已证明它一票能判）：把 `albedo` 换成
+  `vec3(float(moonVisibility), length(viewPos)/1000.0, nViewPos.y)` 一跑就能同时判 (a)(b)(c)。
+  ② `renderStage` 逐 draw 未接（GAP-028）⇒ 本档只有「天盘一次」的语义；
+  ③ `gbuffers_skytextured`（日月盘）走不通：`RenderPipelines.CELESTIAL` 的几何是 `POSITION_TEX`，
+  该程序顶点要 `UV0`+`Color` ⇒ 属性欠供，另案。
+  🔖 **因此 `mrt.skyPackShader` 的代码默认仍是 `false`** —— 白天已经对了，但夜里不能比原版档差。
+- **是否已提交**：✅ 本轮结束即提交并推送（2026-10-11 用户口径：每轮开发结束都提交推送，不再等点头）。
+  （`PipelineApi`/`TerrainPipelineApi` 各只动了 1 行，且**没抬任何一条棘轮基线**：
+  PipelineApi 1163/1163、TerrainPipelineApi 1131/1131、VkDispVirtualPack 1551/1573）。
+
+---
+## 2026-10-11（一百零八）— 🧱 开始接包的 `gbuffers_skybasic`：先证明「全屏能替掉天空穹顶」，再被巨类棘轮拦下（未抬基线，已回退）
+
+> **verdict = 代码轮，🔴 零行为改动**：生产路径今天**没有**任何调用点走 `SKY_PROGRAM` ⇒ 画面与
+> 上一轮逐字相同。`./gradlew build` 退出码 **0**（**1164 项 0 失败**，1 skip）。
+> 这一轮买到的东西是**一条被实测的证明**，不是「天空接好了」。
+
+- **为什么先做证明而不是先画**：登记在 GAP-027 的可行性评估里，「天空穹顶几何是私有的、
+  `SkyRenderer.render` 内部自建 render pass ⇒ 我方绑不进 uniform」这两条决定了
+  **零 mixin 的路线只有一条**：把天空当成**一次全屏 draw**，用包的 skybasic 片元。
+  而它成立的前提是可证伪的：包的天空片元必须是**屏幕空间**的、且顶点不读几何属性。
+- ✅ **证明（逐行取自包 + 一条离线测试）**：`program/gbuffers_skybasic.glsl:84-87` 用
+  `gl_FragCoord.xy / vec2(viewWidth, viewHeight)` + `gl_FragCoord.z` 过 `gbufferProjectionInverse`
+  反解 `viewPos`（方向随后被归一化 ⇒ 穹顶与全屏对同一像素算出同一方向）；该程序的顶点
+  （`:148-181`）**不声明任何 attribute**，只有 `ftransform()` + 三条 `out`（`sunVec`/`upVec`/`alpha`）
+  ⇒ 它与后处理链那一族**同形**。新测试
+  `PackTerrainSourceTest#skybasicUsesPostVertexRouteAndNeedsOnlyOneAttachment` 跑真实 BSL 库存钉住：
+  契约 = **1 个输出、槽 [0]**（决定天空 pass 的附件数，与地形 1 / 水 2 各自独立）、
+  post 顶点配对**成功**、片元要的每条 varying 在配对后的顶点终稿里都有同名 `out`、
+  统一后的块名仍是 `VkDispBuiltins`。
+- **本次改了什么**（2 个文件，都不在渲染热路径上）：
+  1. `pack/PackTerrainSource`：新增 `SKY_PROGRAM` 常量 + `postVertexProgram()` 判定 +
+     `linkPostVertexRoute()`（取**同一条程序**的顶点终稿交给 `glsl/translate/PostVertexLinker`，
+     与链那一族同一份实现、同一顺序：**契约从未改写的片元解析、落进资源的是改写后的那一份**）。
+     `Result` 因此多两个字段（`linkedFragment` / `vertexSource`）+ `postVertexRoute()`。
+     🔴 **配不上对就整条不接线**，不退回 chunk 适配层 —— 那正是本项目反复付学费的「半接线」
+     （片元是包的、顶点不是 = 链接期才炸）。顶点终稿**不许跨维度凑**（照 `PackPostChain.selectVertex` 的纪律）。
+  2. 上面那条测试。
+- ⛔ **卡点（如实记，别读成「做完了」）**：把 `gbuffers_skybasic` 落进
+  `VkDispVirtualPack.GBUFFER_PROGRAMS` 那一步（表项 + `currentTerrainMemoKey()` 进键 +
+  `realizeGbufferProgram` 取 post 顶点对）我先按直白写法实现过一版，被
+  `ClassLineRatchetTest` 当场拦下：**`VkDispVirtualPack.java` 1590 > 上限 1573**
+  （该类本来就压在棘轮上限上）。棘轮的裁决是「新增内容请落到独立类里（QD-10 方向）」，
+  ⇒ **已整段回退，未抬基线**（`git checkout` 后该文件回到 1573）。
+  下一步的第一刀因此不是天空，而是**把 gbuffer 程序注册表从虚拟包里拆出去**
+  （`GbufferArtifacts` + `buildGbufferPrograms` + `memoKeyFor` 落一个独立类），拆完才有地方放天空。
+- **顺带钉住的一条设计约束（写在这里以免下一轮又走弯路）**：天空那条 pass 只有 **1 个颜色目标**
+  ⇒ 它**不进** `MrtPlan` 的冻结集（`packProgramNames` 保持 `[terrain, water]`）。
+  把它并进去会把地形 pass 的附件数从 1 抬到 2，而 `MrtTerrainPass` 的附件数与派生管线必须逐位相等
+  （不等是 `setPipeline` 抛 = 崩客户端）。
+- **影响的文档**：`docs/13-GAP-REGISTRY.md`（GAP-027 天空行新增「可行性已证 + 卡点」一条）。
+- **未解决 / 存疑**：① 绘制那一半（管线 + pass + 绑定 + 与原版重放互斥）未做；
+  ② `alpha` 恒 1.0 是因为 `renderStage` 逐 draw 供值未接（GAP-028），本档只画一次所以正好是
+  天空盘该用的值，但**原版那种「天盘/星/暗盘分三次 draw」的语义在这一档不存在**；
+  ③ `gbuffers_skytextured`（日月盘）走不通：`RenderPipelines.CELESTIAL` 的几何是
+  `POSITION_TEX`，而该程序的顶点要 `UV0`+`Color` ⇒ 属性欠供，另案。
+- **是否已提交**：⏳ 未提交（等用户点头）。改动面 = `pack/PackTerrainSource.java`、
+  `PackTerrainSourceTest.java`、`CHANGE_LOG.md`、`docs/13-GAP-REGISTRY.md`。
+
+---
+## 2026-10-11（一百零七）— 🎯 真机定案「着色器云渲染错误」：主因是**天空没进 gbuffer**（`mrt.skyPass` 默认关）⇒ 翻成开；并撤回「`cloudHeight` 供 0 = 长条云根因」
+
+> **verdict = 代码轮 + 真机复判（Windows / RTX 4060）**：用户报的那一格**不是云的画法坏**。
+> BSL v10.1.8 把 `SKY_DEFERRED` **注释掉了**（`lib/settings.glsl:163`）⇒ 链里 `deferred1.glsl:473`
+> 那支 `#if defined OVERWORLD && defined SKY_DEFERRED` 根本不参与编译 ⇒ **天空只能来自 gbuffer**，
+> 而我方 `mrt.skyPass` 一直默认关 ⇒ 包的体积云画在**纯黑底**上 = 「黑天空 + 一团长条白」。
+> 同一进程内热翻这一个开关：关 = `c0@afterTerrain` 的 SKY_BAND 逐字 `(0,0,0) allZero=true`；
+> 开 = `c0@afterSky` SKY_BAND `(128.0000, 160.0000, 255.0000) mean_luma=160.0558 nonBlack=100.000%`，
+> 且 `[GAP-003/sky]` 自报的 `skyColor=(0.502, 0.628, 1.000)` ×255 与它**逐位吻合**（两个独立仪器同一数）。
+> 画面侧 `pitch −5 / −45 / −85` 三档：蓝天 + 连贯白云、正上方有云层、地形边缘无重影。
+> `./gradlew build` 退出码 **0**（**1163 项 0 失败**，1 项 skip）。
+
+- **本次改了什么**（3 个文件，全是行为面一处 + 两处措辞更正）：
+  1. **`VkDispConfig`：`mrt.skyPass` 默认 `false` → `true`**，字段注释重写（为什么翻、判据数字、
+     买到什么/没买到什么、回退条件）。🔴 顺带删掉注释里那句失效的「**需 `terrainAfterLevel=true`**」——
+     两档挂点都接（帧图档 `MrtTerrainPass:205-215` 用 `FramePass#requires`，AfterLevel 档
+     `FullscreenPassHook:296`），本轮取证跑的就是帧图档（`terrainAfterLevel=false`）。
+     当年留默认关的唯一理由是 h48e 那批「开天空 ⇒ 链输出恒 0」，**h48k（2026-10-07）已撤销**
+     （数字取自第 180~300 帧，没过预热闸门）；本轮把它留的「还开着的那一条」判据补齐，并在真机第二次否证：
+     `main`（area=FULL）**1289** 次读数里 `allZero` **0 次**、`mean_luma=158.1`。
+  2. **`OfUniformManager` 的 `cloudHeight` 供值注释 + `OfUniformManagerTest` 的守卫措辞**：撤回
+     「恒 0 ⇒ 云层被压到 y=0 ⇒ 真机长条云」那条因果。**取法改对仍然对**（`LevelRenderState.cloudHeight`
+     在 `LevelExtractor:223` 之前恒 0，与 `probeAngle` 同一条教训），但因果不成立：包里那两支消费者
+     （`atmospherics/clouds.glsl:329` 的 `lowerY`、`lighting/shadows.glsl:308` 的 `cloudLowerY`）
+     都坐在 `#ifdef IS_IRIS` 里，而我方 `grep -rn "IS_IRIS" src/main` **零命中** ⇒ 走的是 `#else`
+     的硬编码 `192.0` ⇒ 这个 uniform 对包的云几何**当前一个像素都不参与**。守卫保留，但钉的是取法不是症状。
+  3. **`GAP-033` 收口为「当前构建在登记机位不复现」**（不是「已修」）：本轮没有任何针对条带的改动，
+     只是把两个能解释「看着像条带」的因判掉 —— 边缘副本 = GAP-031 的金字塔 V 翻转、纯黑底 = 本轮这一格。
+- **为什么这么改**：这一格是「换包即漂移的硬编码假设」那一族的又一个样本 —— 我方一直按「包会自己算天空」
+  留着 skyPass 关，而 BSL 的默认档恰恰**不**自己算天空（`SKY_DEFERRED` 注释掉）。开关的默认值
+  当时挂在一个**已被自己文档撤销的**结论上，属于「撤回没落到默认值」的漏网。
+- **取证方法（两条会咬人的，都记进了登记表）**：
+  1. 🔑 **探针包**：判「包在自己片元里算到的标量」不必改引擎 —— 拷一份 BSL 到
+     `run/shaderpacks/<探针包名>/`（本仓的包扫描器认目录形态），在 `deferred1.glsl` 的云混合之后加
+     4 行 `color.rgb = vec3(...)` 把标量画成色带（温度计用 `step()` 编码，绕开后续 tonemap 的歧义），
+     冷启动跑。本轮一票判掉了「`sunVisibility`/`sunSkyVisibility` 塌了」这条假设（实测都饱和在 1、
+     `timeAngle` 落在 [0.2,0.5) 的正确档、`darknessFactor`/`blindFactor` 都是 0）。用完已删。
+  2. 🔴 **日时钟每真实分钟走 ~0.1 天** ⇒ 同一机位隔两三分钟的两张图，太阳高度角能差几十度。
+     本轮**第一次**判「云是黑的」就是在 `dayTime≈8400~10400`（太阳只差地平线十几度）上做的，
+     于是把傍晚的正常暗云读成了 bug。⇒ 判云/天空之前 `time set 6000` 后**立刻**截，并当场读
+     `get_time_and_weather` 把 `dayTime` 记进判据。`gamerule doDaylightCycle false` 经 mcpfabric **不可用**（参数被拒）。
+- **补测：新默认值是端到端量过的，不是「改了 define 的第二参数就算数」**：把 `run/config/vkdisp-client.toml`
+  里 `skyPass` 这一行**整行删掉**再冷启动 ⇒ ① 客户端退出时把这一项按**新默认**写回文件（回读 = `skyPass = true`）；
+  ② 正午（`time set 6000` 后立刻截，`dayTime` 当场读）画面 = 蓝天 + 连贯白云；③ 夜里（`time set 18000`）
+  不回归 —— 天空按夜色黑、**星空看得见**、月晕在，`main` 的 `allZero` 在 1451 次读数里 1 次（首帧）。
+  🔑 夜里这一臂同时是 `[GAP-003/sky]` 那条**观测面自报**的正面样本：`clockTime=18341, skyColor=(0.000, 0.000, 0.000)`
+  ⇒ 「`c0@afterSky` 近黑」在这一档是**夜空本来就该黑**，而不是「天空没画进去」—— 这正是 h48k 给这条自报
+  立这条判据时想要区分的那两件事。
+- **影响的文档**：`docs/13-GAP-REGISTRY.md`（GAP-019 天空行收口 + GAP-027 **补登记「天空」这一条程序**
+  + GAP-029 加更正行并改状态 + GAP-033 收口与撤回）、本文件。代码侧：`VkDispConfig`、
+  `OfUniformManager`、`OfUniformManagerTest`。
+- **测试结果**：`./gradlew build` **退出码 0**，**1163 项 / 0 失败 / 1 skip**。
+  棘轮未抬基线（`VkDispConfig` 与 `OfUniformManager` 都只改注释与一个默认值）。
+  真机臂：BSL_v10.1.8、冷启动（避开 GAP-032 的热重载崩）、`optionOverrides=""`、854×480。
+- **未解决 / 存疑**：① 🔴 **本条买到的天空是原版 `SkyRenderer` 的颜色，不是包的 `gbuffers_skybasic` 片元**
+  ⇒ 包的天空渐变 / 大气 / 日月盘 / 星空仍缺（`GbufferPipelineSwaps` 今天只替换 `RenderPipelines.CLOUDS`），
+  已补进 GAP-027 的名单，**不许按本轮已修读**；② 天空仍偏**淡**（原版天顶色 + 包的大气没叠上去），
+  与 `docs/Vitrail Shaders下运行的BSL.png` 那张参考图的差距主要就在这；③ **要不要定义 `IS_IRIS`** =
+  一次翻掉 `clouds.glsl:269/463/503/585` + `shadows.glsl:307` 多支的兼容性裁决，登记待判，别顺手开；
+  ④ `mrt.depthGlProxy` 本轮跑的是 `true` 档（链拿 GL 口径、`Family.GBUFFER` 留引擎口径），
+  产品默认该定在哪一档仍未判（GAP-022）。
+- **是否已提交**：⏳ 未提交（等用户点头）。改动面 = `src/main/java/dev/vkdisp/VkDispConfig.java`、
+  `src/main/java/dev/vkdisp/render/OfUniformManager.java`、
+  `src/test/java/dev/vkdisp/render/OfUniformManagerTest.java`、`CHANGE_LOG.md`、`docs/13-GAP-REGISTRY.md`。
+  ⚠️ 取证用的 `run/shaderpacks/vkdisp-cloud-probe/` 已删；`run/config/vkdisp-client.toml` 留在
+  `skyPass = true` + `shaderPack = "BSL_v10.1.8"`（run/ 不入库）。
+
+---
 ## 2026-10-10（一百零六）— 🎯 阶梯 **C1**（全屏步 sampler 改由包声明派生 + 按类型路由视图）+ **C3**（`PackConformanceReport` 覆盖 §4.1 全部 10 张名单）；真机两轮取证
 
 > **verdict = 代码轮 + 真机取证**：`./gradlew build` 退出码 0（全套测试绿，新增 10 条）；

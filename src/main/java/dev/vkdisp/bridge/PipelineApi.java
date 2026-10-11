@@ -592,7 +592,7 @@ public final class PipelineApi {
      * input 都要在格式里找到同名元素，找不到就抛 {@code does not have a matching vertex buffer
      * element} —— 那是 required 管线，代价是<b>整次资源重载失败</b>。
      */
-    private static final VertexFormat POST_VERTEX_FORMAT = buildPostVertexFormat();
+    static final VertexFormat POST_VERTEX_FORMAT = buildPostVertexFormat(); // 包内可见：GAP-027 包天空那条管线复用同一份，不另造第二份口径
 
     private static VertexFormat buildPostVertexFormat() {
         VertexFormat.Builder builder = VertexFormat.builder(0);

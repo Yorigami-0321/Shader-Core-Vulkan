@@ -181,15 +181,17 @@ class OfUniformManagerTest {
     }
 
     @Test
-    @DisplayName("🔴 cloudHeight 必须走 attributeProbe，不得回落到 LevelRenderState 字段（GAP-033 真机定案）")
+    @DisplayName("🔴 cloudHeight 必须走 attributeProbe，不得回落到 LevelRenderState 字段（取法守卫）")
     void cloudHeightMustComeFromAttributeProbe() throws java.io.IOException {
         // 事故形态（真机 [GAP-033] 自报行量到）：`levelState.cloudHeight` 在我方取值时机是
         //   **0.0** —— 它要等 LevelExtractor:223 才写进 render state，而 gather() 在提取之前。
-        //   后果：包里 atmospherics/clouds.glsl:329 与 lighting/shadows.glsl:308 都拿它当
-        //   **云层底高** ⇒ 云层被压到 y=0、相机在层上方 ⇒ 真机「长条云 / 放射指状条带」，
-        //   且正上方完全没有云（两个症状同源，修后两格一起消失）。
-        // 🔖 这条与 probeAngle 的注释是同一条教训的第二次落地（「SkyRenderState 字段在提取前
-        //   为默认值」p413）⇒ 守卫钉的是**取法**，不是数值，因为数值对不对由真机自报行判。
+        //   与 probeAngle 的注释是同一条教训的第二次落地（「SkyRenderState 字段在提取前为默认值」
+        //   p413）⇒ 本守卫钉的是**取法**，不是数值，因为数值对不对由真机自报行判。
+        // 🔴 但**不许把这条读成「云那一格由它负责」**（2026-10-11 复核，纠正本测试此前的措辞）：
+        //   包里两支消费者（clouds.glsl:329 的 lowerY、shadows.glsl:308 的 cloudLowerY）都坐在
+        //   `#ifdef IS_IRIS` 里，而我方从不定义 IS_IRIS ⇒ 那一支拿的是硬编码 192.0，本 uniform
+        //   对包的云几何当前不参与。它仍然必须供对（无条件读它的包会用到），但真机那两格云症状
+        //   的因在别处：边缘副本 = GAP-031 的金字塔 V 翻转，黑天空 = `mrt.skyPass`（见其字段注释）。
         String source = Files.readString(Path.of(
                 "src/main/java/dev/vkdisp/render/OfUniformManager.java"));
         assertTrue(source.contains("EnvironmentAttributes.CLOUD_HEIGHT"),
@@ -199,7 +201,7 @@ class OfUniformManagerTest {
                 "找不到 cloudHeight 的供值点，本守卫的前提变了，请重判而不是让它空过");
         assertTrue(!source.contains("values.put(\"cloudHeight\", inWorld ? levelState.cloudHeight"),
                 "cloudHeight 不得再读 levelState.cloudHeight —— 那个字段在 LevelExtractor "
-                        + "跑之前恒为 0，正是 GAP-033 长条云的根因");
+                        + "跑之前恒为 0（取法问题，不是云症状的解，理由见上面那段）");
         // 取法必须与同文件里已验证可用的那条 probe 路径同形状（不另造一套读数机制）
         assertTrue(source.contains("probeFloat(probe, EnvironmentAttributes.CLOUD_HEIGHT"),
                 "cloudHeight 必须走 probeFloat(probe, …) —— 与 probeAngle 同一个 probe 来源");

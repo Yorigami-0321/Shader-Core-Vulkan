@@ -214,6 +214,13 @@ public final class VkDispVirtualPack {
         table.put(dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM, new GbufferArtifacts(
                 dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM,
                 () -> VkDispConfig.MRT_PACK_WATER_SHADER.get()));
+        // GAP-027 天空线第二刀（默认关，闸门 = mrt.skyPackShader）。🔴 它的**顶点**不走 chunk
+        //   适配层而走 post 恒等 MVP（判定与理由见 PackTerrainSource.postVertexProgram），
+        //   且它**不进** MrtPlan 的冻结集 —— 那条 pass 只有 1 个颜色目标，并进去会悄悄把地形
+        //   pass 的附件数抬到 2，而附件数与派生管线不匹配是 setPipeline 抛 = 崩客户端。
+        table.put(dev.vkdisp.pack.PackTerrainSource.SKY_PROGRAM, new GbufferArtifacts(
+                dev.vkdisp.pack.PackTerrainSource.SKY_PROGRAM,
+                () -> VkDispConfig.MRT_SKY_PACK_SHADER.get()));
         return table;
     }
 
@@ -995,45 +1002,6 @@ public final class VkDispVirtualPack {
     }
 
     /**
-     * 按<b>本条程序</b>的 varying 契约生成顶点适配层（失败 → {@code null} = 不接线）。
-     *
-     * <p>🔖 与片元源同批生成：两者要么都给、要么都不给，
-     * 免得出现「片元是包的、顶点还是原版」的半接线状态（那正是链接失败的直接来源）。
-     *
-     * <p>🔖 三个 {@code mrt.terrain*Probe} 是**地形那条单变量实验**的档位（GAP-008 取证线），
-     * 只喂地形程序；别条程序一律按 {@code false} 生成中性适配层并自报一行。
-     * 理由：那些档位的全部判据（h10~h15）都是在地形上取的，把它们静默加到水上，
-     * 下一臂的「地形变亮/没变」就说不清了。
-     */
-    private static String generateGbufferAdapter(GbufferArtifacts entry,
-            dev.vkdisp.pipeline.model.PackTerrainProgram program) {
-        boolean terrainProgram = dev.vkdisp.pack.PackTerrainSource.TERRAIN_PROGRAM.equals(entry.program);
-        boolean fullLight = terrainProgram && VkDispConfig.MRT_TERRAIN_FULL_LIGHT_PROBE.get();
-        boolean parallaxSkip = terrainProgram && VkDispConfig.MRT_TERRAIN_PARALLAX_SKIP_PROBE.get();
-        boolean colorProbe = terrainProgram && VkDispConfig.MRT_TERRAIN_COLOR_PROBE.get();
-        if (!terrainProgram && (VkDispConfig.MRT_TERRAIN_FULL_LIGHT_PROBE.get()
-                || VkDispConfig.MRT_TERRAIN_PARALLAX_SKIP_PROBE.get()
-                || VkDispConfig.MRT_TERRAIN_COLOR_PROBE.get())) {
-            VkDisp.LOGGER.warn("vkdisp: [GAP-027] {} 的适配层**不**应用 mrt.terrain*Probe 档"
-                    + "（那些是地形单变量实验的判据，静默加到别条程序会让两臂不可比）", entry.program);
-        }
-        try {
-            dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.Result adapter =
-                    dev.vkdisp.glsl.translate.PackVertexAdapterGenerator.generate(
-                            program.inputs(), fullLight, parallaxSkip, colorProbe);
-            for (TranslateDiagnostic diagnostic : adapter.diagnostics()) {
-                logDiagnostic(diagnostic);
-            }
-            return adapter.glsl();
-        } catch (Throwable t) {
-            VkDisp.LOGGER.error("vkdisp: [GAP-003] 顶点适配层生成 FAILED（原文如下）"
-                    + " -> 本条 gbuffer 程序不接线（沿用原版 core/terrain）: program="
-                    + entry.program, t);
-            return null;
-        }
-    }
-
-    /**
      * 当前配置下应使用的<b>基础</b>记忆键（{@code profile|selection|包地形开关|包水开关|overrides}）。
      *
      * <p>🔖 单一真源：{@link #ensureTerrainProgram} 造键、{@link #takeSourceMemo} 校验键，
@@ -1058,6 +1026,9 @@ public final class VkDispVirtualPack {
                 //   会按新值走（QD-08 第五例）。副作用（有意的、保守的）：改水开关时地形那条
                 //   也会重算一次 —— 过度失效是安全的，不足才是要命的那一类。
                 + "|" + VkDispConfig.MRT_PACK_WATER_SHADER.get()
+                // GAP-027 天空线：`mrt.skyPackShader` 同样在本窗口内被读（天空那条的生成闸门）
+                //   ⇒ 必须进键（QD-08 同一族，由 GenerationTimeSwitchInventoryTest 兜）。
+                + "|" + VkDispConfig.MRT_SKY_PACK_SHADER.get()
                 + "|" + dev.vkdisp.pack.PackOptionOverrideSwitch.spec();
     }
 
@@ -1176,10 +1147,17 @@ public final class VkDispVirtualPack {
         }
         dev.vkdisp.pipeline.model.PackTerrainProgram program = terrain.program();
         entry.contract = program;
-        entry.adapterMemo = generateGbufferAdapter(entry, program);
-        entry.builtinsLayout = BuiltinsBlockLayout.parse(program.fragmentSource());
+        // 🔴 post 顶点路线（今天 = 天空那一条）：顶点 = 包自己写的 .vsh + post 恒等 MVP，
+        //   片元 = PostVertexLinker <b>改写后</b>的那一份（它统一两侧的内建块）。
+        //   🔖 块布局必须从**终稿**解析：解析改写前那份 = 「上传按旧布局写、驱动按新布局读」，
+        //   与 GAP-022 的半翻同族（静默错值，不是崩）。
+        boolean postVertex = terrain.postVertexRoute();
+        String fragment = postVertex ? terrain.linkedFragment() : program.fragmentSource();
+        entry.adapterMemo = postVertex
+                ? terrain.vertexSource()
+                : dev.vkdisp.pack.GbufferVertexSources.chunkAdapter(entry.program, program);
+        entry.builtinsLayout = BuiltinsBlockLayout.parse(fragment);
         logLayout(entry.program, entry.builtinsLayout);
-        String fragment = program.fragmentSource();
         // 🔖🔖 采样因子探针在此生效（**不**接进 OfGlslTranslator，理由见该类 KEEP_OUT）：
         //   作用域天然是「本条程序的片元源」，且不引入任何跨程序 / 跨线程的静态开关。
         //   🔖 只改**赋值右值**，不碰任何声明 ⇒ outputCount / samplers / varyings 契约不变，

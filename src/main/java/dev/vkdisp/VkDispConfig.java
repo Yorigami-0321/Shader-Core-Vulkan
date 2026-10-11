@@ -743,19 +743,60 @@ public final class VkDispConfig {
             .define("mrt.postChainTraceSlots", "0,1,2");
 
     /**
-     * GAP-003 非地形 gbuffer 线 · 第一步：把**天空**重放进 colortex0（默认关）。
+     * GAP-003 非地形 gbuffer 线 · 第一步：把**天空**重放进 colortex0（<b>默认开</b>）。
      *
      * <p>机制：原版 {@code SkyRenderer} 自建 pass 且颜色附件是 LOAD 语义 ⇒ 给它一个指向
      * 我方 colortex0 的 {@code RenderTarget} 薄壳即可，零 mixin、不需要 M-04。
      * 🔖 <b>顺序 = 天空先、地形后盖</b>（h48e 实测改的：地形深度裁不住原版天空，
      * 「后补天空」会把刚画好的地形整片盖掉；原版与 OF/Iris 的 gbuffer 顺序都是 skybasic → terrain）。
-     * ⇒ 两档（帧图 / AfterLevel）都接：帧图档用 {@code FramePass#requires} 显式声明依赖，
-     * AfterLevel 档用调用序（{@code FullscreenPassHook#paintGbufferAndTerrain}）。
+     * ⇒ 两档（帧图 / AfterLevel）都接：帧图档用 {@code FramePass#requires} 显式声明依赖
+     * （{@code MrtTerrainPass} 里 {@code pass.requires(skyPass)}），AfterLevel 档用调用序
+     * （{@code FullscreenPassHook#paintGbufferAndTerrain}）。
      * 🔴 靠<b>插入序</b>排帧图 pass 是无效的 —— h48g 实测，见 {@code 06-MIGRATION.md} V5。
+     *
+     * <p>🔴 <b>为什么默认从关翻成开</b>（2026-10-11 真机 RTX 4060 定案，判据数字见 GAP-019 天空行）：
+     * ① BSL v10.1.8 把 {@code SKY_DEFERRED} <b>注释掉了</b>（{@code lib/settings.glsl:163}）⇒
+     *    链里 {@code deferred1.glsl:473} 那支算天空的代码根本不参与编译 ⇒ <b>天空只能来自 gbuffer</b>；
+     *    关着量的 {@code c0@afterTerrain} SKY_BAND 逐字 {@code (0,0,0) allZero=true}，
+     *    画面 = 黑天空 + 一团长条白 = 用户报的「云渲染错误」。
+     * ② 当年留关的唯一理由是 h48e「开天空 ⇒ 链输出恒 0」，那条<b>已在 h48k 被本仓自己撤销</b>
+     *    （数字取自第 180~300 帧，没过预热闸门）⇒ 撤结论时没同步撤默认值。本轮补齐 h48k 留的判据：
+     *    {@code c0@afterSky} SKY_BAND {@code mean_luma=160.06 nonBlack=100%}（与自报
+     *    {@code skyColor=(0.502,0.628,1.000)}×255 逐位吻合），且 {@code main} 的 {@code allZero}
+     *    在 1289 次读数里 <b>0 次</b>。
+     *
+     * <p>🔴 <b>买到什么、没买到什么</b>：买到的是<b>原版</b> {@code SkyRenderer} 的颜色落进 colortex0，
+     * <b>不是</b>包的 {@code gbuffers_skybasic} 片元 ⇒ 包的天空渐变 / 星空仍缺（那一格见下一条开关
+     * 与 GAP-027 的天空行）。
+     *
+     * <p><b>回退条件</b>：包的 skybasic 接进 gbuffer（{@code mrt.skyPackShader}）之后，本开关的职责
+     * 被包接管 ⇒ 默认改回 {@code false} 并在 GAP-003 记一行换代。
      */
     public static final ModConfigSpec.BooleanValue MRT_SKY_PASS = BUILDER
-            .comment("GAP-003：把原版天空重放进 colortex0（地形之前、链之前；需 terrainAfterLevel=true，默认关）。")
-            .define("mrt.skyPass", false);
+            .comment("GAP-003：把原版天空重放进 colortex0（地形之前、链之前；两档挂点都接，默认开）。"
+                    + "🔴 关掉它 = 包的云画在纯黑底上 —— BSL 把 SKY_DEFERRED 注释掉了，天空只能来自 gbuffer"
+                    + "（2026-10-11 真机定案，判据见字段注释与 GAP-019 天空行）。买到的是原版天顶色，不是包的 skybasic 片元。")
+            .define("mrt.skyPass", true);
+
+    /**
+     * GAP-027 天空线第二刀：gbuffer 里的天空改用<b>包的 {@code gbuffers_skybasic}</b>（默认<b>关</b>）。
+     *
+     * <p>买到的是包算的天空（{@code GetSkyColor} 渐变 + {@code DrawStars} + {@code SunGlare} +
+     * {@code nightVision}/{@code CLASSIC_EXPOSURE}），替掉的是上一条那一笔<b>原版平面底色</b>。
+     * 🔖 走「一次全屏 draw」而不是重放穹顶几何：该程序的片元是<b>屏幕空间</b>的
+     * （{@code gbuffers_skybasic.glsl:84-87} 用 {@code gl_FragCoord} 反解 {@code viewPos}），
+     * 顶点不读任何属性 ⇒ 与后处理链那一族同形；离线证明见
+     * {@code PackTerrainSourceTest#skybasicUsesPostVertexRouteAndNeedsOnlyOneAttachment}。
+     * 🔴 开档时原版那一笔<b>必须不画</b>（两层天空同框 = 与 GAP-027 的双云同族），
+     * 两个读点互斥，且自报行说清本帧走的是哪条。
+     *
+     * <p><b>回退条件</b>：关掉 = 回到 {@code mrt.skyPass} 的原版重放档（已定案的默认画面）；
+     * 生成期配不上 post 顶点、或该程序输出不是单槽 0 ⇒ 自动不接线并 WARN，<b>不静默换绑</b>。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_SKY_PACK_SHADER = BUILDER
+            .comment("GAP-027：gbuffer 的天空改用包的 gbuffers_skybasic（一次全屏 draw；默认关 = 上一条的原版重放档）。"
+                    + "开档时原版那一笔不画；配不上顶点或输出不是单槽 0 时自动不接线并 WARN。")
+            .define("mrt.skyPackShader", false);
 
     /**
      * GAP-027 第二刀：把**云**画进 gbuffer（默认关）。

@@ -110,6 +110,13 @@ public final class SkyIntoGbuffer {
             return;
         }
         clearWriteGeneration(color, depth);
+        // 🔴 GAP-027 天空线第二刀：包天空接管的<b>那一帧</b>，原版那一笔<b>必须不跑</b> ——
+        //   两层天空同框是 GAP-027「双云」那一族的复刻。接管失败（契约不满足 / 编译还没落地 /
+        //   这一路抛了）时本方法继续往下走 = <b>退回原版重放</b>，并由 SkyPackGbuffer 点名一次。
+        if (SkyPackGbuffer.render(color, depth)) {
+            TargetReadback.probeAfterSky();
+            return;
+        }
         if (renderer == null || targetWidth != width || targetHeight != height) {
             rebuild(mc, color, depth, width, height);
         }

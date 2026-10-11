@@ -454,7 +454,7 @@ public final class TerrainPipelineApi {
     }
 
     /** 某条包片元的绑定组布局：VkDispBuiltins 块 + <b>它自己</b>自由声明的每个 sampler。 */
-    private static BindGroupLayout packBindGroupLayout(PackTerrainProgram program) {
+    static BindGroupLayout packBindGroupLayout(PackTerrainProgram program) {
         BindGroupLayout.Builder builder = BindGroupLayout.builder();
         for (String name : program.bindGroupUniformNames()) {
             builder = name.equals(PackTerrainProgram.BUILTINS_BLOCK)
@@ -792,8 +792,8 @@ public final class TerrainPipelineApi {
                     net.minecraft.client.Minecraft.getInstance(),
                     mainTargetWidth(), mainTargetHeight(), blockAtlasSizeOrEmpty(), java.util.List.of(),
                     // 🔴 GAP-022：gbuffers_* 这一族<b>永远</b>引擎口径（它的顶点阶段要用这个矩阵写
-                    //   gl_Position，喂 D2·P 会让 clip.z 越界）⇒ 传 GBUFFER 让开关对它无效。
-                    dev.vkdisp.render.OfUniformManager.Family.GBUFFER);
+                    //   gl_Position，喂 D2·P 会让 clip.z 越界）。族由 builtinsFamily 判，见其 javadoc。
+                    dev.vkdisp.pack.GbufferVertexSources.builtinsFamily(program));
             MappableRingBuffer ring = builtinsRing(program,
                     Math.max(TERRAIN_BUILTINS_MIN_BYTES, layout.byteSize()));
             try (com.mojang.renderpearl.api.buffers.GpuBufferSlice.MappedView view =

@@ -254,12 +254,6 @@ public final class OfUniformManager {
         values.put("rainStrength", rainStrength);
         values.put("wetness", rainStrength);
         values.put("isEyeInWater", eyeInWater(camera));
-        // cloudHeight：✅ 公开路径核实（26.3.0.51-beta）
-        //   `LevelRenderState.cloudHeight` 是 **public float**（源码第 28 行），
-        //   原版自己在 `LevelRenderer:554/563` 就把它当云层高度传给云渲染。
-        //   取法与天空重放同源：`gameRenderer.gameRenderState().levelRenderState`。
-        //   为什么值得补：BSL 的体积云 `DrawCloudVolumetric` 用它当云层底高，
-        //   恒 0 ⇒ 云层被压到海平面以下 ⇒ 一个像素都看不见（GAP-007 清单项）。
         // cloudHeight：🔴 必须直读 attributeProbe，**不能**读 `LevelRenderState.cloudHeight`。
         //   实测（[GAP-033] 自报行）：那个字段在我方取值时机是 **0.0** —— 它要等
         //   `LevelExtractor:223` 才写进 render state，而本方法的取点在提取之前。这与
@@ -267,9 +261,15 @@ public final class OfUniformManager {
         //   原版真值 = 维度属性 `EnvironmentAttributes.CLOUD_HEIGHT`，主世界默认 **192.33**
         //   （`data/worldgen/DimensionTypes.java:38` + `DimensionDefaults.OVERWORLD_CLOUD_HEIGHT`），
         //   且 `LevelRenderer:554/563` 把它交给原版云渲染 ⇒ 读同一个属性就是与原版同源，不是我方口径。
-        //   为什么这一格承重：包里两支拿它当**云层底高** ——
-        //   `atmospherics/clouds.glsl:329`（`lowerY`）与 `lighting/shadows.glsl:308`（`cloudLowerY`）。
-        //   恒 0 ⇒ 云层被压到 y=0、相机在层上方 ⇒ 真机「长条云 / 放射指状条带」（GAP-033）。
+        //   🔴 但**不许把它读成「修好了云」**（2026-10-11 复核，纠正本行此前那句「恒 0 ⇒ 长条云」）：
+        //   包里那两支消费者 `atmospherics/clouds.glsl:329`（lowerY）与 `lighting/shadows.glsl:308`
+        //   （cloudLowerY）都坐在 `#ifdef IS_IRIS` 里，而我方**从来没定义过 IS_IRIS**
+        //   （grep src/main 零命中）⇒ `CLOUD_HEIGHT=-1` 那支走的是 `#else` 的硬编码 192.0，
+        //   这个 uniform 对包的云几何**当前不参与**。供值该对仍然要对（任何无条件读它的包都要它），
+        //   但它不是云那一格的解：真机「黑天空 + 一团长条白」的因是 `mrt.skyPass` 关着
+        //   （BSL 把 SKY_DEFERRED 注释掉了 ⇒ 天空只能来自 gbuffer），云的边缘副本因在 GAP-031。
+        //   要不要定义 IS_IRIS = 一次翻多支的兼容性裁决（clouds.glsl:269/463/503/585 +
+        //   shadows.glsl:307 全跟着切），登记待判，别顺手开。
         values.put("cloudHeight", inWorld
                 ? probeFloat(probe, EnvironmentAttributes.CLOUD_HEIGHT, partialTicks) : 0.0F);
         // bedrockLevel / nightVision：取值隔离在 `NightVisionSupply`（实体/注册表类在测试

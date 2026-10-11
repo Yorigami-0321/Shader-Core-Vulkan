@@ -192,7 +192,13 @@ public final class ShaderPackCompiler {
             // 🔴 GAP-030：后处理链族（deferred/composite/final）的 ftransform 走**恒等 MVP**，
             //   与地形族同一条展开式会把全屏 quad 按相机矩阵拧掉。档位来自程序族判定，
             //   不来自静态开关 —— 见 ProgramStage#isPostChain。
-            boolean postIdentity = program.stage().isPostChain();
+            // 🔴 GAP-027 天空线：档位**不能只看程序名前缀**。{@code gbuffers_skybasic} 名字在 gbuffer 族，
+            //   但它的片元是屏幕空间的、几何由我方给成全屏三角形 ⇒ 它也要恒等档。实测：漏了这一条时
+            //   顶点被算成 {@code gbufferProjection * gbufferModelView * Position}，三角形退化到零面积，
+            //   天空**一个像素都不写**（探针换成常数色仍是 (0,0,0) ⇒ 坏在通路不在数学）。
+            //   判据与 {@code gbufferProjection} 供值分族同源：{@code GbufferVertexSources.postVertexRoute}。
+            boolean postIdentity = program.stage().isPostChain()
+                    || GbufferVertexSources.postVertexRoute(program.name());
             compileStage(plan, resolver, qualifiedName, ShaderStage.VERTEX,
                     program.vertexShader(), overrides, appliedNames, stages, diagnostics,
                     preprocessSink, postIdentity);

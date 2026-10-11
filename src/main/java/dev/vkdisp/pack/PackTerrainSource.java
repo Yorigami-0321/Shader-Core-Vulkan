@@ -28,9 +28,11 @@ import dev.vkdisp.config.PackOptionStore;
 import dev.vkdisp.config.PackOptions;
 import dev.vkdisp.config.PackOptionsSession;
 import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.glsl.translate.PostVertexLinker;
 import dev.vkdisp.glsl.translate.ShaderStage;
 import dev.vkdisp.pack.properties.PackLangFile;
 import dev.vkdisp.pipeline.model.PackTerrainProgram;
+import dev.vkdisp.pipeline.model.PostPassContract;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -59,6 +61,18 @@ public final class PackTerrainSource {
      */
     public static final String WATER_PROGRAM = "gbuffers_water";
 
+    /**
+     * GAP-027 天空线：包的 {@code gbuffers_skybasic}。
+     *
+     * <p>🔖 <b>为什么这一条不走 {@code ChunkSectionLayer} 那一族收口点</b>：天空不是 chunk 几何。
+     * 但它<b>也不需要</b>穹顶几何 —— 该程序的片元是屏幕空间的
+     * （{@code gbuffers_skybasic.glsl:84-87} 用 {@code gl_FragCoord} 反解 {@code viewPos}），
+     * 顶点侧不读任何属性（只有 {@code ftransform()}）⇒ 它与<b>后处理链那一族</b>同形，
+     * 所以顶点走 {@code PostVertexLinker}（包自己的 .vsh + post 恒等 MVP），
+     * 而<b>片元契约</b>仍走本类这条已证的选包/门控/覆盖/编译/槽位兑现链。
+     */
+    public static final String SKY_PROGRAM = "gbuffers_skybasic";
+
     /** 保留名：强制「不接线」（与 PackCompositeSource.SELECTION_NONE 同义，避免两处字面量）。 */
     public static final String SELECTION_NONE = PackCompositeSource.SELECTION_NONE;
 
@@ -70,12 +84,29 @@ public final class PackTerrainSource {
      * @param profile     实际生效的 profile 名（空串 = 默认值路径）
      * @param diagnostics 本次选取的全部诊断（不可变）
      */
+    /**
+     * @param linkedFragment 走「post 顶点路线」时被 {@code PostVertexLinker} 改写过的片元终稿；
+     *                       {@code null} = 本条走普通 chunk 路线（用 {@code program.fragmentSource()}）
+     * @param vertexSource   与 {@link #linkedFragment} <b>同批</b>产出的顶点终稿（全屏恒等 MVP）；
+     *                       {@code null} = 本条的顶点走 {@code PackVertexAdapterGenerator} 那一族
+     */
     public record Result(PackTerrainProgram program, String packName, String profile,
-            List<TranslateDiagnostic> diagnostics) {
+            List<TranslateDiagnostic> diagnostics, String linkedFragment, String vertexSource) {
 
         public Result {
             profile = profile == null ? "" : profile;
             diagnostics = diagnostics == null ? List.of() : List.copyOf(diagnostics);
+        }
+
+        /** 普通（chunk 路线）结果：没有 post 顶点对。 */
+        Result(PackTerrainProgram program, String packName, String profile,
+                List<TranslateDiagnostic> diagnostics) {
+            this(program, packName, profile, diagnostics, null, null);
+        }
+
+        /** 本条是否走「post 顶点路线」（顶点 = 包自己的 .vsh + 恒等 MVP，不是 chunk 适配层）。 */
+        public boolean postVertexRoute() {
+            return vertexSource != null && linkedFragment != null;
         }
 
         /** 是否真的取到了可接线的包地形片元（= 派生 MRT 管线该换片元着色器）。 */
@@ -202,6 +233,10 @@ public final class PackTerrainSource {
                             + " samplers=" + program.fragmentSamplers().size()
                             + " varyings=" + program.inputs().size(),
                     pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+            if (postVertexProgram(programName)) {
+                return linkPostVertexRoute(programName, qualified, compiled, program,
+                        pack.name(), profile, diagnostics);
+            }
             return new Result(program, pack.name(), profile, diagnostics);
         }
 
@@ -214,6 +249,82 @@ public final class PackTerrainSource {
                 selection.isEmpty() ? String.valueOf(inventoryDir) : selection,
                 TranslateDiagnostic.UNKNOWN_LINE));
         return new Result(null, null, profile, diagnostics);
+    }
+
+    /**
+     * 哪些 {@code gbuffers_*} 程序的<b>顶点</b>走「包自己写的 .vsh + post 恒等 MVP」，
+     * 而不是 {@code PackVertexAdapterGenerator} 那一族 chunk 顶点适配层。
+     *
+     * <p>🔖 判据不是「哪个顺手」而是<b>几何与属性</b>：{@code gbuffers_skybasic} 的片元是屏幕空间的
+     * （{@code gbuffers_skybasic.glsl:84-87} 用 {@code gl_FragCoord} 反解 {@code viewPos}），
+     * 顶点侧不读任何属性、只有 {@code ftransform()} ⇒ 它与后处理链那一族<b>同形</b>；
+     * 而 chunk 适配层要求 {@code ChunkPosition}/{@code UV2} 这类天空几何<b>根本没有</b>的属性
+     * （欠供在加载期就是 {@code ShaderCompileException}，会把启动砸掉）。
+     */
+    static boolean postVertexProgram(String programName) {
+        return SKY_PROGRAM.equals(programName);
+    }
+
+    /**
+     * post 顶点路线：取<b>同一条程序</b>的顶点终稿，交给 {@link PostVertexLinker} 与片元配对。
+     *
+     * <p>🔴 <b>配不上对就整条不接线</b>（而不是退回 chunk 适配层）：片元声明的 varying
+     * （{@code alpha}/{@code sunVec}/{@code upVec}）必须由顶点产出，顶点换不成 ⇒ 链接期才炸，
+     * 而那正是本项目反复付学费的「半接线」形状（片元是包的、顶点不是）。
+     * 与 {@code PackPostChain} 同一条口径：<b>契约从<b>未改写</b>的片元终稿解析，
+     * 落进资源的却是 linker 改写后的那一份</b>（两侧顺序必须与链那一族逐字相同，否则
+     * 「同一个 varying 在两条链上被不同地处理」）。
+     */
+    private static Result linkPostVertexRoute(String programName, String qualifiedName,
+            ShaderPackCompiler.CompileResult compiled, PackTerrainProgram program,
+            String packName, String profile, List<TranslateDiagnostic> diagnostics) {
+        String vertexSource = selectVertexSource(compiled, qualifiedName);
+        if (vertexSource == null) {
+            diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.WARN,
+                    "vkdisp: [GAP-027] " + programName + " 走 post 顶点路线，但包没有成功编译的"
+                            + "顶点终稿（限定名 " + qualifiedName + "）⇒ <b>整条不接线</b>"
+                            + "（退回 chunk 适配层会得到「片元是包的、顶点不是」的半接线 = 链接期炸）",
+                    packName, TranslateDiagnostic.UNKNOWN_LINE));
+            return new Result(null, null, profile, diagnostics);
+        }
+        List<PostPassContract.FragmentInput> inputs = program.inputs().stream()
+                .map(input -> new PostPassContract.FragmentInput(
+                        input.location(), input.type(), input.name()))
+                .toList();
+        PostVertexLinker.Result linked =
+                PostVertexLinker.link(qualifiedName, vertexSource, program.fragmentSource(), inputs);
+        diagnostics.addAll(linked.diagnostics());
+        if (!linked.packVertexSupplied() || linked.vertexSource() == null) {
+            diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.WARN,
+                    "vkdisp: [GAP-027] " + programName + " 的 post 顶点配对未完成"
+                            + "（PostVertexLinker 判否）⇒ 整条不接线，天空保持原版重放档",
+                    packName, TranslateDiagnostic.UNKNOWN_LINE));
+            return new Result(null, null, profile, diagnostics);
+        }
+        diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.INFO,
+                "vkdisp: [GAP-027] " + programName + " 走 post 顶点路线: program=" + qualifiedName
+                        + " varyings=" + program.inputs().size()
+                        + " 退化属性=" + linked.degradedAttributes()
+                        + " 合成 varying=" + linked.synthesizedVaryings(),
+                packName, TranslateDiagnostic.UNKNOWN_LINE));
+        return new Result(program, packName, profile, diagnostics,
+                linked.fragmentSource(), linked.vertexSource());
+    }
+
+    /**
+     * 取<b>限定名逐字相等</b>的顶点终稿（与 {@code PackPostChain.selectVertex} 同一条纪律：
+     * 顶点<b>不许跨维度凑</b> —— 片元可以按 world0 &gt; 根 &gt; 其它择优，顶点若跨维度凑，
+     * 就会拿到一份「定义了别的维度才有的宏」的终稿）。
+     */
+    private static String selectVertexSource(ShaderPackCompiler.CompileResult compiled,
+            String qualifiedName) {
+        for (ShaderPackCompiler.CompiledStage stage : compiled.stages()) {
+            if (stage.stage() == ShaderStage.VERTEX && stage.isSuccess()
+                    && qualifiedName.equals(stage.programName())) {
+                return stage.result().text();
+            }
+        }
+        return null;
     }
 
     /**

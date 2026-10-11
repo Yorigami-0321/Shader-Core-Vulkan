@@ -86,7 +86,8 @@ public final class VkDispConfigHotReload {
      */
     private record Snapshot(boolean enabled, boolean debugLog, String packProfile,
             String shaderPack, String packOptionsScreen, boolean capabilityGate,
-            boolean chainEnableGating, String optionOverrides, boolean packWater) {}
+            boolean chainEnableGating, String optionOverrides, boolean packWater,
+            boolean skyPackShader) {}
 
     /** 最近一次快照；null = 还没见 Loading（防御位，实际由首载 Loading 填充）。 */
     private static volatile Snapshot last;
@@ -194,12 +195,12 @@ public final class VkDispConfigHotReload {
                         "vkdisp: config hot-reload: file={} type={} enabled={} debugLog={}"
                                 + " packProfile='{}' shaderPack='{}'"
                                 + " capabilityGate={} chainEnableGating={} optionOverrides='{}'"
-                                + " packWater={} -> resource reload",
+                                + " packWater={} skyPackShader={} -> resource reload",
                         config.getFileName(), config.getType(),
                         current.enabled(), current.debugLog(),
                         current.packProfile(), current.shaderPack(),
                         current.capabilityGate(), current.chainEnableGating(),
-                        current.optionOverrides(), current.packWater());
+                        current.optionOverrides(), current.packWater(), current.skyPackShader());
                 if (minecraft != null) {
                     //观察者线程（nightconfig FileWatcher）不能直接开资源重载 → 挪渲染线程。
                     // P4.5：先异步预编译，编译完成再重载（切 BSL 实测 3.97s 同步阻塞 → 未响应）。
@@ -245,7 +246,8 @@ public final class VkDispConfigHotReload {
                 || !Objects.equals(previous.optionOverrides(), current.optionOverrides())
                 // 🔴 GAP-027：mrt.packWater 与上面那两项同类 —— 只在生成期/注册期被读一次，
                 //   不重载 = 改了配置但水那一臂纹丝不动（QD-08 那一族）。
-                || previous.packWater() != current.packWater();
+                || previous.packWater() != current.packWater()
+                || previous.skyPackShader() != current.skyPackShader();
     }
 
     /** 屏幕驱动分支（{@code packOptionsScreen} 边沿）：解析 → 自报 → 执行（挪渲染线程）。 */
@@ -341,7 +343,10 @@ public final class VkDispConfigHotReload {
                 VkDispConfig.CHAIN_ENABLE_GATING.get(),
                 VkDispConfig.OPTION_OVERRIDES.get(),
                 // GAP-027：水那一臂的开关（只在生成期/注册期被读一次 ⇒ 必须进边沿判定）。
-                VkDispConfig.MRT_PACK_WATER_SHADER.get());
+                VkDispConfig.MRT_PACK_WATER_SHADER.get(),
+                // GAP-027 天空线：`mrt.skyPackShader` 同样是「只在生成期/注册期被读一次」的闸门
+                //   ⇒ 不进边沿判定就是个死开关（QD-08「写了但没生效」那一族，与 packWater 同例）。
+                VkDispConfig.MRT_SKY_PACK_SHADER.get());
     }
 
     /** drive INFO 的动作摘要（与解析结果一一对应，坏输入也可见原文）。 */

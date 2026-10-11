@@ -64,6 +64,68 @@ class PackTerrainSourceTest {
     }
 
     @Test
+    @DisplayName("🔖 GAP-027 天空线：BSL 的 gbuffers_skybasic 走 post 顶点路线（全屏几何可行的离线证明）")
+    void skybasicUsesPostVertexRouteAndNeedsOnlyOneAttachment() {
+        Assumptions.assumeTrue(Files.isDirectory(INVENTORY), "库存目录不在本地（run/shaderpacks/）");
+        PackTerrainSource.Result sky = PackTerrainSource.generate(
+                INVENTORY, "", "", null, PackTerrainSource.SKY_PROGRAM);
+        assertTrue(sky.wired(),
+                "BSL 带 gbuffers_skybasic（world0/ 与 world1/ 各一份），按名字应当选得出；诊断："
+                        + sky.diagnostics().stream().map(d -> d.message()).toList());
+        PackTerrainProgram program = sky.program();
+        assertTrue(program.qualifiedName().endsWith("gbuffers_skybasic"),
+                "选中的必须是天空，实际 " + program.qualifiedName());
+
+        // 依据（逐行取自包）：program/gbuffers_skybasic.glsl:122-123 的 /* DRAWBUFFERS:0 */ 在
+        // 任何 #ifdef 之外 ⇒ 单槽 0。🔴 这一条决定天空 pass 的附件数 = **1**，
+        // 与地形（1 槽）/水（2 槽）各自独立 —— 附件数不匹配是 setPipeline 直接抛的形状。
+        assertEquals(1, program.outputCount(), "天空片元只产出 1 个颜色输出");
+        assertEquals(List.of(0), program.declaredOutputSlots(), "且落在槽 0（colortex0）");
+
+        // 🔴 本测试真正证明的那件事：**天空不需要穹顶几何**。
+        //   片元是屏幕空间的（gbuffers_skybasic.glsl:84-87 用 gl_FragCoord 反解 viewPos），
+        //   顶点不读任何属性（只有 ftransform()）⇒ 它能走链那一族的 post 恒等 MVP。
+        //   若这条不成立，天空就只能走 chunk 适配层（要求 ChunkPosition/UV2 = 天空几何根本没有），
+        //   那才是「实现不了」的形状。所以断言的是**配对成功**，不是「跑通了没崩」。
+        assertTrue(sky.postVertexRoute(),
+                "天空必须拿到「包自己的 .vsh + post 恒等 MVP」配对出来的顶点对；没拿到就说明"
+                        + "顶点路线判否（半接线 = 链接期才炸）。诊断："
+                        + sky.diagnostics().stream().map(d -> d.message()).toList());
+
+        // 片元声明的每条 varying，配对后的顶点终稿里必须有同名同类型的 out
+        java.util.Set<String> vertexOutputs = new java.util.LinkedHashSet<>();
+        java.util.regex.Matcher out = Pattern
+                .compile("layout\\(location\\s*=\\s*\\d+\\)\\s+out\\s+\\w+\\s+(\\w+)\\s*;")
+                .matcher(sky.vertexSource());
+        while (out.find()) {
+            vertexOutputs.add(out.group(1));
+        }
+        for (PackTerrainProgram.Input input : program.inputs()) {
+            assertTrue(vertexOutputs.contains(input.name()),
+                    "片元要的 varying '" + input.name() + "'（location " + input.location()
+                            + "）在配对后的顶点终稿里没有 out 声明 ⇒ 半接线。顶点 out 全集="
+                            + vertexOutputs);
+        }
+        assertTrue(vertexOutputs.containsAll(java.util.List.of("sunVec", "upVec", "alpha")),
+                "BSL 天空片元靠这三条算昼夜与不透明度（sunVisibility=dot(sunVec,upVec)、"
+                        + "gl_FragData[0].a=alpha）；少了任何一条画面侧就是静默错值。实际="
+                        + vertexOutputs);
+        // 🔖 落进资源的片元必须是 **linker 改写后**的那一份（unifyBuiltinsBlock 会统一两侧内建块）
+        assertTrue(sky.linkedFragment().contains("VkDispBuiltins"),
+                "配对后的片元终稿里应当有统一的 VkDispBuiltins 块");
+
+        // 🔴 真机踩过的形状（2026-10-11）：这条顶点必须走 **post 恒等 MVP**，
+        //   绝不能把 gbufferProjection/gbufferModelView 乘到 NDC 顶点上 —— 那样全屏三角形会被
+        //   再变换一次到退化区域 ⇒ **一个片元都不落**，症状是「常数色探针写进 colortex0 仍是
+        //   (0,0,0)」（当时误判过 skyColor / 深度附件，两个都不是因）。
+        String vertex = sky.vertexSource();
+        assertTrue(vertex.contains("gl_Position"), "顶点终稿必须写 gl_Position");
+        assertFalse(vertex.contains("gbufferProjection *") && vertex.contains("gbufferModelView *"),
+                "post 恒等模式下不许出现 gbuffer MVP 链 —— 出现即说明 ftransform() 按 chunk 族展开了"
+                        + "（那一档的判据是程序族，不是名字前缀）");
+    }
+
+    @Test
     @DisplayName("🔖 GAP-027 第一条：BSL 默认档的 gbuffers_water 契约 = **2 槽** [0,1]（不是地形的 1 槽）")
     void waterContractNeedsMoreAttachmentsThanTerrain() {
         Assumptions.assumeTrue(Files.isDirectory(INVENTORY), "库存目录不在本地（run/shaderpacks/）");
