@@ -790,13 +790,21 @@ public final class VkDispConfig {
      * 🔴 开档时原版那一笔<b>必须不画</b>（两层天空同框 = 与 GAP-027 的双云同族），
      * 两个读点互斥，且自报行说清本帧走的是哪条。
      *
-     * <p><b>回退条件</b>：关掉 = 回到 {@code mrt.skyPass} 的原版重放档（已定案的默认画面）；
-     * 生成期配不上 post 顶点、或该程序输出不是单槽 0 ⇒ 自动不接线并 WARN，<b>不静默换绑</b>。
+     * <p>✅ <b>为什么默认开</b>（2026-10-11 真机 RTX 4060 两档复判）：正午天顶 = 包的蓝色渐变天空
+     * + 体积云（原版档是平坦 {@code (128,160,255)} 天顶色）；夜里天顶 = <b>星点回来了</b>
+     * （原版档无星的因是 {@code gl_FragCoord.z}：链那一族的全屏缓冲把 {@code Position.z} 写成 0，
+     * 而包把屏幕深度当远平面用 ⇒ 星点噪声对所有像素塌成同一纹素；本类因此自带一份 z=1 的缓冲，
+     * 见 {@code SkyPackGbuffer#skyVertexBuffer}）。
+     *
+     * <p><b>回退条件</b>：关掉 = 回到 {@code mrt.skyPass} 的原版重放档（上一轮定案的默认画面）；
+     * 生成期配不上 post 顶点、或该程序输出不是单槽 0、或这条 pass 建立/执行抛 ⇒
+     * <b>自动退回原版重放并点名一次</b>（实测过：探针包故意写坏片元时，画面回到原版档、
+     * 日志一行「派生天空管线建立失败 ⇒ 回到原版重放」，不是黑屏）。
      */
     public static final ModConfigSpec.BooleanValue MRT_SKY_PACK_SHADER = BUILDER
-            .comment("GAP-027：gbuffer 的天空改用包的 gbuffers_skybasic（一次全屏 draw；默认关 = 上一条的原版重放档）。"
-                    + "开档时原版那一笔不画；配不上顶点或输出不是单槽 0 时自动不接线并 WARN。")
-            .define("mrt.skyPackShader", false);
+            .comment("GAP-027：gbuffer 的天空改用包的 gbuffers_skybasic（一次全屏 draw；默认开）。"
+                    + "关掉 = 回到 mrt.skyPass 的原版重放档；配不上顶点/输出不是单槽 0/这一路抛 ⇒ 自动退回原版档并点名一次，不静默换绑。")
+            .define("mrt.skyPackShader", true);
 
     /**
      * GAP-027 第二刀：把**云**画进 gbuffer（默认关）。

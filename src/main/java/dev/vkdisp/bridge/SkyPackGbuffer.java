@@ -47,6 +47,7 @@ package dev.vkdisp.bridge;
  *    互斥由 {@code SkyIntoGbuffer} 的调用点保证，本类只自报「本帧我画了」。
  */
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
 import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline;
@@ -89,6 +90,10 @@ public final class SkyPackGbuffer {
     private static final AtomicBoolean REPORTED = new AtomicBoolean(false);
 
     private static final AtomicLong DRAWS = new AtomicLong();
+
+    /** 天空全屏顶点缓冲（建一次；换设备/重建的情况由调用方在异常路径退回原版档）。 */
+    private static final AtomicReference<@Nullable GpuBuffer>
+            SKY_VERTICES = new AtomicReference<>();
 
     private SkyPackGbuffer() {
     }
@@ -167,7 +172,7 @@ public final class SkyPackGbuffer {
             RenderSystem.bindDefaultUniforms(pass);
             TerrainPipelineApi.bindPackGbufferUniforms(pass, ensureSampler(),
                     MrtTerrainPass.blockAtlas(), depth, color, PackTerrainSource.SKY_PROGRAM);
-            pass.setVertexBuffer(0, FrameApi.postVertexBuffer().slice());
+            pass.setVertexBuffer(0, skyVertexBuffer().slice());
             pass.draw(3, 1, 0, 0);
         } catch (Throwable t) {
             // 🔴 退回不是「静默换绑」：这一帧画不出来就交给原版重放，但必须点名 + 只点一次。
@@ -229,6 +234,59 @@ public final class SkyPackGbuffer {
         } catch (Throwable t) {
             reportOnce("派生天空管线建立失败 ⇒ 回到原版重放（异常见下）", t);
             return null;
+        }
+    }
+
+    /**
+     * 天空自己的全屏三角形缓冲。🔴 <b>不能复用 {@code FrameApi.postVertexBuffer()}</b>：
+     * 那份缓冲把 {@code Position} 写成 {@code (x, y, 0.0, 1.0)}（{@code FrameApi:661}），
+     * 而恒等 MVP 下 {@code gl_Position = vec4(Position,1)} ⇒ 设备深度 {@code gl_FragCoord.z = 0}。
+     * 链各级不读 {@code gl_FragCoord.z} ⇒ 对它们无害；但包的 skybasic <b>读</b>它
+     * （{@code gbuffers_skybasic.glsl:84-87} 把它当屏幕深度过 {@code gbufferProjectionInverse}）
+     * ⇒ {@code z=0} 在 GL 口径下是<b>近平面</b>，反解出的 {@code viewPos} 长度只有 ~near，
+     * 于是 {@code DrawStars} 的噪声坐标 {@code viewPos.xz/256 + viewPos.y/128} 对<b>所有</b>像素
+     * 塌成同一个纹素 ⇒ 星点整片消失（真机夜里档实测：无星 + 天顶一圈不连续）。
+     * 这里把 z 写成 1.0 = GL 口径的远平面，与包对「天空像素」的预期一致。
+     */
+    private static GpuBuffer skyVertexBuffer() {
+        GpuBuffer cached = SKY_VERTICES.get();
+        if (cached != null) {
+            return cached;
+        }
+        List<String> names = PipelineApi.postVertexAttributeNames();
+        int stride = PipelineApi.postVertexStride();
+        java.nio.ByteBuffer data = java.nio.ByteBuffer
+                .allocateDirect(FULLSCREEN_VERTICES.length * stride)
+                .order(java.nio.ByteOrder.nativeOrder());
+        for (float[] vertex : FULLSCREEN_VERTICES) {
+            for (String name : names) {
+                putAttribute(data, name, vertex);
+            }
+        }
+        data.flip();
+        GpuBuffer buffer = RenderSystem.getDevice()
+                .createBuffer(() -> "vkdisp sky fullscreen",
+                        GpuBuffer.USAGE_VERTEX, data);
+        SKY_VERTICES.set(buffer);
+        VkDisp.LOGGER.info("vkdisp: [GAP-027/sky] 天空全屏缓冲已建: stride={} attributes={} z=1.0(远平面)",
+                stride, names.size());
+        return buffer;
+    }
+
+    /** 与 {@code FrameApi.POST_FULLSCREEN_VERTICES} 同一张三角形（NDC 大三角），只是 z 由本类写。 */
+    private static final float[][] FULLSCREEN_VERTICES = {
+            {-1.0F, -1.0F, 0.0F, 0.0F},
+            {3.0F, -1.0F, 2.0F, 0.0F},
+            {-1.0F, 3.0F, 0.0F, 2.0F},
+    };
+
+    /** 逐属性写：每个元素固定 4 个 float（与 {@code PipelineApi.POST_VERTEX_FORMAT} 同口径）。 */
+    private static void putAttribute(java.nio.ByteBuffer data, String name, float[] vertex) {
+        switch (name) {
+            // 🔴 Position 的 z = 1.0（本类存在的全部理由），w = 1.0 ⇒ 恒等 MVP 下 NDC z = 1
+            case "Position" -> data.putFloat(vertex[0]).putFloat(vertex[1]).putFloat(1.0F).putFloat(1.0F);
+            case "UV0" -> data.putFloat(vertex[2]).putFloat(vertex[3]).putFloat(0.0F).putFloat(1.0F);
+            default -> data.putFloat(0.0F).putFloat(0.0F).putFloat(0.0F).putFloat(1.0F);
         }
     }
 

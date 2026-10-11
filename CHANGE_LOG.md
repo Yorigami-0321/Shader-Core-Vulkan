@@ -6,6 +6,38 @@
 ---
 ---
 
+## 2026-10-11（一百一十）— ✅ 天空实现完成：包的 `gbuffers_skybasic` 成为 gbuffer 天空的**默认档**（白天/夜里两档真机复判通过）
+
+> **verdict = 代码轮 + 真机复判（Windows / RTX 4060）**：上一轮「接线通了但夜里不对」的那一格判掉了。
+> 冷启动**走代码默认值**（`run/config/vkdisp-client.toml` 里 `skyPackShader` 这一行**删掉**）⇒
+> 自报「天空改由包的 gbuffers_skybasic 画」+「天空全屏缓冲已建: stride=192 attributes=12 z=1.0(远平面)」；
+> `Missing uniform` / `Couldn't compile pipeline` / 「回到原版重放」**各 0 条**，
+> `c0@afterSky` SKY_BAND `nonBlack=100.000%`，`main` 的 `allZero` 在 6650 次读数里 4 次（0.06%，首帧族）。
+> `./gradlew build` 退出码 **0**（**1164 项 0 失败**）。
+
+- 🔑 **夜里那两格（无星 + 天顶环）的真因 = `gl_FragCoord.z`**：链那一族的全屏缓冲把 `Position` 写成
+  `(x, y, 0.0, 1.0)`（`FrameApi:661`），恒等 MVP 下 ⇒ 设备深度 `gl_FragCoord.z = 0`。
+  链各级**不读**它 ⇒ 一直无害；但包的 skybasic **读**它当屏幕深度
+  （`gbuffers_skybasic.glsl:84-87` 过 `gbufferProjectionInverse` 反解 `viewPos`），
+  GL 口径下 `z=0` 是**近平面** ⇒ `viewPos` 长度只有 ~near ⇒
+  `DrawStars` 的噪声坐标 `viewPos.xz/256 + viewPos.y/128` 对**所有**像素塌成同一个纹素 ⇒ 整片无星。
+  **修法**：`SkyPackGbuffer` 自带一份 `Position.z = 1.0`（远平面）的全屏缓冲，
+  **不改 `FrameApi`、不改链那一族的任何一档**（那条缓冲是链各级的既成判据，动它等于跨档改判据）。
+- **默认值翻成开**：`mrt.skyPackShader` `false → true`，字段注释补两档复判证据与回退条件。
+  🔖 翻默认前先把「退回是不是静默」量了一遍：故意用探针包把天空片元写坏 ⇒ 日志一行
+  「派生天空管线建立失败 ⇒ 回到原版重放」、画面回到上一轮定案的原版档、**不是黑屏**
+  ⇒ T11 的「不静默换绑」成立，这一条是翻默认的资格证明而不是注释里的一句话。
+- **画面判据（同机位 `x −66.36 / y 107.7 / z −74.81`、`yaw −33.75`）**：
+  `pitch −25 / 正午` = 蓝色渐变天空 + 体积云 + 雪原/水面正常，**没有** GAP-033 的放射指状条带；
+  `pitch −80 / 夜里` = 深蓝绿夜空 + **星点在场** + 地形剪影；`pitch −85 / 正午天顶` = 包的蓝色渐变（原版档是平坦天顶色）。
+- **影响的文档**：`docs/13-GAP-REGISTRY.md`（GAP-027 天空行：状态从「画面未达成」改成本轮收口）、本文件。
+- **仍未收口的（如实记，不并入本条）**：① `gbuffers_skytextured`（日月盘）仍没接 —— 它的顶点要 `UV0`+`Color`，
+  而 `RenderPipelines.CELESTIAL` 的几何是 `POSITION_TEX`（无 Color）⇒ 属性欠供，另案；
+  ② `renderStage` 逐 draw 未接（GAP-028）⇒ 天空只有「天盘一次」的语义，包按阶段分批评星/月的写法在这一档不存在；
+  ③ 夜里天顶仍有一道**软带**（比修前轻，且不再是硬环）—— 是否 BSL 自身的夜空渐变未判，别当已修读。
+- **是否已提交**：✅ 提交并推送（本轮结束即推，用户口径）。
+
+---
 ## 2026-10-11（一百零九）— 🧱 包的 `gbuffers_skybasic` 真的在画了（零错误、零 mixin），但当前写进 colortex0 的是**黑** ⇒ 默认仍关，本条不关
 
 > **verdict = 代码轮 + 真机取证（Windows / RTX 4060），🔴 功能未达成**：接线全通、`Missing uniform`
