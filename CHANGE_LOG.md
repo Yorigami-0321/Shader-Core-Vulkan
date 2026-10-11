@@ -6,6 +6,49 @@
 ---
 ---
 
+## 2026-10-11（一百一十一）— 🔴 用户自跑 runClient 暴露：**代码默认档每帧抛在旧三步链 Pass 3** ⇒ 地形不见 + 光影不生效（已修 + 真机复判）
+
+> **verdict = 修根因轮（Windows / RTX 4060 / Vulkan，真机两档复判）**：上一轮的「天空实现完成」在**用户自己的 runClient 里不成立**——
+> 画面只有天空与日月方块、**地形一整层不见**、光影没生效。本轮把这一条判到代码级并修掉。
+> `./gradlew build` 退出码 **0**（**1165 项 0 失败**，新增 1 项守卫）；未抬任何棘轮基线。
+
+- 🔑 **根因（四步，全部可跳至代码）**：`mrt.terrain` 与 `mrt.packTerrainShader` 的**代码默认都是 `false`**
+  （`VkDispConfig:184` / `:226`）⇒ `FrameApi.isPostChainActive()` 恒 `false`（`FrameApi:1134-1141`）
+  ⇒ `FullscreenPassHook:232` 走**旧三步链** `FrameApi.drawFullscreen`；其 Pass 3 经 `FrameApi.chainResolver`
+  （`FrameApi:1408-1410`）**无条件**解析 `shadowtex*` → `ShadowStubs.depthView()`，而该视图**刻意不懒建**
+  （懒建会在 pass 内新建 encoder）；`ShadowStubs.init()` 原先**只有一个调用点** =
+  `MrtTerrainPass#ensureShadowStubs`（`MrtTerrainPass:868`）= `mrt.terrain=true` 那一档。
+  ⇒ 默认档每帧 `IllegalStateException` 抛在 Pass 3，而**把 scene 落到主目标的是它后面的 Pass 4** ⇒
+  「抛在半路」不是无害，它等价于「这一帧什么都没画」。栈顶实证：
+  `ShadowStubs.depthView(106) ← FrameApi.chainResolver(1409) ← PackSamplerViews.resolve(90) ← setPackSamplerUniforms(171) ← FrameApi.drawFullscreen(963) ← FullscreenPassHook.onAfterLevel(232)`。
+- **后果的可数部分**：用户那一次约 5 分钟 runClient = **64 959 条同形栈 / 154 MB `latest.log`**。
+- **归因是逐档排出来的，不是推的**（同一份配置、真机热改、每档截图）：
+  `mixin.wireTerrain=false` ⇒ 画面不变（排除「派生地形管线把地形画没了」这一族）；
+  `skyPass=false` + `skyPackShader=false` ⇒ 画面不变（排除天空那一族）；
+  `enabled=false` ⇒ **地形立刻正常** ⇒ 责任在本 mod，收敛到上面那四步。
+- **修法**：`FullscreenPassHook.onAfterLevel` 帧首（`try {` 第一句、任何 pass 打开之前）调 `ShadowStubs.init()`，
+  `ShadowStubs` 类与 `init()` 改 `public`。幂等（`ensure` 早退）⇒ 默认档每帧只多一次引用判断。
+  🔖 **没有动 `FrameApi`**：那一版把 init 放进 `drawFullscreen` 会撞 QD-10 棘轮（上限 1675 行、正压着），
+  且语义上「帧首备好资源」本就属于 hook 而不是某一条链。
+- **真机复判（两档）**：① **用户的原配置原样冷启动**（`terrain=false` / `packTerrainShader=false` / BSL）⇒
+  `fullscreen pass failed` **0 条**（原 64 959）、`[GAP-003] shadow stubs ready (1x1 D32@1.0 + RGBA8@0)` 1 条、
+  `[route] chain=false ⇒ 旧三步链`，**地形回到画面**（夜里的山谷/水面/树影可见）。
+  ② 同一次运行里热改 `mrt.terrain=true` + `mrt.packTerrainShader=true` ⇒ `[route] chain=true`、
+  `[GAP-027/sky] 天空改由包的 gbuffers_skybasic 画` + `天空全屏缓冲已建: stride=192 attributes=12 z=1.0`，
+  画面是**真正的 BSL 夜景**（月晕 + 深蓝绿天空渐变 + 树上积雪剪影）。
+- **本轮最不好看的一条（写下来，不是遮）**：上一轮的「冷启动走代码默认值」只删了 `skyPackShader` **一个键**，
+  其余 `terrain` / `packTerrainShader` / `packWater` / `depthGlProxy` 仍是手写取证档 ⇒
+  **代码默认档这条路径九十多轮从未被执行过**。实证：本轮默认档整份日志里 `[GAP-027/sky]` 自报 **0 行**，
+  即上一轮交付的包天空在默认档**一次都不跑**。以后凡宣称「默认如何」，必须把相关键**整批删掉**再冷启动。
+- **影响的文档**：`docs/13-GAP-REGISTRY.md` 新增 **GAP-036**（含本轮没修的三格）、本文件。
+- **仍未收口（如实记，本条不关）**：① 两条 gbuffer 路线开关的**默认值**是否翻成开 —— 待用户裁决（翻完才是「开箱即光影」）；
+  ② `mrt.terrain=true` 而 `packTerrainShader=false` 的**半开组合 = 全黑**，是有意 A/B 档还是缺配对守卫，未裁决；
+  ③ 重载期 `nvoglv64.dll` 原生崩溃：`hs_err_pid36000.log`（20:46，**本轮改动前**）与 `hs_err_pid37420.log`
+  （23:24，紧随打开 `mrt.packWater`）同形 ⇒ 非本轮引入，但 `packWater` 档要单独复跑。
+- **是否已提交**：✅ 提交并推送（本轮结束即推，用户口径）。
+
+---
+
 ## 2026-10-11（一百一十）— ✅ 天空实现完成：包的 `gbuffers_skybasic` 成为 gbuffer 天空的**默认档**（白天/夜里两档真机复判通过）
 
 > **verdict = 代码轮 + 真机复判（Windows / RTX 4060）**：上一轮「接线通了但夜里不对」的那一格判掉了。

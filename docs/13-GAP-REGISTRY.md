@@ -714,6 +714,23 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 
 ---
 
+### GAP-036 · ✅ **代码默认档每帧抛在旧三步链 Pass 3** ⇒ 地形一整层不见 + 光影不生效（2026-10-11 用户自跑 runClient 暴露）
+
+| 字段 | 内容 |
+|---|---|
+| **为什么会去查这条** | 上一轮（一百一十）汇报「天空实现完成」，用户自己 `runClient` 看到的却是**只有天空、没有地形、光影没生效**（两张截图）。⇒ 要么判据的复判口径错了，要么**默认档从来没被跑到**。 |
+| **事实（代码级，逐条可跳）** | ① `mrt.terrain` 与 `mrt.packTerrainShader` 的代码默认都是 `false`（`VkDispConfig:184/226`）⇒ `FrameApi.isPostChainActive()`（`FrameApi:1134-1141`）恒 `false` ⇒ `FullscreenPassHook:232` 走**旧三步链** `FrameApi.drawFullscreen`。② 旧三步链 Pass 3 里 `PipelineApi.setPackSamplerUniforms` 经 `FrameApi.chainResolver`（`FrameApi:1408-1410`）**无条件**解析 `shadowtex*` → `ShadowStubs.depthView()`。③ `ShadowStubs#depthView` 刻意不懒建（懒建 = pass 内新建 encoder ⇒ RenderPearl 拒），而 `ShadowStubs.init()` 原先**只有一个调用点** = `MrtTerrainPass#ensureShadowStubs`（`MrtTerrainPass:868`），那是 `mrt.terrain=true` 才跑的一档。④ 把 scene 落到**主目标**的是它后面的 Pass 4 ⇒ 抛在半路 = 这一帧什么都没画。 |
+| **后果（可数）** | 默认档**每一帧**一条 `IllegalStateException`：用户那次约 5 分钟 runClient = **64 959 条栈 / 154 MB 日志**，画面是「天还在、地形一整层不见」。真机逐档定位：`mixin.wireTerrain=false` 与 `skyPass`/`skyPackShader=false` 都**不**改变画面（各截过图），而 `enabled=false` 时地形立刻正常 ⇒ 归因收敛到这一条。 |
+| **修法（本轮已落）** | `FullscreenPassHook.onAfterLevel` 帧首（`try {` 第一句、任何 pass 打开之前）调 `ShadowStubs.init()`；`ShadowStubs` 类与 `init()` 改 `public`。幂等（`ensure` 早退），默认档每帧只多一次引用判断。**没有**动 `FrameApi`（QD-10 棘轮上限 1675 行正压着，加两行就红）。 |
+| **判据（已达成）** | 同一份用户配置冷启动：`fullscreen pass failed` **0 条**（原 64 959）、`[GAP-003] shadow stubs ready` 1 条、地形回到画面。守卫 = `ShadowSamplerAliasingTest#defaultRouteInitializesStubsBeforeFirstPass`（钉「帧首 init 早于第一个开 pass 的调用」这个**顺序**，不是钉「非空」）。 |
+| **本轮没修的（如实登记）** | ① **默认档仍不是包的 gbuffer 路线**：两条 `mrt.terrain`/`packTerrainShader` 默认 `false` ⇒ 上一轮的包天空在这条路上**一次都不跑**（整份日志 `[GAP-027/sky]` 自报 **0 行**）。两条一起开才是真机看过的那版画面（夜里有月晕 + 地形剪影 + 包的天空）。翻默认是产品方向，待用户裁决。② `mrt.terrain=true` 而 `packTerrainShader=false` 这一**半开组合 = 全黑**（地形进了 colortex、链不跑、旧三步链采的是已空的 scene）—— 是有意保留的 A/B 档还是缺一道配对守卫，未裁决。③ 重载期出现 `nvoglv64.dll` 原生崩溃（`EXCEPTION_ACCESS_VIOLATION`）：`run/hs_err_pid36000.log`（20:46，**本轮改动之前**）与 `run/hs_err_pid37420.log`（23:24，紧随打开 `mrt.packWater`）同形 ⇒ 不是本轮引入，但 `packWater` 档要单独复跑确认。 |
+| **流程教训** | 九十多轮真机取证都在**同一份手写 toml**（`terrain`/`packTerrainShader`/`packWater`/`depthGlProxy` 全开）上跑 ⇒ 「代码默认档」这条路径从未被执行过。以后凡是宣称「默认如何如何」，必须**把相关键整批删掉**再冷启动，而不是只删被翻的那一个键。 |
+| **影响面** | `render/FullscreenPassHook.java`（帧首 init + import）、`bridge/ShadowStubs.java`（`public` + 调用点清单）、`src/test/java/dev/vkdisp/bridge/ShadowSamplerAliasingTest.java`（新守卫） |
+| **开关 / 回退条件** | 无新开关。回退 = 删掉帧首那一行，立刻回到「默认档每帧抛」的旧行为（本条判据即其反证）。 |
+| **状态** | ✅ **崩溃与「没有地形」已修并真机复判**；①②③ 三格未关，本条不关 |
+
+---
+
 ## 4. 快速自检
 
 ```

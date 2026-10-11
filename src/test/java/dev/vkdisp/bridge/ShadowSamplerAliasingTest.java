@@ -35,6 +35,8 @@ class ShadowSamplerAliasingTest {
             Path.of("src/main/java/dev/vkdisp/bridge/MrtTerrainPass.java");
     private static final Path STUBS =
             Path.of("src/main/java/dev/vkdisp/bridge/ShadowStubs.java");
+    private static final Path HOOK_SRC =
+            Path.of("src/main/java/dev/vkdisp/render/FullscreenPassHook.java");
 
     private static String read(Path p) {
         Assumptions.assumeTrue(Files.exists(p), "工程文件缺失: " + p);
@@ -271,5 +273,24 @@ class ShadowSamplerAliasingTest {
         String pass = read(PASS_SRC);
         assertTrue(pass.contains("withDepthAttachment(colortexDepth.getDepthTextureView(), OptionalDouble.of(0.0))"),
                 "深度附件必须仍是「清屏 0.0 + 可写」");
+    }
+
+    @Test
+    @DisplayName("🔴 默认档必须在任何 pass 打开之前备好阴影桩（帧首建，不靠地形 pass）")
+    void defaultRouteInitializesStubsBeforeFirstPass() {
+        // 真机 2026-10-11（用户自跑 runClient）：mrt.terrain=false 是**代码默认档**，
+        // 而桩原先只在 MrtTerrainPass 里建 ⇒ 旧三步链每帧抛在 Pass 3，写主目标的 Pass 4 不跑
+        // ⇒ 症状是「地形一整层不见 + 光影不生效」，一次跑出 6.5 万条栈。
+        // 本测试钉的是**顺序**：帧首的 init 必须早于本 hook 里第一个会开 pass 的调用。
+        String hook = read(HOOK_SRC);
+        int init = hook.indexOf("ShadowStubs.init();");
+        int firstPassCaller = hook.indexOf("FrameApi.drawFullscreen(");
+        assertTrue(init >= 0, "🔴 FullscreenPassHook 帧首不再建阴影桩 ⇒ 默认档（mrt.terrain=false）"
+                + "会在 Pass 3 抛 IllegalStateException，而主目标只由它后面的 Pass 4 写入"
+                + " ⇒ 画面没有地形。桩不懒建是刻意的（见 ShadowStubs#depthView）");
+        assertTrue(firstPassCaller >= 0, "FullscreenPassHook 里找不到 drawFullscreen 调用（形状已变？）");
+        assertTrue(init < firstPassCaller,
+                "🔴 ShadowStubs.init() 必须在第一个开 pass 的调用**之前**"
+                        + "（pass 打开期间新建 encoder 会被 RenderPearl 拒绝）");
     }
 }

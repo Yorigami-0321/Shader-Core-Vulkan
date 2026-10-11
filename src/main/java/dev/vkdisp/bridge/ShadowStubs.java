@@ -22,7 +22,7 @@ package dev.vkdisp.bridge;
  * <p>合规：只调用公开 API（{@code GpuDevice#createTexture} / {@code createTextureView} /
  * {@code clearColorAndDepthTextures}），零源码搬运。
  */
-final class ShadowStubs {
+public final class ShadowStubs {
 
     /** 桩深度视图（1×1 {@code D32_FLOAT}，清到 0.0 = 远平面）。 */
     private static com.mojang.renderpearl.api.textures.GpuTextureView depthView;
@@ -40,11 +40,23 @@ final class ShadowStubs {
      * {@code try (RenderPass …)} 内部调用，RenderPearl 会抛
      * {@code IllegalStateException: Close the existing render pass before creating a new one!}
      * —— 本轮第一版就是踩了这个（绑定点 {@code bindPackTerrainUniforms} 在 pass 内部）。
-     * ⇒ 调用点安排在 {@code MrtTerrainPass#ensureTargets}（建 pass 描述符之前）。
+     *
+     * <p>🔖 <b>调用点有两个，缺一不可</b>（幂等，见 {@link #ensure} 的早退）：
+     * <ol>
+     *   <li>{@code MrtTerrainPass#ensureShadowStubs} —— {@code mrt.terrain=true} 那一档；</li>
+     *   <li>{@code FullscreenPassHook#onAfterLevel} 帧首 —— <b>覆盖代码默认档</b>
+     *       （{@code mrt.terrain=false}）。旧三步链的 Pass 3 经 {@code FrameApi#chainResolver}
+     *       <b>无条件</b>解析 {@code shadowtex*}，而 {@link #depthView()} 刻意不懒建 ⇒
+     *       只有第 1 个调用点时，默认档<b>每帧</b>抛在 Pass 3；而把 scene 落到主目标的是它
+     *       <b>后面</b>的 Pass 4 ⇒ 真机症状 = <b>地形一整层不见 + 光影不生效</b>，
+     *       且一次 runClient 刷出 6.5 万条栈（154 MB 日志）。
+     *       2026-10-11 用户自跑 runClient 复现并定案 —— 主目标只由那条链写入，
+     *       所以「抛在半路」不是无害，它等价于「这一帧什么都没画」。</li>
+     * </ol>
      *
      * <p>**永不作为 render pass 附件**，这是它消除别名的前提。
      */
-    static void init() {
+    public static void init() {
         ensure();
     }
 

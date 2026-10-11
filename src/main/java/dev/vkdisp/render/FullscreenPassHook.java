@@ -38,6 +38,7 @@ import dev.vkdisp.VkDispConfig;
 import dev.vkdisp.bridge.FrameApi;
 import dev.vkdisp.bridge.MrtTerrainPass;
 import dev.vkdisp.bridge.PipelineApi;
+import dev.vkdisp.bridge.ShadowStubs;
 import dev.vkdisp.bridge.TargetReadback;
 import dev.vkdisp.bridge.TerrainDrawCapture;
 import net.neoforged.api.distmarker.Dist;
@@ -190,6 +191,10 @@ public final class FullscreenPassHook {
         }
 
         try {
+            // 🔴 阴影桩要在**本帧任何 pass 打开之前**备好：两条后处理路都会无条件解析 shadowtex*，
+            //   而 ShadowStubs#depthView 刻意不懒建（懒建 = pass 内新建 encoder ⇒ 抛）。
+            //   幂等；默认档（mrt.terrain=false）下 MrtTerrainPass 不跑，这里就是唯一的建桩点。
+            ShadowStubs.init();
             // 🔖 取样判定在**帧首**做（地形后的取点与逐 pass 追踪都读同一个判定），
             //   否则一条曲线里会混着不同帧的数字（h48 实测过这个形状）。
             dev.vkdisp.bridge.TargetReadback.beginFrame();
