@@ -751,6 +751,96 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 
 ---
 
+### GAP-038 · 🔴 **我方 MRT 地形 pass 从不设雾**：`src/main/java/dev/vkdisp/` 全目录 `setShaderFog` **0 命中** ⇒ 地形那次 draw 绑的是残值（2026-10-12 源码级核实）
+
+| 字段 | 内容 |
+|---|---|
+| **为什么会去查这条** | 调研「哪些功能改用 mixin 更好」时，为 M-05 的「两点汇成一点」候选（`04-SPEC` §5.0 M-06）核 `addMainPass` 形参 —— 结果发现原版在 pass 体**第一行**用那个形参做了件事，而我方对应位置没做。 |
+| **事实（两侧可逐字跳）** | ① 原版：`addMainPass(..., GpuBufferSlice terrainFog, ...)`（`LevelRenderer` 第 **396-401** 行），其 `pass.executes` 体内第一行就是 `RenderSystem.setShaderFog(terrainFog)`（第 **436** 行），随后才是 `bindDefaultUniforms(renderPass)`；② 我方：`MrtTerrainPass.drawTerrain` 绑了包自己的 uniform 环并调 `bindDefaultUniforms`，但 `setShaderFog` 在整个 `src/main/java/dev/vkdisp/` 下**grep 命中数 = 0**（本轮实测，不是推定）；③ 唯一碰过雾 slice 的地方是 `SkyIntoGbuffer` 第 107 行**取**过来给天空用，不写回 `RenderSystem`。 |
+| **后果** | 雾在「我方 MRT 那次地形 draw」上是**未定义读数**（全局残值：可能是上一帧，也可能是原版同帧早先某次 set 的值）。它不一定错 —— 原版每帧也 set 同一个雾，所以**单帧内通常恰好是对的**；⇒ 症状只在「取点顺序变了 / 档变了 / 相机雾变了（进水、旁观、潜行）」时出现，且**零报错、零 validation**（`X11` 那一类）。 |
+| **修法** | 随 **R2（M-06）**：从 `addMainPass` 的 HEAD 形参拿到 `terrainFog`，在我方 pass 体内**第一行** `RenderSystem.setShaderFog(...)`，再 `bindDefaultUniforms`。短期不注入的写法是从 `levelRenderState` 自己算一遍 —— 那是**复制原版逻辑**，不建议（`07` §1.4 那把「能不能删掉复制量」的尺子在这里正好反向适用）。 |
+| **判据（收口时用）** | ① 同一帧同一像素：我方 colortex0 与原版 main 的雾端读数差 < 既定阈值；② 显式变雾档：进水里那一帧两臂都要跟着变（现状我方那帧不随水变 ⇒ 可当最小复现）；③ 日志断言：注入点里 `terrainFog` 的 buffer hash 与原版那次一致。 |
+| **影响面** | `bridge/MrtTerrainPass.java`（pass 体装配段）、`bridge/SkyIntoGbuffer.java`（雾 slice 取用侧）、`bridge/MixinTargets`（新增 M-06 常量） |
+| **开关 / 回退条件** | 随 `mixin.captureMainPassArgs`（M-06）；关掉即回到今天（不设雾）。 |
+| **状态** | 🔴 **已登记（源码级 + grep 实测），未修、未真机取证** —— 属「潜在静默错」，不是当前可见症状 |
+
+---
+
+### GAP-039 · 🔴 **我方重放天空不看原版四道门控** ⇒ 岩浆 / 粉雪 / `Skybox.NONE` 维度里仍画天空（2026-10-12 源码级核实）
+
+| 字段 | 内容 |
+|---|---|
+| **为什么会去查这条** | `SkyIntoGbuffer` 的改造候选（M-11 / M-12）要求把原版 `addSkyPass` 的结构读逐行抄出来对齐，读完发现原版那四道 `if` 我方一条都没有。 |
+| **事实** | 原版：`addSkyPass`（`LevelRenderer` 第 **369** 行）外层门控 = `fogType != POWDER_SNOW && fogType != LAVA && !cameraState.entityRenderState.doesMobEffectBlockSky`（第 **370-371** 行）；内层门控 = `state.skybox != DimensionType.Skybox.NONE`（第 **380** 行）。⇒ 四道里任何一道成立，**原版整帧不画天空**。我方：`SkyIntoGbuffer.render` 由我方 pass 无条件调用（第 83-140 行），四道一条不读。 |
+| **后果** | 浸在岩浆里 / 进粉雪雪雾 / 被遮挡天空的状态效果盖住 / 在 `Skybox.NONE` 的维度里，gbuffer 仍写着天空色与天空深度 ⇒ 依赖「这一刻没天空」的包（按 `skybox` 或按雾类型分支的 `gbuffers_skybasic` / `composite`）出画错。**方向是「多画」**，所以平时看不出，进岩浆才看得出。 |
+| **修法（首选不是注入）** | 🔖 官方 `CustomSkyboxRenderer.renderSky` 就在 `"sky"` **pass 体内**被调（第 **385** 行），且该时刻**没有 render pass 打开**（原版自己的 pass 在 `SkyRenderer` 第 **139** 行内部才开）⇒ 钩子里可直接自开我方 pass，**回 `true` 即天然与原版互斥**（现手工互斥在 `SkyIntoGbuffer` 第 116-119 行）。走这条，四道门控**由原版替我们判**，一行都不用抄。⚠️ 注意 `LevelRenderState.reset` 每帧清该字段 ⇒ 挂点仍须在装配期做。仅当官方钩子被别的约束挡住时，才用 M-12 注 `addSkyPass`。 |
+| **判据（收口时用）** | ① 进岩浆那一帧，`colortex0` 的天空段读数 = 原版「不画天空」口径（固定像素数值，不是截图判读）；② `Skybox.NONE` 维度里我方 gbuffer 天空段不变；③ 搬进官方钩子后，`SkyIntoGbuffer` 的手工互斥分支必须**删掉**而不是留着 —— 留着就是两个所有者。 |
+| **影响面** | `bridge/SkyIntoGbuffer.java`（无条件重放 + 手工互斥）、`bridge/MrtTerrainPass.java`（第 205-215 行的 sky pass 装配与抑制）、`VkDispConfig` 的 `mrt.skyPackShader` 注释 |
+| **开关 / 回退条件** | 不新增开关；沿用 `mrt.skyPackShader`。回退 = 继续无条件重放（今天的行为）。 |
+| **状态** | 🔴 **已登记（源码级），未修**。⚠️ **诚实标注：本条没有真机截图证据** —— 本轮没进岩浆复现，「岩浆里有天空」是源码级推定，不得当已实测症状引用（`X37`）。 |
+
+---
+
+### GAP-040 · 🔴 **h20 守卫是空转**：`hasExpectedAttachmentCount()` 逐字就是 `return inMrtPass` ⇒ 与 `active()` 同义，它声称防的那类状态永远测不出（2026-10-12 逐字核实）
+
+| 字段 | 内容 |
+|---|---|
+| **为什么会去查这条** | 评估「M-01 换成 `PipelineModifier` 能删掉什么」时，需要确认那套 `active()` + 守卫到底是不是真防线；读实现发现守卫的返回值和它包住的那个标志是**同一个变量**。 |
+| **事实** | ① `MrtTerrainPass.hasExpectedAttachmentCount()`（第 **320-322** 行）函数体 = `return inMrtPass;`；② 调用侧 `TerrainPipelineApi`（第 **478-503** 行）的注释写的是「只有当**当前 pass 的 color attachment 数**确实是 8 才交出 MRT 变体」，并解释「`active()` 只是进程级静态布尔，它为 true 并不能证明此刻取管线的原版调用点正处于那个 8 附件 pass 里」⇒ 它用 `active()` 的**同一个变量**去证明「不只是 `active()`」；③ 配套还有 `MRT_GUARD_FALLBACK` 去重集合（第 **530** 行）在守一条**不会触发**的分支。 |
+| **后果** | 「有守卫」被当成安全边际 —— 实际防护 = **0**。真正的防护只剩 `inMrtPass` 的 `finally` 清位纪律（第 532-539 行），那是**约定**而非检测。风险形态与 `h20` 当初想防的一模一样：一旦某条原版路径在 `inMrtPass=true` 期间取管线，它照样拿多附件版本，而守卫不报警。 |
+| **修法** | 随 **R1**：`PipelineModifier` 用 `renderWithPipelineModifier(key, runnable)` 的 push/pop 给出**pass 身份本身**（栈只在回调期间非空）⇒ `inMrtPass`、这条守卫、`MRT_GUARD_FALLBACK` 三件一起删，防护反而**变真**。若要在注入路线里保留检测，需要能读到「当前 render pass 的附件数」—— `FrontendRenderPass` 侧有没有公开面**待核实**（`X41`：没核实过的 API 表面不许当设计地基）。 |
+| **判据（收口时用）** | ① 删除后 `vkdisp: [M-01] hit` 与「modifier 生效」两类日志同时存在且互不依赖；② 单变量 A/B（`X52`）：只换通道、不改其它，地面像素差回到 `h08` 基线 **48.22 / 39.03%** 同量级；③ 不得出现「守卫删了、防护也没了」—— 必须证明 push/pop 覆盖与 `inMrtPass` 等价或更严。 |
+| **影响面** | `bridge/MrtTerrainPass.java`（第 119 / 320-322 / 532-539 行）、`bridge/TerrainPipelineApi.java`（第 478-503 / 530 行） |
+| **开关 / 回退条件** | 无独立开关（它是既有守卫）。R1 落地即删除本条；R1 回退则本条**继续成立**，别当已修。 |
+| **状态** | 🔴 **已登记（代码逐字核实），未修** —— 属「注释声称有防护而实现没有」，按 `T13` 口径优先级高于普通重构 |
+
+---
+
+### GAP-041 · 🔴 **自建图集采样器硬编码 `maxAnisotropy = 1`**，且刻意不复用原版实例 ⇒ 与原版画面不可比（`04-SPEC` §5.0.4 2026-10-03 就写明要对齐，至今未做）
+
+| 字段 | 内容 |
+|---|---|
+| **为什么会去查这条** | 同 `GAP-038`：为 M-07 读原版 `addMainPass` 的采样器重建段，撞出我方自建采样器与它的两处偏差 —— 而这两处 `docs/04-SPEC.md` 第 **486-488** 行**早就写明了**（「取值必须对齐用户设置」「每帧新建会泄漏 GPU 对象」），只是没进登记表。 |
+| **事实** | ① 原版：`chunkLayerSampler` 是 `LevelRenderer` 第 **146** 行的 private 字段，在第 **437-449** 行按需重建，各向异性 = `optionsRenderState.textureFiltering == ANISOTROPIC ? maxAnisotropyValue : 1`，门控 = `shouldResetChunkLayerSampler`；② 我方：`MrtTerrainPass` 第 **889-908** 行自建同款，**`maxAnisotropy` 传 1**（本轮逐字确认），门控自备。 |
+| **后果** | 两个方向：① **用户可见** —— 开了各向异性过滤的用户，在我方那次地形 draw 上拿到明显更糊的方块图集（同屏对比直接看得出）；② **取证污染** —— 我方与原版之间多了一个**未登记的混淆变量**，任何 A/B 差值都不能再干净地归到「管线通道」这一条上（`X52` 违例）。 |
+| **修法** | 首选 **M-07**（`@Mixin(LevelRenderer)` + `@Shadow`/`@Accessor` 读原版实例）：各向异性与重建门控**一起继承**，删掉第 889-908 行。备选（不注入）：对齐 `optionsRenderState` 取值 + 自备同语义门控 —— 那是在**复制原版逻辑**，升版须重新核对。 |
+| **判据（收口时用）** | ① 同一机位同帧，「纹理过滤 = 各向异性」与「= 双线性」两档下，我方 colortex0 的图集锐度**跟着变**（现状不变 ⇒ 即本条复现）；② 用户设置变更后不泄漏 GPU 对象（`GpuSampler` 关闭计数）。 |
+| **影响面** | `bridge/MrtTerrainPass.java`（第 889-908 行 + 自建采样器门控）、`bridge/PackSamplerViews.java`（采样器实例来源变了要同步） |
+| **开关 / 回退条件** | `mixin.reuseChunkSampler`（M-07）；回退 = 自建采样器（今天）。 |
+| **状态** | 🔴 **已登记（源码级），未修** —— 从 2026-10-03 的「实现时注意」升格为缺口，因为它现在**已经在生产形态里**（`mrt.terrain` 取证档常开） |
+
+---
+
+### GAP-042 · 🔴 **反射读私有字段当取证判据，失败只 WARN** ⇒ 升版改名即静默失去「地形画了几条 / 云有几片」这两个唯一数字（2026-10-12 逐字核实）
+
+| 字段 | 内容 |
+|---|---|
+| **为什么会去查这条** | 本轮调研「mixin 能改进什么」的第一个问题就是「项目里还有没有反射」：grep `setAccessible\|getDeclaredField` 在 `src/main/java` 只命中**两处**，而两处**都是判据**。 |
+| **事实** | ① `MrtTerrainPass` 第 **946** 行 `getDeclaredField("drawGroupsPerLayer")` + 第 **957** 行 `getDeclaredField("drawCount")`（原版字段在 `ChunkSectionsToRender` 第 **97** 行，private）；② `CloudsIntoGbuffer` 第 **314-319** 行反射读 `quadCount`（原版第 58 行）/ `texture`（第 57 行）/ `utb`（第 60 行），均 private；③ 两处 `catch` 都只打 WARN —— 即**失败路径是「没有这个数字」，不是「报错」**。另：`getDeclaredField` 不向上找父类，而 `obj.getClass()` 拿到的可能是子类 ⇒ 这条今天就可能偏。 |
+| **后果** | 与 `T10` / `X11` 打的头号坑同形：帧看起来正常、零 validation、日志零 ERROR，但判据没了 ⇒ 下一轮归因时把「读不到」当「读到 0」。**这两个数字是我方 MRT 地形与云唯一的量化判据**（`h48` 族那几张表就是从它们来的）。 |
+| **修法** | **M-08 / M-09**：`@Mixin` + `@Accessor`，配 `require = 1 / expect = 1`（与 `ChunkSectionLayerPipelineMixin` 同口径）⇒ 升版改名变成**启动即硬失败**，而不是跑到一半静默少一个数字。纯删码，不改任何渲染语义。 |
+| **判据（收口时用）** | ① 两处的 WARN 分支**物理删除**（不再存在「读不到」这条路）；② 启动日志 `Mixin apply failed` 0 命中（`07` §1.4.1 ③）；③ 同一存档同机位，读到的条数与今天反射值**逐字相同**。 |
+| **影响面** | `bridge/MrtTerrainPass.java`（第 943-970 行）、`bridge/CloudsIntoGbuffer.java`（第 312-327 行）、`vkdisp.mixins.json`（新增两个 client mixin）、`bridge/MixinTargets`（新增 M-08/M-09 常量） |
+| **开关 / 回退条件** | `mixin.terrainDrawProbe` / `mixin.cloudProbe`；回退 = 恢复反射（可退，但会重新引入本条）。 |
+| **状态** | 🟡 **已登记，未修** —— 低风险、纯删码，排 `19` §5A.4 阶梯 **R3** 第一批 |
+
+---
+
+### GAP-043 · 🔴 **M-01 注入点牵连「建网格侧」**：`layer.pipeline(false)` 也被 `SectionRenderDispatcher` 与 `LevelRenderer` 拿去取顶点格式绑定（2026-10-12 核实调用点）
+
+| 字段 | 内容 |
+|---|---|
+| **为什么会去查这条** | 评估「M-01 能不能换成 `PipelineModifier`」时必须回答「modifier 只在 draw 期生效，会不会漏掉别的调用点」；把 `layer.pipeline(...)` 的调用点列全后发现**不止 draw**。 |
+| **事实** | 原版除地形 draw（`ChunkSectionsToRender` 第 121 / 176 行）外，还有两处调 `layer.pipeline(false).getVertexFormatBinding(0)`：`SectionRenderDispatcher` 第 **76** 行、`LevelRenderer` 第 **796** 行 —— 都在**建网格**（mesh 编译）路径上，且**在 render pass 之外**。`bridge/MixinTargets.java` 第 60-62 行当年正是用「派生管线沿用同一 snippet ⇒ 顶点绑定逐项相同」放行这两处。 |
+| **后果** | 放行条件是**约定**，不是编译期保证。一旦派生管线**改顶点格式** —— 而 `GAP-007`（顶点侧 `mat` / `recolor` / `normal` 三条 varying）要做的正是这件事 —— 就会出现「网格按派生格式编译，draw 那次的绑定组来自另一档」，且**建网格发生在包配置还没被读到之前**（`RegisterRenderPipelinesEvent` 早约 4.5 秒那条时序，`GAP-035` 同源）⇒ 症状是随机形状丢失 / validation 报顶点属性欠供，极难归因。 |
+| **修法** | 随 **R1**（`PipelineModifier` 只在 draw 期 push）：建网格侧**天然拿原版管线**，M-01 那层「注入改枚举返回值 ⇒ 波及 mesh 编译」的耦合**自动消失**。⛔ 不要走「在 mixin 里判别调用者是不是建网格」—— 不可靠，且把业务写进 mixin（`X25`）。 |
+| **判据（收口时用）** | ① R1 落地后，建网格路径上不再出现任何 `vkdisp` 派生管线；② 网格重编（区块重载 / 资源重载）后画面与 R1 前逐字节相同；③ `GAP-007` 开工前本条必须**先关闭** —— 它是 GAP-007 的**前置**，不是并行项。 |
+| **影响面** | `mixin/ChunkSectionLayerPipelineMixin.java`、`bridge/TerrainPipelineApi.java`（派生管线构造侧）、`docs/04-SPEC.md` §5.0 M-01 行 |
+| **开关 / 回退条件** | 随 `mixin.wireTerrain`（M-01）。R1 完成即本条自然关闭。 |
+| **状态** | 🔴 **已登记（两个调用点行号核实），当前无画面症状** —— 属**潜在**缺陷，触发条件是 `GAP-007` 落地 |
+
+---
+
 ## 4. 快速自检
 
 ```

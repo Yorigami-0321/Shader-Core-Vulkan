@@ -72,9 +72,9 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 | **L10** | **jar 内必须包含 `LICENSE`** | MIT 署名要求 |
 | **L11** | 🔴 **与 Sodium 彻底隔绝：零代码、零依赖、零集成、零兼容、零引用** | 用户 2026-09-29 拍板：「不保留，和 sodium 彻底隔绝开」。见 §1.2 |
 | **L12** | 🔴 **调研参考前必须先核许可证（合规是第 0 步，不是最后一步）** | 一旦先读了代码，就难以自证"没受影响"；先判合规才能自证清白。见 §1.3 |
-| **M1** | 🔴 **mixin 允许开到「管线装配层」**；仍**禁止注入 Sodium / 底层 GL 状态类 / 第三方区块渲染器** | 2026-10-02 用户放开限制，2026-10-04 撤回其「零 mixin 无解」的依据（见 §1.4）。理由只剩一条：三支柱里**兼容优先**。注意 mixin 是**手段不是目标** —— 若官方 API 能达成同一结果，优先用官方 API（见 §1.4.2 `PipelineModifier`） |
+| **M1** | 🔴 **mixin 注入范围不限原版类**（2026-10-12 用户裁决废除「管线装配层」白名单）；仍**登记制 + 可关闭制 + 逐个开启**，且仍**禁止注入 Sodium / caffeinemc / 第三方区块渲染器**（X23） | 2026-10-02 放开数量、2026-10-12 放开类别。裁决口径：mixin 与官方 API 一样只是手段，**按工程收益（时序精度 / 删掉的原版复制量 / 升版改动面）择优**，不按「是不是官方」一票否决。官方 API 能达成同一结果时仍优先（省掉一个登记点，见 §1.4.2 `PipelineModifier`），但「优先」不再是闸门 |
 
-### 1.4 M1 的落地尺度（mixin 已松绑到「管线装配层」）
+### 1.4 M1 的落地尺度（2026-10-12 起：类别闸门已废，只留登记制）
 
 **背景（三轮演进，别读错旧结论）**：
 
@@ -84,15 +84,16 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 | 2026-10-02（P4.4 核实） | 🔴 **部分撤回**（2026-10-04）：源码级确认的三条里，`putIfAbsent` / 单附件 / `Globals` 9 字段**都成立**，但三条**都有官方旁路通道** ⇒ 被证伪的是 **M-01 这条实现路径**，不是零 mixin 路线本身 | 硬证据已被 2026-10-04 复核推翻其推论 |
 | **2026-10-04（最新核实）** | ✅ **官方旁路通道存在**：`net.neoforged.neoforge.client.pipeline.PipelineModifier`（`RenderPipeline apply(RenderPipeline, Identifier)`，javadoc 明写可用 `toBuilder()` 改、可用 `withColorTargetState` 改附件数），且 `RenderSystem` patch 在 `getCompiledPipelineNullable` **方法体首行**注入 `PIPELINE_MODIFIERS.apply(pipeline)` ⇒ 比 mixin 更靠前、覆盖任意渲染路径；location 由官方自动改写为 `location + "/transform/<路径>"` ⇒ 不撞 `putIfAbsent` ⇒ **零 mixin 达成 L2 是可能的** | 硬证据（已逐文件核实 26.3.x 分支） |
 | **2026-10-04（同轮附带）** | 🔴 **旧记载「`FrameGraphSetupEvent` 没有插 pass 入口」= 错**。`getFrameGrapBuilder()` 返回 `FrameGraphBuilder`；`LevelRenderer` patch 显示 `fireFrameGraphSetup` 在 `frame.addPass("clear")`（下一行）**之前**触发 ⇒ 帧图内插 pass 本就通 | 硬证据 |
-| **2026-10-02（本次）** | **用户拍板放开限制**：兼容完整 > 零 mixin | 三支柱优先级 |
+| **2026-10-02** | **用户拍板放开限制**：兼容完整 > 零 mixin | 三支柱优先级 |
+| **2026-10-12（最新裁决）** | 🔴 **用户拍板「不用考虑红线」**：M1 的**类别**闸门（「只许注入管线装配层」）废除，注入范围放开到任意原版类；**登记制 / 可关闭制 / 逐个开启三条保留**（X28 / X29 继续有效）。同轮裁决 **X24 作废**、**X23 保留**。触因：本轮全仓调研发现三处被旧白名单挡住但工程上明显更优的注入点（UI 屏幕装配、私有字段访问器替反射、`CloudRenderer` 矩阵实参 `@Redirect`），且 M-04（整主 pass 多附件）被**直接排为下一轮目标** | 用户裁决（原文见 `19-IMPROVEMENT-PATHS.md` §7-5） |
 
 **松绑后的规则（现行）**：
 
 | 维度 | 允许 | 禁止 |
 |---|---|---|
-| **注入目标** | ✅ **管线装配层**：`ChunkSectionsToRender#renderLayers`（private，7 参，末两个是 `renderPipelineOverride`）、`RenderPipeline` 的构造/派生路径、帧图 pass 装配相关类 | ❌ 注入 Sodium / caffeinemc 任何类 |
-| **注入目标** | ✅ 上述「装配层」内**必要的多个注入点**（不再限 1 个） | ❌ 注入 `RenderSystem` / `GlStateManager` / `GL11`/`GL14`/`GL15` 等底层状态类 |
-| **注入目标** | ✅ 为让派生管线被地形/实体/天空 draw 用上，注入点可含 draw 调用侧 | ❌ 注入第三方区块渲染器（Vitrail 等） |
+| **注入目标** | ✅ **任意原版类**（2026-10-12 裁决废除类别白名单）：管线装配层、`LevelRenderer` 内部、`SkyRenderer` / `CloudRenderer` 等原版渲染器、帧图 pass 的创建点、GUI 屏幕，以及**只为读一个 private 字段**的访问器型注入 | ❌ 注入 Sodium / caffeinemc / 第三方区块渲染器的任何类（X23 属 **L11 零集成**支柱，**本次裁决没有放开它**） |
+| **注入目标** | ✅ 同一目标类上**必要的多个注入点**，数量不限 | ❌ 未在本表 + `04-SPEC.md` §5.0 登记就注入（X28） |
+| **底层状态类** | ✅ **X24 已作废（2026-10-12）** —— 不再是禁令。🔖 但本轮结论**并没有用到这个放开**：`RenderSystem` 在 `getCompiledPipelineNullable` **方法体首行**就给了公开通道（§1.4.2），push/pop 比注入它更早、且不占登记位 | ⚠️ 注入 `GL11`/`GL14`/`GL15` 这类**只在 OpenGL 路存在**的类仍然不该做 —— 理由从「红线」改为「工程事实」：Vulkan 路上没有这些调用点，注入即绑死后端（X7） |
 | **注入数量** | 🟡 **不设硬上限**，但每新增一个必须在本表登记（类名 + 方法 + 签名 + 用途 + 兼容性判定） | ❌ 未登记就注入 |
 | **编码约束** | ① 目标类名/方法名只许引用 `bridge/MixinTargets` 常量；② `compatibilityLevel` 必须 `JAVA_25`（否则静默失效，见 X3）；③ 每个注入方法体**首行**打 `vkdisp: [注入点名] hit`；④ **只转发不写业务**（`06-MIGRATION` §2.2）；⑤ 每个注入点必须能**一键关闭**（配置项）以便二分定位 | ❌ mixin 类里写业务逻辑（升级时无法只改一处） |
 | **稳定性要求** | 注入后若出现崩溃/validation error，**必须能通过关闭单个注入点定位** | ❌ 多个注入点互相耦合，无法单独关闭 |
@@ -104,7 +105,7 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 
 | 步骤 | 动作 | 判据 |
 |---|---|---|
-| ① | 拉取新版 sources jar，`grep` 每个 mixin 目标方法签名是否仍存在 | `ChunkSectionLayer#pipeline(boolean)`、`ChunkSectionsToRender#renderLayers(7 参)`、`LevelRenderer#prepareChunkRenders*` |
+| ① | 拉取新版 sources jar，`grep` 每个 mixin 目标方法签名是否仍存在 | `ChunkSectionLayer#pipeline(boolean)`、`ChunkSectionsToRender#renderLayers(7 参)`、`LevelRenderer#prepareChunkRenders*`。🔴 **2026-10-12 起这张表不再是全集**：`04-SPEC.md` §5.0 已增登记候选注入点 M-06…M-14，**哪一个开工了就必须当天把它的签名补进本行**（白名单废除后，本表是升版唯一的回归入口） |
 | ② | 若签名变了：先改 `bridge/MixinTargets` 常量 + mixin 类 `@At`/`@Inject` 注解，**再**跑 `runClient` | 不许「先跑看崩不崩」 |
 | ③ | `runClient` 启动到主菜单，日志 grep `Mixin apply failed` | 0 命中 |
 | ④ | 进世界，确认每个注入点的 `vkdisp: [注入点名] hit` 日志至少出现 1 次 | T10 落地 |
@@ -136,12 +137,18 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 `ExtractLevelRenderStateEvent` 提取 ⇒ 它**可能**是「接管地形 pass 时拿不到 draw 数据」的零 mixin 出口，
 **属待实测，不得当既成事实**。
 
-**当前立场**：🔴 **登记为待评估的实现路径，不改现有代码**。M-01/M-01b 保留为 A/B 对照臂
-（符合 X52 单变量对照），两条路并跑一轮取证再决定是否下线 —— 现成基线是 `h08` 的
-`h08` 地形像素平均绝对差 **48.22** / **39.03%** 像素变化，可直接对比。
+**当前立场（2026-10-12 更新）**：🔴 **从「待评估」升级为「已登记的主线阶梯 R1」** —— 本轮源码级核实它**确实覆盖地形 draw**：地形两条取管线分支（`ChunkSectionsToRender` 第 121 行多重绘制 / 第 176 行单独绘制）都经 `RenderSystem.getCompiledPipeline` ⇒ 都落到 `getCompiledPipelineNullable` 第 107 行的 `PIPELINE_MODIFIERS.apply`。⇒ 它不仅**能**替掉 M-01，而且替掉之后附带消灭三处「判断自己此刻在不在我方 pass 里」的 hack（`inMrtPass` 静态标志、`finally` 清位纪律、h20 守卫 —— 后者见 `GAP-040`：`hasExpectedAttachmentCount()` 实测就是 `return inMrtPass`，与 `active()` 同义，防的那类状态它测不出来）。
+方案与排期在 `19-IMPROVEMENT-PATHS.md` §5A.4 阶梯 R1；M-01 保留为 A/B 对照臂（X52 单变量），基线仍是 `h08` 的地形像素平均绝对差 **48.22** / **39.03%** 像素变化。
+🔴 **前置是那条「必须幂等」硬约束**：上表已写明本项目现状不满足 ⇒ R1 的第一步是**把 4 个开关的生效时机收敛到注册期**，不是先写 modifier。
 
-**为什么仍然禁止底层 GL 状态类**：那会绑死后端，违反 X7（OpenGL 环境直接崩），
-且 VulkanMod 正是这条路 —— 本项目走 `renderpearl` 官方插口，不走后端替换。
+**为什么「优先官方 API」不再写成禁令**：2026-10-12 之前的措辞是「官方 API 可用时不许 mixin」，
+它实际挡住过三件工程上更优的事（见 §1.4 背景表末行）。现行口径：**两把尺子同时量**——
+① 时序是否更准，② 能不能删掉复制自原版的逻辑 / 反射 / 静态标志；官方 API 只在「两条都打平」时胜出。
+
+**关于底层状态类（2026-10-12 更正措辞）**：X24 的**禁令**已作废，但它的**理由**仍然成立一半 ——
+注入 `GL11`/`GL14`/`GL15` 会绑死 OpenGL 路（X7），而本项目走 `renderpearl`，那条路上根本没有这些调用点，
+所以「注入底层 GL 状态类」不是被禁止，是**无处可注**。`RenderSystem` 这一格则完全没必要注入：
+它自己就在方法体首行调 `PIPELINE_MODIFIERS.apply`，公开 push/pop 比注入更早且免登记。
 
 **为什么不再限制「只 1 个」**：上一版把数量当红线，是因为当时认为零 mixin 路线能走通。
 现在该路线已被证据否决，「1 个」的限制只会挡住兼容目标。**改为「登记制 + 可关闭制 + 逐个开启」，
@@ -338,12 +345,12 @@ if (DEBUG) { LOGGER.info("cull kept={}", kept); }
 | X20 | 🔴 **把无 LICENSE 文件的项目当"可以借鉴"** | 无 LICENSE = 默认 ARR = 不可用（L12 §1.3 陷阱 1） |
 | X21 | 🔴 **把「GPL + 例外条款」当成本项目可用** | 例外条款常只放开特定用途，一律按禁止处理（L12 §1.3 陷阱 2） |
 | X22 | ~~开 `ChunkSectionsToRender#renderLayers` 之外的第二个 mixin 注入点~~ **已作废（2026-10-02）** | 数量上限已被 M1 松绑取消，改为**登记制 + 可关闭制 + 逐个开启**。未登记的注入点仍禁止（X28） |
-| X23 | 🔴 **mixin 注入 Sodium / caffeinemc / 第三方区块渲染器的任何类** | 违反 L11 零集成 + M2 永久禁止（`03-DIRECTION` 已判定 Vitrail 的 `mixin/sodium/*` 路线本项目不用） |
-| X24 | 🔴 **mixin 注入 `RenderSystem` / `GlStateManager` / `GL11`/`GL14`/`GL15` 等底层状态类** | 绑死后端、违反 X7；VulkanMod 正是这条路，本项目走 `renderpearl` 不走它 |
+| X23 | 🔴 **mixin 注入 Sodium / caffeinemc / 第三方区块渲染器的任何类** | 违反 L11 零集成。🔖 **2026-10-12 未随 M1 白名单一起放开**：那条裁决放开的是「注入哪个原版类」，本条管的是「注入别人的类」，两者不同源（`03-DIRECTION` 已判定 Vitrail 的 `mixin/sodium/*` 路线本项目不用） |
+| X24 | ~~**mixin 注入 `RenderSystem` / `GlStateManager` / `GL11`/`GL14`/`GL15` 等底层状态类`**~~ **已作废（2026-10-12 用户裁决）** | 类别闸门整体废除，见 M1 / §1.4。🔖 **实际影响 = 0**：本轮调研结论**一个都没注** `RenderSystem`（它有公开通道，见 §1.4.2）；`GL*` 那半条的理由改成工程事实保留 —— Vulkan 路没有那些调用点，注入即绑死后端（X7） |
 | X25 | 🔴 **在 mixin 类里写业务逻辑**（应只转发到 `bridge/` 或业务包） | 违反 M1 编码约束 ④ + `06-MIGRATION` §2.2；升级时无法只改一处 |
 | X26 | 🔴 **建 `vkdisp.mixins.json` 却不同步取消 `neoforge.mods.toml` 的 `[[mixins]]` 注释** | mixin 静默不加载（不报错）；M1 松绑后此条更须注意 |
 | X27 | 🔴 **为「性能」牺牲「兼容」**（砍掉 pack 特性以换取帧率） | 三支柱优先级：兼容 > 稳定 > 高性能（§〇·〇）。取舍前必须先证明该特性**无法**实现，而不是「太麻烦」 |
-| X28 | 🔴 **注入未在 `07` §1.4 登记的 mixin 注入点** | M1 已从「数量红线」改为「登记制」：不限数量，但每个注入点必须登记类名/方法/签名/用途，且能一键关闭 |
+| X28 | 🔴 **注入未在 `07` §1.4 / `04-SPEC.md` §5.0 登记的 mixin 注入点** | M1 是「**类别不限 + 登记制**」：注入哪个原版类都行，但每个注入点必须登记类名/方法/签名/用途/可关闭键，且能一键关闭。2026-10-12 废的是类别闸门，**不是登记闸门** |
 | X29 | 🔴 **新增注入点时一次性开启多个，导致问题无法二分定位** | 违反「稳定」支柱：M1 要求逐个开启 + 逐个可关 |
 | X30 | 🔴 **Rust `extern "C"` 未 `catch_unwind`，或 `Cargo.toml` 设 `panic = "abort"`** | panic 穿 FFI = UB = JVM abort = 游戏崩溃（T17 / N5 / N6） |
 | X31 | 🔴 **原生路径未提供 A/B 开关** | 无法判断问题是原生带来的还是别处坏的（N4） |
@@ -490,7 +497,8 @@ mod_group_id             = dev.vkdisp
 [ ] 🔴 【参考调研】**第 0 条写了合规结论**，且不是「未核实」（L12 / X19）
 [ ] 🔴 所有参考项目都查过仓库的 `LICENSE` 文件（不是只看平台页面）（L12 §1.3）
 [ ] 🔴 没有把「无 LICENSE」当可用、没有把「GPL + 例外条款」当成本项目可用（X20 / X21）
-[ ] 🔴 每个 mixin 注入点已登记在 §1.4（类名/方法/签名/用途），且能一键关闭（M1 / X28）
+[ ] 🔴 每个 mixin 注入点已登记（类名/方法/签名/用途/可关闭键）在 §1.4 + `04-SPEC.md` §5.0，且能一键关闭（M1 / X28）
+[ ] 🔴 本轮新增的注入点签名已补进 §1.4.1 升版回归清单第 ① 行（白名单已废 ⇒ 该表是唯一入口）
 [ ] 🔴 新注入点是**逐个**开启的，不是一次性全开（X29）
 [ ] mixin 类只转发不写业务、目标类名全部引用 `MixinTargets` 常量（M1 编码约束 / X25）
 [ ] 性能相关改动附实测数据，且对照的是 `17-NATIVE.md` §2.2 的 B1–B7（T14）

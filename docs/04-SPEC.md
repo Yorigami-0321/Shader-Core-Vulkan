@@ -375,22 +375,35 @@ config = "${mod_id}.mixins.json"
 
 `gradlew` / shell 脚本：**仓库内必须放 `.gitattributes`**（`* text=auto eol=lf`）+ 仓库级 `core.autocrlf=false`，并手工 `git update-index --chmod=+x gradlew`（Windows 下 git 不跟踪可执行位）。
 
-### 5.0 🔴 mixin 注入点登记表（M1 松绑后的强制登记制）
+### 5.0 🔴 mixin 注入点登记表（2026-10-12 起：类别不限，仍是强制登记制）
 
-> `07-CONSTRAINTS.md` M1 已从「全局只许 1 个注入点」松绑为「**管线装配层 + 登记制 +
-> 可关闭制 + 逐个开启**」。**不限数量，但每个注入点必须在此登记**（X28）。
-> 登记即生效；未登记的注入点一律禁止。
+> `07-CONSTRAINTS.md` M1 现行口径（2026-10-12 用户裁决）：**注入哪个原版类都行**，
+> 保留的是**登记制 + 可关闭制 + 逐个开启**三条（X28 / X29）。X23（禁注入 Sodium / 第三方）未放开。
+> 未登记的注入点一律禁止；登记即生效。
 >
-> 目标类名/方法名只许引用 `bridge/MixinTargets` 常量，禁止散落字面量（M1 编码约束 ①）。
+> 目标类名/方法名只许引用 `bridge/MixinTargets` 常量，禁止散落字面量（M1 编码约束 ①）
+> —— 白名单废除后这条**更重要**：升版排查入口只剩这一张表 + `07` §1.4.1。
+>
+> 🔖 **M-06…M-14 的出处**：2026-10-12 全仓调研（地形/帧图/天空云/包装载四域并行取证），
+> 每条的**行号都对着 26.3 反编译源核过**。改造阶梯见 `19-IMPROVEMENT-PATHS.md` §5A.4。
 
 | # | 目标类 | 目标方法（签名） | 注入类型 | 用途 | 兼容性判定 | 可关闭键 | 状态 |
 |---|---|---|---|---|---|---|---|
-| M-01 | `net.minecraft.client.renderer.chunk.ChunkSectionLayer` | `pipeline(boolean)`（public，1 参 `multiDraw`） | 装配层 | 把**派生管线**（多附件 / 自定义 uniform）按**层**接到地形 draw 上 —— 零 mixin 无法达成（`02` §5.1） | 源码级核实（26.3.0.41-beta sources jar 第 39-41 行 + `ChunkSectionsToRender` 第 121/176 行）：`layer.pipeline(multiDraw)` 是派生管线被地形 draw 用上的**唯一必经点**，且按层解析 | `mixin.wireTerrain` | 🟡 **已实现（2026-10-03）**：通道已通 + GAP-004 块已挂上、每帧绑定、且已被包片元消费（`h08`）。**2026-10-04 更新**：GAP-003 的包片元接线已打通（`h08`/`h09`）—— 派生 MRT 管线片元 = 包 `gbuffers_terrain`，槽位服从 `DRAWBUFFERS` 映射（转译第 ⑦½ 段）。⛔ M-04（整 pass 多附件，方案 B）仍未做；`h24` 坐实：管线替换本身引发闪烁（GAP-011） |
-| M-01b | `net.minecraft.client.renderer.chunk.ChunkSectionsToRender` | `renderLayers(ChunkSectionLayer[], GpuSampler, RenderPass, GpuTextureView, GpuTextureView, @Nullable RenderPipeline, @Nullable RenderPipeline)`（private，7 参，末两个是 override） | 装配层 | 把 M-01 派生管线新增的**自定义 uniform 块**绑到地形 draw 的 RenderPass（GAP-004） | 源码级核实：原版 `renderLayers` 只绑 `TerrainUniform` / `Sampler0` / `Sampler2`；驱动层 STRICT_VALIDATION 按**布局**逐条校验，布局多出的条目无人绑即抛 `Missing uniform` | `mixin.bindTerrainParams` | ✅ **已实现（2026-10-03）**：块挂上并每帧绑定；**2026-10-04 更新（`h08`）**：包片元接上后块**已被消费** —— 42 个块成员 + 5 个 sampler 一条不漏绑定，`VkDispBuiltins` 608 字节环由 `OfUniformManager` 按 std140 偏移每帧填值 |
+| M-01 | `net.minecraft.client.renderer.chunk.ChunkSectionLayer` | `pipeline(boolean)`（public，1 参 `multiDraw`） | 装配层 | 把**派生管线**（多附件 / 自定义 uniform）按**层**接到地形 draw 上 —— 零 mixin 无法达成（`02` §5.1） | 源码级核实（26.3.0.41-beta sources jar 第 39-41 行 + `ChunkSectionsToRender` 第 121/176 行）：`layer.pipeline(multiDraw)` 是派生管线被地形 draw 用上的**唯一必经点**，且按层解析 | `mixin.wireTerrain` | 🟡 **已实现（2026-10-03）**：通道已通 + GAP-004 块已挂上、每帧绑定、且已被包片元消费（`h08`）。**2026-10-04 更新**：GAP-003 的包片元接线已打通（`h08`/`h09`）—— 派生 MRT 管线片元 = 包 `gbuffers_terrain`，槽位服从 `DRAWBUFFERS` 映射（转译第 ⑦½ 段）。⛔ M-04（整 pass 多附件，方案 B）仍未做；`h24` 坐实：管线替换本身引发闪烁（GAP-011）。🔴 **2026-10-12 更新：本条登记为「候选下线」** —— 本轮核实 `RenderSystem.getCompiledPipelineNullable`（第 106-107 行）首行即应用 `PipelineModifier`，而地形两条取管线分支（`ChunkSectionsToRender` 第 121 / 176 行）都经它 ⇒ 官方通道**覆盖地形 draw 成立**，M-01 可被 modifier 替掉（阶梯 R1，见 `19` §5A.4）。附带收益：`inMrtPass` 静态标志 + h20 守卫（`GAP-040`：实测是 `return inMrtPass`，空转）由 push/pop 天然取代；且本注入点会牵连**建网格侧**（`SectionRenderDispatcher` 与 `LevelRenderer` 第 796 行也调 `layer.pipeline(false)` 取顶点格式绑定），modifier 只在 draw 期生效 ⇒ 少一处耦合（`GAP-043`）。**下线前置**：`07` §1.4.2 的「必须幂等」硬约束 —— 先把 4 个开关的生效时机收敛到注册期 |
+| M-01b | `net.minecraft.client.renderer.chunk.ChunkSectionsToRender` | `renderLayers(ChunkSectionLayer[], GpuSampler, RenderPass, GpuTextureView, GpuTextureView, @Nullable RenderPipeline, @Nullable RenderPipeline)`（private，7 参，末两个是 override） | 装配层 | 把 M-01 派生管线新增的**自定义 uniform 块**绑到地形 draw 的 RenderPass（GAP-004） | 源码级核实：原版 `renderLayers` 只绑 `TerrainUniform` / `Sampler0` / `Sampler2`；驱动层 STRICT_VALIDATION 按**布局**逐条校验，布局多出的条目无人绑即抛 `Missing uniform` | `mixin.bindTerrainParams` | ✅ **已实现（2026-10-03）**：块挂上并每帧绑定；**2026-10-04 更新（`h08`）**：包片元接上后块**已被消费** —— **42 个块成员 + 5 个 sampler 一条不漏绑定，`VkDispBuiltins` 608 字节环由 `OfUniformManager` 按 std140 偏移每帧填值**。🔴 **2026-10-12 更新：登记为「应删」** —— 三条理由：① 它注入的是 **private `renderLayers`（7 参）**，是全表里升版最脆的一个签名（`required: true` ⇒ 改名即崩客户端）；② 它要绑的 `VkDispTerrainParams` **只存在于 MRT 变体布局**（`TerrainPipelineApi` 第 251-253 行），而 MRT pass 内本就能在 `renderGroup` **之前**自绑（同文件第 513 行已是这个形态）；③ 原版路径上那 6 条单附件派生管线**刻意不带**这个绑定组（第 139-143 行）⇒ 注入在原版路径上等于往不认它的布局里塞值。下线即消灭本表唯一的 private-7-参 风险面 |
 | M-02 | （待定） | （待定） | 装配层 | 实体 / 天空 draw 走派生管线 | 待源码核实 | `mixin.wireEntity` | ⏳ 未开始 |
 | M-03 | （待定） | （待定） | 装配层 | | | | ⏳ 未开始 |
-| M-04 | `net.minecraft.client.renderer.LevelRenderer` | `addMainPass(FrameGraphBuilder, FeatureRenderDispatcher$PreparedFrame, GpuBufferSlice, ChunkSectionsToRender, boolean)`（private，5 参） | 装配层 | **GAP-003 多附件的方案 B**：拿到地形 render pass 的所有权，把**整个**主 pass 改成多附件 | 源码级核实（同 jar 第 396-404、455-463 行）：原版地形 pass 由 `createRenderPass(name, mainTarget.getColorTextureView(), Optional.empty(), depthView, OptionalDouble.empty())` 建出，**颜色附件恰好 1 个** | `mixin.ownTerrainPass` | ⏸️ **已登记，未实现**（方案 B；§5.0.4 取舍表） |
-| **M-05** | `net.minecraft.client.renderer.LevelRenderer` | `prepareChunkRenders(Matrix4fc, boolean)` 与 `prepareChunkRendersIndirect(Matrix4fc, boolean)`（**均 public**，各返回 `ChunkSectionsToRender`） | **只读捕获** | **GAP-003 方案 A 的入口**：拿到地形 draw 数据对象的引用，使我方能在**自己的**多附件 pass 里画地形 —— **不改原版任何渲染行为** | 源码级核实（同 jar 第 849、937 行签名；第 249 行 `fireFrameGraphSetup` **早于**第 271-275 行的 `prepareChunkRenders*` ⇒ 官方事件里**拿不到**该对象，但 pass 体在第 286 行 `frame.execute()` 执行，**晚于**捕获点 ⇒ 时序可行） | `mixin.captureTerrainDraws` | 🟡 **已登记，2026-10-03 实现并取证**（`evidence/h03-…`）：捕获可用 + 时序成立 |
+| M-04 | `net.minecraft.client.renderer.LevelRenderer` | `addMainPass(FrameGraphBuilder, FeatureRenderDispatcher$PreparedFrame, GpuBufferSlice, ChunkSectionsToRender, boolean)`（private，5 参） | 装配层 | **GAP-003 多附件的方案 B**：拿到地形 render pass 的所有权，把**整个**主 pass 改成多附件 | 源码级核实（同 jar 第 396-404、455-463 行）：原版地形 pass 由 `createRenderPass(name, mainTarget.getColorTextureView(), Optional.empty(), depthView, OptionalDouble.empty())` 建出，**颜色附件恰好 1 个** | `mixin.ownTerrainPass` | 🎯 **已登记，排为下一轮目标**（2026-10-12 用户裁决：**直接排为下一轮目标**，推翻 §5.0.4 那张 2026-10-03「走 A」的取舍结论 —— 见该表的作废注记）。落地形态：`@WrapOperation` 包住 `addMainPass` 内第 **456-463** 行的 `createRenderPass(...)`，把 main 的 color/depth view 换成我方 colortex 阵列，再配 `PipelineModifier` 给主 pass 内**每一条**管线补 `ColorTargetState`。硬约束（本轮核实）：`com/mojang/renderpearl/frontend/FrontendRenderPass.java` 第 **107-121** 行 —— `setPipeline` 要求 **pass 附件数与管线 color target 数相等、且逐条格式相等**，否则 `IllegalStateException`（X42 同源）。收益：地形不再画两遍（`MrtTerrainPass` 类头自陈「双绘代价未测」），并删掉 `GbufferTarget` 薄壳、`ColortexPool` 双代轮转、`DepthSnapshots` 三个手写取点、AfterLevel 第二档；GAP-022/023/037 的「z 有两个所有者」收敛成单点。**开工第一步是交牵连面清单**（主 pass 内实体/特性/云/天气/描边/OIT 各用哪条管线、要派生成几条 N 附件），不是先写注入 |
+| **M-05** | `net.minecraft.client.renderer.LevelRenderer` | `prepareChunkRenders(Matrix4fc, boolean)` 与 `prepareChunkRendersIndirect(Matrix4fc, boolean)`（**均 public**，各返回 `ChunkSectionsToRender`） | **只读捕获** | **GAP-003 方案 A 的入口**：拿到地形 draw 数据对象的引用，使我方能在**自己的**多附件 pass 里画地形 —— **不改原版任何渲染行为** | 源码级核实（同 jar 第 849、937 行签名；第 249 行 `fireFrameGraphSetup` **早于**第 271-275 行的 `prepareChunkRenders*` ⇒ 官方事件里**拿不到**该对象，但 pass 体在第 286 行 `frame.execute()` 执行，**晚于**捕获点 ⇒ 时序可行） | `mixin.captureTerrainDraws` | 🟡 **已登记，2026-10-03 实现并取证**（`evidence/h03-…`）：捕获可用 + 时序成立。🔴 **2026-10-12：本条被 M-06 合并替代**（两个 RETURN 收成一个 HEAD） |
+| **M-06** | `net.minecraft.client.renderer.LevelRenderer` | `addMainPass(FrameGraphBuilder, FeatureRenderDispatcher$PreparedFrame, GpuBufferSlice, ChunkSectionsToRender, boolean)`（**private，5 参**，第 396-401 行） | **只读捕获 `@At("HEAD")`** | **M-05 的合并替代**：一个注入点同时拿到 `terrainFog` 与 `ChunkSectionsToRender` ⇒ 两点收一点、捕获字段可类型化（去掉 `volatile Object` + `instanceof`）；顺带解掉「我方 pass 从不设雾」（`GAP-038`） | 源码级核实（26.3 反编译源）：第 **277** 行**无条件**调 `addMainPass`，而 indirect 分支在第 272 行、常规分支在第 274 行 ⇒ 两支汇成一点；官方 `FrameGraphSetupEvent`（第 249 行触发）实参只有 builder / targets / cameraState / modelViewMatrix / profiler，**不含**这两个 ⇒ 事件里确实拿不到 | `mixin.captureMainPassArgs` | ⏳ **候选（R2），未实现** |
+| **M-07** | `LevelRenderer` | `chunkLayerSampler`（private 字段，第 **146** 行；其按需重建在第 437-449 行的 pass 体内） | `@Shadow` 读 + `@Accessor` | 复用**原版那个采样器实例**：各向异性跟随用户纹理过滤设置、`shouldResetChunkLayerSampler` 门控一并继承 ⇒ 删 `MrtTerrainPass` 第 889-908 行的自建同款（`GAP-041`：现硬编码 `maxAnisotropy = 1`，画面与原版不可比） | 源码级核实：原版 `createSampler(...)` 的各向异性取 `optionsRenderState.maxAnisotropyValue`（仅当 `textureFiltering == ANISOTROPIC`，否则 1）。🔖 旧文档把「不用原版那个实例」记成设计取舍（§5.0.4 表第 2 行），本轮据实改判 | `mixin.reuseChunkSampler` | ⏳ **候选（R3），未实现** |
+| **M-08** | `net.minecraft.client.renderer.chunk.ChunkSectionsToRender` | draw 变体内的 `drawGroupsPerLayer`（private，第 **97** 行）与其 `drawCount` | `@Mixin` + `@Accessor`（**替反射**） | 把「地形这帧画了几条 draw」从**可静默失效**的判据变成**升版即硬失败**的判据：现状 `MrtTerrainPass` 第 946 / 957 行 `getDeclaredField` + `setAccessible`，失败只 WARN（`GAP-042`） | 源码级核实字段存在；口径与 `07` T10「每处注入点必须能证明被调用」一致 —— 反射那条不满足 | `mixin.terrainDrawProbe` | ⏳ **候选（R3），未实现** |
+| **M-09** | `net.minecraft.client.renderer.CloudRenderer` | `quadCount`（第 **58** 行）/ `texture`（第 57 行）/ `utb`（第 60 行），均 private | `@Mixin` + `@Accessor`（**替反射**） | 同上：`CloudsIntoGbuffer` 第 314-319 行反射读这三个字段当云侧判据，改名即哑（`GAP-042` 同族） | 源码级核实三字段存在且 private | `mixin.cloudProbe` | ⏳ **候选（R3），未实现** |
+| **M-10** | `CloudRenderer` | `render(...)` 内第 **226** 行 `getDynamicUniforms().writeTransform(RenderSystem.getModelViewMatrixCopy())` 的**实参** | `@Redirect` | 云不再压/还原**全局** modelview 栈 ⇒ 删 `CloudsIntoGbuffer` 第 276-296 行的 `stack.set` + `saved` + `finally` 那一族；「漏还原即污染同帧后续原版 pass」这个事故类别整个消失（现注释自陈「不压 = 云网格锚错 = 放射长条」） | 源码级核实：原版云矩阵确实只从 `getModelViewMatrixCopy()` 取 ⇒ 改实参即可，不动全局栈 | `mixin.cloudMatrixRedirect` | ⏳ **候选（R3），未实现** |
+| **M-11** | `net.minecraft.client.renderer.SkyRenderer` | `render(GpuBufferSlice, SkyRenderState)`（**public**，第 **132** 行）内第 **134 / 135** 行的 `renderTarget.getColorTextureView()` 与 `getDepthTextureView()` | `@Redirect`（改两实参） | 原版天空**直接**落进我方 colortex0 / gbuffer 深度 ⇒ 删 `GbufferTarget`（`RenderTarget` 薄壳 + 每帧 `repoint`）、删 `SkyIntoGbuffer` 里第二个 `SkyRenderer` 实例与自抽 `SkyRenderState`；天空深度从「写一次 + 翻两次」回到「写一次 + 翻一次」（`GAP-037` 根因之一） | 源码级核实：`SkyRenderer` 由 `LevelRenderer` 第 377 行用 `gameRenderer.mainRenderTarget()` 构造，第 139 行**在方法内部**才开自己的 render pass ⇒ 视图取用点就是这两行 | `mixin.skyIntoGbufferTarget` | ⏳ **候选（R4），未实现**（本域收益第二，仅次于 M-04） |
+| **M-12** | `LevelRenderer` | `addSkyPass(FrameGraphBuilder, CameraRenderState, GpuBufferSlice)`（private，第 **369** 行） | `@Inject HEAD`（**兜底位，首选不注入**） | 补回原版四道门控：第 370-371 行 `FogType.POWDER_SNOW` / `LAVA` / `doesMobEffectBlockSky`、第 380 行 `state.skybox != Skybox.NONE` ⇒ 现状我方重放天空**一条都不看**，症状是「岩浆里能看到天空」（`GAP-039`） | 🔖 **优先走官方钩子，不是注入**：`CustomSkyboxRenderer.renderSky` 在第 **385** 行、**就在 `"sky"` pass 体内**被调，而该时刻**没有 render pass 打开**（原版 pass 在 `SkyRenderer:139` 内部才开）⇒ 钩子里可直接自开我方 pass，回 `true` 天然与原版互斥（现手工互斥在 `SkyIntoGbuffer` 第 116-119 行）。⚠️ `LevelRenderState.reset` 每帧清 `customSkyboxRenderer` 字段 ⇒ 挂点仍要在装配期做 | `mixin.skyGate` | ⏳ **候选（R4），未实现**；**默认不启用** |
+| **M-13** | `com.mojang.blaze3d.framegraph.FrameGraphBuilder`（调用点在 `LevelRenderer#addMainPass` 第 **403** 行 `frame.addPass("main")`） | `addPass(String)` 的返回值 | `@WrapOperation` | 把「天空必须排在地形之前」从**实测反推**变成**显式声明**：拿回 `FramePass` 后与原版 `"sky"`（第 383 行）建 `requires` 边 ⇒ 删 ORDER-MARK 顺序日志判据与 `mrt.terrainAfterLevel` 这条 A/B 车道（`MrtTerrainPass` 第 205-215 行的 `disableCulling` + `requires` 猜测式装配） | 源码级核实 `FrameGraphBuilder#resolvePassOrder`：先递归解析 `requiredPassIds` 再 `output.add(pass)` ⇒ **插入序不是依赖**（`h48g` 实测天空被排到地形之后，`c0@afterSky` 只剩 0.0611） | `mixin.pinPassOrder` | ⏳ **候选（R5），未实现** |
+| **M-14** | `net.minecraft.client.gui.screens.options.VideoSettingsScreen` | `addOptions()`（**protected**，第 **108** 行） | `@Inject TAIL` | 用原版 `OptionsList.addSmall(List)`（第 45 行）/ `addHeader`（第 59 行）把包选项嵌进原版视频设置页 ⇒ 删 `screen/PackPickerScreen` 整类、`PackOptionsScreen` 第 89-291 行的自研双列分页与 `fit()`、`ScreenDriveCommand.Page` 那套页码 | 源码级核实两类与方法均存在。🔴 **官方事件路已核实不通**：`ConfigurationScreen` 是 `final`（nf 源第 112 行）⇒ 加不了选项卡；`ScreenEvent.Init.Post` 只 `addListener`、不进 `HeaderAndFooterLayout` ⇒ 控件重叠 | `mixin.packOptionsInVanillaScreen` | ⏳ **候选（R6），未实现** |
 
 #### 5.0.3 ✅ 多附件**原语**已验证（2026-10-03，MRT 能力验证件）
 
@@ -458,14 +471,21 @@ FramePass pass = frame.addPass("main");
 ```
 
 ⇒ 把这个 pass 改成 N 附件，**所有原版管线**（各自声明 1 个 `ColorTargetState`）都会与 pass 不匹配。
-所以 M-04 落地前必须先做**取舍分析**（未做）：
+所以 M-04 落地前必须先做**牵连面清单**（🔴 2026-10-12 更新：取舍分析本身已由用户裁决定为「走 B」，
+剩下未做的正是这份清单 —— 主 pass 内实体 / 特性 / 云 / 天气 / 描边 / OIT 各用哪条管线、
+要派生成几条 N 附件版本、`FrontendRenderPass` 第 107-121 行的「附件数与逐条格式恒等」各自怎么满足。**它是 R7 的第一步，不是先写注入**）：
 
 | 方案 | 做法 | 代价 | 入口状态（2026-10-03 实测） |
 |---|---|---|---|
-| **A. 地形单独一个 pass** | 我方在帧图里另建一个多附件 pass 只画地形，原版主 pass 保持单附件 | 地形 pass 的深度/可见性/顺序语义要自己处理；地形与实体之间没有共享附件 | ✅ **入口已通**：M-05 只读捕获（`evidence/h03-…`）。不改任何渲染行为，ON/OFF 截图逐字节相同 |
-| **B. 整 pass 多附件** | 主 pass 加附件，所有走它的原版管线也得跟着派生 | 要为实体/特性/云/描边各派生一份 N 附件管线，改动面与回归面都大得多 | ⏸️ M-04 未开工 |
+| **A. 地形单独一个 pass** | 我方在帧图里另建一个多附件 pass 只画地形，原版主 pass 保持单附件 | 地形 pass 的深度/可见性/顺序语义要自己处理；地形与实体之间没有共享附件。🔴 **实际付出的代价（2026-10-12 补记）**：地形**被画两遍** + 一整套图外同步（`GbufferTarget` repoint / `ColortexPool` 双代 / `DepthSnapshots` 手写取点 / AfterLevel 第二档） | ✅ **已实现即现状**：M-05 只读捕获（`evidence/h03-…`）+ 帧图内插 pass（`h04`/`h05`）。🔖 M-04 落地后本方案**退役** |
+| **B. 整 pass 多附件** | 主 pass 加附件，所有走它的原版管线也得跟着派生 | 要为实体/特性/云/描边各派生一份 N 附件管线，改动面与回归面都大得多 | 🎯 **M-04 已排为下一轮目标**（2026-10-12 用户裁决；先交牵连面清单，见 R7） |
 
-✅ **取舍结论（2026-10-03）：走 A。** 依据不是偏好，是两条入口的**实测风险差**：
+🔴 **取舍结论（2026-10-03）「走 A」已于 2026-10-12 作废 ⇒ 改走 B（M-04 排为下一轮目标，用户裁决）**。
+下面两张表**保留作历史依据**，别当现状读。作废理由两条：
+① 当时「走 A」的前提是 M1 白名单把注入范围锁在装配层，**该闸门本轮已废**（`07` §1.4）；
+② 当时没有把**方案 A 自己的代价**记账 —— 地形被画两遍（`MrtTerrainPass` 类头第 25-28 / 77-78 行自陈「双绘代价未测」）、
+`GbufferTarget` 每帧 `repoint`、`ColortexPool` 双代轮转、`DepthSnapshots` 三个手写取点、AfterLevel 第二档 A/B 车道，
+全都是为了「不碰原版 pass」而付的账。⇒ 开工第一步：交**牵连面清单**（主 pass 内每条管线 × 附件数），见 M-04 行的落地形态。
 
 | | 方案 A（M-05） | 方案 B（M-04） |
 |---|---|---|
