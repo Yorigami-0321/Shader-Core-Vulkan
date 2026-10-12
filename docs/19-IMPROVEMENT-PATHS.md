@@ -503,7 +503,7 @@ C2b 要动每帧路径，按 QD-04 的教训必须单独一轮；
 | **R4** | **天空**：包天空搬进官方 `CustomSkyboxRenderer` 钩子 + M-11 视图 `@Redirect`（M-12 仅兜底） | M-11、M-12、`GAP-037`、`GAP-039` | 删 `GbufferTarget` **整类** + `SkyIntoGbuffer` 的第二个 `SkyRenderer` 实例 / 自抽 state / 手工互斥 | 岩浆里**没有**天空；天空深度**只被翻一次**；一百一十轮的星点判据**不回退** | 2 天 | 🟡 **代码已落地（2026-10-12 第 5 步）**：M-11 两条 `@Redirect`（键 `mixin.skyViews`）+ 包天空进官方 `CustomSkyboxRenderer`（`SkyIntoGbuffer.installHook()` 在装配期写字段，回 true 即互斥）；`GbufferTarget` 整类已删、第二个 `SkyRenderer` 与自抽 state/私有深度都删。**未签**：三条判据 + `Mixin apply failed=0` + 自报行 `钩子被调#` 是否非零 |
 | **R5** | ✅ **已收口（2026-10-12）**：`@WrapOperation` 两个 addPass 调用点接住原版 sky/main 句柄、`PassOrder` 双向补出 requires 边、ORDER-MARK 两条反推日志已删、`mrt.terrainAfterLevel` 那条 A/B 车道连同 `drawAfterLevel()` / `paintGbufferAndTerrain()` 一起删除 | M-13 | 删 `MrtTerrainPass:205-215` 的猜测式装配 + ORDER-MARK 日志 + `mrt.terrainAfterLevel` A/B 车道 | `h48g` 那个「天空排在地形之后」的 0.0611 读数**不再可能复现** | 1 天 | ✅ 代码收口，⚠️ 判据 `c0@afterSky` 要真机 |
 | **R6** | **M-14 包选项进原版视频设置页** | M-14 | 删 `PackPickerScreen` 整类 + `PackOptionsScreen` 分页与 `fit()` + `ScreenDriveCommand.Page` | 原版页内可滚动、可键盘操作、切包后选项仍在 | 1–2 天 | ❌ |
-| **R7** | 🎯 **M-04 整主 pass 多附件**（**下一轮目标**，用户 2026-10-12 裁决） | M-04、`GAP-003` 的 M-04 未解除项 | `@WrapOperation` `LevelRenderer:456-463` + 主 pass 内每条管线派生 | 地形**只画一遍**（用 R3 的访问器判据，不再用反射）；`FrontendRenderPass:107-121` 零抛；实体/云/天气/描边**不回退** | 未估 | 🔴 整帧 |
+| **R7** | 🎯 **M-04 整主 pass 多附件**（**下一轮目标**，用户 2026-10-12 裁决） | M-04、`GAP-003` 的 M-04 未解除项 | `@WrapOperation` `LevelRenderer:456-463` + 主 pass 内每条管线派生 | 地形**只画一遍**（用 R3 的访问器判据，不再用反射）；`FrontendRenderPass:107-121` 零抛；实体/云/天气/描边**不回退** | ✅ **待核三项已结 ⇒ 成本可报**（原「未估」）：代码面只有三处（1 个注入点 + 1 处通用派生公式 + 1 处退路计数），**成本全在回归面** —— 主 pass 同帧路径含实体/方块实体/物品/文本/粒子/云/天气/边界/描边/OIT 交替，且 `N ≤ 8` 无余量（§5.0.6 ⑤ 第 2、3 条还要求「补槽同尺寸」与「深度必须就是 `D32_FLOAT`」两条装配期前提）⇒ **估 3–5 个工作日 + 一轮完整真机对照**，不是「一天」的活 | 🔴 整帧 |
 
 **R7 的第一步不是写注入**：先交**牵连面清单**（`executeSolid` / `executeClassicTransparency` / `executeOit` /
 `executeOutline` / `executeSeeThrough` / `executeAlwaysOnTop` 六支各用哪些管线、要派生成几条 N 附件版本），
@@ -563,7 +563,7 @@ C2a (光空间数学，可单测、不碰 GPU) → C2b (包 shadow pass 装配) 
 | **R2**（M-06 一点替两点 + 补雾） | ★（雾口径与原版同源） | ★★★（消「残值当本帧值」那类静默错） | 0（每帧一次赋值） | 1 天 | 🟡 一帧判据即可 |
 | **R1**（R1a：新增 M-15，用 `renderPass` 实参定 pass 身份） | ★★（少一层「档不一致」风险） | ★★★（`GAP-040` 的假守卫被真判据替掉） | 🔴 热路径，须报 B1/B3 | 1–2 天 | 🔴 单变量 A/B 一轮 |
 | ~~R1b（M-01 → `PipelineModifier`）~~ | — | — | — | — | 🔴 **已作废**（`GAP-045`：缓存键无包代次、key 不能运行期增删） |
-| **R7**（M-04 整主 pass 多附件） | ★★★（gbuffer 第一次**就是**主目标 ⇒ 双绘与图外同步一族消失） | ★★（少一套手工同步，但改的是原版 pass 语义） | 少一遍地形绘制 —— ⚠️ 本机 llvmpipe **不可量化**（`00` 铁律 ①） | 未估 | 🔴 牵连整帧，需完整回归 |
+| **R7**（M-04 整主 pass 多附件） | ★★★（gbuffer 第一次**就是**主目标 ⇒ 双绘与图外同步一族消失） | ★★（少一套手工同步，但改的是原版 pass 语义） | 少一遍地形绘制 —— ⚠️ 本机 llvmpipe **不可量化**（`00` 铁律 ①） | 3–5 天 + 完整回归（三项待核已结，见 §5A.4 的 R7 行） | 🔴 牵连整帧，需完整回归 |
 
 ---
 

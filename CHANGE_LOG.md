@@ -6,6 +6,61 @@
 ---
 ---
 
+## 2026-10-12（一百二十二）— ✅ 闸门解锁：`04-SPEC` §5.0.6 ⑤ 三项待核逐条核完（源码级），R7 的成本锁解除
+
+> **verdict = 三项都结在源码里，没一项需要开客户端**；结论里两条**缩小**了 R7 的范围、一条**收窄**了
+> 原写法（GAP-046 的「格式不合」那一支）。本轮只改文档 + 台账，零代码。
+
+- **① 非 OIT 的 `water_mask` 落在哪个 pass（原先锁着 R7 的成本）** —— 结论：**不存在「同一条
+  `pipeline/water_mask` 既在主 pass 又在别的单附件 pass」这一族问题**。
+  `RenderTypes.waterMask()`（`RenderTypes:715-716`）按 `useImprovedTransparency()` 交出的是
+  **两条不同 location 的管线**（`pipeline/water_mask` `RenderPipelines:792-797` /
+  `pipeline/oit_water_mask` `:798`，同一 `WATER_MASK_SNIPPET`、各 1 个颜色目标），而这两支所在的
+  路径本身就互斥：`LevelRenderer:466` 的 `if (!useImprovedTransparency)` 才走
+  `executeClassicTransparency` → `:721` `featureFrame.executeTranslucent(renderPass)` →
+  `FeatureRenderDispatcher:210-228` 里执行 `collection.waterMask` 相，**那一刻就在主 GPU pass
+  `:455-463` 内**；OIT 那支只在 `:471-472 → executeOit → :591-592 / :649-650 →
+  executeOitWaterMask(:699-711)` 的**独立 pass** 里。
+  ⇒ 对 R7 的影响：`pipeline/water_mask` 只需派生**一条** N 附件变体（已计入 §5.0.6 ② 的 ≈52 条），
+  `pipeline/oit_water_mask` 所在 pass 不动 ⇒ **不派生**；**不需要**「一条管线两个变体 + 按 pass 选」，
+  也就不需要把 M-15 的 `renderPass` 身份判据再搬一次。
+- **② 默认 `renderArea` 的尺寸从哪来** —— `RenderPassDescriptor.defaultRenderArea`（`:79-98`）
+  取的是**最后一个非 null 颜色附件**的 `getWidth(0)/getHeight(0)`；一个颜色附件都没有才退到深度附件。
+  **不取 min、不求交、不校验**，同一算法在 `VulkanCommandEncoder:255-268` 又算一遍（那次结果当视口/
+  尺寸传给 `VulkanRenderPass`，`:337`）⇒ 附件尺寸不一致时是**静默改尺寸**（症状 = 画面被裁/被拉伸），
+  而不是报错（本机还没有 validation layer，X35）。
+  ⇒ 派生公式多一条硬前提：**补上去的每一槽必须与 target0 同尺寸**（我方 `ColortexPool` 本来就按
+  同一个 `main.width/height` 建 ⇒ 今天成立，但这条要从「隐式」升成 R7 的装配期检查项）。
+- **③ 后端深度格式是否硬编码** —— 是，而且比「硬编码」更强：`VulkanRenderPipeline:294` 直接写
+  `renderingInfo.depthAttachmentFormat(126)`（= `VK_FORMAT_D32_SFLOAT`），有模板那支 `:330` 写
+  `VK_FORMAT_D32_SFLOAT_S8_UINT`，无深度 `:318` 写 `0` —— **从不读附件的真实格式**。
+  ⇒ 我方 gbuffer 深度只能保持 `D32_FLOAT`（今天 `TextureTarget(..., GpuFormat.D32_FLOAT)` 就是它），
+  换格式属「不要动：后端分叉」那一格。🔴 连带**收窄 GAP-046**：那里写的「格式不合时交回原版路径并
+  计数」在**颜色**这一维成立（`ColorTargetState.format()` 读得到），在**深度**这一维没有可比对象 ⇒
+  深度改成**装配期断言**（池深度必须就是 `D32_FLOAT`，否则根本不该开这条 pass）。
+  也 ⇒ `GAP-022` / `GAP-037` 的「深度口径单点化」只能在同一格式内做（谁清、谁翻），不能靠换格式。
+- **④ 成本解锁并给出**：`04-SPEC` M-04 行的「⛔ 待核 1 未结之前不许报 R7 成本」改成 ✅ 三条结论；
+  `19-IMPROVEMENT-PATHS` §5A.4 与那张优先级表里 R7 的「未估」改成 **3–5 个工作日 + 一轮完整真机对照**
+  —— 代码面只有三处（1 个注入点 + 1 处通用派生 + 1 处退路计数），成本全在回归面（主 pass 同帧路径
+  含实体/BA/物品/文本/粒子/云/天气/边界/描边/OIT 交替）与 `N ≤ 8` 无余量。
+- **影响的文档**：`04-SPEC` §5.0.6 ⑤（表整个换成「结论 + 证据 + 对 R7 的影响」三列）与 M-04 行尾、
+  `13-GAP-REGISTRY` 的 GAP-046 修法行、`19-IMPROVEMENT-PATHS` 的两条 R7 行。
+- **取证方式**：26.3 反编译源（`net/minecraft/**`、`com/mojang/renderpearl/**`）逐行；本轮把
+  `RenderTypes` / `RenderPipelines` / `FeatureRenderDispatcher` / `LevelRenderer` / `SkyRenderer` /
+  `RenderTarget` / `VideoSettingsScreen` / `VulkanCommandEncoder` / `VulkanRenderPipeline` /
+  `NeoForge 的 CustomSkyboxRenderer` 都落在 `build/vanilla-src/`（gitignored）里跳读，
+  结论里每个行号都可复核。
+- **测试结果**：零代码改动，但跑了 `./gradlew test --offline --rerun` → **BUILD SUCCESSFUL**
+  （1166 条真跑，1 条既有 skip）—— 本仓有若干守卫会读 `docs/` 与台账文本，改文档也验一遍。
+- **下一步（顺序不变）**：第 6 步后半 = M-14（`VideoSettingsScreen#addOptions` TAIL + 删
+  `PackPickerScreen` 与自研分页 + `ScreenDriveCommand.Page`）；之后才是 R7（M-04 整主 pass）。
+  🔖 M-14 的牵连面本轮已摸清：入口只有 `VkDispClient:43-44` 那个 `IConfigScreenFactory`，
+  钩子链是 `VkDispConfigHotReload:262 → PackOptionsDrive`，会红的测试是
+  `ScreenDriveCommandTest`（`Page`）、`PackOptionSwitchReloadTest:80`（键名清单）、
+  `PackPickerCandidatesTest`（看是否保留候选逻辑），以及 `MixinWiringTest` 对**新注入点**的三条约束
+  （目标类名来自 `MixinTargets`、体首行转发到 `on…`、`vkdisp.mixins.json` 登记）——
+  这是仓库第一个 GUI 屏幕注入点。
+
 ## 2026-10-12（一百二十一）— ✅ R5 收口（第 6 步前半）：删掉 `mrt.terrainAfterLevel` 那条 A/B 车道 —— 钩子里不再有任何地形绘制调用
 
 > **verdict = 顺序这件事只剩「声明」**：`PassOrder` 那条 requires 边是唯一的顺序来源，
