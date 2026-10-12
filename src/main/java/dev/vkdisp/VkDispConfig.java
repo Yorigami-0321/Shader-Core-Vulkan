@@ -171,16 +171,36 @@ public final class VkDispConfig {
             .define("mixin.captureTerrainDraws", true);
 
     /**
-     * 🔴 GAP-003 方案 A 的地形多附件诊断开关 —— **默认关闭**。
+     * 🔴 GAP-003 方案 A 的地形多附件 gbuffer 开关 —— <b>默认关</b>（与 {@link #MRT_PACK_TERRAIN_SHADER} 成对）。
      *
      * <p>打开后我方在帧图里插一个 pass，把地形（OPAQUE 组）画进 {@code N} 个 colortex 附件。
-     * ⚠️ <b>注意代价</b>：写的是**自己的** colortex，主目标仍由原版绘制
-     * ⇒ <b>地形被画两遍</b>，且本轮**不产出任何画面改进**。
-     * 它的用途只有一个：验证「地形能进多附件 pass」。
+     *
+     * <p>🔴 <b>单独开它 = 全黑，不是「画面不变」</b>（2026-10-12 真机量出来的，旧注释那句
+     * 「地形被画两遍、主目标不受影响、屏幕画面不变」已被否证）：地形只进 colortex，
+     * 而把 colortex 带回主目标的是后处理链 —— 链的生效条件里就含本键<b>与</b>
+     * {@code mrt.packTerrainShader}（{@code FrameApi#isPostChainActive}）。
+     * 半开档实测：{@code main} allZero=true、同帧 {@code c0} 有内容（nonBlack=100%）
+     * = 探针口径的 <b>NOT_ON_MAIN</b>，且<b>零异常</b>（不是崩，是没人写主目标）。
+     * ⇒ 本键与 {@code mrt.packTerrainShader} 是<b>一对</b>，要开一起开、要关一起关；
+     * 单开本键时 {@code FullscreenPassHook} 打一次点名 WARN，不静默。
+     *
+     * <p>🟡 <b>翻默认差一步</b>（2026-10-12 真机 RTX 4060 / Vulkan 三档取证）：
+     * 两条都关（= 今天的默认）时画面是「地形在、<b>天空整片黑</b>」，且包天空
+     * {@code [GAP-027/sky]} 自报 <b>0 行</b> ⇒ 一百一十轮交付的天空不在这条路上；
+     * 两条都开 + BSL 时同机位白天 = 蓝天 + 日晕 + 地形 AO、夜里 = 夜空渐变 + 月晕，
+     * {@code [route] chain=true}、{@code fullscreen pass failed} 0 条 —— <b>好包档已合格</b>。
+     * 🔴 <b>坏包档不合格</b>：换到 {@code ComplementaryReimagined_r5.9.3}（其
+     * {@code world1/gbuffers_*} 全部编译失败）后，本 pass 在 {@code MrtTerrainPass#drawTerrain}
+     * 的 {@code renderGroup} 处抛 {@code IllegalStateException: Missing uniform VkDispBuiltins
+     * (should be UNIFORM_BUFFER)}，而它跑在<b>帧图 pass 体内</b>没人接 ⇒
+     * {@code ReportedException: Render Frame} = <b>客户端直接死</b>
+     * （旧默认档下同一个包只是「没地形没光影」，不崩）。
+     * ⇒ 翻默认<b>暂缓</b>；阻塞项登记在 GAP-036 ④（含栈与两侧差异），解开后再翻。
      */
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_ENABLED = BUILDER
-            .comment("GAP-003 方案 A 诊断：地形画进多附件 pass（默认关）。开启后地形被画两遍，"
-                    + "主目标不受影响，屏幕画面不变。")
+            .comment("GAP-003 方案 A：地形画进多附件 gbuffer pass（默认关）。与 mrt.packTerrainShader 是**一对**："
+                    + "只开本键 = 半开档，地形只进 colortex 而链不跑 ⇒ 屏幕预期全黑（实测 main allZero + c0 有内容），"
+                    + "日志点名一次。两条一起开才是包路线（好包 BSL 已真机复判；坏包会崩帧，见 GAP-036 ④）。")
             .define("mrt.terrain", false);
 
     /**
@@ -210,19 +230,25 @@ public final class VkDispConfig {
             .defineInRange("mrt.attachments", 3, 1, 8);
 
     /**
-     * 🔴 GAP-003：派生 MRT 地形管线**改用包自己的 gbuffers_terrain 片元** —— 默认关闭。
+     * 🔴 GAP-003：派生 MRT 地形管线<b>用包自己的 gbuffers_terrain 片元</b> —— 默认<b>关</b>
+     * （与 {@link #MRT_TERRAIN_ENABLED} 成对，翻默认的共同阻塞项写在那一条的注释里 = GAP-036 ④）。
      *
-     * <p><b>为什么要单独一个键</b>（M1 编码约束 ⑤「逐个开启 + 逐个关闭」）：
-     * 「地形画进多附件 pass」（mrt.terrain）与「片元来自包而不是原版」是两件独立的事 ——
-     * 前者已验通（h04/h05）；后者依赖包地形片元的契约解析、绑定组条目与顶点适配层，
-     * 且其中三条 varying 目前只能按常量供值（GAP-007）⇒ 必须能<b>一键退回</b>原版 core/terrain。
+     * <p><b>为什么保留成独立一键</b>（M1 编码约束 ⑤「逐个开启 + 逐个关闭」）：
+     * 「地形画进多附件 pass」与「片元来自包而不是原版」是两件独立的事 ——
+     * 后者依赖包地形片元的契约解析、绑定组条目与顶点适配层，
+     * 且其中三条 varying 目前只能按常量供值（GAP-007）⇒ 必须能<b>一键退回</b>原版 core/terrain 做对照。
+     * 🔴 但<b>只开 {@code mrt.terrain} 而关本键</b>是半开档 ⇒ 屏幕全黑（见那条的实测读数），
+     * 做对照时两条一起关。
      *
      * <p>开启后若所选包<b>没有</b>可用的 gbuffers_terrain 片元，会显式 WARN 并保持原版
-     * （不静默换片元、不崩）。
+     * （不静默换片元）。🔴 <b>「不崩」这一半今天还不成立</b>：坏包 + 两条都开 ⇒
+     * {@code drawTerrain} 的 {@code renderGroup} 抛 {@code Missing uniform VkDispBuiltins}
+     * 并带走客户端，GAP-036 ④。
      */
     public static final ModConfigSpec.BooleanValue MRT_PACK_TERRAIN_SHADER = BUILDER
-            .comment("GAP-003：派生 MRT 地形管线使用包自己的 gbuffers_terrain 片元"
-                    + "（需配合 mrt.terrain=true；默认关 = 沿用原版 core/terrain）。")
+            .comment("GAP-003：MRT 地形管线用包自己的 gbuffers_terrain 片元（默认关，与 mrt.terrain 成对）。"
+                    + "关掉 = 沿用原版 core/terrain；🔴 只开 mrt.terrain 而关本键 = 半开档，屏幕预期全黑，"
+                    + "要对照请两条一起关。包里没有 gbuffers_terrain 时显式 WARN（但坏包+两条都开仍会崩帧，GAP-036 ④）。")
             .define("mrt.packTerrainShader", false);
 
     /**

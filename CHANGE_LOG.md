@@ -6,6 +6,42 @@
 ---
 ---
 
+## 2026-10-12（一百一十二）— 🟡 半开档定性完成；**翻默认试了、被自家取证挡回来**（坏包 + 包路线 = 崩帧）
+
+> **verdict = 取证轮（Windows / RTX 4060 / Vulkan，四档冷启动）**：用户裁决「先补默认档取证再翻」+「顺手判半开档是有意的 A/B 档还是缺配对守卫」。
+> 两件事都办了；翻默认**没翻成**，而且是被本轮自己的取证挡的。
+> `./gradlew build` 退出码 **0**（1165 项 0 失败）；未抬任何棘轮基线。
+
+- **半开档（`mrt.terrain=true` 而 `packTerrainShader=false`）判完了，答案是「注释在撒谎」**：
+  探针读数 = `main` **allZero=true**，同一帧 `c0@writeGen` `mean_luma 59~71 / nonBlack=100%`
+  ⇒ 本仓探针自己定义的 **NOT_ON_MAIN**；且 `fullscreen pass failed` **0 条** = **不是崩，是没人写主目标**。
+  而 `VkDispConfig` 那条注释写的是「开启后地形被画两遍，主目标不受影响，**屏幕画面不变**」——
+  与这组读数直接矛盾。⇒ 它不是「有意的 A/B 档」，是**过期的诊断档 + 缺一道点名**。
+- **处置（保留可用 + 不许静默，本仓 X11 口径）**：`FullscreenPassHook` 在 `[route]` 自报同一处加
+  `[GAP-036/半开档]` WARN 一次；`VkDispConfig` 两条键的注释改成实测口径（成对开、成对关，半开=全黑）。
+  守卫 `MrtTerrainPassWiringTest#diagnosticIsOffByDefault`（前提就是那句错注释）重写为
+  `terrainKeysShareOneDefault`：钉**两条键同默认值** + **半开必须点名**，而不是钉「默认必须 false」。
+- **翻默认的资格证明（三档，全部删空 `vkdisp-client.toml` 冷启动，不再只删单个键）**：
+  ① **旧默认（两条都关）** = 地形在、**天空整片黑**（白天 `dayTime 3317` 实测），
+  且整份日志 `[GAP-027/sky]` 自报 **0 行** ⇒ 一百一十轮交付的包天空**一次都没跑过**。
+  ② **两条都开 + BSL** = `[route] chain=true`、包天空自报在场、`fullscreen pass failed` 0 条，
+  同机位白天 = 蓝天 + 日晕 + 地形与积雪 + AO ⇒ **好包档合格**，这一步本可以翻。
+  ③ 🔴 **两条都开 + Complementary**（其 `world1/gbuffers_*` 全部编译失败）= **客户端直接死**：
+  `MrtTerrainPass.drawTerrain:518` 的 `renderGroup` 抛
+  `IllegalStateException: Missing uniform VkDispBuiltins (should be UNIFORM_BUFFER)`，
+  而它在**帧图 pass 体内**执行、无人接 ⇒ `ReportedException: Render Frame`。
+  旧默认档下同一个包只是「没地形没光影」，**不崩** ⇒ 翻默认等于给坏包加一条崩溃路径。
+  **两条默认已退回 `false`**，本轮不改产品默认。
+- **顺带把 GAP-036 ③ 那两次 `nvoglv64` 原生崩溃读正了**：`hs_err_pid37420.log` 的栈里**有我方帧**
+  （`SkyPackGbuffer.render ← SkyIntoGbuffer.render ← MrtTerrainPass$$Lambda`）
+  ⇒ ③ 与本轮 ③ 可能同源，真正缺的是**帧图 pass 体内那道异常兜底**；上一轮我把它记成「驱动问题、非本轮引入」是**低估**了它。
+- **影响的文档**：`docs/13-GAP-REGISTRY.md` GAP-036 追加「半开档定性 + 翻默认资格证明 + 守卫」三行、本文件。
+- **下一步（顺序即优先级）**：① 给帧图 pass 体加异常兜底 + 坏包时**不接管**（回到原版地形），
+  这是翻默认的唯一阻塞项；② 解开后重跑本轮这三档再翻；③ `packWater` 档单跑复现那两次原生崩溃。
+- **是否已提交**：✅ 提交并推送（本轮结束即推，用户口径）。
+
+---
+
 ## 2026-10-11（一百一十一）— 🔴 用户自跑 runClient 暴露：**代码默认档每帧抛在旧三步链 Pass 3** ⇒ 地形不见 + 光影不生效（已修 + 真机复判）
 
 > **verdict = 修根因轮（Windows / RTX 4060 / Vulkan，真机两档复判）**：上一轮的「天空实现完成」在**用户自己的 runClient 里不成立**——

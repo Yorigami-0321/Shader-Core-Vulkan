@@ -212,6 +212,18 @@ public final class FullscreenPassHook {
                 lastRoute = route;
                 VkDisp.LOGGER.info("vkdisp: [route] 本帧渲染路径 = {} ⇒ {}", route,
                         chainActive ? "整条后处理链（colortex 按名接线）" : "旧三步链（scene 采样）");
+                // 🔴 半开档点名（2026-10-12 真机量出来，不是推测）：`mrt.terrain=true` 而链不跑时，
+                //   地形只进 colortex、**没有任何东西把它带回主目标** ⇒ 屏幕全黑。
+                //   探针读数：`main` = allZero=true，同一帧 `c0@writeGen` mean_luma 59~71 / nonBlack=100%
+                //   ⇒ 这是本仓探针自己定义的 **NOT_ON_MAIN** 形状，且**零异常**（不是崩，是没人写）。
+                //   旧注释「地形被画两遍、主目标不受影响、屏幕画面不变」已被这组读数否证，
+                //   VkDispConfig 那条注释同步改掉了。本档**保留可用**（A/B 取证要它），但不许静默。
+                if (MrtTerrainPass.enabled() && !chainActive && !MrtTerrainPass.toMain()) {
+                    VkDisp.LOGGER.warn("vkdisp: [GAP-036/半开档] mrt.terrain=true 而 mrt.packTerrainShader=false"
+                            + " ⇒ 地形只写进 colortex，链不跑就没有东西把它带回主目标，**本档画面预期为全黑**"
+                            + "（实测 main allZero + c0 有内容 = NOT_ON_MAIN）。"
+                            + "要看画面必须两条一起开；这一档只用来单独测「地形进不进多附件 pass」");
+                }
             }
             // 🔴 h48 修正（这条 gate 曾经把两个**独立**的轴捆在一起）：条件里带 afterLevel()
             //   ⇒ 关诊断档 `mrt.terrainAfterLevel=false` 会**连带把整条链关掉**，

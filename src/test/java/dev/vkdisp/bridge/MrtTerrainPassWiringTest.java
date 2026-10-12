@@ -111,11 +111,33 @@ class MrtTerrainPassWiringTest {
     }
 
     @Test
-    @DisplayName("🔖 诊断开关必须默认关闭（常规帧零开销，支柱③ B1 ≤ +2%）")
-    void diagnosticIsOffByDefault() {
+    @DisplayName("🔖 两条 gbuffer 路线开关必须**同默认值**（半开档 = 全黑，2026-10-12 实测）")
+    void terrainKeysShareOneDefault() {
+        // 本测试的前身是「mrt.terrain 必须默认 false —— 开启时地形被画两遍、屏幕画面不变」。
+        // 🔴 那句前提被真机否证了：单开 mrt.terrain 时地形**只进 colortex**，而把 colortex 带回
+        //   主目标的是后处理链（其生效条件同时含 mrt.packTerrainShader）⇒ 半开档实测
+        //   `main` allZero=true 而同帧 `c0` nonBlack=100%（探针口径 NOT_ON_MAIN）、零异常 = 全黑。
+        //   所以真正的不变式不是「默认必须关」，而是「**两条不得一开一关**」+「半开必须点名」。
         String config = readOrSkip(CONFIG);
-        assertTrue(config.contains("define(\"mrt.terrain\", false)"),
-                "mrt.terrain 必须默认 false —— 开启时地形被画两遍，是诊断路径不是产品功能");
+        String terrain = codeDefaultOf(config, "mrt.terrain");
+        String packFragment = codeDefaultOf(config, "mrt.packTerrainShader");
+        assertEquals(terrain, packFragment,
+                "🔴 mrt.terrain 与 mrt.packTerrainShader 必须同开同关 —— 一开一关 = 半开档 = 屏幕全黑"
+                        + "（链不跑而地形已离开主目标）。实测读数见 CHANGE_LOG 2026-10-12 与 GAP-036");
+
+        // 半开档仍要能被单独构造（A/B 取证要它），但**不许静默**：hook 里必须有点名那一行。
+        String hook = readOrSkip(Path.of("src/main/java/dev/vkdisp/render/FullscreenPassHook.java"));
+        assertTrue(hook.contains("半开档"),
+                "🔴 半开档（terrain 开而链不跑）必须在日志里点名一次 —— 本仓纪律 X11：允许难看，禁止静默");
+    }
+
+    /** 取 {@code .define("键", 默认值)} 里那个字面量（源码级，不启动游戏）。 */
+    private static String codeDefaultOf(String config, String key) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("define\\(\"" + java.util.regex.Pattern.quote(key) + "\",\\s*(true|false)\\)")
+                .matcher(config);
+        assertTrue(m.find(), "VkDispConfig 里找不到 " + key + " 的 define(…, 布尔) 形状");
+        return m.group(1);
     }
 
     @Test

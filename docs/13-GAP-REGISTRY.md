@@ -727,7 +727,9 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 | **流程教训** | 九十多轮真机取证都在**同一份手写 toml**（`terrain`/`packTerrainShader`/`packWater`/`depthGlProxy` 全开）上跑 ⇒ 「代码默认档」这条路径从未被执行过。以后凡是宣称「默认如何如何」，必须**把相关键整批删掉**再冷启动，而不是只删被翻的那一个键。 |
 | **影响面** | `render/FullscreenPassHook.java`（帧首 init + import）、`bridge/ShadowStubs.java`（`public` + 调用点清单）、`src/test/java/dev/vkdisp/bridge/ShadowSamplerAliasingTest.java`（新守卫） |
 | **开关 / 回退条件** | 无新开关。回退 = 删掉帧首那一行，立刻回到「默认档每帧抛」的旧行为（本条判据即其反证）。 |
-| **状态** | ✅ **崩溃与「没有地形」已修并真机复判**；①②③ 三格未关，本条不关 |
+| **10-12 追加：半开档定性 + 翻默认的资格证明** | ① 半开档**实测**：`main` allZero=true，而同帧 `c0@writeGen` mean_luma 59~71 / nonBlack=100% = 探针口径的 **NOT_ON_MAIN**，且**零异常**（不是崩，是没人写主目标）⇒ 旧注释「地形被画两遍、主目标不受影响、屏幕画面不变」**是错的**，已改掉；本档保留可用，但 `FullscreenPassHook` 打一次 `[GAP-036/半开档]` WARN 点名（X11：允许难看，禁止静默）。②  **翻默认的阻塞项**：曾把两条默认试翻成开并冷启动 —— **好包档合格**（BSL，白天蓝天 + 日晕 + 地形 AO，`[route] chain=true`，`fullscreen pass failed` 0 条，包天空自报在场）；**坏包档崩客户端**（`ComplementaryReimagined_r5.9.3`，其 `world1/gbuffers_*` 全部编译失败）：`MrtTerrainPass.drawTerrain:518` 的 `renderGroup` 抛 `IllegalStateException: Missing uniform VkDispBuiltins (should be UNIFORM_BUFFER)`，而它跑在**帧图 pass 体内**、无人接 ⇒ `ReportedException: Render Frame` 直接死。旧默认档下同一个包只是「没地形没光影」不崩 ⇒ 两条默认**已退回 `false`**，翻默认卡在「坏包必须优雅降级」这一格。③ 由此回看 ③ 那两次 `nvoglv64` 原生崩溃：`hs_err_pid37420.log` 的栈里**有我方帧**（`SkyPackGbuffer.render ← SkyIntoGbuffer.render ← MrtTerrainPass$$Lambda`）⇒ ② 可能同源，真正缺的是**帧图 pass 体内那道异常兜底**，不能只当驱动问题读。 |
+| **守卫（本轮落地）** | `MrtTerrainPassWiringTest#terrainKeysShareOneDefault` —— 前身是「`mrt.terrain` 必须默认 false，因为开启只是诊断」；那句前提已被实测否证，改钉**真正的不变式**：两条键同默认值 + 半开档必须在日志点名。 |
+| **状态** | ✅ **崩溃与「没有地形」已修并真机复判**；半开档已定性 + 已点名；🔴 **翻默认暂缓**（阻塞 = 坏包 + 包路线崩帧，②③）；本条不关 |
 
 ---
 
