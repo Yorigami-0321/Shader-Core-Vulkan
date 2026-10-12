@@ -219,11 +219,17 @@ public final class MainPassPipelineDerivation {
         return String.valueOf(pipeline.getLocation());
     }
 
-    /** 自报（节流）：派生/拒绝/记忆命中的次数必须看得见，否则「交回原版」这一族会静默累积。 */
+    /**
+     * 自报（节流）：派生/拒绝/记忆命中的次数必须看得见，否则「交回原版」这一族会静默累积。
+     *
+     * <p>🔴 节流的分母<b>必须含 {@code memoHits}</b>：加了记忆层之后 {@code derived} 只在「第一次见到某条
+     * 管线」时涨（本机量级 = 几十），拿 {@code derived + refused} 去 % 600 会让这一行<b>永远打不出来</b>
+     * —— 而「日志里没有这行」正是本仓反复登记过的那类误读源（{@code GAP-022} 的成对自报同一族）。
+     */
     public static void reportPeriodically() {
-        long total = STATS.derived + STATS.refused;
+        long total = STATS.derived + STATS.refused + STATS.memoHits;
         if (total == 0L || total % 600L != 0L) {
-            // 🔖 两个都还是 0 时不打 —— 那一行会被读成「公式没跑」，而它其实只是「还没到」
+            // 🔖 三个都还是 0 时不打 —— 那一行会被读成「公式没跑」，而它其实只是「还没到」
             return;
         }
         VkDisp.LOGGER.info("vkdisp: [M-04/⑤-b] 派生={} 交回原版={} 记忆命中={}（每次 draw 都会走 derive ⇒ "

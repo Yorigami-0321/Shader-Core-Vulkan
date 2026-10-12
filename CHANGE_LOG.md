@@ -6,6 +6,22 @@
 ---
 ---
 
+## 2026-10-12（一百三十二）— ✅ R7 ⑤-c 第二族签掉 + 第一次「接管后不崩」的一帧（截图正常），但「没崩」不等于「全族都过了」
+
+> **verdict = 两件事同时成立**：① ⑤-c 的机制可复制（第二处注入点，形状与第一处逐字相同）；② 主 pass 被换成 8 附件之后，客户端**第一次**跑过了一整帧不崩 —— 而这一帧没碰到云/天气/边界那几处，所以「没崩」只能读成「已放开的族过了」。
+
+- **新增 `mixin/QuadParticleFeatureRendererPipelineMixin`**（第 15 条 mixin）：包 `QuadParticleFeatureRenderer#drawLayers` 第 89 行那次 `getCompiledPipeline` —— 就是上一轮真机崩点指名的那一处（它取 `SingleQuadParticle.Layer#pipeline()` 或 OIT 变体，**不经过** `PreparedRenderType`，所以必须单独注）。
+- 🔴 **一条新的注入形状规则（`GAP-047` ④，本族第一次跑就撞到）**：目标方法是 `private static` ⇒ **handler 也必须是 `static`**，否则**类加载期**就 `InvalidInjectionException: non-static callback method … targets a static method which is not supported`（`Injector.checkTargetModifiers:371`）。⚠️ 这一条与开关无关：mixin 是类变换期的事，配置键只切运行分支 ⇒ 写错就是**默认档也起不来**（实测崩在 `FeatureRenderDispatcher.<init>:56` ← `GameRenderer.<init>:164`，连主菜单都没有）。修完再跑，apply 0 失败。
+- 🔖 **观测面从「一族一行」改成「分站点计数」**：`PassAwarePipelines.onMainPassSiteHit(site)`（取代 `onRenderTypeHit()`），每处注入点一个键。理由写在方法注释里：「崩点挪位置」一次只能证一族，而真机一趟很贵 ⇒ 同一趟要能同时看清几族各自活没活。本机读数：`{PreparedRenderType#draw=215070, QuadParticle#drawLayers=8130}`。
+- ✅ **第一次不崩的接管帧**：`主 pass 接管=28288`（帧数）持续上涨、0 条 ERROR、0 条 mixin apply 失败，MCP 截图（**vkdisp 侧 · 取证档 `ownTerrainPass=true` + BSL `ADVANCED_MATERIALS` ⇒ `slots=8` · 854×480**）是一张正常的白天画面：地形/树/雪/天空渐变/手持物品/快捷栏都在。
+- ⚠️ **这条判据的边界（写进 `04-SPEC` §5.0.7 末）**：这一帧里**没有**走到云（`CloudRenderer:215/229`）、天气（`WeatherEffectRenderer:165`）、边界（`WorldBorderRenderer:158/170`）、立方图（`CubeMap:69`）、`LevelRenderer:518` 那几处 —— 截图天空无云就是证据。它们仍会在自己的调用点抛 ⇒ ⑤-c 还剩 6 处（外加 OIT 那 4 处，取决于是否开改进透明）。
+- 🔧 **顺带修掉一处自己写的观测缺陷**：`reportPeriodically` 的节流分母原来只算 `derived + refused` —— 加了记忆层（`GAP-051`）之后这两个数只在「第一次见到某条管线」时涨（本机量级几十），`% 600` 永远打不出那一行 ⇒ 「日志里没有这行」会被读成「公式没跑」（本仓 `GAP-022` 那一族误读的旧形状）。改成把 `memoHits` 一起算。
+- ✅ **改完再跑一趟，`GAP-051` 的量真的看得见**：`[M-04/⑤-b] 派生=7 交回原版=0 记忆命中=42593` —— 7 条管线被建出来、42593 次 draw 侧取用直接复用。**没有那层记忆就是 42593 次 `toBuilder().build()`**（这条从「推理」升成「读数」）。同一趟仍然 0 崩、`主 pass 接管=3588` 帧。
+- **取证档已回退**：`ownTerrainPass=false`、`ADVANCED_MATERIALS` 行删除 ⇒ 默认档逐字等于今天。测试 **1174 条 0 失败**（本轮新增 2 条：记表形状 + 名字撞车守卫）。
+- **下一步**：⑤-c 第三~七族（云 → 天气 → 边界 → 立方图 → `LevelRenderer:518`），形状与本轮两处逐字相同；全放开之后才谈 ⑤-d 关双绘（前置：`GAP-049` 那件「池尺寸锚在另一张主目标」的活）。
+
+---
+
 ## 2026-10-12（一百三十一）— ✅ R7 ⑤-c 第一族签掉：`PreparedRenderType` 一处顶十几族，崩点按预测挪进 `executeSolid`
 
 > **verdict = ⑤-c 的判据形状与 a/b 相同（「崩点必须挪位置」）并且真的挪了**：上一档崩在 `executeClassicTransparency:721`，这一档崩在 `QuadParticleFeatureRenderer.drawLayers:89` ← `LevelRenderer.executeSolid:538` ⇒ **全部 RenderType 那一族在主 pass 里已经能过附件校验**，剩下的族按真机指的位置逐族做。

@@ -76,7 +76,7 @@ public abstract class PreparedRenderTypePipelineMixin {
             RenderPipeline requested, Operation<CompiledRenderPipeline> original,
             @Local(argsOnly = true) RenderPass renderPass) {
         // 首行埋点（M1 编码约束 ③）：证明这条通道真的被走到，节流口径同 M-01。
-        PassAwarePipelines.onRenderTypeHit();
+        PassAwarePipelines.onMainPassSiteHit("PreparedRenderType#draw");
         return original.call(PassAwarePipelines.selectForMainPass(
                 MainPassTakeover.isTakenOverPass(renderPass), requested));
     }

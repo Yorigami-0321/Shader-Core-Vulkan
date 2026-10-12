@@ -247,6 +247,32 @@ public final class MixinTargets {
                     + "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)V";
 
     /**
+     * {@code net.minecraft.client.renderer.feature.QuadParticleFeatureRenderer} —— R7 ⑤-c <b>第二族</b>
+     * 的目标类（四边形粒子；登记表 {@code 04-SPEC} §5.0.7 表 ⑤ 行 c 与末的新表）。
+     *
+     * <p>🔖 它是 ⑤-c 第一族签掉后<b>真机指出来的下一处</b>：崩栈
+     * {@code QuadParticleFeatureRenderer.drawLayers:89} ← {@code executeGroup:79} ←
+     * {@code FeatureRenderDispatcher$PreparedGroup.execute:394} ← {@code LevelRenderer.executeSolid:538}。
+     * 之所以要单独一处注入：它取的是 {@code SingleQuadParticle.Layer#pipeline()} /
+     * {@code OitPipelineSet} 那条管线，<b>不经过</b> {@code PreparedRenderType#draw}。
+     */
+    public static final String QUAD_PARTICLE_FEATURE_RENDERER =
+            "net.minecraft.client.renderer.feature.QuadParticleFeatureRenderer";
+
+    /**
+     * {@code QuadParticleFeatureRenderer#drawLayers(StagedVertexBuffer, PreparedGroup, RenderPass, OitStage)}
+     * （<b>private static</b>）。
+     *
+     * <p>🔖 第 3 个形参是 {@code RenderPass} ⇒ 与 M-15 同形状（{@code @Local(argsOnly = true)} 读实参）。
+     * 描述符写满是因为 {@code drawLayers} 只有一个重载，签名一动就要注入期硬失败，不许静默不生效。
+     */
+    public static final String QUAD_PARTICLE_DRAW_LAYERS =
+            "drawLayers(Lnet/minecraft/client/renderer/StagedVertexBuffer;"
+                    + "Lnet/minecraft/client/renderer/feature/QuadParticleFeatureRenderer$PreparedGroup;"
+                    + "Lcom/mojang/renderpearl/api/commands/RenderPass;"
+                    + "Lnet/minecraft/client/renderer/oit/OitStage;)V";
+
+    /**
      * {@code net.minecraft.client.gui.screens.options.VideoSettingsScreen} —— M-14 的目标类
      * （R6：包选项进原版视频设置页）。这是<b>本仓第一个 GUI 屏幕注入点</b>（类别闸门已于
      * 2026-10-12 废除，见类注释 M1 现行口径）。

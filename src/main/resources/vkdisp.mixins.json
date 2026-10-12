@@ -17,6 +17,7 @@
     "LevelRendererMainPassCaptureMixin",
     "MainPassAttachmentMixin",
     "PreparedRenderTypePipelineMixin",
+    "QuadParticleFeatureRendererPipelineMixin",
     "SkyRendererViewRedirectMixin",
     "VideoSettingsPackOptionsMixin"
   ],

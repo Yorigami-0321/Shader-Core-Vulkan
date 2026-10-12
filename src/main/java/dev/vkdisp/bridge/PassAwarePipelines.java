@@ -34,6 +34,8 @@ package dev.vkdisp.bridge;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import dev.vkdisp.VkDisp;
 import dev.vkdisp.VkDispConfig;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * H 线 M-15 的判定侧 + M-04 ⑤-b/⑤-c 的收口点（登记表：{@code docs/04-SPEC.md} §5.0 的 M-15 行、
@@ -51,6 +53,12 @@ public final class PassAwarePipelines {
     private static final class Counters {
         private long terrain;
         private long renderType;
+
+        /**
+         * ⑤-c 各族注入点各自的命中数（键的个数 = 注入点数，天然有界）。
+         * 分站点计数的理由：一次真机跑要能同时看清<b>几族都活着</b>，否则只能靠崩点挪位置一族一试。
+         */
+        private final Map<String, Long> sites = new LinkedHashMap<>();
     }
 
     /** 计数<b>不参与</b>任何判定 —— 判据是 {@code renderPass} 的对象身份，否则又回到「靠标志位证明标志位」。 */
@@ -127,12 +135,19 @@ public final class PassAwarePipelines {
         }
     }
 
-    /** ⑤-c 第一族的埋点：{@code PreparedRenderType#draw} 那处注入跑没跑（同 T10 口径）。 */
-    public static void onRenderTypeHit() {
-        long count = ++COUNT.renderType;
-        if (count == 1L || count % 600L == 0L) {
-            VkDisp.LOGGER.info("vkdisp: [M-04/⑤-c] PreparedRenderType 取管线 hits={}（每帧每次 draw 一次；"
-                    + "接管关档时这一处只计数、不改任何东西）", count);
+    /**
+     * ⑤-c 各族注入点的埋点：一处一条，证明「这处取管线真的被包住」（T10：每处注入点必须能证明被调用）。
+     *
+     * <p>🔖 计数<b>不参与</b>任何判定；分站点是因为「崩点挪位置」一次只能证一族，
+     * 而这一行能在<b>同一趟</b>真机里同时给出几族各自活没活。
+     */
+    public static void onMainPassSiteHit(String site) {
+        long total = ++COUNT.renderType;
+        long forSite = COUNT.sites.merge(site, 1L, Long::sum);
+        if (forSite == 1L) {
+            VkDisp.LOGGER.info("vkdisp: [M-04/⑤-c] 取管线注入点首次命中：{}", site);
+        } else if (total % 600L == 0L) {
+            VkDisp.LOGGER.info("vkdisp: [M-04/⑤-c] 取管线注入点累计={}，分站点={}", total, COUNT.sites);
         }
     }
 
@@ -141,8 +156,13 @@ public final class PassAwarePipelines {
         return COUNT.terrain;
     }
 
-    /** 累计命中次数（诊断/单测读数）：⑤-c 那处（全部 RenderType）。 */
+    /** 累计命中次数（诊断/单测读数）：⑤-c 那些处（全部站点合计数）。 */
     public static long renderTypeHitCount() {
         return COUNT.renderType;
+    }
+
+    /** 某一处注入点的命中数（单测/诊断读数；没跑过就是 0）。 */
+    public static long siteHitCount(String site) {
+        return COUNT.sites.getOrDefault(site, 0L);
     }
 }

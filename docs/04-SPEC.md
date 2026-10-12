@@ -698,6 +698,20 @@ FramePass pass = frame.addPass("main");
 > ⇒ 于是 ⑤-c 的成本是**一个注入点一族**、且**主 pass 内还剩 8 处**（特性渲染器/云×2/天气/边界×2/立方图/`LevelRenderer:518`）
 > + OIT 那四处（`LevelRenderer:670/690/694/706`，走 `executeOit` 分支，取决于用户有没有开改进透明）。
 > 🔖 最后一行的「不该补」是这一族**判据的一半**：判据不只是「补到了」，还要能证明**没补错地方**。
+>
+> ✅ **第二族已落地 + 真机已签（同日再下一轮，2026-10-12）**：`QuadParticleFeatureRenderer#drawLayers`
+> 那处（`mixin/QuadParticleFeatureRendererPipelineMixin`）—— 就是上一段说的「真机指出来的下一处」。
+> 三条新事实：
+> ① **目标方法是 `private static` ⇒ handler 也必须 `static`**，否则类加载期就 `InvalidInjectionException`
+> （`non-static callback method … targets a static method which is not supported`），且**与开关无关**
+> ⇒ 默认档也起不来（`GAP-047` ④ 已记，这是那一族的第五条形状，第一次撞是在启动期而不是渲染期）。
+> ② **观测面改成「分站点计数」**（`PassAwarePipelines.onMainPassSiteHit(site)`）：一趟真机就能同时给出
+> 每族各自活没活 —— 本机读数 `{PreparedRenderType#draw=215070, QuadParticle#drawLayers=8130}`
+> （地形那两处的计数在 M-15 自己的 `hits` 里，两个口径不合并）。
+> ③ 🔴 **第一次「不崩」的帧**：两族放开后客户端进世界并稳定跑（`主 pass 接管=28288` 帧、0 ERROR、
+> 0 mixin apply 失败），截图是一张正常的白天画面 —— ⚠️ **但这一条不能读成「主 pass 全族都过了」**：
+> 这一帧里根本没走到云 / 天气 / 边界 / 立方图那几处（截图天空无云），它们仍会在自己的调用点抛。
+> 「没崩」在这一步只等于「已放开的族过了 + 场景没碰到未放开的族」，判据要分开写。
 
 ### 5.1 原生工具链（⏸️ **仅 G 系列裁决「采用」后才配**）
 

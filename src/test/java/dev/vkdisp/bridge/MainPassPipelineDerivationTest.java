@@ -117,7 +117,7 @@ class MainPassPipelineDerivationTest {
         String mixin = readOrSkip(Path.of("src/main/java/dev/vkdisp/mixin/PreparedRenderTypePipelineMixin.java"));
         assertTrue(mixin.contains("MixinTargets.PREPARED_RENDER_TYPE_DRAW"),
                 "目标必须写完整描述符（draw 有同族重载；改名要注入期硬失败，T10 / X11）");
-        assertTrue(mixin.contains("PassAwarePipelines.onRenderTypeHit();"),
+        assertTrue(mixin.contains("PassAwarePipelines.onMainPassSiteHit("),
                 "每处注入点都要能证明被走到（M1 编码约束 ③）");
         assertTrue(mixin.contains("MainPassTakeover.isTakenOverPass(renderPass)"),
                 "pass 身份来自形参 renderPass 的对象比较，不是静态标志（GAP-040 那一族）");
