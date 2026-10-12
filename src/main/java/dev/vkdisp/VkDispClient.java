@@ -17,7 +17,6 @@ package dev.vkdisp;
  */
 
 import dev.vkdisp.bridge.DeviceApi;
-import dev.vkdisp.screen.PackPickerScreen;
 import net.minecraft.client.Minecraft;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -25,7 +24,6 @@ import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
-import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 
 /**
  * 模组客户端入口。本模组是纯客户端模组（渲染引擎），不会在专用服务端加载。
@@ -36,12 +34,11 @@ import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 @EventBusSubscriber(modid = VkDisp.MOD_ID, value = Dist.CLIENT)
 public final class VkDispClient {
     public VkDispClient(ModContainer container) {
-        // 【临时 · 测试用】包选择屏取代 NeoForge 自动生成的 ConfigurationScreen。
-        // 原版 ConfigurationScreen 是 final 类，无法继承加选项卡；要挂按钮只能自建屏。
-        // 本屏内附「完整 TOML 配置」按钮回原配置页，原有配置入口不丢。
-        // 待形态确定（是否像 Iris 那样挂进视频设置）后可能改走别的接线。
-        container.registerExtensionPoint(IConfigScreenFactory.class,
-                (modContainer, parentScreen) -> new PackPickerScreen(parentScreen));
+        // R6 / M-14（2026-10-12）：不再注册 IConfigScreenFactory 顶掉原版配置页。
+        //   旧做法是【临时 · 测试用】：自研 PackPickerScreen 当配置屏，因为原版视频设置页进不去。
+        //   现在包选择与包选项已经走官方通路（VideoSettingsScreen#addOptions 的 TAIL 注入，
+        //   见 screen/VanillaPackOptionsPage）⇒ 配置屏交回 NeoForge 自动生成的 ConfigurationScreen，
+        //   本模组的构造器不再挂任何扩展点（留着它就是为了这条注释：入口为什么是空的，得写下来）。
     }
 
     @SubscribeEvent

@@ -23,8 +23,7 @@ package dev.vkdisp;
  *    ② **边沿分流**：Loading 只记快照（启动首载，资源加载尚未开始，重载是空转）；
  *       Reloading 对比快照 —— 核心四项（enabled/debugLog/packProfile/shaderPack）任一变化 →
  *       P4.2 原样的 T11 INFO + {@code reloadResourcePacks()}（p417 证据行逐字保留）；
- *       {@code packOptionsScreen} 变化 → 独立 drive INFO + 屏幕动作（不重载，done 除外）；
- *       两者互不牵连（同一次保存同时改两边 = 两个动作都执行）；快照前移后重复保存同值不重发；
+ *       快照前移后重复保存同值不重发；
  *    ③ 回调跑在 nightconfig Watcher 线程 → 经 {@code minecraft.execute} 挪回渲染线程再执行
  *       （重载与开屏都不允许在观察者线程直接开跑）；全程 catch Throwable 打 ERROR 原文（T11）。
  * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只观察事件签名（07-CONSTRAINTS L5-L8 / X19-X21）。
@@ -33,11 +32,9 @@ package dev.vkdisp;
 
 import java.util.Objects;
 
-import dev.vkdisp.config.ScreenDriveCommand;
 import dev.vkdisp.pack.PackCompositeSource;
 import dev.vkdisp.pack.PackCompileCache;
 import dev.vkdisp.pack.PackPrecompileScheduler;
-import dev.vkdisp.screen.PackOptionsDrive;
 import net.minecraft.client.Minecraft;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -60,9 +57,12 @@ import org.jspecify.annotations.Nullable;
  *   <li>{@code ClientResourceLoadFinishedEvent} 再发 → 扫包日志与链路埋点重新可见（证据链）。</li>
  * </ol>
  *
- * <p><b>屏幕驱动路径</b>（{@code packOptionsScreen} 边沿）：解析
- * {@link ScreenDriveCommand} 并在渲染线程执行（{@link PackOptionsDrive}）——
- * 打开选项屏幕 / 改屏幕里的选项 / 翻页 / 完成（完成自己触发重载，把改动送进着色器）。
+ * <p><b>屏幕驱动路径已退役（R6 / M-14，2026-10-12）</b>：旧的 {@code packOptionsScreen} 边沿
+ * （{@code open} / {@code set:k=v} / {@code page:N} / {@code done}）是为自研屏幕做的无头入口，
+ * 屏幕删了它就没有执行对象 ⇒ 整条 drive 分支连同 {@code ScreenDriveCommand} 一起删除。
+ * 🔖 取证侧的替身：直接改 {@code <gameDir>/config/vkdisp-pack-options.properties}
+ * （{@code PackOptionStore.pathFor} 指的那份），再动一次核心项（例如 {@code shaderPack}）触发资源重载
+ * —— 少了一次「不重载只改值」的档位，这条代价已在 {@code 08-TESTING} 与 CHANGE_LOG 点名，不当已解决。
  *
  * <p>不订阅 {@link ModConfigEvent.Unloading}：没有后续动作语义。
  */
@@ -76,7 +76,6 @@ public final class VkDispConfigHotReload {
      * @param debugLog        核心项（变了要重载）
      * @param packProfile     核心项（变了要重载）
      * @param shaderPack      核心项（变了要重载）
-     * @param packOptionsScreen 驱动项（变了只执行屏幕动作，不重载）
      * @param capabilityGate  核心项（包选项相关，变了要重载）
      * @param chainEnableGating 核心项（GAP-024：只在链装配时读一次，变了必须重载才换臂）
      * @param optionOverrides 核心项（包选项相关，变了要重载）
@@ -85,7 +84,7 @@ public final class VkDispConfigHotReload {
      *                        而配置值本身看起来「改了」（QD-08 那一族，已发生四次）
      */
     private record Snapshot(boolean enabled, boolean debugLog, String packProfile,
-            String shaderPack, String packOptionsScreen, boolean capabilityGate,
+            String shaderPack, boolean capabilityGate,
             boolean chainEnableGating, String optionOverrides, boolean packWater,
             boolean skyPackShader) {}
 
@@ -168,8 +167,7 @@ public final class VkDispConfigHotReload {
     }
 
     /**
-     * 配置热加载完成 → 边沿分流：核心四项变化 → P4.2 原样的 INFO + 资源重载；
-     * {@code packOptionsScreen} 变化 → drive INFO + 屏幕动作（不重载）。
+     * 配置热加载完成 → 边沿分流：核心项变化 → P4.2 原样的 INFO + 资源重载。
      */
     @SubscribeEvent
     static void onConfigReloading(ModConfigEvent.Reloading event) {
@@ -206,12 +204,6 @@ public final class VkDispConfigHotReload {
                     // P4.5：先异步预编译，编译完成再重载（切 BSL 实测 3.97s 同步阻塞 → 未响应）。
                     scheduleReloadWithPrecompile(current);
                 }
-            }
-
-            boolean driveChanged = previous != null
-                    && !Objects.equals(previous.packOptionsScreen(), current.packOptionsScreen());
-            if (driveChanged) {
-                runScreenDrive(current, minecraft);
             }
         } catch (Throwable t) {
             // 失败必须打 ERROR 原文（T11），且不许让观察者线程带着异常死掉。
@@ -250,18 +242,7 @@ public final class VkDispConfigHotReload {
                 || previous.skyPackShader() != current.skyPackShader();
     }
 
-    /** 屏幕驱动分支（{@code packOptionsScreen} 边沿）：解析 → 自报 → 执行（挪渲染线程）。 */
-    private static void runScreenDrive(Snapshot current, @Nullable Minecraft minecraft) {
-        ScreenDriveCommand command = ScreenDriveCommand.parse(current.packOptionsScreen());
-        VkDisp.LOGGER.info("vkdisp: pack options screen drive: raw='{}' -> {}",
-                current.packOptionsScreen(), describe(command));
-        if (command instanceof ScreenDriveCommand.Malformed malformed) {
-            VkDisp.LOGGER.warn("vkdisp: pack options screen drive rejected: {}（{}）",
-                    malformed.raw(), malformed.reason());
-        } else if (minecraft != null) {
-            minecraft.execute(() -> PackOptionsDrive.run(minecraft, command));
-        }
-    }
+    /** 屏幕驱动分支已随 R6 删除（自研屏幕没了，指令就没有执行对象）。 */
 
     /**
      * P4.5：核心配置变化 → <b>先预编译再切资源</b>。
@@ -338,7 +319,6 @@ public final class VkDispConfigHotReload {
                 VkDispConfig.DEBUG_LOG.get(),
                 VkDispConfig.PACK_PROFILE.get(),
                 VkDispConfig.SHADER_PACK.get(),
-                VkDispConfig.PACK_OPTIONS_SCREEN.get(),
                 VkDispConfig.CAPABILITY_GATE.get(),
                 VkDispConfig.CHAIN_ENABLE_GATING.get(),
                 VkDispConfig.OPTION_OVERRIDES.get(),
@@ -347,28 +327,5 @@ public final class VkDispConfigHotReload {
                 // GAP-027 天空线：`mrt.skyPackShader` 同样是「只在生成期/注册期被读一次」的闸门
                 //   ⇒ 不进边沿判定就是个死开关（QD-08「写了但没生效」那一族，与 packWater 同例）。
                 VkDispConfig.MRT_SKY_PACK_SHADER.get());
-    }
-
-    /** drive INFO 的动作摘要（与解析结果一一对应，坏输入也可见原文）。 */
-    private static String describe(ScreenDriveCommand command) {
-        if (command instanceof ScreenDriveCommand.None) {
-            return "none (neutral)";
-        }
-        if (command instanceof ScreenDriveCommand.Open) {
-            return "open";
-        }
-        if (command instanceof ScreenDriveCommand.Done) {
-            return "done";
-        }
-        if (command instanceof ScreenDriveCommand.Set set) {
-            return "set " + set.name() + "=" + set.value();
-        }
-        if (command instanceof ScreenDriveCommand.Page page) {
-            return "page " + page.page1();
-        }
-        if (command instanceof ScreenDriveCommand.Malformed malformed) {
-            return "malformed (" + malformed.reason() + ")";
-        }
-        return String.valueOf(command);
     }
 }

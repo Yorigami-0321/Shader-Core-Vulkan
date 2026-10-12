@@ -6,6 +6,37 @@
 ---
 ---
 
+## 2026-10-12（一百二十四）— ✅ R6 收口（M-14 · 下半）：删掉自研屏幕那一族 —— `PackPickerScreen` / `PackOptionsScreen` / `PackOptionsDrive` / `ScreenDriveCommand` / `packOptionsScreen` 键 / `IConfigScreenFactory`
+
+> **verdict = GUI 只剩一条通路**：光影包与包选项现在只在原版视频设置页里（上一条新建的那条），
+> 自研屏幕与它的无头驱动臂一起从仓库消失 —— 第 6 步（R5 + R6）到此整个走完。
+
+- **① 删了什么**：`screen/PackPickerScreen.java`、`screen/PackOptionsScreen.java`（自研双列分页 +
+  `turnPage` + `fitLabel` + 页码绘制都在这个类里）、`screen/PackOptionsDrive.java`、
+  `config/ScreenDriveCommand.java`（sealed 接口 + 解析 + 它的单测文件一起删）、
+  `VkDispConfig.PACK_OPTIONS_SCREEN` 键、`VkDispConfigHotReload` 的 `packOptionsScreen` 边沿
+  （快照字段 + `runScreenDrive` + `describe` + 那条 drive 分流）、`VkDispClient` 构造器里那个
+  `IConfigScreenFactory` 扩展点 ⇒ 模组配置页交回 NeoForge 自动生成的 `ConfigurationScreen`。
+  保留：`PackPickerCandidates`（纯候选逻辑，新页在用，单测继续有效）、`PackOptionsSession` 的
+  `page()/pageCount()/pageOptions()`（分页 UI 没了，但那是会话侧纯函数；删它要另开一格，本轮不顺手）。
+- **② 一条真实的代价，不粉饰**：`packOptionsScreen` 那条**无头驱动臂**（取证脚本靠它
+  `open` / `set:` / `done` 在活客户端里改选项）随屏幕一起消失 ⇒ 替身是**直接改
+  `config/vkdisp-pack-options.properties` + 动一次核心项触发重载**。少了一次「不重载只改值」的档位
+  ⇒ 「同帧只差一个选项」那类像素比臂要改成两帧/重启对照。已在 `08-TESTING` 那条 P4.3 记录下面
+  用引用块点名（历史证据仍算数，只是不能照做）。
+- **③ 守卫跟着收紧**（不是放宽）：`MixinWiringTest#m14EmbedsPackOptionsIntoVanillaScreen` 追加
+  「那四件必须不存在 + 配置里不许再有 `packOptionsScreen`」；`PackOptionSwitchReloadTest` 那份
+  「快照引用的字段必须真实存在」的名单去掉 `PACK_OPTIONS_SCREEN`（这条守卫防的正是这种悬空引用）。
+  全量：`./gradlew cleanTest test --offline` → **BUILD SUCCESSFUL**（1166 条，1 条既有 skip）。
+  `VkDispConfig` 因删掉一整个键短了一截 ⇒ 巨类名单里的上限按棘轮口径可以再审（本轮没动名单）。
+- **影响的文档**：`04-SPEC` §5.0 M-14（🟡 → ✅ 已落地 + 记代价）、`19-IMPROVEMENT-PATHS` §5A.4 R6
+  （❌ → ✅ 代码收口）、`08-TESTING` P4.3 那条 GUI 取证臂（标退役 + 替身）。
+- **未收口（如实）**：M-14 的三条画面判据 + `Mixin apply failed=0` 都没真机 —— 尤其
+  `@Shadow` 能不能命中**继承来**的 `OptionsSubScreen#list` 是本轮唯一没被任何自动化手段验证的假设
+  （命中不了是 apply 期硬失败，不是静默）。**阶梯往下就是闸门后的 R7（M-04 整主 pass）**：
+  三项待核已结（一百二十二）、成本已报（3–5 天 + 完整回归），开工第一步是那张牵连面清单的执行序，
+  不是先写注入。
+
 ## 2026-10-12（一百二十三）— 🟡 R6 第 6 步后半（M-14 · 上半）：包选项进<b>原版视频设置页</b> —— 新增通路，自研屏幕这一提交先不删
 
 > **verdict = 原版页里现在能选包、能改包选项**：分页/双列/标签截断那一族自己算的版式整个不进新页，

@@ -77,7 +77,7 @@ class PackOptionSwitchReloadTest {
         String config = readOrSkip(CONFIG);
         for (String field : java.util.List.of(
                 "CAPABILITY_GATE", "OPTION_OVERRIDES", "ENABLED", "DEBUG_LOG",
-                "PACK_PROFILE", "SHADER_PACK", "PACK_OPTIONS_SCREEN")) {
+                "PACK_PROFILE", "SHADER_PACK")) {
             assertTrue(config.contains("ModConfigSpec."), "配置类读不到（测试前提失效）");
             assertTrue(config.contains(field),
                     "VkDispConfig 上没有字段 " + field + " —— 快照引用了不存在的字段，"

@@ -163,7 +163,15 @@ if (meshStride != bindStride) {
 `packOptionsScreen` 驱动（同一 FileWatcher 热加载链，但走边沿分割 →
 `PackOptionsDrive.run`，**不触发资源重载**；`done` 保存/改写自身触发重载）。
 语法 `""` / `open` / `set:NAME=VALUE` / `page:N` / `done`；`set`/`page`/`done` 要求
-屏幕已开，否则 WARN 拒绝（T11）。**帧注入点 = `RenderLevelStageEvent.AfterLevel`**
+屏幕已开，否则 WARN 拒绝（T11）。
+> 🔴 **这条无头驱动臂已于 2026-10-12 随 R6 / M-14 退役**（自研屏幕删了，指令没有执行对象 ⇒
+> `packOptionsScreen` 键 + `ScreenDriveCommand` + `PackOptionsDrive` 一起删）。
+> 替身：**直接改 `config/vkdisp-pack-options.properties`**（`PackOptionStore.pathFor` 那份），
+> 再动一次核心项（如 `shaderPack`）触发资源重载；代价 = 少了一次「不重载只改值」的档位，
+> 所以像素比那一类「同帧只差一个选项」的臂要改成两帧对照或重启对照（不得当免费午餐）。
+> 下面的历史证据（`evidence/p418-options-gui.md` 八截图那组）仍是那次定案的记录，只是**不能再照做**。
+
+**帧注入点 = `RenderLevelStageEvent.AfterLevel`**
 （`render/FullscreenPassHook`；P4.3 从 `RenderFrameEvent.Post` 迁移 —— Post 在 GUI
 合成之后触发会整屏覆盖 GUI，实测否决），菜单态不再绘制全屏 pass。
 取证 `evidence/p418-options-gui.md`：单会话八截图（BSL 284 项分页渲染 + set 回执 +

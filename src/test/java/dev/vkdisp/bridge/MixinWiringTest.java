@@ -164,6 +164,14 @@ class MixinWiringTest {
                 "必须走原版 OptionsList 的三个装配方法（滚动、每行两列、标签、关屏 apply 都由原版做）");
         assertTrue(page.contains("PackPickerCandidates"),
                 "候选与标签仍走 PackPickerCandidates（那份纯逻辑已有单测，不许在新页里重抄一遍）");
+        // 🔴 旧入口必须真的消失：留着 = 两套 GUI 通路并存，「用户看到的到底是哪一页」又变成运行时竞争
+        for (String gone : new String[] {"screen/PackPickerScreen.java", "screen/PackOptionsScreen.java",
+                "screen/PackOptionsDrive.java", "config/ScreenDriveCommand.java"}) {
+            assertFalse(Files.exists(Path.of("src/main/java/dev/vkdisp/" + gone)),
+                    "R6 要删的自研屏幕/驱动件还在：" + gone);
+        }
+        assertFalse(config.contains("packOptionsScreen"),
+                "驱动键 packOptionsScreen 应随 PackOptionsDrive 一起删除（留着它就是一把没有锁孔的钥匙）");
     }
 
     @Test
