@@ -6,6 +6,20 @@
 ---
 ---
 
+## 2026-10-12（一百二十九）— 🔴 GAP-049 定案：主 pass 画进去的那张图**不是** `gameRenderer.mainRenderTarget()`，连纹理都不是
+
+> **verdict = ⑤-b 的前置清了（口径层面），但留下一件必须做的活**：我方池的尺寸锚在「另一张主目标」上，⑤-d 关双绘之前要改。
+
+- **为什么要再跑一趟**：上一轮把判据第三条降级成「交叉核对」时留了一个说法 —— 也许两条 handle 指的是**同一张图**，只是 `createTextureView` 造的壳不同。本轮把判据换成 `GpuTextureView.texture()`（公开 API，比纹理本体）再跑一次真机，就是为了把这两种解释分开。
+- **结果：两种解释都不成立**。`label='Main' 命中，但那条附件与 gameRenderer 主目标连纹理都不是同一张（附件视图=0x6d358a8e 附件纹理=0x2b6af37d 主目标纹理=0x326872b3）` ⇒ 主 pass 写的是**另一张图**。
+- **而它确实是主 pass**（不是同名的别条）：这一趟仍然打出 `主 pass 的颜色附件已换成我方 colortex 阵列：8 个（label='Main'，尺寸=854x480）` 并随后崩在 `FrontendRenderPass#setPipeline:113`（栈顶 `executeSolid:532`）⇒ ⑤-a 的签字证据对当前这份码仍然成立（本轮重跑过，不是沿用上一轮的结论）。
+- **源码侧对不上**：`LevelRenderer:210` 明写 `frame.importExternal("main", this.gameRenderer.mainRenderTarget())`，而 `FrameGraphBuilder.ExternalResource.get()` 原样返回导入的对象 ⇒ 按 sources jar 读，两条必然同源。真机不同源 ⇒ **运行时的 `LevelRenderer` 与 sources jar 不是同一份**（NeoForge 对它打了补丁）。这是本轮第二次撞到「sources jar ≠ 运行时」（前一次是 `getModelViewMatrixCopy` 的实参表，见 GAP-047 ③）。
+- **口径定案（写进 `GAP-049` 的修法行）**：M-04 一律**按值判、不按对象身份判** —— 身份 = 「单颜色附件 + label ∈ {Main,Solid}」；尺寸/格式 = **以描述符自带的那条附件为准**（`slotsUsable` 比的就是 `target0.getWidth(0)/getHeight(0)`）⇒ 哪天两张主目标尺寸不同，接管被拒绝并计数，不会静默错位。
+- 🔴 **留下的活（⑤-d 前置）**：`MrtTerrainPass#ensureColortex` 仍拿 `gameRenderer.mainRenderTarget()` 定池尺寸 —— 那是「另一张主目标」。要么改成以主 pass 自己的 target0 尺寸建池，要么装配期断言两者同尺寸并把它计数出来。今天两者都是 854×480，所以没露馅。
+- **取证档已回退**：`ownTerrainPass=false`、`ADVANCED_MATERIALS` 行删除 ⇒ 默认档零变化。测试 1168 条 0 失败。
+
+---
+
 ## 2026-10-12（一百二十八）— ✅ R7 ⑤-a **真机签掉**：主 pass 的颜色附件被换成我方 8 槽阵列，一秒后按预测崩在 `setPipeline`
 
 > **verdict = §5.0.7 五步的第一步现在有了它要求的证据**：不是「画面看起来对」，而是那句预测中的 `IllegalStateException` 逐字出现在预测的位置。同时判据被真机削掉一条腿（`GAP-049`）。

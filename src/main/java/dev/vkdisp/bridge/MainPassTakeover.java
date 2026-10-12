@@ -41,6 +41,7 @@ package dev.vkdisp.bridge;
  */
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
+import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import dev.vkdisp.VkDisp;
@@ -130,16 +131,21 @@ public final class MainPassTakeover {
             return descriptor;
         }
         STATS.labelHits++;
-        if (target0 == mainColorView()) {
+        // 判据③「那个附件就是主目标的颜色纹理」—— 真机证明这一腿**永不成立**，故只当交叉核对留着：
+        // 视图壳不同源（createTextureView 造的）还能解释，连**纹理本体**都不是同一张
+        // （实测 附件纹理=0x2b6af37d vs 主目标纹理=0x326872b3）⇒ 主 pass 画进去的那张图不是
+        // gameRenderer.mainRenderTarget()（GAP-049 定案）。身份由「单附件 + label」两腿担，
+        // 而「接管有没有真命中主 pass」由后面那笔 setPipeline 抛负责证明（⑤-a 已签）。
+        GpuTexture mainTexture = mainColorTexture();
+        if (mainTexture != null && target0.texture() == mainTexture) {
             STATS.viewHits++;
         } else if (!STATS.reportedViewMismatch) {
-            // 交叉核对（不当闸门）：两条「主目标」handle 不同源 —— 登记为 GAP-049，见类注释 ⚠️ 条
             STATS.reportedViewMismatch = true;
-            VkDisp.LOGGER.warn("vkdisp: [M-04/⑤-a] label='{}' 命中，但描述符那条附件与 gameRenderer 的"
-                            + "主目标颜色视图<b>不是同一个对象</b>（附件={} 主目标={}，0x 是 identityHashCode）"
-                            + " ⇒ 本类仍按 label 接管，但这条差异已登记 GAP-049：我方多处把后者当『主目标』用，"
-                            + "需要逐条重核（0x 只用来判对象身份，不是地址）",
-                    label, hex(target0), hex(mainColorView()));
+            VkDisp.LOGGER.warn("vkdisp: [M-04/⑤-a] label='{}' 命中，但那条附件与 gameRenderer 主目标<b>连纹理都不是</b>"
+                            + "同一张（附件视图={} 附件纹理={} 主目标纹理={}；0x 是 identityHashCode）"
+                            + " ⇒ 主 pass 的目标不是 gameRenderer.mainRenderTarget()，本类不据此拒绝接管；"
+                            + "口径与后果见 GAP-049",
+                    label, hex(target0), hex(target0.texture()), hex(mainTexture));
         }
         GpuTextureView[] ours = writeGenerationViews(target0.getWidth(0), target0.getHeight(0));
         if (ours == null) {
@@ -256,12 +262,20 @@ public final class MainPassTakeover {
         return o == null ? "null" : "0x" + Integer.toHexString(System.identityHashCode(o));
     }
 
-    private static @Nullable GpuTextureView mainColorView() {        Minecraft minecraft = Minecraft.getInstance();
+    /**
+     * 主目标的<b>颜色纹理本体</b>（判据③比的是它，不是视图壳）。取不到 ⇒ 返回 null（= 不接管）。
+     *
+     * <p>🔖 为什么不用 {@code getColorTextureView()} 的对象身份：{@code GpuTextureView} 是
+     * {@code createTextureView(texture)} 造的壳，两条 handle 即使指向同一张图也不会是同一个对象
+     * —— 上一版判据就是这么把主 pass 永久判飞的（{@code 视图同源=0}，22059 次 label 命中）。
+     */
+    private static @Nullable GpuTexture mainColorTexture() {
+        Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.gameRenderer == null) {
             return null;
         }
         RenderTarget main = minecraft.gameRenderer.mainRenderTarget();
-        return main == null ? null : main.getColorTextureView();
+        return main == null ? null : main.getColorTexture();
     }
 
     private static @Nullable String labelOf(RenderPassDescriptor descriptor) {
