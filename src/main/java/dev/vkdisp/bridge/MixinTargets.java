@@ -222,6 +222,31 @@ public final class MixinTargets {
                     + "Lcom/mojang/renderpearl/api/pipeline/CompiledRenderPipeline;";
 
     /**
+     * {@code net.minecraft.client.renderer.rendertype.PreparedRenderType} —— R7 ⑤-c <b>第一族</b>的目标类
+     * （一条 {@code record}，登记表：{@code 04-SPEC} §5.0.7 表 ⑤ 行 c）。
+     *
+     * <p>🔖 <b>为什么是它</b>：本轮从 26.3.0.51-beta sources jar 逐处数过，全游戏取管线点是 <b>34</b> 处
+     * （{@code grep -rn "getCompiledPipeline" net/minecraft}），其中 {@code PreparedRenderType#draw} 第
+     * <b>43</b> 行那一条是<b>全部</b> {@code RenderType} 的公共通路（实体 / 粒子 / 方块层 / 水 / 玻璃 /
+     * 文本…都从这儿走）⇒ ⑤-c「逐族放开」的第一族一处就顶十几族。真机也是先在这儿响的：
+     * {@code PreparedRenderType.draw:43} ← {@code drawFromBuffer:29} ← {@code executeClassicTransparency:721}。
+     */
+    public static final String PREPARED_RENDER_TYPE =
+            "net.minecraft.client.renderer.rendertype.PreparedRenderType";
+
+    /**
+     * {@code PreparedRenderType#draw(StagedVertexBuffer$ExecuteInfo, RenderPass, RenderPipeline)}（private）。
+     *
+     * <p>🔖 形参表就是判据通路：第 2 个形参是 {@code RenderPass} ⇒ handler 用
+     * {@code @Local(argsOnly = true)} 读它（同 M-15 那两条的形状，{@code GAP-047} ① 已核实
+     * 「被包住的是<b>静态</b>调用 ⇒ handler 不带接收者」）。签名一动就注入期硬失败，不许静默不生效。
+     */
+    public static final String PREPARED_RENDER_TYPE_DRAW =
+            "draw(Lnet/minecraft/client/renderer/StagedVertexBuffer$ExecuteInfo;"
+                    + "Lcom/mojang/renderpearl/api/commands/RenderPass;"
+                    + "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)V";
+
+    /**
      * {@code net.minecraft.client.gui.screens.options.VideoSettingsScreen} —— M-14 的目标类
      * （R6：包选项进原版视频设置页）。这是<b>本仓第一个 GUI 屏幕注入点</b>（类别闸门已于
      * 2026-10-12 废除，见类注释 M1 现行口径）。

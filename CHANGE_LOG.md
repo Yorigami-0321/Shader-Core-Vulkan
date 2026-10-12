@@ -6,6 +6,21 @@
 ---
 ---
 
+## 2026-10-12（一百三十一）— ✅ R7 ⑤-c 第一族签掉：`PreparedRenderType` 一处顶十几族，崩点按预测挪进 `executeSolid`
+
+> **verdict = ⑤-c 的判据形状与 a/b 相同（「崩点必须挪位置」）并且真的挪了**：上一档崩在 `executeClassicTransparency:721`，这一档崩在 `QuadParticleFeatureRenderer.drawLayers:89` ← `LevelRenderer.executeSolid:538` ⇒ **全部 RenderType 那一族在主 pass 里已经能过附件校验**，剩下的族按真机指的位置逐族做。
+
+- **新增 `mixin/PreparedRenderTypePipelineMixin`**（第 14 条 mixin）：包 `PreparedRenderType#draw` 第 **43** 行那次 `RenderSystem.getCompiledPipeline`，形参 `RenderPass` 给 pass 身份（`@Local(argsOnly = true)`，与 M-15 同形状：静态调用的 handler 不带接收者）。选它的理由是从源码数出来的：主 pass 里实体/粒子/方块层/水/玻璃/文本这些**全都**走这一个方法。
+- 🔖 **判定入口分两处，不是偷懒**：新增 `PassAwarePipelines.selectForMainPass(takenOverMainPass, requested)` 而不是复用 `select(layer, …)` —— 渲染类型名里有 `solid`/`translucent`，与 `ChunkSectionLayer` 的层名**同字**，把名字传进去查地形多附件表，在有非地形 draw 落进我方 gbuffer pass 的那天就会把地形管线塞给不相干的一族。守卫 `renderTypeSiteDoesNotReuseTheLayerNameTable` 把「那一支里不许出现 `mrtVariantOrNull`」钉成断言。
+- 🔴 **动手前查出一条自己上一轮写错的性能口径（`GAP-051`）**：`RenderSystem:106-120` 的顺序是 `PIPELINE_MODIFIERS.apply` → `PipelineCache.get(pipeline)` ⇒ 补槽发生在缓存**之前**，「每条管线一次」不成立，接上 `PreparedRenderType` 就是**每次 draw 建一条新管线**。改法：按**入参对象身份**的记忆层（`IdentityHashMap`，槽数一变或条数 ≥256 整表作废），自报加 `记忆命中=`。类头那句过期口径已就地更正。
+- ✅ **本轮还把取管线点全集数清了**：`grep -rn "getCompiledPipeline" net/minecraft` = **34 处**（`GAP-045` 那条挂着「30 处，来自子代理，未独立复核」→ 作废）。34 处的形状统一是 `renderPass.setPipeline(RenderSystem.getCompiledPipeline(X))` ⇒ 每处都看得见 pass，这正是 `PipelineModifier` 做不到的原因。主 pass 内还剩 8 处（特性渲染器 / 云×2 / 天气 / 边界×2 / 立方图 / `LevelRenderer:518`）+ OIT 4 处；天空 6 处与 GUI/后处理/动画图集 10 处**不该补** —— 全集与分档表已进 `04-SPEC` §5.0.7 末。
+- **顺手修掉一处文档断表**：`04-SPEC` 里 M-05 那一条表格行曾被上一轮的插入挤到 §5.0.7 的引注末尾（`…出处）。|| **M-05** |`）⇒ 行已搬回 §5.0 原位、M-04 行补回收尾竖线；现在 §5.0 那张表每行都是 9 根竖线。
+- **真机证据三行**：`[M-04/⑤-a] 主 pass 的颜色附件已换成我方 colortex 阵列：8 个（label='Main'，尺寸=854x480）`、`[M-04/⑤-b] 首条补槽管线：vkdisp:pipeline/terrain_solid_multidraw（1 条声明 → 8 槽）`、`[M-04/⑤-c] PreparedRenderType 取管线 hits=1`；崩栈 `IllegalStateException: Render pass color attachment count must match pipeline color target state count.` @ `FrontendRenderPass.setPipeline:113` ← `QuadParticleFeatureRenderer.drawLayers:89`。**0 条 mixin apply 失败**（第 14 条 mixin 一次过 apply）。
+- **取证档已回退**：`ownTerrainPass=false`、`BSL_v10.1.8.ADVANCED_MATERIALS` 那行删除 ⇒ 默认档（关接管）零变化：`selectForMainPass` 那一支要求 `isTakenOverPass(renderPass)`，未接管时逐字原样返回。测试 **1174 条 0 失败**（本轮新增 2 条）。
+- **下一步**：⑤-c 第二族 = 真机刚指的 `QuadParticleFeatureRenderer:89`（它取的是 `OitPipelineSet`/`RenderType.pipeline()`，不在 `PreparedRenderType` 通路上）；其后云×2 / 天气 / 边界×2 / 立方图 / `LevelRenderer:518`，再谈 ⑤-d 关双绘（前置仍是 `GAP-049` 那件池尺寸锚点的活）。
+
+---
+
 ## 2026-10-12（一百三十）— ✅ R7 ⑤-b **真机签掉**：通用派生公式接上，地形在主 pass 里过了 `setPipeline`，崩点按预测挪到透明那一笔
 
 > **verdict = §5.0.7 五步的第二步有证据了**：`[M-04/⑤-b] 首条补槽管线：SOLID（1 条声明 → 8 槽）` 打出来后，同一个 `setPipeline` 抛**不再**发生在地形那条栈上，而是挪到 `PreparedRenderType.draw:43` ← `executeClassicTransparency:721` —— 「这一族过了，下一族在它的调用点响」就是 ⑤-c 逐族放开的排序依据。

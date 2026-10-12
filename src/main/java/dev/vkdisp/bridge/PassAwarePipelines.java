@@ -1,12 +1,15 @@
 package dev.vkdisp.bridge;
 /**
- * 【参考调研】R1a / M-15：pass 身份判定 —— 「这次 draw 是不是画进我方那个多附件 pass」由数据回答
+ * 【参考调研】R1a / M-15 + R7 ⑤-b/⑤-c：pass 身份判定 —— 「这次 draw 落在哪个 pass」由数据回答
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
  *    参考对象 = ① 原版 26.3 {@code net/minecraft/client/renderer/chunk/ChunkSectionsToRender}：
  *    {@code DrawSeparate#render} 第 **176** 行与 {@code DrawIndirect#render} 第 **121** 行的
  *    {@code renderPass.setPipeline(RenderSystem.getCompiledPipeline(...))}，以及这两个 {@code render}
  *    的形参表（第 2 个形参就是 {@code RenderPass}）；
- *    ② MixinExtras（NeoForge 自带）的 {@code @WrapOperation} + {@code @Local(argsOnly = true)} 契约
+ *    ② 同 jar {@code net/minecraft/client/renderer/rendertype/PreparedRenderType}：
+ *    {@code private void draw(StagedVertexBuffer$ExecuteInfo, RenderPass, RenderPipeline)} 第 **43** 行
+ *    那次同样的 {@code getCompiledPipeline}（⑤-c 第一族 —— 全部 RenderType 的公共通路）；
+ *    ③ MixinExtras（NeoForge 自带）的 {@code @WrapOperation} + {@code @Local(argsOnly = true)} 契约
  *    —— 只观察注解签名，不读实现。
  *    许可证：Mojang EULA（只观察语句与形参表）+ Mixin MIT + NeoForge/MixinExtras LGPL-2.1（只观察契约）。
  *    → 能否并入本项目（MIT）：可以 —— 本文件是独立编写的桥接判定，零源码搬运
@@ -14,42 +17,53 @@ package dev.vkdisp.bridge;
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：原版把 {@code RenderPass} 一路传到取管线那一刻 ⇒ 身份判据本来就在那里，
  *    只是我方以前没用（改用进程级静态布尔）。
- * 2. 备选：① 继续用 {@code MrtTerrainPass.active() + finally} —— **否决**（{@code GAP-040}：
+ * 2. 备选：① 继续用 {@code MrtTerrainPass.active() + finally} —— <b>否决</b>（{@code GAP-040}：
  *    标志位为 true 并<b>不能证明</b>取管线的那一方就在我方 pass 里，而配套守卫
  *    {@code hasExpectedAttachmentCount()} 的判定口径是「标志位为 true 就返回 true」= 空转）；
- *    ② {@code PipelineModifier} —— **已证伪**（缓存键没有包代次、key 只能启动期注册，{@code GAP-045}）。
- * 3. 我们的差异点：判定写成<b>纯函数</b>（{@link #select}）⇒ 不启动客户端就能单测「错配必须被拒」。
- *    本类不含渲染调用，也不碰 {@code RenderSystem}；表的<b>所有权</b>仍在 {@code TerrainPipelineApi}
- *    （注册与查询同源），这里只是读 + 一次身份比较的结果应用。
+ *    ② {@code PipelineModifier} —— <b>已证伪</b>（缓存键没有包代次、key 只能启动期注册，{@code GAP-045}；
+ *    且它看不到「这次要进哪个 pass」⇒ 只能对<b>所有</b> pass 一起补槽，GUI/后处理立刻全崩）。
+ * 3. 我们的差异点：判定写成<b>纯函数</b>（{@link #select} / {@link #selectForMainPass}）⇒
+ *    不启动客户端就能单测「错配必须被拒」。本类不含渲染调用，也不碰 {@code RenderSystem}；
+ *    表的<b>所有权</b>仍在 {@code TerrainPipelineApi}（注册与查询同源），这里只是读 + 身份比较的结果应用。
  * 4. 许可证核对：本项目 MIT；零第三方代码复制。
- * 5. 性能基线：🔴 热路径 —— 每帧每层 1 次：一次布尔短路 + 一次 map.get，无分配。
- *    观测面（{@link #onHit()}）按 M-01 的节流口径，不做性能优化（17 §3.2）。
+ * 5. 性能基线：🔴 热路径 —— ⑤-c 起 {@code selectForMainPass} 是<b>每次 draw</b> 一次
+ *    （{@code PreparedRenderType#draw}）：一次布尔短路 + 一层按对象身份的记忆表（见
+ *    {@code MainPassPipelineDerivation} 类头第 5 条），本类自身零分配。
+ *    观测面（{@link #onHit} / {@link #onRenderTypeHit}）按 M-01 的节流口径，不做性能优化（17 §3.2）。
  */
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import dev.vkdisp.VkDisp;
 import dev.vkdisp.VkDispConfig;
 
 /**
- * H 线 M-15 的判定侧（登记表：{@code docs/04-SPEC.md} §5.0 的 M-15 行）。
+ * H 线 M-15 的判定侧 + M-04 ⑤-b/⑤-c 的收口点（登记表：{@code docs/04-SPEC.md} §5.0 的 M-15 行、
+ * §5.0.7 表 ④/⑤）。
  *
- * <p><b>它解决的问题</b>：地形管线有两套 —— 单附件版（给原版 pass）与多附件版（给我方 gbuffer pass）。
+ * <p><b>它解决的问题</b>：地形管线有两套 —— 单附件版（给原版 pass）与多附件版（给我方 gbuffer pass）；
+ * 主 pass 一旦被我方换成 N 附件（M-04 ⑤-a），它里面<b>每一条</b>管线也得有 N 个颜色目标。
  * 选错就是「原版单附件 pass 拿到 8 附件管线」（Vulkan 未定义）或反过来（{@code setPipeline} 抛）。
  * 旧实现靠「谁记得置位/清位」，本类改成<b>读数据</b>：draw 落到的那个 {@code RenderPass} 对象
- * 是不是我方打开的那一个。
+ * 是不是我方打开的那一个 / 是不是被接管的那一个主 pass。
  */
 public final class PassAwarePipelines {
 
-    /** 命中计数（只作观测面，<b>不是</b>判据的输入 —— 否则又回到「靠标志位证明标志位」）。 */
-    private static long hits;
+    /** 观测面计数（装在持有者里，不动 QD-03 那条静态字段棘轮）。 */
+    private static final class Counters {
+        private long terrain;
+        private long renderType;
+    }
+
+    /** 计数<b>不参与</b>任何判定 —— 判据是 {@code renderPass} 的对象身份，否则又回到「靠标志位证明标志位」。 */
+    private static final Counters COUNT = new Counters();
 
     private PassAwarePipelines() {
     }
 
     /**
-     * 判定本体。<b>纯函数</b>：同样的入参永远给同样的结果，因此可单测。
+     * 地形那两条的判定本体（M-15）。<b>纯函数</b>：同样的入参永远给同样的结果，因此可单测。
      *
-     * <p>🔴 <b>故意错配一次必须被拒</b>：{@code ourPass == false} 时逐字<b>原样返回</b>入参 ——
-     * 于是原版单附件 pass 永远拿不到多附件管线，且这件事不再依赖「记得在 finally 里清标志位」。
+     * <p>🔴 <b>故意错配一次必须被拒</b>：{@code ourPass == false} 时不会拿到多附件变体 ——
+     * 于是原版单附件 pass 永远拿不到 8 附件管线，且这件事不再依赖「记得在 finally 里清标志位」。
      *
      * <p>⚠️ 身份对上却查不到变体（该层没规划进 gbuffer）时同样原样返回：单附件管线进 8 附件 pass
      * 会被 {@code setPipeline} <b>当场抛</b> ⇒ 是响亮失败，不会被静默画错，因此这里不加第二套告警集合
@@ -75,27 +89,60 @@ public final class PassAwarePipelines {
         if (takenOverMainPass) {
             // ⑤-b：主 pass 现在是 N 附件 ⇒ 地形这两条也要有 N 个颜色目标，否则 setPipeline 抛。
             //        补不动的形状（声明比附件多等）由公式自己交回原版并计数（GAP-046）。
-            return MainPassPipelineDerivation.derive(requested, MainPassTakeover.takenOverSlots(), layer);
+            return MainPassPipelineDerivation.derive(requested, MainPassTakeover.takenOverSlots());
         }
         return requested;
     }
 
     /**
-     * M1 编码约束 ③ 的埋点：证明「取管线那一刻真的被包住」。
+     * ⑤-c 第一族（{@code PreparedRenderType#draw} —— 全部 RenderType 的公共取管线点）的判定。
      *
-     * <p>🔖 计数<b>不参与</b>任何判定 —— 判据是 {@code renderPass} 的对象身份，
-     * 这条只回答「这段注入到底跑没跑」（T10：每处注入点必须能证明被调用）。
+     * <p>🔖 <b>为什么不复用 {@link #select}</b>：那条的入参是<b>层名</b>，要拿它查地形多附件表；
+     * 而渲染类型的名字里就有 {@code "solid"} / {@code "translucent"} 这种<b>与层名同字</b>的串
+     * （{@code ChunkSectionLayer} 也叫 {@code solid}）⇒ 一旦哪天有非地形的 draw 落进我方 gbuffer pass，
+     * 传名字过去就会把<b>地形</b>管线塞给它（顶点格式对不上）。所以这里<b>只</b>走主 pass 那一支：
+     * 补槽是「按形状改声明数」，不需要知道这是哪一族。
+     *
+     * @param takenOverMainPass 这次 draw 是不是落在被接管的主 pass 里（对象身份，由 mixin 侧比较后传入）
+     * @param requested         原版即将编译的管线
+     * @return 要交给 {@code RenderSystem.getCompiledPipeline} 的管线
+     */
+    public static RenderPipeline selectForMainPass(boolean takenOverMainPass, RenderPipeline requested) {
+        if (!VkDispConfig.MIXIN_PASS_AWARE_PIPELINE.get() || !takenOverMainPass) {
+            return requested;
+        }
+        return MainPassPipelineDerivation.derive(requested, MainPassTakeover.takenOverSlots());
+    }
+
+    /**
+     * M1 编码约束 ③ 的埋点：证明「地形取管线那一刻真的被包住」。
+     *
+     * <p>🔖 计数<b>不参与</b>任何判定（T10：每处注入点必须能证明被调用）。
      */
     public static void onHit() {
-        long count = ++hits;
+        long count = ++COUNT.terrain;
         if (count == 1L || count % 600L == 0L) {
-            VkDisp.LOGGER.info("vkdisp: [M-15] pass-aware getCompiledPipeline hits={}"
+            VkDisp.LOGGER.info("vkdisp: [M-15] pass-aware getCompiledPipeline（地形两条）hits={}"
                     + "（身份比较在 mixin handler 里做，本行只是观测面）", count);
         }
     }
 
-    /** 累计命中次数（诊断/单测读数）。 */
+    /** ⑤-c 第一族的埋点：{@code PreparedRenderType#draw} 那处注入跑没跑（同 T10 口径）。 */
+    public static void onRenderTypeHit() {
+        long count = ++COUNT.renderType;
+        if (count == 1L || count % 600L == 0L) {
+            VkDisp.LOGGER.info("vkdisp: [M-04/⑤-c] PreparedRenderType 取管线 hits={}（每帧每次 draw 一次；"
+                    + "接管关档时这一处只计数、不改任何东西）", count);
+        }
+    }
+
+    /** 累计命中次数（诊断/单测读数）：地形两条那处。 */
     public static long hitCount() {
-        return hits;
+        return COUNT.terrain;
+    }
+
+    /** 累计命中次数（诊断/单测读数）：⑤-c 那处（全部 RenderType）。 */
+    public static long renderTypeHitCount() {
+        return COUNT.renderType;
     }
 }

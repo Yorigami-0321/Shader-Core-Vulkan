@@ -94,4 +94,43 @@ class MainPassPipelineDerivationTest {
         assertTrue(derivation.contains("首条交回原版的管线"), "第一次拒绝必须点名是哪条管线");
         assertTrue(derivation.contains("return pipeline;"), "拒绝 = 原样交回入参，不改任何东西");
     }
+
+    @Test
+    @DisplayName("⑤-c：derive 是每次 draw 一次 ⇒ 必须有按对象身份的记忆层，且槽数一变就作废")
+    void deriveIsMemoisedByIdentity() {
+        String derivation = readOrSkip(DERIVATION);
+        assertTrue(derivation.contains("RenderPipeline memoised = remember(pipeline, slotCount);"),
+                "先查记忆表 —— 不查就是每次 draw 都 toBuilder().build() 建新对象");
+        assertTrue(derivation.contains("new IdentityHashMap<>()"),
+                "按对象身份记（主 pass 里取的都是 RenderPipelines 静态常量）；用 equals/hashCode 会把"
+                        + "大 record 的哈希开销叠在原版缓存之上");
+        assertTrue(derivation.contains("if (STATS.memoSlots != slotCount) {"),
+                "槽数变了（换包档 / 换池尺寸）必须整表作废，否则会把 8 槽的结果给 5 槽的 pass");
+        assertTrue(derivation.contains("STATS.padded.size() >= 256"),
+                "没有「包代次」这一维就只能靠上限清空 —— GAP-018/045 那一族的形状");
+        assertTrue(derivation.contains("STATS.padded.put(pipeline, padded);"), "派生结果要回写记忆表");
+    }
+
+    @Test
+    @DisplayName("⑤-c 第一族的注入点存在、只转发；且 selectForMainPass 不许查地形的层名表")
+    void renderTypeSiteDoesNotReuseTheLayerNameTable() {
+        String mixin = readOrSkip(Path.of("src/main/java/dev/vkdisp/mixin/PreparedRenderTypePipelineMixin.java"));
+        assertTrue(mixin.contains("MixinTargets.PREPARED_RENDER_TYPE_DRAW"),
+                "目标必须写完整描述符（draw 有同族重载；改名要注入期硬失败，T10 / X11）");
+        assertTrue(mixin.contains("PassAwarePipelines.onRenderTypeHit();"),
+                "每处注入点都要能证明被走到（M1 编码约束 ③）");
+        assertTrue(mixin.contains("MainPassTakeover.isTakenOverPass(renderPass)"),
+                "pass 身份来自形参 renderPass 的对象比较，不是静态标志（GAP-040 那一族）");
+
+        String aware = readOrSkip(Path.of("src/main/java/dev/vkdisp/bridge/PassAwarePipelines.java"));
+        int site = aware.indexOf("public static RenderPipeline selectForMainPass(");
+        assertTrue(site > 0, "⑤-c 那一支要走独立入口（而不是把渲染类型名当层名传进 select）");
+        String body = aware.substring(site, aware.indexOf("\n    }", site));
+        assertEquals(-1, body.indexOf("mrtVariantOrNull"),
+                "🔴 名字会撞车：RenderType 有 \"solid\"/\"translucent\"，ChunkSectionLayer 也叫 solid —— "
+                        + "拿渲染类型名去查地形多附件表，就会在有非地形 draw 落进我方 gbuffer pass 的那天，"
+                        + "把地形管线塞给不相干的一族");
+        assertTrue(body.contains("!takenOverMainPass"),
+                "没接管主 pass ⇒ 逐字原样返回（默认档 mixin.ownTerrainPass=false 时这一处零影响）");
+    }
 }
