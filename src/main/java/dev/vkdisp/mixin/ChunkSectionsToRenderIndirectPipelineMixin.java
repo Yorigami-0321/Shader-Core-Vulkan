@@ -24,6 +24,7 @@ import com.llamalad7.mixinextras.sugar.Local;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import dev.vkdisp.bridge.MainPassTakeover;
 import dev.vkdisp.bridge.MixinTargets;
 import dev.vkdisp.bridge.MrtTerrainPass;
 import dev.vkdisp.bridge.PassAwarePipelines;
@@ -62,6 +63,7 @@ public abstract class ChunkSectionsToRenderIndirectPipelineMixin {
         PassAwarePipelines.onHit();
         return original.call(PassAwarePipelines.select(
                 TerrainPipelineApi.layerNameOf(layer), MULTI_DRAW,
-                MrtTerrainPass.isOurPass(renderPass), requested));
+                MrtTerrainPass.isOurPass(renderPass), MainPassTakeover.isTakenOverPass(renderPass),
+                requested));
     }
 }

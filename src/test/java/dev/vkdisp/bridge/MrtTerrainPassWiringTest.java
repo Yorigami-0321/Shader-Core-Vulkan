@@ -102,8 +102,13 @@ class MrtTerrainPassWiringTest {
         String aware = readBridgeSource("PassAwarePipelines.java");
         assertTrue(aware.contains("TerrainPipelineApi.mrtVariantOrNull(layer, multiDraw)"),
                 "多附件变体的查表只在这一处（两套管线不混用的收口点）");
-        assertTrue(aware.contains("!ourPass"),
-                "🔴 判据的短路形状：pass 身份不符 ⇒ 逐字原样返回入参（故意错配一次必须被拒）");
+        // 🔴 判据的短路形状（⑤-b 起有两条身份分支，但「谁都不是」时必须原样返回）
+        assertTrue(aware.contains("if (!VkDispConfig.MIXIN_PASS_AWARE_PIPELINE.get()) {"),
+                "开关关着 = 逐字原样返回入参（可关闭制 X29）");
+        assertTrue(aware.contains("if (takenOverMainPass) {"),
+                "⑤-b：只有「接管后的主 pass」那一条身份对上才走补槽公式");
+        assertTrue(countCode(aware, "return requested;") >= 2,
+                "🔴 故意错配一次必须被拒：两条身份都不成立 ⇒ 逐字原样返回入参（多附件管线绝不进单附件 pass）");
     }
 
     @Test

@@ -88,6 +88,8 @@ public final class MainPassTakeover {
         private long labelHits;
         /** 判据①+②+③三条都过的次数（= 除我方附件是否备好之外，全部匹配）。 */
         private long viewHits;
+        private RenderPass takenOverPass;
+        private int takenOverSlots;
         private boolean reportedViewMismatch;
         private boolean reportedFirstHit;
         private boolean warnedNoMatch;
@@ -106,7 +108,26 @@ public final class MainPassTakeover {
      */
     public static RenderPass onCreateRenderPass(RenderPassDescriptor descriptor,
             Function<RenderPassDescriptor, RenderPass> original) {
-        return original.apply(attachmentReplaced(descriptor));
+        RenderPassDescriptor replaced = attachmentReplaced(descriptor);
+        RenderPass created = original.apply(replaced);
+        if (replaced != descriptor) {
+            // 🔖 记下这条 pass 本身：M-15 那一侧靠「renderPass == 这个对象」判「这次 draw 在接管后的
+            //    主 pass 里」⇒ ⑤-b 的补槽只发生在那一刻。每帧建新对象，旧的自动失效（身份不再相等）。
+            STATS.takenOverPass = created;
+            STATS.takenOverSlots = replaced.colorAttachments().size();
+            MainPassPipelineDerivation.reportPeriodically();
+        }
+        return created;
+    }
+
+    /** 这次 draw 是不是落在<b>接管后的主 pass</b> 里（对象身份；没接管时永远 {@code false}）。 */
+    public static boolean isTakenOverPass(RenderPass renderPass) {
+        return renderPass != null && renderPass == STATS.takenOverPass;
+    }
+
+    /** 接管后的主 pass 有几个颜色附件（= ⑤-b 要补到的条数）；没接管返回 0。 */
+    public static int takenOverSlots() {
+        return STATS.takenOverSlots;
     }
 
     private static RenderPassDescriptor attachmentReplaced(RenderPassDescriptor descriptor) {

@@ -6,6 +6,22 @@
 ---
 ---
 
+## 2026-10-12（一百三十）— ✅ R7 ⑤-b **真机签掉**：通用派生公式接上，地形在主 pass 里过了 `setPipeline`，崩点按预测挪到透明那一笔
+
+> **verdict = §5.0.7 五步的第二步有证据了**：`[M-04/⑤-b] 首条补槽管线：SOLID（1 条声明 → 8 槽）` 打出来后，同一个 `setPipeline` 抛**不再**发生在地形那条栈上，而是挪到 `PreparedRenderType.draw:43` ← `executeClassicTransparency:721` —— 「这一族过了，下一族在它的调用点响」就是 ⑤-c 逐族放开的排序依据。
+
+- **新增 `bridge/MainPassPipelineDerivation.java`**（§5.0.6 ④ 那条通用公式的实现）：`padTargets` 把声明的 `ColorTargetState` 列表补到 N 槽 —— **target0 逐字原样**，补槽一律 `RGBA8_UNORM` + `WRITE_NONE`(=0) + 无混合（`Optional.empty()`）；`refusalReason(声明数, 槽数)` 是纯整数退路（`槽数 ≤ 0` / `> MAX_COLOR_TARGETS(8)` / `声明数 > 槽数`）⇒ **整条交回原版管线并计数**（`GAP-046` 收窄后的写法，不许静默）；`derive` 走 `pipeline.toBuilder()` + `withColorTargetState(i, …)`（它顺带把 `activeColorTargetStateCount` 顶上去，这正是 `FrontendRenderPass:111-114` 比的那个数）。
+- 🔖 **落地时改了 ④ 那行的挂点**（原文写「走 `PipelineModifier` 家族 / `GbufferPipelineSwaps` 那条既有通路」）：**改成接进 M-15 已有的那次 `getCompiledPipeline` 包裹**。理由不是省事 —— 槽数 N 来自「接管后的那条描述符」，而 `PipelineModifier` 的 key **只能在启动期注册**（`GAP-045` 刚证伪过它换不掉 M-01，同一根因：注册期拿不到运行期的数）⇒ 能同时拿到「管线本体 + N + pass 身份」的一刻只有 M-15 那一处。
+- **三条判据在同一个纯函数里汇合**：`PassAwarePipelines.select(layer, multiDraw, ourPass, takenOverMainPass, requested)` 现在是三支 —— 我方 MRT pass ⇒ 查多附件表；被接管的主 pass ⇒ 补槽派生；**都不是 ⇒ 逐字原样返回**。两个 `ChunkSectionsToRender*PipelineMixin` 各多传一个 `MainPassTakeover.isTakenOverPass(renderPass)`（对象身份，来自 ⑤-a 记下的那个 pass），不再靠标志位。
+- **⚠️ 一处测试运行时的坑（同族第三次）**：`MainPassPipelineDerivation` 的 `static final PAD = new ColorTargetState(...)` 让**单测**在类初始化就 `NoClassDefFoundError: ColorTargetState` —— renderpearl 不在测试 classpath（与 `McVersion`、`NightVisionSupply` 那两例同形状，已在 `13` 记过两次）。改法：把常量挪进 lazy 内部类 `Pad` + `pad()`，于是纯整数判据（`refusalReason`）在测试里可调，`ColorTargetState` 只在真机那一侧构造。
+- **一条守卫随之改形**：`MrtTerrainPassWiringTest` 里那条 `aware.contains("!ourPass")` 是 ⑤-a 之前那个两支形状的针 —— select 加第三支后 `!ourPass` 物理消失，守卫**没有变红就被读成「判据还在」**是更坏的结果，因此改成断言现行三支：配置短路那句、`if (takenOverMainPass) {`、以及 `return requested;` 至少出现两次（两支「原样返回」的退路都在）。
+- **真机两行（取证档：BSL 开 `ADVANCED_MATERIALS` ⇒ `slots=8`）**：`首条补槽管线：SOLID（1 条声明 → 8 槽）` ⇒ 地形两条（`solid/cutout` × plain/indirect）确实过了附件校验；崩点 `IllegalStateException: Render pass color attachment count must match pipeline color target state count.` 的栈是 `PreparedRenderType.draw:43` ← `drawFromBuffer:29` ← `executeClassicTransparency:721` = **经典透明那一笔**（⑤-c 的第一族，按预测在它自己的调用点响）。
+- **🔴 此步起地形是双绘**（⑤-d 才关掉）：主 pass 里地形画一遍、`MrtTerrainPass` 自绘一遍 —— 这是 ⑤-b 的**已知代价**，不是回归（§5.0.7 ⑤ 行 b 原文就写了这句）。
+- **默认档零变化**：`mixin.ownTerrainPass=false`（默认）⇒ `select` 的第三支永不进入，派生码一行不跑；取证档本轮已回退（`ownTerrainPass=false`、`ADVANCED_MATERIALS` 行删除）。测试 **1172 条 0 失败**（`--offline --rerun` 全量，新增 `MainPassPipelineDerivationTest` 4 条）。
+- **下一步（⑤-c）**：逐族放开实体 → 粒子 → 云 → 天气 → 边界 → 描边/OIT 交替，每族一条独立判据；机制上就是「让那些族的取管线那一刻也走同一个 `select`」，第一族按真机已经响的位置就是经典透明。⚠️ `GAP-049` 那件活（`MrtTerrainPass#ensureColortex` 的池尺寸锚在另一张主目标上）仍排在 ⑤-d 之前。
+
+---
+
 ## 2026-10-12（一百二十九）— 🔴 GAP-049 定案：主 pass 画进去的那张图**不是** `gameRenderer.mainRenderTarget()`，连纹理都不是
 
 > **verdict = ⑤-b 的前置清了（口径层面），但留下一件必须做的活**：我方池的尺寸锚在「另一张主目标」上，⑤-d 关双绘之前要改。

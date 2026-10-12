@@ -58,16 +58,26 @@ public final class PassAwarePipelines {
      * @param layer     原版层名（{@code ChunkSectionLayer#name()}）
      * @param multiDraw 该 draw 走哪条变体（indirect = {@code true}，separate = {@code false}）
      * @param ourPass   {@code renderPass} 是否就是我方 MRT pass 那个对象（由 mixin 侧比较后传入）
+     * @param takenOverMainPass {@code renderPass} 是否是<b>接管后的主 pass</b>
+     *                          （{@link MainPassTakeover#isTakenOverPass}；没开 M-04 时永远 false）
      * @param requested 原版即将编译的管线（已被 M-01 换成<b>单附件</b>派生版）
      * @return 要交给 {@code RenderSystem.getCompiledPipeline} 的管线
      */
     public static RenderPipeline select(String layer, boolean multiDraw, boolean ourPass,
-            RenderPipeline requested) {
-        if (!VkDispConfig.MIXIN_PASS_AWARE_PIPELINE.get() || !ourPass) {
+            boolean takenOverMainPass, RenderPipeline requested) {
+        if (!VkDispConfig.MIXIN_PASS_AWARE_PIPELINE.get()) {
             return requested;
         }
-        RenderPipeline mrt = TerrainPipelineApi.mrtVariantOrNull(layer, multiDraw);
-        return mrt == null ? requested : mrt;
+        if (ourPass) {
+            RenderPipeline mrt = TerrainPipelineApi.mrtVariantOrNull(layer, multiDraw);
+            return mrt == null ? requested : mrt;
+        }
+        if (takenOverMainPass) {
+            // ⑤-b：主 pass 现在是 N 附件 ⇒ 地形这两条也要有 N 个颜色目标，否则 setPipeline 抛。
+            //        补不动的形状（声明比附件多等）由公式自己交回原版并计数（GAP-046）。
+            return MainPassPipelineDerivation.derive(requested, MainPassTakeover.takenOverSlots(), layer);
+        }
+        return requested;
     }
 
     /**
