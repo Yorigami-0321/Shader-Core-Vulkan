@@ -864,6 +864,12 @@ public final class VkDispConfig {
             .comment("R6 M-14：把光影包与包选项嵌进原版视频设置页的 OptionsList（滚动、每行两列、标签、关屏 apply 都由原版做）。关闭 = 本页没有 vkdisp 段（自研屏幕已随 R6 删除，只能改配置文件）。")
             .define("mixin.packOptionsInVanilla", true);
 
+    /** 🔴 R7 / M-04 ⑤-a 开关（登记键名沿用 §5.0 M-04 行）：默认<b>关</b> —— 开着=主 pass 换附件但不派生管线 ⇒ {@code setPipeline} 当场抛。 */
+    public static final ModConfigSpec.BooleanValue MIXIN_OWN_TERRAIN_PASS = BUILDER
+            .comment("R7 M-04 ⑤-a：把原版主 pass 的颜色附件换成我方 colortex 阵列（FrontendCommandEncoder 建描述符那一刻）。"
+                    + "⚠️ ⑤-b 的通用派生公式没接之前开着就是崩（附件数 ≠ 管线颜色目标数）⇒ 默认关，只给取证档。")
+            .define("mixin.ownTerrainPass", false);
+
     /**
      * GAP-027 第二刀：把**云**画进 gbuffer（默认关）。
      *

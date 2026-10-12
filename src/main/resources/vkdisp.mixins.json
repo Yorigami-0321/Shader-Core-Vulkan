@@ -15,6 +15,7 @@
     "FrameGraphPassOrderMixin",
     "LevelRendererChunkSamplerMixin",
     "LevelRendererMainPassCaptureMixin",
+    "MainPassAttachmentMixin",
     "SkyRendererViewRedirectMixin",
     "VideoSettingsPackOptionsMixin"
   ],

@@ -273,6 +273,46 @@ public final class MixinTargets {
             "com.mojang.blaze3d.pipeline.RenderTarget.getDepthTextureView()"
                     + "Lcom/mojang/renderpearl/api/textures/GpuTextureView;";
 
+    /**
+     * {@code com.mojang.renderpearl.frontend.FrontendCommandEncoder} —— M-04 ⑤-a 的目标类。
+     *
+     * <p>🔖 本仓<b>第一个</b>注到 Mojang 库类（不是 {@code net.minecraft}）的点：这类不在混淆域里，
+     * 名字就是它自己写的那样，而 {@code remap=false} 的口径与其余各条一致。
+     * 选它而不选 {@code LevelRenderer} 的理由见 {@code 04-SPEC} §5.0.7 顶部那条事实
+     * （原版那次调用在 {@code pass.executes} 的 <b>lambda 内</b>）；不选后端类的理由 = X7「不绑后端」
+     * （frontend 这层 Vulkan/GL 共用）。
+     */
+    public static final String FRONTEND_COMMAND_ENCODER =
+            "com.mojang.renderpearl.frontend.FrontendCommandEncoder";
+
+    /**
+     * 那个 <b>6 参</b>便利重载（第 80-96 行）= 注入所在的<b>方法</b>。
+     *
+     * <p>⚠️ 必须写全描述符：这个类有 4 个同名 {@code createRenderPass} 重载（67 / 72 / 81 / 99 行），
+     * 只给方法名会一次匹配到多条 ⇒ mixin 报「too many matching methods」。
+     */
+    public static final String FRONTEND_ENCODER_CREATE_PASS_SIX =
+            "createRenderPass(Ljava/util/function/Supplier;"
+                    + "Lcom/mojang/renderpearl/api/textures/GpuTextureView;"
+                    + "Ljava/util/Optional;"
+                    + "Lcom/mojang/renderpearl/api/textures/GpuTextureView;"
+                    + "Ljava/util/OptionalDouble;"
+                    + "Lcom/mojang/renderpearl/api/commands/RenderPass$RenderArea;)"
+                    + "Lcom/mojang/renderpearl/api/commands/RenderPass;";
+
+    /**
+     * 第 <b>95</b> 行 {@code return this.createRenderPass(descriptor.build())} = 被包住的那次调用。
+     *
+     * <p>🔖 为什么包这一条而不是外层那条（第 99 行的 {@code createRenderPass(RenderPassDescriptor)}）：
+     * 2 参/5 参重载都并到 6 参（第 68/75 行），而 6 参在这里<b>自己造</b>描述符 ⇒ 这个点
+     * <b>只看得见单颜色附件的便捷路径</b>；我方直接递描述符的那几处（{@code MrtTerrainPass:439/637}、
+     * {@code FrameApi:1317}）从这里物理看不见 ⇒ 判据不用再多写一层「这不是我方自己建的 pass」。
+     */
+    public static final String FRONTEND_ENCODER_CREATE_PASS_DESCRIPTOR =
+            "com.mojang.renderpearl.frontend.FrontendCommandEncoder.createRenderPass("
+                    + "Lcom/mojang/renderpearl/api/commands/RenderPassDescriptor;)"
+                    + "Lcom/mojang/renderpearl/api/commands/RenderPass;";
+
     /** 本契约版本（与 {@link ContractVersion#VERSION} 一致）。 */
     public static final int CONTRACT_VERSION = 1;
 

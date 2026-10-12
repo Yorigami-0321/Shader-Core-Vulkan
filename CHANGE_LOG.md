@@ -6,6 +6,44 @@
 ---
 ---
 
+## 2026-10-12（一百二十六）— 🟡 R7 第 ⑤-a 步**代码落地**：主 pass 的颜色附件换成我方 colortex 阵列（`MainPassAttachmentMixin` + `MainPassTakeover`），开关默认**关**
+
+> **verdict = §5.0.7 那条五步执行序的第一步交了代码，但它的判据没签字**：⑤-a 的证据是「下一次 `setPipeline` 当场抛附件数不匹配」，那句抛只能在真机上看，本轮**一次真机都没跑** ⇒ 状态写「已落地待取证」，不写「已完成」。测试 1168 条（本轮 +7）、0 失败。
+
+- **① 挂点比计划更窄一层（这是本轮唯一一处主动改设计）**：§5.0.7 表 ① 写的是包外层
+  `FrontendCommandEncoder#createRenderPass(RenderPassDescriptor)`，落地包的是**6 参重载内部第 95 行**
+  对它的那次调用（`@WrapOperation(method = 全签名, at = @At("INVOKE", target = 描述符版签名))`）。
+  理由是可数的：2 参/5 参重载都并到 6 参（`:68/:75`），而 6 参在这里**自己造**描述符 ⇒ 这个点只看得见
+  **单颜色附件**的便捷路径；我方直接递描述符的三处（`MrtTerrainPass:439/637`、`FrameApi:1317`）从这里
+  **物理看不见** ⇒ 判据不必再长一层「这是不是原版自己建的 pass」。
+- **② 判据三条全来自调用自带的数据**（`MainPassTakeover.matchesMainPass`，纯函数 ⇒ 不启动客户端就能测）：
+  颜色附件恰好 1 条 + `label() ∈ {"Main","Solid"}`（`LevelRenderer:458` 那个三元式的两边）+ 那条附件的视图
+  **就是** `mainRenderTarget` 的颜色视图（对象身份；`RenderTarget:26/129` 实测它是缓存字段，不是每次新建，
+  所以比较得动）。挡掉的邻居是有出处的：`GameRenderer:412` 那条 `"Item in hand"` 同样是
+  「单附件 + main 的颜色」⇒ 少一条 label 就会把后处理臂当成主 pass。
+- **③ §5.0.6 ⑤ 第 2 条从「文档里的前提」变成一道闸门**：`slotsUsable` 要求每个补槽视图与 target0
+  **同尺寸**且槽数 ≥ 2，不满足 ⇒ **拒绝接管 + 计数**（日志 `尺寸不合拒绝=`），而不是硬塞给后端。
+  深度这一维 ⑤-a **不碰**（沿用原那条附件），留给 ⑤-e。
+- **④ 一条 javac 25 的自爆，值得单独记**：把 `RenderPassDescriptor` 的**嵌套类型**写进声明并挂
+  `@Nullable`（`RenderPassDescriptor.@Nullable Attachment<...>` 这种合法写法）之后，**测试编译**会抛
+  `java.lang.AssertionError: Incorrect number of arguments; expected 2, found 0`
+  （`com.sun.tools.javac.comp.TransTypes.visitApply`），报的是「编译器异常」而不是任何一行语法错 ⇒
+  第一反应会去查自己那两行断言。定位办法：把测试削到只剩一次对 `MainPassTakeover` 的引用，照样崩
+  ⇒ 说明问题在被引用类的**签名**里。改成 `var` 推断即避开（`MainPassTakeover` 里那条注释是出处）。
+- **⑤ 开关用回登记名**：键名 = `mixin.ownTerrainPass`（§5.0 M-04 行与 `13-GAP-REGISTRY` 早已写死这个名字，
+  只是过去没有实现），🔴 默认**关**。开着 = 主 pass 有 N 个附件而管线只有 1 个颜色目标 ⇒ 崩是设计，
+  所以「取证档」也不该在 ⑤-b 之前打开它 —— 默认档与今天**逐字节相同**这一点由开关保证，不由测试保证。
+- **⑥ 纪律**：`Stats` 那五格计数装进一个 `static final` 持有者，不是随手写五个 `private static`
+  —— `StaticFieldRatchetTest` 的基线只许降（19 §3.2 病根「静态即全局单例」），本轮**净增 0**。
+- **🔖 判据纪律（本轮欠的账，写在最显眼处）**：下一步 ⑤-b（通用派生公式）之前，先跑一次真机取证，看三样：
+  ① 日志有 `[M-04/⑤-a] 主 pass 的颜色附件已换成我方 colortex 阵列：N 个`；
+  ② 紧接着的崩溃报告是 `FrontendRenderPass#setPipeline` 的「附件数不匹配」（不是别的）；
+  ③ `Mixin apply failed` 计数仍为 0 —— ⚠️ 这条尤其没底：`MainPassAttachmentMixin` 是本仓**第一个**注到
+  Mojang 库类（`com.mojang.renderpearl.frontend`）的点，而上一轮就没人验证过 `require=1` 是否真能装上。
+  红灯另一侧：`建 pass 观察=` 涨到几百而 `主 pass 接管=0` ⇒ 判据已不匹配（先怀疑 label 改名 / 视图不同源）。
+
+---
+
 ## 2026-10-12（一百二十五）— ✅ R7 的**执行序**交付（`04-SPEC` §5.0.7）：注入点定在 `FrontendCommandEncoder#createRenderPass(descriptor)`，不注合成 lambda
 
 > **verdict = 那张「先交清单再写注入」的裁决要求到此满足两份**：清单 = 一百二十二前交付的 §5.0.6，
