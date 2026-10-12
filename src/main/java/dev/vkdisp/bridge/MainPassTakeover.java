@@ -55,10 +55,13 @@ import java.util.function.Function;
  * 主 pass 附件接管（M-04 的第 ⑤-a 步；登记表：{@code 04-SPEC} §5.0 M-04 行 + 执行序 §5.0.7）。
  *
  * <p>🔴 <b>判据只用调用本身的数据</b>，不用任何「现在到哪儿了」的静态标志（那是刚被 M-15 废掉的
- * {@code inMrtPass} 那一族）：三条一起 —— ① 颜色附件<b>恰好一个</b>、② label ∈ {@code {"Main","Solid"}}
- * （第 458 行给的就是这两个串）、③ 那个附件<b>就是</b>主目标的颜色视图（对象身份）。
- * ②③ 各排掉一半假阳：只写 main 颜色的 pass 有 Sky / SeeThrough / AlwaysOnTop / {@code "Item in hand"}
- * （{@code GameRenderer:412}）/ 原版 clear / 后处理链，它们 label 不同；label 相同的又不会挂 main 的颜色。
+ * {@code inMrtPass} 那一族）：当下两道闸门 —— ① 颜色附件<b>恰好一个</b>、② label ∈
+ * {@code {"Main","Solid"}}（第 458 行给的就是这两个串，全原版只有这一个出处）。
+ * 第三道「那个附件就是 {@code gameRenderer.mainRenderTarget()} 的颜色视图」<b>已降级成交叉核对</b>：
+ * 真机实测它永远不成立（{@code targets.main.get()} 与后者不是同一对象）⇒ 见
+ * {@link #matchesMainPass} 的 ⚠️ 条与 {@code GAP-049}。挡掉的邻居仍是有出处的：
+ * {@code GameRenderer:412} 那条 {@code "Item in hand"} 也是「单附件 + 主目标的颜色」，
+ * 它与主 pass 的<b>唯一</b>区别就是 label ⇒ label 这一腿不能省。
  *
  * <p>⚠️ <b>为什么还要一条计数</b>：② 是<b>字符串</b>比较，Mojang 改了 label 就静默不接管
  * （画面退回今天，不报错）。所以本类统计「看见多少次建 pass」与「其中接管几次」，看够了而一次都没接上
@@ -80,6 +83,11 @@ public final class MainPassTakeover {
         private long seen;
         private long takenOver;
         private long refusedSize;
+        /** 判据②那一腿的命中数（label ∈ 表内）—— 与 {@link #viewHits} 一起才分得清是哪条腿断的。 */
+        private long labelHits;
+        /** 判据①+②+③三条都过的次数（= 除我方附件是否备好之外，全部匹配）。 */
+        private long viewHits;
+        private boolean reportedViewMismatch;
         private boolean reportedFirstHit;
         private boolean warnedNoMatch;
     }
@@ -103,19 +111,35 @@ public final class MainPassTakeover {
     private static RenderPassDescriptor attachmentReplaced(RenderPassDescriptor descriptor) {
         STATS.seen++;
         if (STATS.seen % REPORT_PERIOD == 0L) {
-            VkDisp.LOGGER.info("vkdisp: [M-04/⑤-a] 建 pass 观察={} 主 pass 接管={} 尺寸不合拒绝={} 开关={}",
-                    STATS.seen, STATS.takenOver, STATS.refusedSize,
+            VkDisp.LOGGER.info("vkdisp: [M-04/⑤-a] 建 pass 观察={} 主 pass 接管={} label命中={} 视图同源={}"
+                            + " 尺寸不合拒绝={} 开关={}",
+                    STATS.seen, STATS.takenOver, STATS.labelHits, STATS.viewHits, STATS.refusedSize,
                     VkDispConfig.MIXIN_OWN_TERRAIN_PASS.get());
         }
         if (!VkDispConfig.MIXIN_OWN_TERRAIN_PASS.get()) {
             return descriptor;
         }
-        GpuTextureView target0 = onlyColorView(descriptor);
-        boolean sameAsMain = target0 != null && target0 == mainColorView();
-        if (!matchesMainPass(descriptor.colorAttachments().size(), labelOf(descriptor), sameAsMain)
-                || target0 == null) {
+        String label = labelOf(descriptor);
+        if (!matchesMainPass(descriptor.colorAttachments().size(), label)) {
             warnIfNeverMatched();
             return descriptor;
+        }
+        GpuTextureView target0 = onlyColorView(descriptor);
+        if (target0 == null) {
+            warnIfNeverMatched();
+            return descriptor;
+        }
+        STATS.labelHits++;
+        if (target0 == mainColorView()) {
+            STATS.viewHits++;
+        } else if (!STATS.reportedViewMismatch) {
+            // 交叉核对（不当闸门）：两条「主目标」handle 不同源 —— 登记为 GAP-049，见类注释 ⚠️ 条
+            STATS.reportedViewMismatch = true;
+            VkDisp.LOGGER.warn("vkdisp: [M-04/⑤-a] label='{}' 命中，但描述符那条附件与 gameRenderer 的"
+                            + "主目标颜色视图<b>不是同一个对象</b>（附件={} 主目标={}，0x 是 identityHashCode）"
+                            + " ⇒ 本类仍按 label 接管，但这条差异已登记 GAP-049：我方多处把后者当『主目标』用，"
+                            + "需要逐条重核（0x 只用来判对象身份，不是地址）",
+                    label, hex(target0), hex(mainColorView()));
         }
         GpuTextureView[] ours = writeGenerationViews(target0.getWidth(0), target0.getHeight(0));
         if (ours == null) {
@@ -137,16 +161,26 @@ public final class MainPassTakeover {
     /**
      * 判定本体（<b>纯函数</b> ⇒ 不启动客户端就能单测，口径同 M-15 的 {@code PassAwarePipelines.select}）。
      *
-     * @param colorAttachmentCount     描述符里的颜色附件条数（含 null 占位）
-     * @param label                    {@code descriptor.label().get()} 的结果；取不到传 null
-     * @param attachmentIsMainColorView 那个唯一的附件是否<b>就是</b>主目标的颜色视图（对象身份）
+     * <p>⚠️ 判据从三条收成两条是<b>真机逼出来的</b>（2026-10-12）：第三条「那个附件就是
+     * {@code gameRenderer.mainRenderTarget()} 的颜色视图」在实机上<b>永远不成立</b> ——
+     * {@code LevelRenderer:454} 用的是 {@code targets.main.get()}（第 210 行
+     * {@code frame.importExternal("main", …)} 之后又被 253/383/404 行的 {@code readsAndWrites} 换过手），
+     * 它交出的颜色视图与 {@code gameRenderer.mainRenderTarget()} 的<b>不是同一个对象</b>
+     * （日志点名过：附件=0x11cf0e8a 主目标=0xc9c725d）。这条差异本身登记为 {@code GAP-049}
+     * —— 我方多处把后者当「主目标」用，得逐条重核。当下用 label 那一腿担身份：
+     * {@code "Main"} / {@code "Solid"} 这两个串在原版只有一个出处（{@code LevelRenderer:458}），
+     * 而「改名即哑」由 {@link #warnIfNeverMatched} 那条红灯守着（口径同 {@code 钩子被调#}）。
+     *
+     * @param colorAttachmentCount 描述符里的颜色附件条数（含 null 占位）
+     * @param label                {@code descriptor.label().get()} 的结果；取不到传 null
      */
-    public static boolean matchesMainPass(int colorAttachmentCount, @Nullable String label,
-            boolean attachmentIsMainColorView) {
-        return colorAttachmentCount == 1
-                && label != null
-                && MAIN_PASS_LABELS.contains(label)
-                && attachmentIsMainColorView;
+    public static boolean matchesMainPass(int colorAttachmentCount, @Nullable String label) {
+        return colorAttachmentCount == 1 && isMainLabel(label);
+    }
+
+    /** 判据②那一腿单独拆出来：自报要分得清是「label 不匹配」还是「视图不同源」。 */
+    private static boolean isMainLabel(@Nullable String label) {
+        return label != null && MAIN_PASS_LABELS.contains(label);
     }
 
     /**
@@ -217,8 +251,12 @@ public final class MainPassTakeover {
         }
     }
 
-    private static @Nullable GpuTextureView mainColorView() {
-        Minecraft minecraft = Minecraft.getInstance();
+    /** 只用来判「是不是同一个对象」的打印形式（不是地址，是 identityHashCode，够区分对象身份）。 */
+    private static String hex(@Nullable Object o) {
+        return o == null ? "null" : "0x" + Integer.toHexString(System.identityHashCode(o));
+    }
+
+    private static @Nullable GpuTextureView mainColorView() {        Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.gameRenderer == null) {
             return null;
         }

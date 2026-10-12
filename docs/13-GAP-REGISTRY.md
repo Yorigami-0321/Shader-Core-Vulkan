@@ -912,6 +912,21 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 
 ---
 
+### GAP-049 · 🔴 **有两条「主目标」handle，它们不是同一个对象**（2026-10-12 真机实测，M-04 ⑤-a 的副产物）
+
+| 字段 | 内容 |
+|---|---|
+| **为什么会去查这条** | M-04 ⑤-a 的判据第三条要问「主 pass 那个颜色附件是不是主目标的颜色视图」。按 `04-SPEC` §5.0.6 ⑤ 的写法拿 `gameRenderer.mainRenderTarget()` 去比 —— 一比就**永不相等**。 |
+| **事实（真机 + 源码两头）** | ① 真机：`[M-04/⑤-a] label='Main' 命中，但描述符那条附件与 gameRenderer 的主目标颜色视图不是同一个对象（附件=0x11cf0e8a 主目标=0xc9c725d）`，`视图同源=0` 在 22059 次 label 命中里**一次都没成立过**。② 源码：主 pass 用的是 `LevelRenderer:454` 的 `targets.main.get()`，而 `targets.main` 在 `:210` 由 `frame.importExternal("main", gameRenderer.mainRenderTarget())` 引入后，又被 `:253`（clear pass）、`:383`（sky）、`:404`（main 自己）三次 `readsAndWrites(...)` 换过手 —— 帧图资源的 `.get()` 与最初那个 `RenderTarget` **不保证同对象**。③ 两者尺寸恰好相同（都是 854×480），所以按尺寸建的池没露馅。 |
+| **后果** | 我方把 `gameRenderer.mainRenderTarget()` 当「那张主目标」用的地方不止一处：`MrtTerrainPass#ensureColortex`（池的尺寸）、`MrtProbe`、`FrameApi`（取视图/清屏）、`SkyIntoGbuffer#onSkyColorViewRequest`（兜底回的那张）。今天靠「同尺寸」侥幸对齐；一旦哪条路径按**对象身份**做判断（就像 ⑤-a 原本那样），就会静默失效。 |
+| **修法（⑤-b 之前必须定清）** | 二选一并写进 `07`：**(A)** 统一按「值」判（尺寸 + 格式 + 用途），不比对象身份 —— ⑤-a 现在就是这么收的（label + 单附件两道闸门，视图那一腿降级成交叉核对）；**(B)** 把「主目标」这件事**只从主 pass 自己拿**：M-06 已在 `addMainPass` HEAD，可在那里把 `targets.main.get()` 的实际对象交进 bridge 当唯一真源，其余各处改读它。(B) 更硬，但要多一条 `@Accessor`/捕获链，且要处理每帧换对象。 |
+| **判据** | 定完之后：⑤-b 的接管描述符里 target0 与「我方认定的那张主目标」**同源**（`视图同源=` 那一格从 0 变成与 `label命中=` 相等），且不再有代码按 `gameRenderer.mainRenderTarget()` 的对象身份做渲染正确性判断。 |
+| **影响面** | `bridge/MainPassTakeover.java`（判据已降级）、`bridge/MrtTerrainPass.java`、`bridge/MrtProbe.java`、`bridge/FrameApi.java`、`bridge/SkyIntoGbuffer.java`。 |
+| **开关 / 回退条件** | 无开关：这是口径问题，不是路径问题。`mixin.ownTerrainPass=false`（默认）时本条不影响画面。 |
+| **状态** | 🔴 **已登记（真机实测），未处置** —— ⑤-b 的前置。 |
+
+---
+
 ## 4. 快速自检
 
 ```

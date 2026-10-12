@@ -43,19 +43,18 @@ class MainPassTakeoverTest {
     }
 
     @Test
-    @DisplayName("判据：单附件 + label ∈ {Main,Solid} + 那个附件就是主目标颜色视图 —— 三条缺一即不接管")
-    void predicateIsAnAndOfTheThreeSignals() {
-        assertTrue(MainPassTakeover.matchesMainPass(1, "Main", true), "原版非 OIT 主 pass（LevelRenderer:458）");
-        assertTrue(MainPassTakeover.matchesMainPass(1, "Solid", true), "OIT 开时同一条 pass 换了 label");
-        assertFalse(MainPassTakeover.matchesMainPass(1, "Item in hand", true),
-                "GameRenderer:412 也是「单附件 + main 的颜色」，只靠视图身份分不开 ⇒ label 必须参与");
-        assertFalse(MainPassTakeover.matchesMainPass(1, "Sky", true), "天空那条同样挂 main 的颜色视图");
-        assertFalse(MainPassTakeover.matchesMainPass(2, "Main", true),
+    @DisplayName("判据：单附件 + label ∈ {Main,Solid}（第三道视图身份已因真机实测降级为交叉核对）")
+    void predicateIsTwoGatesFromTheCallItself() {
+        assertTrue(MainPassTakeover.matchesMainPass(1, "Main"), "原版非 OIT 主 pass（LevelRenderer:458）");
+        assertTrue(MainPassTakeover.matchesMainPass(1, "Solid"), "OIT 开时同一条 pass 换了 label");
+        assertFalse(MainPassTakeover.matchesMainPass(1, "Item in hand"),
+                "GameRenderer:412 也是「单附件 + 主目标的颜色」⇒ 这一档只能靠 label 分开，label 不能省");
+        assertFalse(MainPassTakeover.matchesMainPass(1, "Sky"), "天空那条同样只写 main 的颜色");
+        assertFalse(MainPassTakeover.matchesMainPass(2, "Main"),
                 "我方自己的 MRT pass 就是多附件：这条挡在它和我之间（选内层挂点后它本就不路过，别把双保险删了）");
-        assertFalse(MainPassTakeover.matchesMainPass(1, "Main", false),
-                "视图不是主目标 ⇒ 不是那条 pass（地址不同的同 label pass）");
+        assertFalse(MainPassTakeover.matchesMainPass(0, "Main"), "零附件的描述符不是主 pass");
         String labelUnavailable = null;
-        assertFalse(MainPassTakeover.matchesMainPass(1, labelUnavailable, true),
+        assertFalse(MainPassTakeover.matchesMainPass(1, labelUnavailable),
                 "label 取不到 = 判据缺一条，宁可不接管也不能猜");
     }
 

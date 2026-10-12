@@ -6,6 +6,21 @@
 ---
 ---
 
+## 2026-10-12（一百二十八）— ✅ R7 ⑤-a **真机签掉**：主 pass 的颜色附件被换成我方 8 槽阵列，一秒后按预测崩在 `setPipeline`
+
+> **verdict = §5.0.7 五步的第一步现在有了它要求的证据**：不是「画面看起来对」，而是那句预测中的 `IllegalStateException` 逐字出现在预测的位置。同时判据被真机削掉一条腿（`GAP-049`）。
+
+- **✅ 接管命中**：`[M-04/⑤-a] 主 pass 的颜色附件已换成我方 colortex 阵列：8 个（label='Main'，尺寸=854x480）` —— 挂点（`FrontendCommandEncoder` 6 参重载内部第 95 行）确实看得见原版主 pass，且换附件这条路走得通。
+- **✅ 预期的崩**：`IllegalStateException: Render pass color attachment count must match pipeline color target state count.` @ `FrontendRenderPass#setPipeline:113`，栈顶 `ChunkSectionsToRender$DrawIndirect.render:120` ← `LevelRenderer.executeSolid:532` = **主 pass 体内那一笔地形 draw**。这正是 ⑤-a 要的「注入真命中」证据（§5.0.7 ⑤ 行 a 原文）。
+- **① 签这一下必须换包档**：BSL 默认档 `slots=1` ⇒ `slotsUsable` 按设计**拒绝接管并计数**（`label命中=22059 尺寸不合拒绝=22059`，那一档画面与今天逐字相同、也不崩）。把包切到 `ADVANCED_MATERIALS`（`run/config/vkdisp-pack-options.properties` 冷启动）⇒ `slots=8 poolDepth=D32_FLOAT mipLevels=10`，接管才发生。**「不接管」和「接管了但没证据」是两件事**，这一档把前者演示了一遍。
+- **② 判据从三条收成两条（`GAP-049`）**：第三条「附件就是 `gameRenderer.mainRenderTarget()` 的颜色视图」实机**永不成立**（`附件=0x11cf0e8a` vs `主目标=0xc9c725d`，22059 次 label 命中里 `视图同源=0`）。根因：主 pass 用的是 `targets.main.get()`，那条 handle 在 `LevelRenderer:210/253/383/404` 被帧图换过手 ⇒ 与 `gameRenderer` 那张不保证同对象。这一腿降级成**交叉核对**（自报里那一格继续显示 0），身份改由「单附件 + label」两腿担；`GAP-049` 立在 ⑤-b 的前置上。
+- **③ 红灯按设计响了**：第一次 600 次观察没接上时打 `mixin.ownTerrainPass=true 但看了 600 次 createRenderPass 一次都没判定成主 pass`（`GAP-042` 那一族「改名即哑」就是靠它兜）。
+- **④ 设备面顺手量到一件事**：8 条颜色附件**没有**触发 `device only supports N` 那条上限错（`FrontendCommandEncoder:104-110`）⇒ 本机 `maxColorAttachments ≥ 8`，§5.0.6 那条「N ≤ 8 无余量」的前提在 RTX 4060 上成立。
+- **下一步（⑤-b）**：通用派生公式接进 `PipelineModifier` 家族，先让地形两条（`solid/cutout` × plain/indirect）过 —— 但**先结 `GAP-049`**（拿哪张主目标），否则 target0 沿用的是「原版那张」而我方池按另一张建，尺寸巧合一破就静默错位。
+- **⚠️ 取证档已回退**：`mixin.ownTerrainPass` 改回 `false`、`ADVANCED_MATERIALS` 那行删掉；本轮**没有**留下任何用户可见的默认档变化。
+
+---
+
 ## 2026-10-12（一百二十七）— 🔴 第一次真机 `runClient` 就炸出四个注入点：handler 形状全部照真机改过，客户端现在能进世界
 
 > **verdict = 上一轮那句「`Mixin apply failed = 0` 仍未验证」还掉了五轮的账，本轮一次跑清**：四趟 `runClient -PquickPlay`（19:57 崩 bootstrap → 20:03 崩 CloudRenderer apply → 20:08 崩 `Operation.call` 条数 → 20:11 **进世界并稳定跑**）。测试 1168 条 0 失败。
