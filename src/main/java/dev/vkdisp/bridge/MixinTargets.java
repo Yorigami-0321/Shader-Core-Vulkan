@@ -23,11 +23,22 @@ package dev.vkdisp.bridge;
  * <p><b>规矩</b>：mixin 类只允许引用本文件的常量做 {@code @Inject(method = ...)} 的
  * 方法名拼接/校验，不许散落字面量（06 §2.2：mixin 只转发，不写业务）。
  *
- * <p><b>mixin 红线（07-CONSTRAINTS M1，2026-10-02 松绑后）</b>：允许注入到「管线装配层」，
- * <b>不限数量</b>，但改为<b>登记制 + 可关闭制 + 逐个开启</b>：每个注入点必须登记在
- * {@code docs/04-SPEC.md} §5.0，且各自能一键关闭。仍<b>永久禁止</b>注入 Sodium / caffeinemc /
- * 第三方区块渲染器 / {@code RenderSystem}·{@code GlStateManager}·{@code GL*} 等底层状态类
- * （X23 / X24）。
+ * <p><b>mixin 红线（07-CONSTRAINTS M1，现行口径 = 2026-10-12 用户裁决）</b>：注入<b>类别</b>闸门
+ * （旧「只许注入管线装配层」白名单）<b>已废除</b> ⇒ 任意原版类都可注入：管线装配层、
+ * {@code LevelRenderer} 内部、{@code SkyRenderer} / {@code CloudRenderer} 等原版渲染器、
+ * 帧图 pass 的创建点、GUI 屏幕，以及<b>只为读一个 private 字段</b>的访问器型注入。
+ * 保留的是三条：<b>登记制 + 可关闭制 + 逐个开启</b> —— 每个注入点必须登记在
+ * {@code docs/04-SPEC.md} §5.0，且各自能一键关闭。
+ *
+ * <p><b>X24 已作废（2026-10-12）</b>：注入 {@code RenderSystem}·{@code GlStateManager} 不再
+ * 是禁令。🔖 但本轮结论<b>一处都没用到这个放开</b> —— {@code RenderSystem} 在
+ * {@code getCompiledPipelineNullable} <b>方法体首行</b>就给了公开通道（{@code PipelineModifier}，
+ * 见 07 §1.4.2）。⚠️ 注入 {@code GL11}/{@code GL14}/{@code GL15} 这类<b>只在 OpenGL 路存在</b>的
+ * 类仍然不该做，但理由已从「红线」降级为<b>工程事实</b>：Vulkan 路上没有那些调用点，
+ * 注入即绑死后端（X7）。
+ *
+ * <p><b>唯一保留的禁令 = X23</b>：永久禁止注入 Sodium / caffeinemc / 第三方区块渲染器的任何类 ——
+ * 它属 L11「零集成」支柱，与「注入哪个<b>原版</b>类」不同源，因此<b>不随类别放开</b>。
  *
  * <p><b>2026-10-03 修订</b>：原 javadoc 写的「全局只许 1 个注入点 = {@code renderLayers}」
  * 是 M1 松绑**之前**的口径，已作废。理由（源码级核实，26.3.0.41-beta sources jar）：
@@ -87,9 +98,11 @@ public final class MixinTargets {
     // ── 帧图插入点（P3 阶段曾评估启用；现状 = OPT-1 可选，非必需，优先走官方事件）────
     /** {@code net.minecraft.client.renderer.LevelRenderer} —— 影子 pass 插入（addMainPass HEAD）。 */
     public static final String LEVEL_RENDERER = "net.minecraft.client.renderer.LevelRenderer";
-    /** {@code LevelRenderer#addMainPass} —— 帧图主 pass 追加点（04-SPEC §3.4）。**private**，M1 下不得注入。 */
+    /** {@code LevelRenderer#addMainPass} —— 帧图主 pass 追加点（04-SPEC §3.4）。**private**；
+     * 2026-10-12 起 M1 类别闸门已废 ⇒ 可注入，已登记为 **M-06**（04-SPEC §5.0）。 */
     public static final String LEVEL_RENDERER_ADD_MAIN_PASS = "addMainPass";
-    /** {@code LevelRenderer#render} —— 后处理链 RETURN 插入点（04-SPEC §3.4）。**M1 下不得注入**。 */
+    /** {@code LevelRenderer#render} —— 后处理链 RETURN 插入点（04-SPEC §3.4）。⚠️ 现行口径下
+     * 目标类本身可注入，但本点**未登记** ⇒ 依 X28 不得注入；要用先登记 04-SPEC §5.0。 */
     public static final String LEVEL_RENDERER_RENDER = "render";
 
     /**

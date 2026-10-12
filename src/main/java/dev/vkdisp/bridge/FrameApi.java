@@ -17,8 +17,8 @@ package dev.vkdisp.bridge;
  *    此刻写 main target 必然先于 GUI 出现在屏幕上（X9：合并 jar 字节码顺序实测，2026-10-01 P4.3）。
  * 2. 备选：① RenderFrameEvent.Post —— **实测否决（P4.3 根因）**：触发在 GameRenderer.render()
  *    返回之后，GUI 已画进 main target，我方 final blit 整屏覆盖 GUI（实证 p03_mainmenu_pattern.png
- *    与 P4.3 世界内截图）；② FrameGraphSetupEvent 帧图插 pass —— 调研否决（vanilla clear pass
- *    会随后全清 main target，图案必被抹掉）；上述事件均属官方事件，无需 GAP 登记。
+ *    与 P4.3 世界内截图）；② FrameGraphSetupEvent 帧图插 pass —— 🔴 **旧记载「调研否决」作废**（见 07 §1.4：
+ *    `fireFrameGraphSetup` 早于 `addPass("clear")` ⇒ 本就通；本类不采用只是选型，非能力否决）；两条均官方事件。
  * 1b.（P1.1 补充）自定义 uniform 上传：原版 PostPass 用 MappableRingBuffer(usage=MAP_WRITE|UNIFORM=130)
  *    + Std140Builder 写 UBO + setUniform(name, buffer) 的官方序列；GLSL 侧块名与绑定布局 uniform 名一致
  *    （原版范本 assets/minecraft/shaders/core/clouds.vsh 的 layout(std140) uniform CloudInfo）。

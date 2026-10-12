@@ -20,8 +20,8 @@ package dev.vkdisp.render;
  * 2. 备选：① RenderFrameEvent.Post —— **实测否决（P4.3 根因）**：触发点在 GameRenderer.render()
  *    返回之后，GUI 已经画进 main target，我方 final blit（offscreen3 → main）会整屏覆盖 GUI ——
  *    实证：p03_mainmenu_pattern.png（图案盖住整个主菜单）与 P4.3 世界内截图（选项屏幕
- *    全部不可见、GUI 层消失）；② FrameGraphSetupEvent 帧图插 pass —— 调研否决
- *    （vanilla clear pass 会随后全清 main target，图案必被抹掉）；
+ *    全部不可见、GUI 层消失）；② FrameGraphSetupEvent 帧图插 pass —— 🔴 **旧记载「调研否决」作废**（见 07 §1.4：
+ *    `fireFrameGraphSetup` 早于 `addPass("clear")` ⇒ 本就通；本类不采用只是选型，非能力否决）；
  *    上述事件都是正常选用的官方事件，不构成自行补充，无需 GAP 登记。
  * 3. 我们的差异点：本类只做事件接线与埋点，并且**在客户端资源加载完成之前完全不触碰管线缓存** ——
  *    实测（P0.3 复验）：启动窗口期原版会安装 fallback PipelineCache（GameRenderer.preloadUiShader，

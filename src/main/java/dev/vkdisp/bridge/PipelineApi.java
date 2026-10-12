@@ -14,8 +14,8 @@ package dev.vkdisp.bridge;
  *    PrimitiveTopology.TRIANGLES，自带 Globals UBO 布局、无顶点绑定）+ 原版 TRACY_BLIT / ENTITY_OUTLINE_BLIT
  *    （1150-1169 行：withVertexShader/withFragmentShader/withColorTargetState 的官方注册范本）；
  *    NeoForge 侧范本 = NeoForgeRenderPipelines（@EventBusSubscriber(Dist.CLIENT) + event.registerPipeline）。
- * 2. 备选：FrameGraphSetupEvent 帧图插 pass —— 调研否决（vanilla clear pass 会随后全清 main target，
- *    图案必被抹掉），本任务不采用；两条路径都是官方 API，无需 GAP 登记。
+ * 2. 备选：FrameGraphSetupEvent 帧图插 pass —— 🔴 **旧记载「调研否决」作废**（见 07 §1.4：`fireFrameGraphSetup`
+ *    早于 `addPass("clear")` ⇒ 本就通；本任务不采用只是选型，非能力否决）；两条路径都是官方 API，无需 GAP 登记。
  * 1b.（P1.1 补充）自定义 uniform 块：BindGroupLayout.builder().withUniform(name, UNIFORM_BUFFER) 的官方用法
  *    （对照原版 BindGroupLayouts 的 GLOBALS = withUniform("Globals", UNIFORM_BUFFER)）；
  *    GLSL 侧块名必须与此处 uniform 名一致，无显式 binding 序号。

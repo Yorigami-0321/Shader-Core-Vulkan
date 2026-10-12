@@ -14,8 +14,8 @@ package dev.vkdisp.bridge;
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：原版 {@code RenderPipeline.builder(snippet).withLocation(...).build()} 派生范式；
  *    {@code BindGroupLayout.builder().withUniform(name, UNIFORM_BUFFER).build()} 加自定义块（GAP-004）。
- * 2. 备选：AccessTransformer / 改原版字段 —— 否决（07-CONSTRAINTS M1：只许动「管线装配层」，
- *    改原版 {@code RenderPipelines} 静态初始化属于侵入原版状态，且 GAP-003 ①②已源码级证伪该路线）。
+ * 2. 备选：AccessTransformer / 改原版字段 —— 否决（🔴 理由已改口径：<b>不再是</b>旧 M1「只许动「管线装配层」」
+ *    白名单 —— 该类别闸门已于 2026-10-12 废除，见 07 §1.4；真正否决它的是<b>工程事实</b>：侵入原版状态）。
  * 3. 我们的差异点：① 参数差异全部来自纯数据表 {@code pipeline.model.TerrainDerivedPlan}（可单测）；
  *    ② 每个注入点各有独立入口（{@link #onWireTerrainHit()} / {@link #onBindTerrainParamsHit}）与
  *    独立配置键，满足 M1「逐个开启 + 逐个关闭」；③ 绑定动作只在「两个 override 形参都为 null」
