@@ -6,6 +6,48 @@
 ---
 ---
 
+## 2026-10-12（一百二十五）— ✅ R7 的**执行序**交付（`04-SPEC` §5.0.7）：注入点定在 `FrontendCommandEncoder#createRenderPass(descriptor)`，不注合成 lambda
+
+> **verdict = 那张「先交清单再写注入」的裁决要求到此满足两份**：清单 = 一百二十二前交付的 §5.0.6，
+> 执行序 = 本轮的 §5.0.7。R7 的代码本轮**不写**（下一步 ⑤-a 的证据要在真机上看）。
+
+- **① 本轮新核出来的那条事实，它把机制选型整个改了一遍**：`LevelRenderer:455-463` 那次
+  `createRenderPass(...)` **不在 `addMainPass` 方法体里，而在 `pass.executes(() -> { … })` 的 lambda 内**
+  （`pass.executes(` 第 **434** 行、lambda 体从 **435** 起）。⇒ 之前写在 §5.0 那格的
+  「`@WrapOperation` 包住 `addMainPass` 内第 456-463 行的 `createRenderPass(...)`」**按字面做不到**：
+  按调用点注入能瞄准的「方法」只有编译期合成 lambda（`lambda$addMainPass$N`，N 随方法排布变号）
+  —— 正是 `GAP-042`「改名即哑」那一族，只不过这次会以 `require=1` 硬失败而不是静默。**不选它。**
+- **② 改取的点**：`com.mojang.renderpearl.frontend.FrontendCommandEncoder#createRenderPass(RenderPassDescriptor)`。
+  依据：`CommandEncoder` 那几个便利重载全是 `default`（`api/commands/CommandEncoder.java:24,28,36,50`），
+  最后一律收敛到 abstract 的 `createRenderPass(RenderPassDescriptor)`（`:53`），而
+  `FrontendCommandEncoder` 是 **backend 无关**的那层实现（`VulkanCommandEncoder` / `GlCommandEncoder`
+  再往下）⇒ 一个具体方法、不绑后端（守「不要动：后端分叉」那条）。
+- **③ 判据只用调用自带的数据**：`colorAttachments().size() == 1` + 该附件视图**就是** main 的颜色视图
+  （对象身份）+ `label() ∈ {"Main","Solid"}`（第 458 行给的就是这两个串）。视图身份排掉「别的 pass 也写
+  main」（Sky / SeeThrough / AlwaysOnTop / 原版 clear / 后处理链），label 排掉同图的其余 pass。
+  🔴 label 是字符串，Mojang 改了会**静默不接管** ⇒ 必须配一条自报计数，口径就是本轮 M-11/M-12 那条
+  `钩子被调#`：**`main pass 接管次数 = 0` 算红灯**，不许被当成「今天画面正常」。
+- **④ 命中后只做一件事**：重建描述符再转发 —— target0 原样（含它的清屏语义）、补 1..N-1 槽
+  `RGBA8_UNORM` + `WRITE_NONE` + 无混合、深度与 `renderArea` 沿用原那条。两条**装配期前提**来自
+  §5.0.6 ⑤：补槽必须与 target0 **同尺寸**（默认尺寸取「最后一个非 null 附件」，不一致是静默改视口）、
+  gbuffer 深度必须就是 `D32_FLOAT`（后端把深度格式硬编码成 126，没有可比如）。
+- **⑤ 五步执行序（每步一提交，红树不提交）**：a 只换描述符、故意不加派生 ⇒ 预期 `setPipeline`
+  当场抛附件数不匹配 = **注入真命中**的最便宜证据；b 通用派生公式接进 `PipelineModifier` 家族，先让
+  地形两条过；c 逐族放开（实体 → 粒子 → 云 → 天气 → 边界 → 描边/OIT 交替），每族一条独立判据；
+  d 关双绘（删 `MrtTerrainPass` 自开 pass 与自绘 `renderGroup(OPAQUE)`、并收 `ColortexPool` 双代轮转
+  对应一侧）—— R7 真正省下的那笔在 d；e 深度口径单点化（GAP-022/023/037 同轮）。
+  🔖 为什么 a 与 b 不能压成一步：这条路上「接管有没有生效」**没有别的证据**，必须先留一次已知会抛。
+- **影响的文档**：`04-SPEC` 新增 §5.0.7 + M-04 行尾把旧写法（「包住 addMainPass 内第 456-463 行」）
+  按新事实改写并指向 §5.0.7。
+- **测试结果**：纯文档轮，但跑了一次 `./gradlew test --offline --rerun` → **BUILD SUCCESSFUL**
+  （**1161** 条真跑，1 条既有 skip）。🔖 为什么强制重跑：`docs/` **不是** `:test` 任务的输入，
+  而本仓有若干守卫会去读 `docs/` 与台账文本 ⇒ 不加 `--rerun` 时它可能吃构建缓存、这一轮的文档改动
+  等于没验（本轮就撞上了一次「cleanTest test 两秒通过」）。
+- **上一条的条数更正**：一百二十四 写的是「1166 条」，实测是 **1161** —— 删 `ScreenDriveCommandTest`
+  带走了 5 条，写的时候没重数。下面把那条也改过来。
+- **阶梯状态**：第 1…6 步全部落地（R0/R3/R4/R2/R1a/R4天空/R5/R6），闸门三项已结，R7 = 执行序已交付、
+  代码未开工。真机那一批判据（第 2-6 步的画面侧 + `Mixin apply failed=0` + `钩子被调#`）仍全部未签。
+
 ## 2026-10-12（一百二十四）— ✅ R6 收口（M-14 · 下半）：删掉自研屏幕那一族 —— `PackPickerScreen` / `PackOptionsScreen` / `PackOptionsDrive` / `ScreenDriveCommand` / `packOptionsScreen` 键 / `IConfigScreenFactory`
 
 > **verdict = GUI 只剩一条通路**：光影包与包选项现在只在原版视频设置页里（上一条新建的那条），
@@ -27,7 +69,7 @@
 - **③ 守卫跟着收紧**（不是放宽）：`MixinWiringTest#m14EmbedsPackOptionsIntoVanillaScreen` 追加
   「那四件必须不存在 + 配置里不许再有 `packOptionsScreen`」；`PackOptionSwitchReloadTest` 那份
   「快照引用的字段必须真实存在」的名单去掉 `PACK_OPTIONS_SCREEN`（这条守卫防的正是这种悬空引用）。
-  全量：`./gradlew cleanTest test --offline` → **BUILD SUCCESSFUL**（1166 条，1 条既有 skip）。
+  全量：`./gradlew cleanTest test --offline` → **BUILD SUCCESSFUL**（**1161** 条，1 条既有 skip）。
   `VkDispConfig` 因删掉一整个键短了一截 ⇒ 巨类名单里的上限按棘轮口径可以再审（本轮没动名单）。
 - **影响的文档**：`04-SPEC` §5.0 M-14（🟡 → ✅ 已落地 + 记代价）、`19-IMPROVEMENT-PATHS` §5A.4 R6
   （❌ → ✅ 代码收口）、`08-TESTING` P4.3 那条 GUI 取证臂（标退役 + 替身）。
