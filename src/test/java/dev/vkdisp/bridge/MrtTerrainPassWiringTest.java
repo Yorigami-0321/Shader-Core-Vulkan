@@ -68,27 +68,42 @@ class MrtTerrainPassWiringTest {
     }
 
     @Test
-    @DisplayName("🔖 活动标记的置位/清位必须在 try/finally —— 漏清会让原版 pass 拿到多附件管线")
-    void activeFlagClearedInFinally() {
+    @DisplayName("🔖 M-15：pass 身份是**对象**不是标志位 —— inMrtPass 与 finally 纪律整体消失")
+    void passIdentityIsObjectNotFlag() {
         String pass = readOrSkip(PASS);
-        assertTrue(pass.contains("inMrtPass = true;"), "必须在进入 pass 时置位");
-        assertTrue(pass.contains("} finally {"), "必须有 finally");
-        // 清位语句在 finally 块内：取 finally 之后的文本里必须出现清位。
-        int finallyAt = pass.indexOf("} finally {");
-        assertTrue(finallyAt > 0, "找不到 finally 块");
-        String after = pass.substring(finallyAt);
-        assertTrue(after.contains("inMrtPass = false;"),
-                "清位必须在 finally 里 —— 漏清时原版单附件 pass 会拿到多附件管线 ⇒ validation error");
+        // 🔖 旧守卫（activeFlagClearedInFinally）要求「置位 + finally 清位」成对存在。
+        //   R1a 之后这整条纪律不该存在：判据换成「这次 draw 的 renderPass 是不是我方那个 pass 对象」，
+        //   而 RenderPearl 每次 createRenderPass 都给**新**对象 ⇒ 上一帧的引用不会与本帧原版 pass 相撞，
+        //   于是「漏清 = 原版 pass 拿到 8 附件管线」这个风险类别（GAP-040）从代码里消失。
+        assertEquals(0, countCode(pass, "inMrtPass"),
+                "静态布尔必须删干净 —— 留着就是靠「记得清」保证正确性");
+        assertEquals(0, countCode(pass, "} finally {"),
+                "两处 pass 体都不再需要 finally 清理（对象身份不需要清）");
+        assertEquals(2, countCode(pass, "ownPass = renderPass;"),
+                "地形 pass A 与水 pass B 都要记下自己的 pass 对象 —— 少记一条，那一趟 draw 就拿不到多附件变体");
+        assertTrue(pass.contains("public static boolean isOurPass("),
+                "身份判定必须有唯一出口（mixin 侧只做一次比较，不写业务，X25）");
     }
 
     @Test
-    @DisplayName("🔖 M-01 必须在 MRT pass 内返回多附件变体（两套管线不能混用）")
-    void m01SelectsMrtVariantInsidePass() {
+    @DisplayName("🔖 M-01 退化成「只按层名查表」；多附件升级只在 PassAwarePipelines.select 里")
+    void m01OnlyLooksUpLayerTable() {
         String api = readOrSkip(API);
-        assertTrue(api.contains("MrtTerrainPass.active()"),
-                "M-01 的管线解析必须先判「是否在 MRT pass 内」");
-        assertTrue(api.contains("DERIVED_MRT.get(key(layer, multiDraw))"),
-                "MRT pass 内必须取多附件变体的表");
+        int derivedAt = api.indexOf("public static RenderPipeline derivedTerrainPipeline");
+        int awareAt = api.indexOf("static @Nullable RenderPipeline mrtVariantOrNull", derivedAt + 10);
+        assertTrue(derivedAt > 0 && awareAt > derivedAt,
+                "两个都要在：derivedTerrainPipeline（M-01 查表）与 mrtVariantOrNull（M-15 用的表读）");
+        String derived = api.substring(derivedAt, awareAt);
+        assertEquals(0, countCode(derived, "MrtTerrainPass.active()"),
+                "M-01 不再判「在不在我方 pass 里」—— 它只按层名交出单附件派生版");
+        assertEquals(0, countCode(derived, "hasExpectedAttachmentCount()"),
+                "空转守卫已退役（GAP-040）");
+        // 🔖 判定本体落在独立类（ClassLineRatchet 的口径：巨类不再长新逻辑，QD-10 / 19 §3.1）。
+        String aware = readBridgeSource("PassAwarePipelines.java");
+        assertTrue(aware.contains("TerrainPipelineApi.mrtVariantOrNull(layer, multiDraw)"),
+                "多附件变体的查表只在这一处（两套管线不混用的收口点）");
+        assertTrue(aware.contains("!ourPass"),
+                "🔴 判据的短路形状：pass 身份不符 ⇒ 逐字原样返回入参（故意错配一次必须被拒）");
     }
 
     @Test
@@ -314,15 +329,21 @@ class MrtTerrainPassWiringTest {
     }
 
     @Test
-    @DisplayName("`U0001f534 h20 缺陷①：MRT 变体须有 attachment 数守卫，命中即回退原版管线")
-    void mrtVariantIsGuardedByAttachmentCount() {
-        String src = readBridgeSource("TerrainPipelineApi.java");
-        assertTrue(src.contains("hasExpectedAttachmentCount()"),
-                "`U0001f535 没有守卫调用：active() 为 true 就无条件把 8 附件管线交给原版");
-        assertTrue(src.contains("MRT_GUARD_FALLBACK"),
-                "`U0001f50d 守卫命中必须去重告警（热路径上不能刷日志）");
-        assertTrue(src.contains("回退原版管线"),
-                "`U0001f50d 守卫命中必须自报，否则无法区分「没触发」与「触发了但没生效」");
+    @DisplayName("🔴 GAP-040 退役：MRT 变体的守卫是 pass 身份，不是「附件数对不对」的空转比较")
+    void mrtVariantGuardedByIdentityNotAttachmentCount() {
+        String api = readBridgeSource("TerrainPipelineApi.java");
+        String aware = readBridgeSource("PassAwarePipelines.java");
+        assertEquals(0, countCode(api, "MRT_GUARD_FALLBACK"),
+                "旧守卫的去重告警集合必须删 —— 它守的是一个不该存在的状态（标志位为 true 却不在我方 pass 里）");
+        assertFalse(api.contains("hasExpectedAttachmentCount()"),
+                "旧守卫的判定本体是「inMrtPass 为 true 就直接返回 true」= 拿标志位证明标志位");
+        assertTrue(aware.contains("boolean ourPass"),
+                "新判据以 pass 身份为**入参**（由 @WrapOperation 的 renderPass 形参算出）");
+        // 埋点必须在，但它**不是**判据的输入（否则又回到「靠标志位证明标志位」那一族）。
+        assertTrue(aware.contains("onHit()"),
+                "M-15 的观测面：证明那次取管线真的被包住（热路径节流同 M-01）");
+        assertFalse(aware.contains("inMrtPass"),
+                "判定侧不得再引用静态标志 —— 那是本条要删掉的东西");
     }
 
     @Test

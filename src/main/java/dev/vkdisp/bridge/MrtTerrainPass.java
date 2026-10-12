@@ -113,8 +113,12 @@ public final class MrtTerrainPass {
     /** 我方深度目标（地形要深度测试/写深度；与 colortex 同尺寸）。 */
     private static TextureTarget colortexDepth;
 
-    /** 是否正处于我方 MRT 地形 pass 内（M-01 据此选管线变体；**渲染线程内**使用）。 */
-    private static boolean inMrtPass;
+    /**
+     * 我方本帧打开的那个 MRT render pass 对象（M-15 用它做<b>对象身份</b>比较，
+     * 取代旧的 {@code inMrtPass} 静态布尔 + {@code finally} 纪律 —— 每次 createRenderPass 都给新对象，
+     * 上一帧的引用与本帧原版 pass 永不相等，故「漏清」这个风险类别不存在，见 {@code GAP-040}）。
+     */
+    private static @Nullable RenderPass ownPass;
 
     /** 实际附件数（设备能力收敛后）。 */
     private static int actualSlots;
@@ -158,8 +162,12 @@ public final class MrtTerrainPass {
      *
      * <p>⚠️ 非 volatile 是**有意的**：读写都在渲染线程，不存在跨线程可见性问题。
      */
-    static boolean active() {
-        return inMrtPass;
+    /**
+     * M-15 的判据：这个 {@code renderPass} <b>是不是</b>我方本帧打开的那一个（对象身份，不是标志位）。
+     * 由 {@code mixin.ChunkSectionsToRender*PipelineMixin} 的 handler 调用。
+     */
+    public static boolean isOurPass(@Nullable RenderPass renderPass) {
+        return renderPass != null && renderPass == ownPass;
     }
 
     /** 画过的帧数（纯 long 视图，诊断用）。 */
@@ -309,17 +317,12 @@ public final class MrtTerrainPass {
     }
 
     /**
-     * 🔴 h20 守卫配套：**当前 pass 的 color attachment 数**是否确实是我们期望的那个数。
-     * <p>🔖 为什么需要它：{@link #active()} 只是进程级静态布尔，它为 true 并**不能证明**
-     * 「此刻取管线的那一方正处于我们的 pass 内」。原版单附件 pass 拿到 8 附件管线是 **Vulkan 未定义**。
-     * <p>判定口径：{@link #inMrtPass} 为 true 时**直接返回 true**（我方 pass 的结构是确定的），
-     * 否则返回 false ⇒ 守卫命中 ⇒ 交回原版管线。
+     * 期望的 color attachment 数（诊断自报用；口径与 {@code MrtPlan.slotCount()} 一致）。
+     *
+     * <p>⚠️ 它<b>不再</b>参与「该不该交出多附件管线」—— 旧 {@code hasExpectedAttachmentCount()}
+     * 的判定是「{@code inMrtPass} 为 true 就返回 true」，即拿标志位证明标志位（{@code GAP-040}）。
+     * 那道判定现在由 {@link #isOurPass} 承担。
      */
-    public static boolean hasExpectedAttachmentCount() {
-        return inMrtPass;
-    }
-
-    /** 期望的 color attachment 数（供守卫日志用；口径与 {@code MrtPlan.slotCount()} 一致）。 */
     public static int expectedAttachmentCount() {
         return MrtPlan.slotCount();
     }
@@ -471,12 +474,12 @@ public final class MrtTerrainPass {
         descriptor.withDepthAttachment(colortexDepth.getDepthTextureView(), OptionalDouble.of(0.0));
 
         var encoder = RenderSystem.getDevice().createCommandEncoder();
-        inMrtPass = true;
         try (RenderPass renderPass = encoder.createRenderPass(descriptor.build())) {
-            // 🔴🔴 GAP-038：pass 体**第一行**就把本帧地形雾交出去 —— 原版就是在它的 pass executes
-            //   第一句做这件事（LevelRenderer:436）。我方此前只绑默认 uniform 而从不设雾 ⇒ Fog 那块
-            //   UBO 拿到的是**上一帧/别处**的残值（症状：进水那一帧雾端读数不动）。
-            //   必须在 bindDefaultUniforms **之前**；雾切片来自 M-06 那次捕获的形参（与 draws 同代）。
+            // 🔖 M-15：记下本帧我方这个 pass 对象；多附件变体只在 draw 的 renderPass 与之同一对象时交出。
+            ownPass = renderPass;
+            // 🔴🔴 GAP-038：pass 体**第一行**就把本帧地形雾交出去 —— 原版的 executes 体第一句就是它
+            //   （LevelRenderer:436）。我方此前只绑默认 uniform 从不设雾 ⇒ Fog UBO 吃**残值**
+            //   （症状：进水那一帧雾端读数不动）。必须在 bindDefaultUniforms **之前**。
             RenderSystem.setShaderFog(TerrainDrawCapture.currentFog());
             // 原版在 executeSolid 之前同样调它（LevelRenderer:464）—— 缺了 Globals/Projection/Fog
             // 会被 validateDraw 按布局逐条校验拦下。
@@ -534,9 +537,6 @@ public final class MrtTerrainPass {
             //   （blit 是 encoder 命令，render pass 打开期间不能发 —— h10 实测规则）。
             //   ⚠️ OFF 档（mrt.packWater=false，默认）仍然整个不走 ⇒ 与 h50m 逐字一致（回归基线）。
             drainDeviceDebugMessages();
-        } finally {
-            // 🔖 必须在 finally 清：漏清会让后续**原版** pass 也拿到多附件管线 ⇒ 立刻 validation error。
-            inMrtPass = false;
         }
 
         // 🔴 GAP-023 第一时刻：**不透明段刚关** ⇒ 这一刻的深度就是 `depthtex0` 该含的东西。
@@ -667,8 +667,9 @@ public final class MrtTerrainPass {
             noteAtlasSamplerMissing();
             return;
         }
-        inMrtPass = true;
         try (RenderPass renderPass = encoder.createRenderPass(second.build())) {
+            // 🔖 M-15：pass B 同样记下对象身份（两条 pass 顺序打开、不嵌套，每次都是新对象）。
+            ownPass = renderPass;
             RenderSystem.bindDefaultUniforms(renderPass);
             TerrainPipelineApi.bindPackGbufferUniforms(renderPass, sampler, blockAtlas(),
                     colortexDepth.getDepthTextureView(), slotView(0),
@@ -677,8 +678,6 @@ public final class MrtTerrainPass {
                     sampler, blockAtlas(), false);
             reportWaterGroup(draws);
             drainDeviceDebugMessages();
-        } finally {
-            inMrtPass = false;
         }
         // 🔴 第二时刻：半透明写完之后的深度 = OF 的 `depthtex1`。
         //   有了这一格，BSL 的 `composite.glsl:333 z1 > z0`（半透明/水体识别）才第一次

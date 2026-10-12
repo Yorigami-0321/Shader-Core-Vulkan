@@ -465,42 +465,16 @@ public final class TerrainPipelineApi {
     }
 
     /**
-     * M-01 注入点入口：把「原版层名 + multiDraw」解析成派生管线（**只查表，不写渲染逻辑**）。
+     * M-01 注入点入口：把「原版层名 + multiDraw」解析成派生管线（<b>只查表，不判 pass</b>）。
+     *
+     * <p>🔴 R1a（M-15，2026-10-12）之后本方法<b>不再</b>判「此刻在不在我方 pass 里」：
+     * 它只按层名交出<b>单附件</b>派生管线。多附件变体的升级发生在真正取管线的那一刻
+     * （{@link PassAwarePipelines#select}），由 {@code renderPass} 的<b>对象身份</b>决定
+     * ⇒ GAP-040 那一族（进程级静态布尔 + 「附件数对不对」的空转守卫 + 回退去重集合）整体退役。
      *
      * @return 派生管线；开关关闭 / 未注册 / 层名不可识别 → {@code null}（调用方必须继续走原版返回值）
      */
     public static RenderPipeline derivedTerrainPipeline(String layer, boolean multiDraw) {
-        // 🔖 GAP-003 方案 A：我方 MRT 地形 pass 内必须换**多附件变体** ——
-        // 原版 DrawSeparate#render 只调 layer.pipeline(false)、不透传 pass 引用，
-        // 所以「当前在哪个 pass」只能由我方置位标记告知（见 MrtTerrainPass.active）。
-        // ⚠️ 标记漏清 ⇒ 原版单附件 pass 拿到多附件管线 ⇒ 立刻 validation error
-        //（所以置位/清位都放在 finally 里）。
-        if (MrtTerrainPass.active()) {
-            // 🔴 h20 缺陷①守卫：只有当**当前 pass 的 color attachment 数**确实是 8，
-            //   才允许把 MRT 变体交出去。
-            //   🔖 理由：MrtTerrainPass.active() 只是进程级静态布尔，它为 true 并**不能证明**
-            //   「此刻取管线的原版调用点正处于那个 8 附件 pass 里」。
-            //   前提一旦不成立，原版单附件 pass 就会拿到 8 附件管线 ⇒ Vulkan 未定义 ⇒ 画面时好时坏。
-            if (MrtTerrainPass.hasExpectedAttachmentCount()) {
-            RenderPipeline mrt = DERIVED_MRT.get(key(layer, multiDraw));
-            if (mrt != null) {
-                WIRED.put(key(layer, multiDraw), Boolean.TRUE);
-                if (Boolean.FALSE.equals(WIRED_MRT.put(key(layer, multiDraw), Boolean.TRUE))) {
-                    VkDisp.LOGGER.info("vkdisp: [GAP-003/A] wired (mrt variant): layer={} multiDraw={} -> {}",
-                            layer, multiDraw, mrt.getLocation());
-                }
-                return mrt;
-            }
-            } else {
-                // 🔶 守卫命中：**不给**原版 MRT 管线。
-                if (MRT_GUARD_FALLBACK.add(layer)) {
-                    VkDisp.LOGGER.warn(
-                            "vkdisp: [GAP-011] active() 为 true 但当前 pass 的 color attachment 数不是 {}"
-                                    + "⇒ **回退原版管线**（绝不把 8 附件管线交给原版单附件 pass）。layer={} multiDraw={}",
-                            MrtTerrainPass.expectedAttachmentCount(), layer, multiDraw);
-                }
-            }
-        }
         if (!wireTerrainEnabled()) {
             if (WIRE_OFF_LOGGED.compareAndSet(false, true)) {
                 VkDisp.LOGGER.info("vkdisp: [M-01] disabled by config (mixin.wireTerrain=false)"
@@ -529,9 +503,24 @@ public final class TerrainPipelineApi {
         return pipeline;
     }
 
-    /** 🔴 h20 守卫去重集合：同一 layer 只告警一次（热路径上不能刷日志）。 */
-    private static final java.util.Set<String> MRT_GUARD_FALLBACK =
-            java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /**
+     * M-15 用的多附件变体表查询（<b>包内</b>可见；判定与观测面在 {@code PassAwarePipelines}）。
+     *
+     * <p>🔖 判定为什么不写在本类里：本类是 QD-10 名单里的巨类（上限 1131 行），
+     * R1a 的「判定 + 埋点」若长进来就违反「新增内容落到独立类」的棘轮口径
+     * （{@code ClassLineRatchetTest}）。表的<b>所有权</b>仍在这里（注册与查询同源），
+     * 交出去的只是读与首次命中的自报。
+     *
+     * @return 该层该变体的多附件管线；未注册 → {@code null}
+     */
+    static @Nullable RenderPipeline mrtVariantOrNull(String layer, boolean multiDraw) {
+        RenderPipeline mrt = DERIVED_MRT.get(key(layer, multiDraw));
+        if (mrt != null && Boolean.FALSE.equals(WIRED_MRT.put(key(layer, multiDraw), Boolean.TRUE))) {
+            VkDisp.LOGGER.info("vkdisp: [M-15] MRT variant handed to our pass: layer={} multiDraw={} -> {}",
+                    layer, multiDraw, mrt.getLocation());
+        }
+        return mrt;
+    }
 
     /** 派生管线是否已被原版取用（= 通道真的通了，而不是只注册成功）。 */
     public static int wiredDerivedPipelineCount() {

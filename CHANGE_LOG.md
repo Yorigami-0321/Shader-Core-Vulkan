@@ -6,6 +6,41 @@
 ---
 ---
 
+## 2026-10-12（一百一十八）— ✅ R1a 第 4 步落地：**pass 身份由数据给出**（M-15 两支 `@WrapOperation`）；`inMrtPass` + `finally` + 空转守卫 + `MRT_GUARD_FALLBACK` 一并删除，M-01 退化成「只按层名查表」
+
+> **verdict = 把「靠记得清标志位才正确」换成「读手里就有的数据」**：判据从静态布尔换成
+> `renderPass` 的**对象身份**，于是那三件为布尔而存在的补丁整体消失（`GAP-040`）。
+
+- **① M-15 落地（两支）**：`mixin/ChunkSectionsToRenderSeparatePipelineMixin`（第 176 行那支，
+  `multiDraw=false`）+ `...IndirectPipelineMixin`（第 121 行那支，`true`）。用 MixinExtras 的
+  `@WrapOperation` + `@Local(argsOnly=true)`，handler 同时看到**正要编译的管线**与**所在方法的
+  `renderPass` 形参** ⇒ 「在不在我方 pass 里」不再是猜的。两支合起来才覆盖
+  `usingMultiDrawIndirectForTerrain` 的二选一 —— 少注一支 = 那一支仍走老路（与旧 M-05「两个重载都要注」同一条纪律）。
+- **② 删掉的三件**：`MrtTerrainPass.inMrtPass` 与它两处 `finally` 清理、
+  `hasExpectedAttachmentCount()`（`GAP-040`：判定口径是「`inMrtPass` 为 true 就返回 true」= 拿标志位证明标志位）、
+  `TerrainPipelineApi.MRT_GUARD_FALLBACK`（为那个空转守卫服务的去重告警集）。
+  `TerrainDrawCapture` 侧留一个 `ownPass` 引用 + `isOurPass(renderPass)`，`M-01` 则退化成
+  **只按层名交出单附件派生版**，多附件升级只在 `PassAwarePipelines.select` 这一处。
+- **③ 判据的形状**：`select` 是**纯函数**（`ourPass=false` ⇒ 逐字原样返回入参），
+  于是「故意错配一次必须被拒」不需要客户端就能守（`MixinWiringTest` /
+  `MrtTerrainPassWiringTest` 换成断言新形状：不再出现 `inMrtPass`、不再出现 `} finally {`、
+  `ownPass = renderPass;` 必须**两条 pass 各一次**）。
+- **④ 巨类棘轮逼出来的拆分**：判定与观测面本来想写进 `TerrainPipelineApi`，但它已顶在 1131 行上限
+  ⇒ 按 `ClassLineRatchetTest` 的口径「新增内容落到独立类」新建 `bridge/PassAwarePipelines`，
+  表的所有权仍在 `TerrainPipelineApi`（只交出一个包内可见的 `mrtVariantOrNull`）。
+  本轮三个巨类实测**都没长**：`MrtTerrainPass` 1068（上限 1069）、`VkDispConfig` 1042（1047）、
+  `TerrainPipelineApi` 1120（1131）。
+- **影响的文档**：`04-SPEC` §5.0 M-15 行（候选 → 已实现，含关档代价与 M-01 退化）、
+  `13` 的 `GAP-040` 状态（修法已落地、真机未跑）、本文与 `19` §5A.4 的 R1 行。
+  mixin 清单：7 → **9** 个 client 类；`MixinTargets` 再加 3 个常量。
+- **测试**：`./gradlew test --offline` → **BUILD SUCCESSFUL**（1165 条，1 条既有 skip）。
+- **未验证（不许当已收口）**：① 真机单变量 A/B 对 `h08` 基线 **48.22 / 39.03%** 同量级；
+  ② `Mixin apply failed = 0`（本轮新增 2 个 `@WrapOperation` 注入点，且 `@Local(argsOnly=true)`
+  这条路**本机从未跑过**）⇒ 这两条不跑完，R1a 就只能记「代码完成、验证未结」。
+- **提交**：✅ 本地提交并推送（stage 覆盖 main + test + resources + docs，`git status` 干净）。
+
+
+
 ## 2026-10-12（一百一十七）— ✅ R2 第 3 步落地：**M-06 一点替两点**（`addMainPass` HEAD 一次拿齐地形 draw + 雾切片），M-05 那两个 RETURN 注入点与 `volatile Object`+`instanceof` 一并删除，pass 体第一行补 `setShaderFog`（GAP-038）
 
 > **verdict = 捕获点收敛轮**：注入点从 2 个变 1 个，捕获字段的类型从 `Object` 变回它本来的类型，

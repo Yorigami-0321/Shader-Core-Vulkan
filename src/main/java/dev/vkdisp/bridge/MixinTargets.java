@@ -163,6 +163,40 @@ public final class MixinTargets {
     /** {@code DrawIndirect#drawGroupsPerLayer} —— private 字段，第 **97** 行。M-08 访问器目标。 */
     public static final String CHUNK_SECTIONS_TO_RENDER_DRAW_GROUPS = "drawGroupsPerLayer";
 
+    /**
+     * {@code ChunkSectionsToRender.DrawSeparate} —— M-15 的第二个目标（非多重绘制变体，第 152 行起）。
+     *
+     * <p>取管线那一刻在它自己的 {@code render} 第 **176** 行；{@code DrawIndirect} 那一支在第
+     * **121** 行。两支的 {@code render} 形参表<b>逐字相同</b>（都是 abstract 的实现）。
+     */
+    public static final String CHUNK_SECTIONS_TO_RENDER_DRAW_SEPARATE =
+            "net.minecraft.client.renderer.chunk.ChunkSectionsToRender$DrawSeparate";
+
+    /**
+     * {@code ChunkSectionsToRender} 两个变体共同的 private/protected {@code render} 方法描述符
+     * （{@code render(ChunkSectionLayer, RenderPass, GpuBuffer, IndexType, RenderPipeline, RenderPipeline)}）。
+     *
+     * <p>🔖 M-15 要靠它的<b>形参表</b>拿到 {@code renderPass} —— 这是「pass 身份由数据给出」的唯一通路：
+     * {@code @WrapOperation} 的 handler 用 MixinExtras 的 {@code @Local(argsOnly = true)} 读实参。
+     */
+    public static final String CHUNK_SECTIONS_TO_RENDER_RENDER_INNER =
+            "render(Lnet/minecraft/client/renderer/chunk/ChunkSectionLayer;"
+                    + "Lcom/mojang/renderpearl/api/commands/RenderPass;"
+                    + "Lcom/mojang/renderpearl/api/buffers/GpuBuffer;"
+                    + "Lcom/mojang/renderpearl/api/pipeline/IndexType;"
+                    + "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;"
+                    + "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)V";
+
+    /**
+     * {@code RenderSystem.getCompiledPipeline(RenderPipeline)} —— M-15 被包住的那次<b>调用</b>
+     * （声明见第 123 行，返回 {@code CompiledRenderPipeline}；它内部第 107 行第一句就是
+     * {@code PIPELINE_MODIFIERS.apply}，见 {@code 07} §1.4.2）。
+     */
+    public static final String RENDER_SYSTEM_GET_COMPILED_PIPELINE =
+            "com.mojang.blaze3d.systems.RenderSystem.getCompiledPipeline("
+                    + "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)"
+                    + "Lcom/mojang/renderpearl/api/pipeline/CompiledRenderPipeline;";
+
     /** 本契约版本（与 {@link ContractVersion#VERSION} 一致）。 */
     public static final int CONTRACT_VERSION = 1;
 

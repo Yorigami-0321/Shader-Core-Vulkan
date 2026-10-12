@@ -7,7 +7,9 @@
   "client": [
     "ChunkSectionLayerPipelineMixin",
     "ChunkSectionsToRenderDrawProbeMixin",
+    "ChunkSectionsToRenderIndirectPipelineMixin",
     "ChunkSectionsToRenderMixin",
+    "ChunkSectionsToRenderSeparatePipelineMixin",
     "CloudRendererMatrixRedirectMixin",
     "CloudRendererMeshProbeMixin",
     "LevelRendererChunkSamplerMixin",

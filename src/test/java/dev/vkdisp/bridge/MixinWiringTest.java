@@ -116,6 +116,7 @@ class MixinWiringTest {
         assertTrue(config.contains("mixin.terrainDrawProbe"), "M-08 缺少可关闭键 mixin.terrainDrawProbe");
         assertTrue(config.contains("mixin.cloudProbe"), "M-09 缺少可关闭键 mixin.cloudProbe");
         assertTrue(config.contains("mixin.cloudMatrixRedirect"), "M-10 缺少可关闭键 mixin.cloudMatrixRedirect");
+        assertTrue(config.contains("mixin.passAwarePipeline"), "M-15 缺少可关闭键 mixin.passAwarePipeline");
         assertTrue(config.contains("define(\"mixin.wireTerrain\", true)"), "M-01 默认应为开");
         assertTrue(config.contains("define(\"mixin.bindTerrainParams\", true)"), "M-01b 默认应为开");
         assertTrue(config.contains("define(\"mixin.captureMainPassArgs\", true)"), "M-06 默认应为开");
@@ -123,6 +124,7 @@ class MixinWiringTest {
         assertTrue(config.contains("define(\"mixin.terrainDrawProbe\", true)"), "M-08 默认应为开");
         assertTrue(config.contains("define(\"mixin.cloudProbe\", true)"), "M-09 默认应为开");
         assertTrue(config.contains("define(\"mixin.cloudMatrixRedirect\", true)"), "M-10 默认应为开");
+        assertTrue(config.contains("define(\"mixin.passAwarePipeline\", true)"), "M-15 默认应为开");
     }
 
     @Test
@@ -191,7 +193,8 @@ class MixinWiringTest {
                 //   ② @Accessor（M-07/M-08/M-09）—— 抽象方法**没有体**，埋点无处放 ⇒
                 //      证据换成「它把字段交进 bridge 声明的 IVkdisp* 接口，且文件里没有反射」。
                 if (countCodeOccurrences(text, "@Inject(") == 0
-                        && countCodeOccurrences(text, "@Redirect(") == 0) {
+                        && countCodeOccurrences(text, "@Redirect(") == 0
+                        && countCodeOccurrences(text, "@WrapOperation(") == 0) {
                     assertTrue(countCodeOccurrences(text, "@Accessor(") > 0,
                             p.getFileName() + "：没有 @Inject/@Redirect 就必须是 @Accessor 访问器注入点");
                     assertTrue(countCodeOccurrences(text, "implements IVkdisp") > 0,
@@ -208,12 +211,13 @@ class MixinWiringTest {
                     if (trimmed.startsWith("*") || trimmed.startsWith("//") || trimmed.startsWith("/*")) {
                         continue;
                     }
-                    if (trimmed.contains("@Inject(") || trimmed.contains("@Redirect(")) {
+                    if (trimmed.contains("@Inject(") || trimmed.contains("@Redirect(")
+                            || trimmed.contains("@WrapOperation(")) {
                         injectAt = i;
                         break;
                     }
                 }
-                assertTrue(injectAt >= 0, p.getFileName() + " 里没有 @Inject/@Redirect");
+                assertTrue(injectAt >= 0, p.getFileName() + " 里没有 @Inject/@Redirect/@WrapOperation");
                 // 先定位方法体的开括号（签名可能跨多行），再取体内第一条语句。
                 int bodyAt = -1;
                 for (int i = injectAt; i < lines.size() && i < injectAt + 20; i++) {
@@ -274,6 +278,17 @@ class MixinWiringTest {
                 MixinTargets.CLOUD_RENDERER_RENDER_INNER);
         assertEquals("com.mojang.blaze3d.systems.RenderSystem.getModelViewMatrixCopy()Lorg/joml/Matrix4f;",
                 MixinTargets.RENDER_SYSTEM_GET_MODEL_VIEW_MATRIX_COPY);
+        // R1a（M-15）：两支取管线调用所在**各自的嵌套变体**，方法必须写完整描述符，
+        // 而被包住的调用要带返回类型（@At(target=…) 的写法就是「类.方法(描述符)返回」）。
+        assertEquals("net.minecraft.client.renderer.chunk.ChunkSectionsToRender$DrawSeparate",
+                MixinTargets.CHUNK_SECTIONS_TO_RENDER_DRAW_SEPARATE);
+        assertTrue(MixinTargets.CHUNK_SECTIONS_TO_RENDER_RENDER_INNER.startsWith("render(")
+                        && MixinTargets.CHUNK_SECTIONS_TO_RENDER_RENDER_INNER.endsWith(")V"),
+                "M-15 的注入方法必须是完整描述符（handler 靠它拿 renderPass 形参）");
+        assertEquals("com.mojang.blaze3d.systems.RenderSystem.getCompiledPipeline("
+                        + "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)"
+                        + "Lcom/mojang/renderpearl/api/pipeline/CompiledRenderPipeline;",
+                MixinTargets.RENDER_SYSTEM_GET_COMPILED_PIPELINE);
         assertEquals(1, MixinTargets.MIXIN_CONFIG_COUNT,
                 "MIXIN_CONFIG_COUNT 必须与 neoforge.mods.toml 里启用的 [[mixins]] 数一致");
     }
