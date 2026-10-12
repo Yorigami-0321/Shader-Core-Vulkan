@@ -114,7 +114,7 @@ public final class OfUniformManager {
     private static final FrameClock FRAME_CLOCK = new FrameClock();
 
     /**
-     * 本帧的令牌：优先用 M-05 的捕获计数（GAP-019 的自报实测它与 {@code framesDrawn} 严格 1:1）。
+     * 本帧的令牌：优先用 M-06 的捕获计数（GAP-019 的自报实测它与 {@code framesDrawn} 严格 1:1）。
      *
      * <p>⚠️ 拿不到捕获计数（未进世界 / 捕获关着）时退回「每次调用都算一帧」——
      * 那是<b>本次修改前的行为</b>，不是猜一个新语义；退回时会被 {@link FrameClock} 的

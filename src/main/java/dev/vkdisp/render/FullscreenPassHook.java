@@ -93,11 +93,11 @@ public final class FullscreenPassHook {
     /** 每帧计数（用于按间隔打印 uniform 取值证据）。 */
     private static int frameCounter;
 
-    /** M-05：上次见到的捕获计数（用于节流埋点）。 */
+    /** M-06：上次见到的捕获计数（用于节流埋点）。 */
     private static long lastCapturedCount;
 
-    /** M-05：节流埋点最多打几次（3 次足够判定时序，不必刷屏）。 */
-    private static int m05ProbeLogs;
+    /** M-06：节流埋点最多打几次（3 次足够判定时序，不必刷屏）。 */
+    private static int m06ProbeLogs;
 
     /** uniform 取值证据最多打印 5 次（限频，避免刷屏）。 */
     private static int paramLogs;
@@ -172,7 +172,7 @@ public final class FullscreenPassHook {
         float phase = (float) (seconds % PHASE_PERIOD_SECONDS);
         FrameApi.FrameParams params = new FrameApi.FrameParams(phase, 1.0F);
 
-        // H 线 M-05 埋点（节流）：本行的作用是**时序验证** ——
+        // H 线 M-06 埋点（节流）：本行的作用是**时序验证** ——
         // AfterLevel 在帧图执行之后触发，若此处已能看到捕获计数增长，
         // 说明捕获（LevelRenderer#render 第 271-275 行）确实早于 pass 体执行（第 286 行）
         // ⇒ GAP-003 方案 A 的时序前提成立。
@@ -180,12 +180,12 @@ public final class FullscreenPassHook {
         long capturedNow = TerrainDrawCapture.captureCount();
         if (capturedNow != lastCapturedCount) {
             lastCapturedCount = capturedNow;
-            if (m05ProbeLogs < 3) {
-                m05ProbeLogs++;
+            if (m06ProbeLogs < 3) {
+                m06ProbeLogs++;
                 VkDisp.LOGGER.info(
-                        "vkdisp: [M-05] capture visible at AfterLevel (render thread, after frame graph executed):"
+                        "vkdisp: [M-06] capture visible at AfterLevel (render thread, after frame graph executed):"
                                 + " captures={} from={} nonNull={}",
-                        lastCapturedCount, TerrainDrawCapture.capturedFrom(),
+                        lastCapturedCount, TerrainDrawCapture.capturedVariant(),
                         TerrainDrawCapture.hasCaptured());
             }
         }

@@ -762,7 +762,7 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 | **判据（收口时用）** | ① 同一帧同一像素：我方 colortex0 与原版 main 的雾端读数差 < 既定阈值；② 显式变雾档：进水里那一帧两臂都要跟着变（现状我方那帧不随水变 ⇒ 可当最小复现）；③ 日志断言：注入点里 `terrainFog` 的 buffer hash 与原版那次一致。 |
 | **影响面** | `bridge/MrtTerrainPass.java`（pass 体装配段）、`bridge/SkyIntoGbuffer.java`（雾 slice 取用侧）、`bridge/MixinTargets`（新增 M-06 常量） |
 | **开关 / 回退条件** | 随 `mixin.captureMainPassArgs`（M-06）；关掉即回到今天（不设雾）。 |
-| **状态** | 🔴 **已登记（源码级 + grep 实测），未修、未真机取证** —— 属「潜在静默错」，不是当前可见症状 |
+| **状态** | 🟡 **修法已落地（2026-10-12 R2 第 3 步），真机判据未取证** —— M-06 已把 `terrainFog` 从 `addMainPass` 的 HEAD 形参交出来，`MrtTerrainPass` 的 pass 体**第一行**（早于 `bindDefaultUniforms`）就 `RenderSystem.setShaderFog(...)`，口径逐字对齐原版 `LevelRenderer:436`。仍开放：判据 ②「进水那一帧两臂读数都跟着变」是真机 A/B —— **现状不变就是本条复现**，签之前不许当已收口 |
 
 ---
 

@@ -69,7 +69,7 @@ import org.jspecify.annotations.Nullable;
 /**
  * GAP-003 方案 A 第 2 步：在我方自己的帧图 pass 里，把地形画进**多附件**（MRT）render pass。
  *
- * <p><b>它证明什么</b>：地形 draw 数据（M-05 捕获的 {@code ChunkSectionsToRender}）
+ * <p><b>它证明什么</b>：地形 draw 数据（M-06 捕获的 {@code ChunkSectionsToRender}）
  * 能在**我方控制的**多附件 pass 里完成渲染 —— 这是 GAP-003 从「原语可用」走向
  * 「地形真的走多附件」的关键一步。
  *
@@ -213,7 +213,7 @@ public final class MrtTerrainPass {
         }
         // 🔖🔖 **必须在 pass 体里读捕获，不能在这里读**（本轮真踩过，症状极具欺骗性）：
         //   帧图「装配」发生在 LevelRenderer#render 第 249 行（官方事件处），
-        //   而 M-05 的捕获发生在第 271-275 行的 prepareChunkRenders —— **装配早于捕获**。
+        //   而 M-06 的捕获发生在第 277 行的 addMainPass HEAD —— **装配早于捕获**。
         //   在这里读到的是**上一帧**的 ChunkSectionsToRender，而它持有的
         //   DynamicGpuBuffer 切片（terrainTransformUBO / chunkSectionInfos / 顶点索引缓冲）
         //   已经被本帧的上传**环形复用覆盖** ⇒ 几何退化 ⇒ 一片片元都过不了光栅化。
@@ -382,25 +382,21 @@ public final class MrtTerrainPass {
         drawTerrain();
     }
 
-    /** pass 体：真正画地形（跑在帧图**执行期**，即 M-05 捕获之后 ⇒ 拿到的是本帧数据）。 */
+    /** pass 体：真正画地形（跑在帧图**执行期**，即 M-06 捕获之后 ⇒ 拿到的是本帧数据）。 */
     private static void drawTerrain() {
         // 🔖 帧图内模式下本方法**早于** AfterLevel 钩子 ⇒ 取样判定要在这里也走一次
         //   （beginFrame 内部按捕获计数去重，一帧只决定一次）。
         TargetReadback.beginFrame();
-        Object captured = TerrainDrawCapture.current();
-        if (captured == null) {
-            // M-05 未开启或尚未捕获 ⇒ 无从画地形。**这不是错误**（是「未启用」），
-            // 静默跳过；M-05 自己的埋点负责让「为什么没画」可见。
+        ChunkSectionsToRender draws = TerrainDrawCapture.current();
+        if (draws == null) {
+            // M-06 未开启或尚未捕获 ⇒ 无从画地形。**这不是错误**（是「未启用」），静默跳过；
+            // M-06 自己的埋点负责让「为什么没画」可见。
             return;
         }
-        if (!(captured instanceof ChunkSectionsToRender draws)) {
-            // 类型不符 = 捕获到别的东西 ⇒ 显式报错，不静默（T11）。
-            VkDisp.LOGGER.error("vkdisp: [GAP-003/A] captured terrain draws is not ChunkSectionsToRender but {}",
-                    captured == null ? "null" : captured.getClass().getName());
-            return;
-        }
+        // 🔖 M-06 之后这里**不再有 instanceof**：捕获点的形参类型就是 ChunkSectionsToRender
+        //   （由 require=1 的注入器保证），旧 M-05 存 Object ⇒ 才需要那段「捕获到别的东西」的兜底。
         RenderSystem.assertOnRenderThread();
-        gap019NoteReplay(captured);
+        gap019NoteReplay(draws);
         RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         ensureTargets(main);
         // 🔖 逐槽清屏色的决策（诊断 vs 生产）在建 pass 前定一次（纯逻辑、可单测）。
@@ -477,6 +473,11 @@ public final class MrtTerrainPass {
         var encoder = RenderSystem.getDevice().createCommandEncoder();
         inMrtPass = true;
         try (RenderPass renderPass = encoder.createRenderPass(descriptor.build())) {
+            // 🔴🔴 GAP-038：pass 体**第一行**就把本帧地形雾交出去 —— 原版就是在它的 pass executes
+            //   第一句做这件事（LevelRenderer:436）。我方此前只绑默认 uniform 而从不设雾 ⇒ Fog 那块
+            //   UBO 拿到的是**上一帧/别处**的残值（症状：进水那一帧雾端读数不动）。
+            //   必须在 bindDefaultUniforms **之前**；雾切片来自 M-06 那次捕获的形参（与 draws 同代）。
+            RenderSystem.setShaderFog(TerrainDrawCapture.currentFog());
             // 原版在 executeSolid 之前同样调它（LevelRenderer:464）—— 缺了 Globals/Projection/Fog
             // 会被 validateDraw 按布局逐条校验拦下。
             RenderSystem.bindDefaultUniforms(renderPass);
@@ -915,8 +916,7 @@ public final class MrtTerrainPass {
     /**
      * 这一帧拿不到图集采样器 ⇒ 本帧不画，并<b>只报一次</b>原因。null 一路传到 {@code setUniform}
      * 会变成一个看不出根因的 {@code textureView and sampler must both or neither be null}
-     * （h33 实测的那 2702 条）—— 停在这里并说明「原版实例还没建出来」才是可定位的失败
-     * （01-DEV-LOOP §6 第 2 步）。
+     * （h33 那 2702 条）⇒ 停在这里并说明根因，才是可定位的失败（01-DEV-LOOP §6 第 2 步）。
      */
     private static void noteAtlasSamplerMissing() {
         if (atlasSamplerMissingNoted) {
@@ -1020,8 +1020,8 @@ public final class MrtTerrainPass {
      *   {@code identities≪window} ⇒ 对象在轮转复用（引用生命周期就是嫌疑）。
      *   另外记「本帧的 capture# 与我方 framesDrawn 是否同代」：不同代 = 我方 pass 每帧被走多次。
      */
-    private static void gap019NoteReplay(Object captured) {
-        GAP019_IDENTITIES.add(System.identityHashCode(captured));
+    private static void gap019NoteReplay(ChunkSectionsToRender draws) {
+        GAP019_IDENTITIES.add(System.identityHashCode(draws));
         gap019Seen++;
         // 🔖 比**增量**不比绝对值：两者起点不同（捕获在加载期就可能先跑），绝对差是常数、
         //   没有信息量；「本帧我方跑了一次，但捕获没前进（或前进了多次）」才是代次错配。

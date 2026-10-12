@@ -6,6 +6,40 @@
 ---
 ---
 
+## 2026-10-12（一百一十七）— ✅ R2 第 3 步落地：**M-06 一点替两点**（`addMainPass` HEAD 一次拿齐地形 draw + 雾切片），M-05 那两个 RETURN 注入点与 `volatile Object`+`instanceof` 一并删除，pass 体第一行补 `setShaderFog`（GAP-038）
+
+> **verdict = 捕获点收敛轮**：注入点从 2 个变 1 个，捕获字段的类型从 `Object` 变回它本来的类型，
+> 并且把「我方 pass 从不设雾」这个潜在静默错按原版的口径补上。
+
+- **① M-06 落地**：`mixin/LevelRendererMainPassCaptureMixin` 注 `addMainPass` 的 `@At("HEAD")`，
+  五个形参**逐个照抄**（`FrameGraphBuilder, FeatureRenderDispatcher.PreparedFrame, GpuBufferSlice terrainFog,
+  ChunkSectionsToRender, boolean`，sources jar 第 396-402 行）—— 原版改签名 ⇒ 注入期硬失败，不静默。
+  选择它而不是两个 `prepareChunkRenders*` 的依据（源码级）：第 **277** 行那次调用**无条件**执行，
+  而 indirect（272）/常规（274）两支都在它之前汇合 ⇒ 一点顶两点，且这个点**同时**交出了雾切片，
+  而旧点只能拿返回值。时序不变：HEAD 在 277，仍早于第 286 行 `frame.execute()`（pass 体执行期）。
+- **② M-05 退役**（不是「留着备用」）：`LevelRendererChunkCaptureMixin` 整类删除、
+  `MixinTargets` 里 `LEVEL_RENDERER_PREPARE_CHUNK_RENDERS*` 两个常量删除、
+  配置键 `mixin.captureTerrainDraws` → `mixin.captureMainPassArgs`。
+  `TerrainDrawCapture` 的两个字段类型化为 `ChunkSectionsToRender` + `GpuBufferSlice`
+  ⇒ `MrtTerrainPass#drawTerrain` 里那段「`instanceof` 失败就 ERROR」的兜底**物理消失**
+  （类型由注入点保证，不再靠运行时猜）。守卫跟着改：`MixinWiringTest` 现在**断言旧类与旧键都不存在**，
+  `MrtTerrainPassWiringTest` 断言不再出现 `instanceof ChunkSectionsToRender draws` / `Object captured`。
+  🔖 诊断红利：自报从「命中了哪个注入方法」换成**运行期变体名**（`DrawIndirect`/`DrawSeparate`）——
+  这是本机走哪条绘制分支的直接证据，旧形式给不出。
+- **③ GAP-038 补雾**：pass 体第一行 `RenderSystem.setShaderFog(TerrainDrawCapture.currentFog())`，
+  位置口径逐字对齐原版（`LevelRenderer:436` 就在建 pass 与 `bindDefaultUniforms` 之前）。
+  此前我方只 `bindDefaultUniforms` 而从没设过雾 ⇒ Fog 那块 UBO 拿的是**上一帧/别处**的残值。
+- **影响的文档**：`04-SPEC` §5.0 的 M-05（⚪ 已退役）与 M-06（✅ 已实现）两行；`13` 的 GAP-038 状态；
+  本文与 `19` §5A.4 的 R2 行。mixin 清单仍是 7 个 client 类（一增一删）。
+- **测试**：`./gradlew test --offline` → **BUILD SUCCESSFUL**（1165 条，1 skip = 既有 `PackUniformBslTest`）。
+  两处棘轮上限被这轮**压着没长**：`MrtTerrainPass` 靠压缩注释回到 1069，`VkDispConfig` 回到 1047。
+- **未验证（不许当已收口）**：判据「进水那一帧两臂雾端读数都跟着变」是真机 A/B ——
+  **现状不变就是 GAP-038 复现**，这一条本轮没签。M-06 这个注入点也还没在真机加载过
+  （`Mixin apply failed` 必须实测为 0）。
+- **提交**：✅ 本地提交并推送。
+
+---
+
 ## 2026-10-12（一百一十六）— ✅ R3 第 2 步落地：**反射清零**（M-08/M-09 访问器）、**自建采样器 42 行删除**（M-07 复用原版实例）、**云的压栈/还原删除**（M-10 `@Redirect` 改实参）、**modifier 现读配置移到调用点**（GAP-044）
 
 > **verdict = 纯删码轮**：四条改动都不新增渲染语义，只把「可静默失效的取值方式」换成「升版即硬失败的取值方式」。

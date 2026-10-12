@@ -158,17 +158,17 @@ public final class VkDispConfig {
             .defineInRange("mrt.viewSlot", 0, 0, 7);
 
     /**
-     * 🔴 H 线 M-05 开关：**只读捕获**地形 draw 数据（默认开）。
+     * 🔴 R2 / M-06 开关：**只读捕获**地形 draw 数据 + 地形雾切片（默认开，不改变任何渲染行为）。
      *
-     * <p>捕获本身**不改变任何渲染行为** —— 关闭它，地形照原版渲染。它的作用是让
-     * GAP-003 方案 A（我方自己的多附件 pass 画地形）能拿到 {@code ChunkSectionsToRender}：
-     * 官方 {@code FrameGraphSetupEvent} 触发时该对象**尚未创建**（源码级核实：事件在
-     * {@code LevelRenderer#render} 第 249 行，创建在第 271-275 行），所以只能在创建点捕获引用。
+     * <p>取法是原版第 **277** 行那次<b>无条件</b>的 {@code addMainPass} 调用（indirect 272、常规 274
+     * 两支都在此汇合）⇒ 旧 M-05 那两个 {@code prepareChunkRenders*} RETURN 点被这一个 HEAD 点替代，
+     * 并顺带交出 {@code terrainFog}（{@code GAP-038}）。事件给不了：它在 249 行触发，早于创建点。
      */
-    public static final ModConfigSpec.BooleanValue MIXIN_CAPTURE_TERRAIN_DRAWS = BUILDER
-            .comment("H 线 M-05：只读捕获地形 draw 数据引用（GAP-003 方案 A 的前置）。"
-                    + "不改变渲染行为；关闭后我方多附件地形 pass 静默不开。")
-            .define("mixin.captureTerrainDraws", true);
+    public static final ModConfigSpec.BooleanValue MIXIN_CAPTURE_MAIN_PASS_ARGS = BUILDER
+            .comment("R2 M-06：只读捕获 LevelRenderer#addMainPass 的 terrainFog 与地形 draw 数据"
+                    + "（GAP-003 方案 A 的前置 + GAP-038 补雾的来源）。不改变渲染行为；"
+                    + "关闭后我方多附件地形 pass 静默不开。")
+            .define("mixin.captureMainPassArgs", true);
 
     /**
      * 🔴 R3 / M-07 开关：地形图集**复用原版那个采样器实例**（默认开）—— 各向异性与

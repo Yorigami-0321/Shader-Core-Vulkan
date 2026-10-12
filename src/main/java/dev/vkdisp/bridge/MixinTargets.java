@@ -98,31 +98,20 @@ public final class MixinTargets {
     // ── 帧图插入点（P3 阶段曾评估启用；现状 = OPT-1 可选，非必需，优先走官方事件）────
     /** {@code net.minecraft.client.renderer.LevelRenderer} —— 影子 pass 插入（addMainPass HEAD）。 */
     public static final String LEVEL_RENDERER = "net.minecraft.client.renderer.LevelRenderer";
-    /** {@code LevelRenderer#addMainPass} —— 帧图主 pass 追加点（04-SPEC §3.4）。**private**；
-     * 2026-10-12 起 M1 类别闸门已废 ⇒ 可注入，已登记为 **M-06**（04-SPEC §5.0）。 */
+    /**
+     * {@code LevelRenderer#addMainPass} —— 帧图主 pass 追加点（04-SPEC §3.4），**private、5 参**。
+     *
+     * <p>✅ 现已被 <b>M-06</b> 用作只读捕获点（登记在 {@code 04-SPEC} §5.0；它替代旧 M-05 那两个
+     * {@code prepareChunkRenders*} 的 RETURN 注入点）。签名（26.3 sources jar 第 396-402 行核实）：
+     * {@code private void addMainPass(FrameGraphBuilder, FeatureRenderDispatcher.PreparedFrame,
+     * GpuBufferSlice terrainFog, ChunkSectionsToRender, boolean)}
+     * —— 唯一调用点在第 **277** 行且<b>无条件</b>执行，而 indirect（272）与常规（274）两支都在它
+     * 之前汇合 ⇒ 一个注入点同时拿到 {@code terrainFog}（{@code GAP-038} 要的雾）与地形 draw 数据。
+     */
     public static final String LEVEL_RENDERER_ADD_MAIN_PASS = "addMainPass";
     /** {@code LevelRenderer#render} —— 后处理链 RETURN 插入点（04-SPEC §3.4）。⚠️ 现行口径下
      * 目标类本身可注入，但本点**未登记** ⇒ 依 X28 不得注入；要用先登记 04-SPEC §5.0。 */
     public static final String LEVEL_RENDERER_RENDER = "render";
-
-    /**
-     * {@code LevelRenderer#prepareChunkRenders(Matrix4fc, boolean)} ——
-     * M-05 注入方法之一（**public**，返回地形 draw 数据对象）。
-     *
-     * <p>GAP-003 方案 A 的入口：官方 {@code FrameGraphSetupEvent} 在 {@code render} 的
-     * 第 249 行触发，而 {@code prepareChunkRenders*} 在第 271-275 行才被调用
-     * ⇒ <b>事件里拿不到地形 draw 数据</b>。但帧图 pass 体在第 286 行 {@code frame.execute()}
-     * 才执行，<b>晚于</b>捕获点 ⇒ 在这里只读捕获引用即可。
-     *
-     * <p>签名（26.3.0.41-beta sources jar 第 849 行核实）：
-     * {@code public ChunkSectionsToRender prepareChunkRenders(Matrix4fc, boolean)}
-     * —— 其重载对偶 {@code prepareChunkRendersIndirect} 在第 937 行，<b>必须同时注入</b>
-     * （本机 lavapipe 走 indirect 分支，漏掉它就捕获不到）。
-     */
-    public static final String LEVEL_RENDERER_PREPARE_CHUNK_RENDERS = "prepareChunkRenders";
-
-    /** {@code LevelRenderer#prepareChunkRendersIndirect(Matrix4fc, boolean)} —— M-05 注入方法之二。 */
-    public static final String LEVEL_RENDERER_PREPARE_CHUNK_RENDERS_INDIRECT = "prepareChunkRendersIndirect";
 
     // ── R3（2026-10-12 第 2 步）新增：M-07 / M-08 / M-09 / M-10 ────────────────────
     /**

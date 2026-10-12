@@ -10,8 +10,8 @@
     "ChunkSectionsToRenderMixin",
     "CloudRendererMatrixRedirectMixin",
     "CloudRendererMeshProbeMixin",
-    "LevelRendererChunkCaptureMixin",
-    "LevelRendererChunkSamplerMixin"
+    "LevelRendererChunkSamplerMixin",
+    "LevelRendererMainPassCaptureMixin"
   ],
   "injectors": {
     "defaultRequire": 1
