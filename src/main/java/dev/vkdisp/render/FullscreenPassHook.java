@@ -206,8 +206,7 @@ public final class FullscreenPassHook {
             // 🔖 走哪条路必须**在决策处自报**（只在变了时打一行）：h48 就是缺这条 ——
             //   gate 把「链」与「afterLevel」捆在一起，于是一臂以为在测链、实际在跑旧三步链，
             //   而画面与日志其它行都看起来正常。判读对象不声明自己是谁 = 假证据。
-            String route = "chain=" + chainActive + " afterLevel=" + MrtTerrainPass.afterLevel()
-                    + " toMain=" + MrtTerrainPass.toMain();
+            String route = "chain=" + chainActive + " toMain=" + MrtTerrainPass.toMain();
             if (!route.equals(lastRoute)) {
                 lastRoute = route;
                 VkDisp.LOGGER.info("vkdisp: [route] 本帧渲染路径 = {} ⇒ {}", route,
@@ -226,16 +225,13 @@ public final class FullscreenPassHook {
                 }
             }
             // 🔴 h48 修正（这条 gate 曾经把两个**独立**的轴捆在一起）：条件里带 afterLevel()
-            //   ⇒ 关诊断档 `mrt.terrainAfterLevel=false` 会**连带把整条链关掉**，
-            //   于是那一臂跑的是旧三步链，画面却是「链生效」的样子 —— 我据此下过一次错结论
-            //   （evidence/h48 §五 已按此更正）。链要不要跑只取决于链本身；
-            //   `afterLevel` 只决定**地形何时画**。
-            // GAP-003 非地形 gbuffer 线：天空先铺、地形后盖、然后才轮到链（h48e 改序，
-            //   实测理由见 evidence/h48 §15.4）。两个轴都收进同一个 helper，链的条件仍只看
-            //   chainActive —— 见 RenderRouteWiringTest。
-            if (chainActive) {
-                paintGbufferAndTerrain();
-            }
+            //   ⇒ 关诊断档 `mrt.terrainAfterLevel=false` 会**连带把整条链关掉**，于是那一臂跑的
+            //   是旧三步链、画面却是「链生效」的样子 —— 我据此下过一次错结论（evidence/h48 §五
+            //   已按此更正）。那条 A/B 车道已随 R5 退役，留下的纪律是：<b>链要不要跑只取决于链本身</b>。
+            // 🔖🔖 地形与天空都**不再在这里画**：天空在原版 "sky" pass 体内（R4 的官方钩子 + M-11），
+            //   地形在我方帧图 pass 体内（M-06 捕获 + M-13 的 requires 边），而 {@code frame.execute}
+            //   （LevelRenderer:286）<b>早于</b>本事件（AfterLevel 由 GameRenderer 在 render 返回后 post）
+            //   ⇒ 到这一刻 colortex 已经写好，链直接消费它，不需要任何「先补画一次」的调用。
             if (chainActive) {
                 if (FrameApi.isPostChainReady()) {
                     FrameApi.drawPostChain(PASS_LABEL);
@@ -267,27 +263,19 @@ public final class FullscreenPassHook {
             VkDisp.LOGGER.error("vkdisp: fullscreen pass failed", t);
         }
 
-        // 诊断 A/B：地形 MRT 绘制挪到帧图执行之后。
-        // 🔖🔖 必须放在**整条链之后**（本轮踩过）：本 mod 的 SceneCaptureApi 会把场景纹理
-        //   blit 进 main —— 画在它之前会被整块覆盖掉，表现为「pass 明明跑了，屏幕却毫无变化」。
-        //   「没报错 + 画面没变」会被误读成「没执行」，实际是被后写的 pass 盖掉了。
-        //   🔴 链模式下地形已**先画**（见上），这里不得再画一遍（画两遍 = 双重暴露 + 白白翻倍）。
-        if (!FrameApi.isPostChainActive()
-                && MrtTerrainPass.enabled() && MrtTerrainPass.afterLevel()) {
-            try {
-                MrtTerrainPass.drawAfterLevel();
-            } catch (Throwable t) {
-                VkDisp.LOGGER.error("vkdisp: gbuffer terrain pass failed", t);
-            }
-        }
+        // 🔖 R5 退役了「地形挪到帧图执行之后画」那条 A/B 车道，但它买到的那条事实留着：
+        //   本 mod 的 SceneCaptureApi 会把场景纹理 blit 进 main ⇒ **任何**想在 main 上留下的东西
+        //   都必须排在那次 blit 之后，否则症状是「pass 明明跑了、屏幕毫无变化」（误读成「没执行」），
+        //   而画两遍则是双重暴露。现在地形只在帧图 pass 里画一次 ⇒ 本钩子里没有任何地形绘制调用。
 
         // 🔖🔖 像素回读探针（默认关）。**位置有三重约束，本轮全部是实测踩出来的**：
         //  ① 必须在**所有** render pass 关闭之后（原版 FrontendCommandEncoder 在 pass 内
         //     做 copyTextureToBuffer 会抛 "Close the existing render pass before
         //     performing additional commands"）；
-        //  ② 必须在**地形 MRT pass 之后** —— 它在 afterLevel 模式下会写主目标，
-        //     探针若在它之前跑，读到的「主目标」就是**写入前**的内容
-        //     ⇒ 恰好在 `mrt.terrainToMain=true`（GAP-008 取证那一档）失效；
+        //  ② 必须在**地形 MRT pass 之后** —— 帧图档里那个 pass 在 {@code frame.execute}
+        //     （LevelRenderer:286）内就跑完了，本事件在它之后 ⇒ {@code mrt.terrainToMain=true}
+        //     （GAP-008 取证那一档）读到的主目标是**写入之后**的内容。那条约束现在由事件时序
+        //     天然给出，但**仍不许把探针往前挪**（往前 = 读到的还是写入前的）；
         //  ③ 必须在**诊断视图 blit 之前** —— 那个 blit 会把主目标覆盖成某个 colortex 的
         //     内容，在它之后回读会让「主目标」与「colortex」两个数字指向同一张图，
         //     两源对照静默失效。
@@ -295,24 +283,4 @@ public final class FullscreenPassHook {
         TargetReadback.probeFrameTail();
     }
 
-    /**
-     * 链模式下的 gbuffer 挂点：只有<b>地形</b>。
-     *
-     * <p>🔖 它单独成方法只为两件事：① 本仓 QD-04 那条「&gt;60 行方法」棘轮（**靠提取降，不靠放宽基线**）；
-     * ② 让「诊断档会毁掉本帧地形内容」这个判断只出现在一处。
-     *
-     * <p>🔴 R4 之后这里<b>不再画天空</b>：天空落在<b>原版 "sky" pass 体内</b>（官方天空盒钩子 +
-     * M-11 视图 @Redirect，见 {@code SkyIntoGbuffer}），由 {@code PassOrder} 那条
-     * 「terrain requires sky」保证它在先 ⇒ 两档（帧图 / AfterLevel）共用同一路天空，
-     * 每帧恰好一次，不需要按档重复调用（旧实现要在两个挂点各接一次，正是 GAP-039 那条
-     * 「我方重放不看原版门控」的成因）。
-     */
-    private static void paintGbufferAndTerrain() {
-        if (!MrtTerrainPass.afterLevel()) {
-            return;
-        }
-        if (MrtTerrainPass.enabled()) {
-            MrtTerrainPass.drawAfterLevel();
-        }
-    }
 }

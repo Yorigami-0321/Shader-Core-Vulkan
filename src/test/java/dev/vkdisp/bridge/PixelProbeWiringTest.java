@@ -93,17 +93,21 @@ class PixelProbeWiringTest {
     @DisplayName("🔖🔖 探针必须在**地形 MRT pass 之后**（否则 toMain 档读到的是写入前的内容）")
     void probeRunsAfterTerrainPass() {
         // 🔖🔖 本轮实测踩到：探针首版放在 FrameApi#drawFullscreen 的末尾，
-        //   而地形 MRT pass（afterLevel 模式）是由 Hook 在**那个方法返回之后**才调的
+        //   而地形 MRT pass（当时的 afterLevel 模式）是由 Hook 在**那个方法返回之后**才调的
         //   ⇒ 探针读到的「主目标」是地形 pass **写入之前**的内容
         //   ⇒ 恰好在 `mrt.terrainToMain=true`（GAP-008 取证那一档）失效，
         //   而且日志上完全看不出来（数字照打，只是早了半帧）。
+        // 🔴 R5 退役了那条车道 ⇒ 地形现在只在我方**帧图 pass** 里画，那一刻比本事件更早
+        //   （frame.execute = LevelRenderer:286，AfterLevel 由 GameRenderer 在 render 返回后 post）
+        //   ⇒ 「晚于地形」这件事现在由时序天然给出；但探针**仍不许往前挪**（挪进链里 = 又回到
+        //   「写入之前」那个形状，而这一档失效同样是零报错的）。守卫因此改成查「往后没被挪走」。
         String hook = readOrSkip(HOOK);
         int probeAt = hook.indexOf("TargetReadback.probeFrameTail()");
-        int terrainAt = hook.indexOf("MrtTerrainPass.drawAfterLevel()");
-        assertTrue(probeAt > 0 && terrainAt > 0, "找不到探针调用或地形 pass 调用");
-        assertTrue(terrainAt < probeAt,
-                "探针必须在地形 MRT pass 之后 —— 在它之前读主目标，"
-                        + "读到的不是「地形有没有落到主目标」而是「落点之前长什么样」");
+        assertTrue(probeAt > 0, "找不到探针调用");
+        assertTrue(hook.indexOf("FrameApi.drawPostChain(") < probeAt,
+                "探针必须在链跑完之后再取 —— 链自己就写主目标，在它之前读等于读上一帧的尾巴");
+        assertFalse(hook.contains("MrtTerrainPass.drawAfterLevel"),
+                "「在钩子里补画地形」那条车道应已整个删除（它曾是这条判据成立的前提，现在由帧图时序给出）");
     }
 
     @Test

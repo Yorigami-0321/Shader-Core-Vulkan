@@ -192,13 +192,9 @@ public final class MrtTerrainPass {
         if (!enabled()) {
             return;
         }
-        // 🔴 R4：天空的钩子在<b>两档都要装</b>，所以必须在 afterLevel 的早退<b>之前</b> ——
-        //   它装的是「原版 sky pass 体内由谁画天空」，与地形在哪一档画是两个轴。
+        // 🔴 R4：把「本帧由谁画天空」交给官方钩子（它装的是 LevelRenderState 的字段，与地形在
+        //   哪一档画无关 —— 旧 mrt.terrainAfterLevel 那档退役后，这是唯一一条路）。
         SkyIntoGbuffer.installHook();
-        if (afterLevel()) {
-            // A/B 模式：不在帧图里插 pass，改在 AfterLevel 画（见 drawAfterLevel）。
-            return;
-        }
         // 🔴 GAP-027：frameGraph 档里原版 clouds pass 与链无依赖边、排在链之后 ⇒ 不抑制就会
         //   「gbuffer 云 + 原版云」两层同框（2026-10-10 真机截图）。装配期挂钩子，executes 期生效。
         dev.vkdisp.bridge.CloudsIntoGbuffer.installSuppression();
@@ -303,7 +299,8 @@ public final class MrtTerrainPass {
         renderPass.draw(3, 1, 0, 0);
     }
 
-    /** 诊断：附件 0 改用主目标颜色视图（配 {@link #afterLevel()} 使用，屏幕即证据）。 */
+    /** 诊断：附件 0 改用主目标颜色视图（⚠️ 屏幕<b>不再</b>是证据 —— 我方 pass 早于原版 "main"，
+     *  画面随后会被重画；剩下的用途是回读侧的 toMain 判据表，见 {@code PixelProbeVerdict}）。 */
     public static boolean toMain() {
         return VkDispConfig.MRT_TERRAIN_TO_MAIN.get();
     }
@@ -333,11 +330,6 @@ public final class MrtTerrainPass {
     /** 顺序标记是否已打过（每轮只打一次，避免日志 I/O 进热路径）。 */
     private static boolean orderMarkerLogged;
 
-    /** A/B 模式开关：把绘制从帧图内挪到帧图执行之后。 */
-    public static boolean afterLevel() {
-        return VkDispConfig.MRT_TERRAIN_AFTER_LEVEL.get();
-    }
-
     /** 「天空先画 ⇒ 槽 0 走 LOAD」这条自报是否已打过。 */
     private static boolean slot0LoadLogged;
 
@@ -353,18 +345,6 @@ public final class MrtTerrainPass {
      */
     private static boolean skyPrePainted(int slot) {
         return slot == 0 && !toMain() && SkyIntoGbuffer.paintedWriteGeneration();
-    }
-
-    /**
-     * 【诊断 A/B】在帧图**执行完之后**（AfterLevel）画同一批地形到同一批 colortex。
-     *
-     * <p>🔖 <b>为什么需要这个 A/B</b>：帧图 pass 的执行顺序由资源依赖解析，
-     * 我方 pass 不声明任何依赖 ⇒ 可能排在原版地形数据上传**之前**执行。
-     * 若症状是「pass 跑通、0 报错、colortex 只有清屏色」，本开关能一刀切开
-     * 「是顺序/上传时序问题」还是「是绘制本身的问题」。
-     */
-    public static void drawAfterLevel() {
-        drawTerrain();
     }
 
     /** pass 体：真正画地形（跑在帧图**执行期**，即 M-06 捕获之后 ⇒ 拿到的是本帧数据）。 */
@@ -579,10 +559,9 @@ public final class MrtTerrainPass {
             // 🔖 M-13：这里原来是 ORDER-MARK「my-pass executing vs vanilla-main-pass executing」两条
             //   日志对行号反推顺序（h48g 那轮就这么定位到「天空被排到地形之后」）。现在顺序由
             //   PassOrder 显式声明 ⇒ 自报改成「这条边到底连上没有」。
-            VkDisp.LOGGER.info("vkdisp: [M-13] terrain requires vanilla-sky 边已声明={}（{} 档）"
+            VkDisp.LOGGER.info("vkdisp: [M-13] terrain requires vanilla-sky 边已声明={}"
                             + " —— false ⇒ 顺序退回按依赖猜，天空可能被排到地形之后（h48g 的坏形状）",
-                    dev.vkdisp.bridge.PassOrder.edgeDeclared(),
-                    afterLevel() ? "afterLevel" : "frameGraph");
+                    dev.vkdisp.bridge.PassOrder.edgeDeclared());
         }
         // 🔖 探针**不能**在首帧跑：首帧区块还没网格化，drawGroups 必然是空的
         //（本轮踩过：首帧打出 groups=0，一度被误读成「捕获到的数据是空的」）。

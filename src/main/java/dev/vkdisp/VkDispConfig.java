@@ -256,16 +256,13 @@ public final class VkDispConfig {
             .define("mrt.terrain", false);
 
     /**
-     * 🔴 诊断 A/B：把地形 MRT pass 从「帧图内」挪到「帧图执行完之后」。
+     * 诊断：地形 MRT 附件 0 改写**主目标**。
      *
-     * <p>用途：帧图 pass 的顺序由资源依赖解析，我方 pass 不声明依赖 ⇒ 可能早于原版地形
-     * 数据上传执行。本开关用来一刀切开「顺序/上传时序问题」与「绘制本身的问题」。
+     * <p>⚠️ 「屏幕即证据」这句随 {@code mrt.terrainAfterLevel} 车道的退役一起失效（R5 / 2026-10-12）：
+     * 现在地形只可能在帧图里画，而我方那个 pass <b>早于</b>原版 {@code "main"} pass ⇒ 主目标随后会被
+     * 原版重画。本档剩下的用途是**回读侧**：{@code PixelProbeVerdict} 的 toMain 那一族标签
+     * （GAP-008 的定位档 —— 「主黑 + 槽正常」在那一排里读作 albedo ≡ 0，而不是「没落到主目标」）。
      */
-    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_AFTER_LEVEL = BUILDER
-            .comment("诊断：地形 MRT 绘制改在帧图执行完之后执行（默认关）。")
-            .define("mrt.terrainAfterLevel", false);
-
-    /** 诊断：地形 MRT 附件 0 改写**主目标**（配 terrainAfterLevel 用，屏幕即证据）。 */
     public static final ModConfigSpec.BooleanValue MRT_TERRAIN_TO_MAIN = BUILDER
             .comment("诊断：地形 MRT 附件 0 改用主目标颜色视图（默认关）。会清掉主目标画面。")
             .define("mrt.terrainToMain", false);

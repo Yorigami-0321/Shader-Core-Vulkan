@@ -1053,11 +1053,11 @@ public final class FrameApi {
         ring.rotate();
 
         // 🔖 像素回读探针**不在这里调用** —— 它移到 {@code FullscreenPassHook} 的最末尾。
-        //   🔴🔖 本轮实测踩到并修掉：放在这里时，本方法还没跑完、地形 MRT pass
-        //   （{@link MrtTerrainPass#drawAfterLevel()}，由 Hook 在本方法**返回之后**调用）
-        //   也就还没往主目标里画 ⇒ 在 {@code mrt.terrainToMain=true} 这一档下，
-        //   探针读到的「主目标」是**我方 pass 写入之前**的内容 ⇒ 恰好在需要它的时候失效。
-        //   ⇒ 位置必须晚于地形 pass、早于诊断 blit（唯一满足处 = Hook 末尾）。
+        //   🔴🔖 本轮实测踩到并修掉：放在这里时，本方法还没跑完、地形 MRT pass 也还没往主目标里画
+        //   （旧 {@code mrt.terrainAfterLevel} 档下它由 Hook 在本方法**返回之后**才画；R5 起那条
+        //   车道退役 ⇒ 地形只在我方帧图 pass 里画，位置比本方法更早，这条约束自动满足）
+        //   ⇒ 在 {@code mrt.terrainToMain=true} 这一档下，探针读到的「主目标」是**我方 pass 写入
+        //   之前**的内容 ⇒ 恰好在需要它的时候失效。⇒ 位置必须晚于地形 pass、早于诊断 blit。
 
         // GAP-003 多附件能力验证（诊断视图，默认关闭 ⇒ 常规帧到这里零开销）。
         // ⚠️ 放在**整条链之后**：它会把主目标覆盖成某个 colortex 的内容，

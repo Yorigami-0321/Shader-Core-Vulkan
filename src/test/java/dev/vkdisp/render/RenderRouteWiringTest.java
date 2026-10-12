@@ -42,47 +42,46 @@ class RenderRouteWiringTest {
     }
 
     @Test
-    @DisplayName("🔴 链的执行不得被 afterLevel 连带关掉（两个轴各自独立）")
+    @DisplayName("🔴 链的执行只看 chainActive，且「补画地形」的调用必须整个消失（两个轴各一个轴，A/B 车道不许复活）")
     void chainDispatchIsNotGatedOnAfterLevel() {
         String hook = readOrSkip(HOOK);
         int gate = hook.indexOf("if (chainActive) {");
         assertTrue(gate > 0, "链的执行必须只看 chainActive（`if (chainActive) {`）——"
                 + "h48 实测：gate 里带 afterLevel() ⇒ 关诊断档会连带把整条链关掉，"
-                + "那一臂跑的是旧三步链，却被当成「链生效」下了结论");
-        int call = hook.indexOf("FrameApi.drawPostChain(", gate);
-        assertTrue(call > gate, "chainActive 分支里必须真的调用 drawPostChain");
-        assertFalse(hook.substring(gate, call).contains("afterLevel"),
-                "从 `if (chainActive)` 到 drawPostChain 之间不得再出现 afterLevel —— 地形何时画是"
-                        + "另一个轴（它只决定挂点，而挂点已抽成 paintGbufferAndTerrain()，"
-                        + "结构上就与链的条件分开了）");
-        assertTrue(hook.contains("private static void paintGbufferAndTerrain()"),
-                "gbuffer 挂点必须是独立方法；把 afterLevel 写回链的条件里就是 h48 的那次错判");
+                + "于是那一臂跑的是旧三步链而画面像「链生效」，我据此下过一次错结论");
+        int call = hook.indexOf("FrameApi.drawPostChain(");
+        assertTrue(call > gate, "链必须在 gate 里执行");
+        String region = hook.substring(gate, call);
+        // 🔖 只看**调用**，不看注释：h48 那段的说明文字里仍要写「条件里带 afterLevel()」，
+        //   所以这里的针是「补画地形」那两个方法名 —— 它们才是那条 A/B 车道的实体。
+        assertFalse(region.contains("MrtTerrainPass.drawAfterLevel") || region.contains("paintGbufferAndTerrain"),
+                "从 `if (chainActive)` 到 drawPostChain 之间不得再出现「补画地形」—— 地形现在只在我方"
+                        + "帧图 pass 里画一次（M-13 的 requires 边决定它在链之前），R5 已退役 "
+                        + "`mrt.terrainAfterLevel` 那条车道");
+        assertFalse(hook.contains("MrtTerrainPass.afterLevel"),
+                "AfterLevel 档的读取点必须清零：留一个恒真的判档 = 下一条车道又长回来");
+        assertFalse(hook.contains("paintGbufferAndTerrain"),
+                "gbuffer 挂点这个 helper 应随车道退役整个删除（它存在的唯一理由就是「按档补画」）");
     }
 
     @Test
-    @DisplayName("🔖 R4：天空交回原版 \"sky\" pass（钩子 + 视图 @Redirect），我方不再插 sky pass、也不再在 AfterLevel 补画")
+    @DisplayName("🔖 R4/R5：天空交回原版 \"sky\" pass（钩子 + 视图 @Redirect），我方既不再插 sky pass、也不在任何钩子里补画")
     void skyIsHandedOffToTheVanillaSkyPass() {
         String hook = readOrSkip(HOOK);
         assertFalse(hook.contains("SkyIntoGbuffer.render()"),
-                "AfterLevel 档不得再自己画天空：天空现在落在原版 \"sky\" pass 体内，两档共用同一路 ⇒ "
-                        + "这里再调一次就是每帧两遍天空 + 多翻一代（GAP-018 的代次账会算错）");
-        String helper = hook.substring(hook.indexOf("private static void paintGbufferAndTerrain() {"));
-        assertTrue(helper.indexOf("MrtTerrainPass.drawAfterLevel()") > 0,
-                "gbuffer 挂点仍必须只负责地形（链的条件与地形的挂点各一个轴，h48 的成因）");
-        assertTrue(hook.indexOf("paintGbufferAndTerrain();") < hook.indexOf("FrameApi.drawPostChain("),
-                "地形不许排在链**之后**：链跑完 colortex0 就是输出图了，之后画进去的东西没人读");
+                "钩子里不得再自己画天空：天空现在落在原版 \"sky\" pass 体内 ⇒ 这里再画一次"
+                        + "就是每帧两遍天空 + 多翻一代（GAP-018 的代次账会算错）");
 
         String mrt = readOrSkip(MRT);
         int install = mrt.indexOf("SkyIntoGbuffer.installHook();");
-        int afterLevelReturn = mrt.indexOf("if (afterLevel()) {");
-        assertTrue(install > 0 && afterLevelReturn > install,
-                "钩子必须在 afterLevel 的早退**之前**装：它装的是「原版 sky pass 里由谁画天空」，"
-                        + "与地形在哪一档画是两个轴（A/B 档同样要天空进 gbuffer）");
+        int terrainInsert = mrt.indexOf("addPass(\"vkdisp_gbuffer_terrain\")");
+        assertTrue(install > 0 && install < terrainInsert,
+                "钩子必须在装配期、创建我方地形 pass **之前**装：它决定的是「原版 sky pass 里由谁画天空」，"
+                        + "而那一刻已经不可能再补一次（帧图执行期才开始画）");
         assertFalse(mrt.contains("addPass(\"vkdisp_gbuffer_sky\")"),
                 "我方那个 sky pass 应随 R4 删除：留着它 = 每帧两遍天空，而 GAP-039 的四道门控又回到没人判");
         assertFalse(mrt.contains("pass.requires(skyPass);"),
                 "requires 的目标现在由 PassOrder 交成**原版**的 \"sky\" 句柄（M-13），不再是自插的 skyPass");
-        int terrainInsert = mrt.indexOf("addPass(\"vkdisp_gbuffer_terrain\")");
         assertTrue(terrainInsert > 0 && mrt.indexOf("PassOrder.declareOwnTerrain(pass)") > terrainInsert,
                 "h48g 实测：插入序不是依赖，执行序由 resolvePassOrder 按 requires 边解析 ⇒ "
                         + "\"terrain requires 原版 sky\" 这条边必须在创建我方 pass 之后声明");

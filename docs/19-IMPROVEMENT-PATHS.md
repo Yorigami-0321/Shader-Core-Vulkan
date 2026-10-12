@@ -457,6 +457,15 @@ C2b 要动每帧路径，按 QD-04 的教训必须单独一轮；
 | **进程级静态标志当「我在哪个 pass」的证据** | 1 族 | `MrtTerrainPass:119`（`inMrtPass`）+ `:532-539`（`finally` 纪律）+ `:320-322`（**空转守卫**）+ `TerrainPipelineApi:530` | 🔴 `GAP-040`：防护实际为 0 |
 | **图外重放 + 手工同步** | 1 族 | `GbufferTarget`（壳 + 每帧 `repoint`）、`ColortexPool:41-52`（双代轮转）、`DepthSnapshots`（三个手写取点）、`FullscreenPassHook:309-319`（AfterLevel 第二档）、`mrt.terrainAfterLevel` A/B 车道 | 🔴 这一族的**存在理由**是 §5.0.4 那条「走 A 不碰原版 pass」的取舍 —— 该取舍已于 2026-10-12 作废 |
 
+> 🔖 **本表是 2026-10-12 早间那份快照，别按 `file:line` 逐行去跳** —— 阶梯 R0…R5 当天已经改掉大半：
+> ② **手抄原版逻辑**：`SkyIntoGbuffer` 的自抽 `SkyRenderState` 与 `MrtTerrainPass` 那份采样器手抄已删
+> （R3 M-07 / R4 M-11 + 官方天空盒钩子），`TerrainDerivedPlan` / `SceneCaptureApi` / `CloudsIntoGbuffer`
+> 三处仍在；③ **反射读 private**：两处 5 字段全部换成 `@Accessor`（R3 ⇒ `GAP-042` 那一族消失）；
+> ④ **静态标志当「我在哪个 pass」的证据**：`inMrtPass` + 两处 `finally` + 空转守卫 +
+> `MRT_GUARD_FALLBACK` 已删，判据改成 `renderPass` 的**对象同一性**（R1a，M-15）；
+> ⑤ **图外重放**：`GbufferTarget` 整类（R4）与 AfterLevel 第二档 + `mrt.terrainAfterLevel` 车道（R5）
+> 已删 ⇒ 这一族只剩 `ColortexPool` 的双代轮转与 `DepthSnapshots` 的三个手写取点（都还在债单上）。
+
 ### 5A.2 病根（只有一条，别数成五条）
 
 **「不碰原版 pass」被当成永久前提**，于是每个「必须在原版那个时刻/那个位置上做事」的需求都被推成了
@@ -492,7 +501,7 @@ C2b 要动每帧路径，按 QD-04 的教训必须单独一轮；
 | **R2** | ✅ **已落地（2026-10-12 第 3 步，代码级）**：M-06 的 HEAD 点已建、M-05 的类/两个注入点/旧键/`volatile Object`+instanceof 全部删除、pass 体第一行已补 `setShaderFog`。🔴 判据（进水那一帧雾端读数跟着变）**待真机**。**M-06 一点替两点** + 补 `setShaderFog` | M-06（替 M-05）、`GAP-038` | 新增 1 注入点；删 `TerrainDrawCapture` 的 `volatile Object` + `instanceof` | 原版那次 draw 与注入点里 `terrainFog` 的 buffer hash 一致；进水那一帧雾端读数**跟着变** | 1 天 | 🟡 每帧一次赋值 |
 | **R3** | ✅ **已落地（2026-10-12 第 2 步，代码级）**：`src/main/java` 里 `getDeclaredField/setAccessible` 已零命中、自建采样器 42 行已删、云那次压栈/还原已删、`apply` 里的现读配置已移到调用点。🔴 **判据仍未取证**：「各向异性两档锐度随用户设置变」与「同机位同帧读数与今天相同」都要真机 A/B 才能签 ⇒ 本条状态 = 代码完成、验证未结。**删反射族**：M-07 复用原版采样器 / M-08 / M-09 访问器 / M-10 云矩阵 `@Redirect` | M-07…M-10、`GAP-041`、`GAP-042` | 删两处反射块 + 42 行自建采样器 + 云的栈压还原 | 反射的 WARN 分支**物理删除**；各向异性两档锐度随用户设置变；云与今天同帧读数相同 | 1 天 | ❌（判据侧）/ 🟡（采样器） |
 | **R4** | **天空**：包天空搬进官方 `CustomSkyboxRenderer` 钩子 + M-11 视图 `@Redirect`（M-12 仅兜底） | M-11、M-12、`GAP-037`、`GAP-039` | 删 `GbufferTarget` **整类** + `SkyIntoGbuffer` 的第二个 `SkyRenderer` 实例 / 自抽 state / 手工互斥 | 岩浆里**没有**天空；天空深度**只被翻一次**；一百一十轮的星点判据**不回退** | 2 天 | 🟡 **代码已落地（2026-10-12 第 5 步）**：M-11 两条 `@Redirect`（键 `mixin.skyViews`）+ 包天空进官方 `CustomSkyboxRenderer`（`SkyIntoGbuffer.installHook()` 在装配期写字段，回 true 即互斥）；`GbufferTarget` 整类已删、第二个 `SkyRenderer` 与自抽 state/私有深度都删。**未签**：三条判据 + `Mixin apply failed=0` + 自报行 `钩子被调#` 是否非零 |
-| **R5** | 🟡 **半边已落地（2026-10-12，作为 R4 的前置）**：`@WrapOperation` 两个 addPass 调用点已接住原版 sky/main 句柄、`PassOrder` 双向补出 requires 边、ORDER-MARK 两条反推日志已删；**未收口** = `mrt.terrainAfterLevel` 车道仍在、边的效果要真机看 `c0@afterSky`。**M-13 `requires` 边钉死顺序** | M-13 | 删 `MrtTerrainPass:205-215` 的猜测式装配 + ORDER-MARK 日志 + `mrt.terrainAfterLevel` A/B 车道 | `h48g` 那个「天空排在地形之后」的 0.0611 读数**不再可能复现** | 1 天 | 🟡 |
+| **R5** | ✅ **已收口（2026-10-12）**：`@WrapOperation` 两个 addPass 调用点接住原版 sky/main 句柄、`PassOrder` 双向补出 requires 边、ORDER-MARK 两条反推日志已删、`mrt.terrainAfterLevel` 那条 A/B 车道连同 `drawAfterLevel()` / `paintGbufferAndTerrain()` 一起删除 | M-13 | 删 `MrtTerrainPass:205-215` 的猜测式装配 + ORDER-MARK 日志 + `mrt.terrainAfterLevel` A/B 车道 | `h48g` 那个「天空排在地形之后」的 0.0611 读数**不再可能复现** | 1 天 | ✅ 代码收口，⚠️ 判据 `c0@afterSky` 要真机 |
 | **R6** | **M-14 包选项进原版视频设置页** | M-14 | 删 `PackPickerScreen` 整类 + `PackOptionsScreen` 分页与 `fit()` + `ScreenDriveCommand.Page` | 原版页内可滚动、可键盘操作、切包后选项仍在 | 1–2 天 | ❌ |
 | **R7** | 🎯 **M-04 整主 pass 多附件**（**下一轮目标**，用户 2026-10-12 裁决） | M-04、`GAP-003` 的 M-04 未解除项 | `@WrapOperation` `LevelRenderer:456-463` + 主 pass 内每条管线派生 | 地形**只画一遍**（用 R3 的访问器判据，不再用反射）；`FrontendRenderPass:107-121` 零抛；实体/云/天气/描边**不回退** | 未估 | 🔴 整帧 |
 

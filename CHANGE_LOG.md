@@ -6,6 +6,42 @@
 ---
 ---
 
+## 2026-10-12（一百二十一）— ✅ R5 收口（第 6 步前半）：删掉 `mrt.terrainAfterLevel` 那条 A/B 车道 —— 钩子里不再有任何地形绘制调用
+
+> **verdict = 顺序这件事只剩「声明」**：`PassOrder` 那条 requires 边是唯一的顺序来源，
+> 旧的「画在帧图之后」对照臂整个退役 —— 上一条（一百二十）留的「未收口」那一格就此合上。
+
+- **① 为什么现在能删**：那条车道的用途是一刀切开「顺序/上传时序问题」与「绘制本身的问题」
+  （h05 那轮）。它要回答的三个问题后来都由**声明**而不是对照臂回答了：顺序 = M-13 的
+  `terrain requires 原版 sky` 边；本帧数据 = M-06 把捕获挪到执行期读；pass 身份 = M-15 用
+  `renderPass` 对象同一性。留着它反而要维护「两档各接一次天空/地形」这套纪律 —— 而 R4
+  已经让天空只可能在原版 `"sky"` pass 体内画，那条臂在结构上就不成立了。
+- **② 删掉的东西**：`VkDispConfig.MRT_TERRAIN_AFTER_LEVEL`（键 + javadoc）、
+  `MrtTerrainPass.afterLevel()`、`MrtTerrainPass.drawAfterLevel()`、
+  `FullscreenPassHook#paintGbufferAndTerrain()`（helper 整个方法，连它的调用点）、
+  以及 `onAfterLevel` 末尾那段「诊断 A/B：地形挪到帧图执行之后」的分支（含它的 try/catch）。
+  ⇒ **本 mod 的 AfterLevel 钩子里现在没有任何地形绘制调用**；每帧地形只在我方帧图 pass 里画一次。
+- **③ 随车道一起改口径的两条**（都是「注释不能再描述已删的东西」，R0 那条纪律的延续）：
+  ① `mrt.terrainToMain` **保留**，但「屏幕即证据」失效 —— 帧图档里我方 pass 早于原版 `"main"`，
+  主目标随后会被重画 ⇒ 它剩下的用途是**回读侧**的 toMain 判据表（`PixelProbeVerdict` /
+  `PixelProbePlan` 那一族，GAP-008 的定位档）；② `FullscreenPassHook` 里「探针必须在地形 pass
+  之后」那条约束**不再由调用顺序给出**，改由事件时序给出（`frame.execute` = `LevelRenderer:286`
+  早于 AfterLevel）⇒ 探针仍不许往前挪，`FrameApi` 那段说明同步改掉 `{@link ...#drawAfterLevel()}`。
+- **④ h48 那次错判的教训留在原地**（注释里，不删）：那条 gate 曾把「链跑不跑」与「地形何时画」
+  捆在一起 ⇒ 关诊断档连带关掉链，我据此下过一次错结论。守卫跟着换成守「实体」而不是守关键词：
+  `chainDispatchIsNotGatedOnAfterLevel` 现在查的是「补画地形的两个方法名不得再出现」
+  （`drawAfterLevel` / `paintGbufferAndTerrain`），`skyIsHandedOffToTheVanillaSkyPass` 查
+  「钩子在我方 pass 创建之前装 + sky pass 与 requires(skyPass) 都已删」，
+  `PixelProbeWiringTest#probeRunsAfterTerrainPass` 改查「晚于链 + 车道实体已删」。
+- **影响的文档**：`04-SPEC` §5.0 的 M-13 行（本条收口，判据仍待真机）、
+  `19-IMPROVEMENT-PATHS` §5A.4 的 R5 行（🟡 → ✅ 代码收口）。
+- **测试结果**：`./gradlew cleanTest test --offline` → **BUILD SUCCESSFUL**（1166 条真跑，1 条既有 skip）。
+  `VkDispConfig` 因为删掉了键，从 1047 降到 1044 行（上限按棘轮口径可再降，本轮没动名单）。
+- **未收口（如实）**：车道删掉之后，「我方 pass 在帧图里排在原版 main 之前/之后」这件事只剩
+  日志自报 + 真机读数可验（`c0@afterSky` 要落在 72.85~84.50 那一排）；`Mixin apply failed = 0`
+  同样没跑。**下一步**：第 6 步后半 = M-14 把包选择接进 `VideoSettingsScreen#addOptions` TAIL，
+  删 `PackPickerScreen` + 自研分页。
+
 ## 2026-10-12（一百二十）— 🟡 R4 第 5 步（天空）：包天空搬进官方 `CustomSkyboxRenderer` 钩子 + 原版天空两视图 `@Redirect`（M-11），`GbufferTarget` 整类删除
 
 > **verdict = 天空从「我方自己插一个 pass 无条件重放」改成「就在原版 `"sky"` pass 体内」**：
