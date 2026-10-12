@@ -261,13 +261,24 @@ class MrtTerrainPassWiringTest {
     }
 
     @Test
-    @DisplayName("🔖 依赖 M-05 的捕获：拿不到数据时静默跳过（未启用不是失败）")
-    void dependsOnM05Capture() {
+    @DisplayName("🔖 依赖 M-06 的捕获：拿不到数据时静默跳过，且类型化到不再需要 instanceof")
+    void dependsOnM06Capture() {
         String pass = readOrSkip(PASS);
         assertTrue(pass.contains("TerrainDrawCapture.current()"),
-                "必须从 M-05 捕获处取地形 draw 数据");
-        assertTrue(pass.contains("if (captured == null)"),
-                "捕获为空时应静默跳过 —— 「未启用 M-05」不是失败，M-05 自己的埋点负责可见性");
+                "必须从 M-06 捕获处取地形 draw 数据");
+        assertTrue(pass.contains("if (draws == null)"),
+                "捕获为空时应静默跳过 —— 「未启用 M-06」不是失败，M-06 自己的埋点负责可见性");
+        // 🔴 R2 的「两点收一点」在这里的可验收证据：捕获存的类型是 ChunkSectionsToRender（由注入点
+        //   形参保证），于是旧 M-05 那套 volatile Object + 模式匹配 instanceof + 「捕获到别的东西」
+        //   的 ERROR 分支必须整体消失 —— 留着就是用一个运行时猜测替编译期类型再加一层。
+        // ⚠️ 判据只认「捕获那一次的类型猜测」这个形状，不认所有 instanceof：
+        //    probeDrawCounts 里对 public record 元素类型的 instanceof 是正当的（M-08 用它读 drawCount）。
+        assertEquals(0, countCode(pass, "instanceof ChunkSectionsToRender draws"),
+                "M-06 之后不该再有「instanceof ChunkSectionsToRender draws」：形参类型已经保证");
+        assertEquals(0, countCode(pass, "Object captured"),
+                "捕获不应再以 Object 形态存在（旧 M-05 的 volatile Object 已换成类型化字段）");
+        assertTrue(pass.contains("ChunkSectionsToRender draws = TerrainDrawCapture.current()"),
+                "取用点应直接按类型接（TerrainDrawCapture.current() 已返回 ChunkSectionsToRender）");
     }
 
     @Test

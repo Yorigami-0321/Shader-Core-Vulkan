@@ -111,14 +111,14 @@ class MixinWiringTest {
         String config = readOrSkip(CONFIG);
         assertTrue(config.contains("mixin.wireTerrain"), "M-01 缺少可关闭键 mixin.wireTerrain");
         assertTrue(config.contains("mixin.bindTerrainParams"), "M-01b 缺少可关闭键 mixin.bindTerrainParams");
-        assertTrue(config.contains("mixin.captureTerrainDraws"), "M-05 缺少可关闭键 mixin.captureTerrainDraws");
+        assertTrue(config.contains("mixin.captureMainPassArgs"), "M-06 缺少可关闭键 mixin.captureMainPassArgs");
         assertTrue(config.contains("mixin.reuseChunkSampler"), "M-07 缺少可关闭键 mixin.reuseChunkSampler");
         assertTrue(config.contains("mixin.terrainDrawProbe"), "M-08 缺少可关闭键 mixin.terrainDrawProbe");
         assertTrue(config.contains("mixin.cloudProbe"), "M-09 缺少可关闭键 mixin.cloudProbe");
         assertTrue(config.contains("mixin.cloudMatrixRedirect"), "M-10 缺少可关闭键 mixin.cloudMatrixRedirect");
         assertTrue(config.contains("define(\"mixin.wireTerrain\", true)"), "M-01 默认应为开");
         assertTrue(config.contains("define(\"mixin.bindTerrainParams\", true)"), "M-01b 默认应为开");
-        assertTrue(config.contains("define(\"mixin.captureTerrainDraws\", true)"), "M-05 默认应为开");
+        assertTrue(config.contains("define(\"mixin.captureMainPassArgs\", true)"), "M-06 默认应为开");
         assertTrue(config.contains("define(\"mixin.reuseChunkSampler\", true)"), "M-07 默认应为开");
         assertTrue(config.contains("define(\"mixin.terrainDrawProbe\", true)"), "M-08 默认应为开");
         assertTrue(config.contains("define(\"mixin.cloudProbe\", true)"), "M-09 默认应为开");
@@ -126,31 +126,37 @@ class MixinWiringTest {
     }
 
     @Test
-    @DisplayName("M-05：只读捕获必须同时注入两个 prepareChunkRenders* 重载（漏一个就捕获不到）")
-    void m05CapturesBothOverloads() {
-        // 原版二选一（LevelRenderer#render 第 269-275 行，由 usingMultiDrawIndirectForTerrain 决定），
-        // 本机 lavapipe 走 indirect 分支 ⇒ 两个都必须注入。
-        assertTrue(readOrSkip(MIXIN_DIR.resolve("LevelRendererChunkCaptureMixin.java"))
-                .contains("@Inject(method = \"prepareChunkRenders\""));
-        assertTrue(readOrSkip(MIXIN_DIR.resolve("LevelRendererChunkCaptureMixin.java"))
-                .contains("@Inject(method = \"prepareChunkRendersIndirect\""));
+    @DisplayName("M-06：两点收一点 —— M-05 那两个 prepareChunkRenders* 的 RETURN 注入必须已删除")
+    void m06ReplacesBothM05Points() throws java.io.IOException {
+        assertFalse(Files.exists(MIXIN_DIR.resolve("LevelRendererChunkCaptureMixin.java")),
+                "M-05 的注入类必须随 M-06 落地一起删除 —— 留着就是两个捕获点并存，"
+                        + "「谁写本帧捕获」重新变成运行时竞争（旧类存在的唯一理由就是拿返回值）");
+        String config = readOrSkip(CONFIG);
+        assertFalse(config.contains("mixin.captureTerrainDraws"),
+                "旧键 mixin.captureTerrainDraws 应已被 mixin.captureMainPassArgs 取代（一扇门不许两把钥匙）");
+        String mixin = readOrSkip(MIXIN_DIR.resolve("LevelRendererMainPassCaptureMixin.java"));
+        assertTrue(mixin.contains("MixinTargets.LEVEL_RENDERER_ADD_MAIN_PASS"),
+                "M-06 的注入方法名必须来自 MixinTargets 常量（M1 编码约束 ①）");
+        assertTrue(mixin.contains("@At(\"HEAD\")"),
+                "只读捕获要在 HEAD：五个形参在方法体第一句就可读，不必等返回值");
     }
 
     @Test
-    @DisplayName("M-05：捕获必须是非空的 RETURN 注入（不得 cancellable，否则能改掉原版返回值）")
-    void m05IsReadOnlyReturnInjection() {
-        String mixin = readOrSkip(MIXIN_DIR.resolve("LevelRendererChunkCaptureMixin.java"));
-        assertEquals(2, countCodeOccurrences(mixin, "@Inject("),
-                "M-05 应恰好两个注入（两个重载各一个；注释里的字面量不计）");
-        // 只读的两条硬证据：@At("RETURN") 且不出现 cancellable。
-        // ⚠️ 只查代码行：类 javadoc 里正好解释了「cancellable 为何刻意为 false」，
-        // 全文匹配会被这段说明自己判为违规。
+    @DisplayName("M-06：全类恰好一个非取消的 @Inject，且 terrainFog 与地形 draw 两个形参都照抄")
+    void m06IsSingleReadOnlyHeadInjection() {
+        String mixin = readOrSkip(MIXIN_DIR.resolve("LevelRendererMainPassCaptureMixin.java"));
+        assertEquals(1, countCodeOccurrences(mixin, "@Inject("),
+                "两点收一点 ⇒ 全类恰好一个注入（旧 M-05 是两个重载各一个）");
+        // 只读的三条硬证据：在 HEAD、不 cancellable、不 setReturnValue。
+        // ⚠️ 只查代码行：类 javadoc 里解释了「cancellable 为何刻意不写」，全文匹配会被自己的说明判红。
         assertEquals(0, countCodeOccurrences(mixin, "cancellable"),
-                "M-05 是只读捕获，代码里出现 cancellable 就意味着能改掉原版返回值");
-        assertEquals(2, countCodeOccurrences(mixin, "@At(\"RETURN\")"),
-                "两个注入都必须是 RETURN 位置");
+                "M-06 是只读捕获，代码里出现 cancellable 就意味着能改掉原版行为");
         assertEquals(0, countCodeOccurrences(mixin, "setReturnValue("),
-                "M-05 不得调 setReturnValue —— 那是改原版行为，不是只读捕获");
+                "M-06 不调 setReturnValue —— 那是改原版行为，不是只读捕获");
+        assertTrue(mixin.contains("GpuBufferSlice terrainFog"),
+                "雾切片必须被捕获（GAP-038 补雾的唯一来源，旧 M-05 拿不到它）");
+        assertTrue(mixin.contains("ChunkSectionsToRender chunkSectionsToRender"),
+                "地形 draw 数据必须被捕获，且类型化（bridge 侧因此不再存 Object）");
     }
 
     /**
@@ -247,8 +253,13 @@ class MixinWiringTest {
                 MixinTargets.CHUNK_SECTIONS_TO_RENDER);
         assertEquals("renderLayers", MixinTargets.CHUNK_SECTIONS_RENDER_LAYERS);
         assertEquals("net.minecraft.client.renderer.LevelRenderer", MixinTargets.LEVEL_RENDERER);
-        assertEquals("prepareChunkRenders", MixinTargets.LEVEL_RENDERER_PREPARE_CHUNK_RENDERS);
-        assertEquals("prepareChunkRendersIndirect", MixinTargets.LEVEL_RENDERER_PREPARE_CHUNK_RENDERS_INDIRECT);
+        assertEquals("addMainPass", MixinTargets.LEVEL_RENDERER_ADD_MAIN_PASS);
+        // 🔴 M-05 的两个常量随注入点一起删除（M-06 用同一个 addMainPass 点拿两样东西）：
+        //    这里刻意断言「不再有 prepareChunkRenders 常量」，免得下一轮有人把它加回来。
+        assertEquals(0, countCodeOccurrences(readOrSkip(Path.of(
+                        "src/main/java/dev/vkdisp/bridge/MixinTargets.java")),
+                "LEVEL_RENDERER_PREPARE_CHUNK_RENDERS"),
+                "M-05 已退役：MixinTargets 里不该再留 prepareChunkRenders* 的目标常量");
         // R3（M-07…M-10）新增的目标 —— 逐字对着 26.3.0.41-beta sources jar 的声明核。
         assertEquals("net.minecraft.client.renderer.CloudRenderer", MixinTargets.CLOUD_RENDERER);
         assertEquals("quadCount", MixinTargets.CLOUD_RENDERER_QUAD_COUNT);
