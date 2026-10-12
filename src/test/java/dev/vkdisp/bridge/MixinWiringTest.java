@@ -119,6 +119,8 @@ class MixinWiringTest {
         assertTrue(config.contains("mixin.passAwarePipeline"), "M-15 缺少可关闭键 mixin.passAwarePipeline");
         assertTrue(config.contains("mixin.pinPassOrder"), "M-13 缺少可关闭键 mixin.pinPassOrder");
         assertTrue(config.contains("mixin.skyViews"), "M-11 缺少可关闭键 mixin.skyViews");
+        assertTrue(config.contains("mixin.packOptionsInVanilla"),
+                "M-14 缺少可关闭键 mixin.packOptionsInVanilla");
         assertTrue(config.contains("define(\"mixin.wireTerrain\", true)"), "M-01 默认应为开");
         assertTrue(config.contains("define(\"mixin.bindTerrainParams\", true)"), "M-01b 默认应为开");
         assertTrue(config.contains("define(\"mixin.captureMainPassArgs\", true)"), "M-06 默认应为开");
@@ -128,6 +130,40 @@ class MixinWiringTest {
         assertTrue(config.contains("define(\"mixin.cloudMatrixRedirect\", true)"), "M-10 默认应为开");
         assertTrue(config.contains("define(\"mixin.passAwarePipeline\", true)"), "M-15 默认应为开");
         assertTrue(config.contains("define(\"mixin.skyViews\", true)"), "M-11 默认应为开");
+    }
+
+    @Test
+    @DisplayName("R6 / M-14：包选项进原版视频设置页 —— 第一个 GUI 注入点的约束 + 自研分页不许复活")
+    void m14EmbedsPackOptionsIntoVanillaScreen() {
+        String mixin = readOrSkip(MIXIN_DIR.resolve("VideoSettingsPackOptionsMixin.java"));
+        assertTrue(mixin.contains("MixinTargets.VIDEO_SETTINGS_SCREEN")
+                        && mixin.contains("MixinTargets.VIDEO_SETTINGS_ADD_OPTIONS"),
+                "M-14 的目标类与方法都必须来自 MixinTargets 常量（M1 编码约束 ①）");
+        assertTrue(mixin.contains("@At(\"TAIL\")"),
+                "必须挂在 addOptions 的 TAIL：原版自己那批行要先在，我们的行才排在它们后面");
+        assertTrue(mixin.contains("@Shadow"),
+                "OptionsSubScreen#list 是父类 protected 字段 ⇒ 用 @Shadow 交出；用反射读就是新欠一格 GAP-042");
+        assertEquals(1, countCodeOccurrences(mixin, "require = 1"),
+                "注入点只有一处且要 require=1：addOptions 改名/签名一变就当场硬失败");
+        assertTrue(mixin.contains("VanillaPackOptionsPage.onAddOptions"),
+                "注入方法只许转发（X25）：建行与会话生命周期都在 screen 侧");
+
+        String config = readOrSkip(CONFIG);
+        assertTrue(config.contains("define(\"mixin.packOptionsInVanilla\", true)"),
+                "M-14 默认应为开（关掉 = 原版页里没有 vkdisp 段，那是回退档不是默认档）");
+
+        String page = readOrSkip(Path.of("src/main/java/dev/vkdisp/screen/VanillaPackOptionsPage.java"));
+        // 🔖 针要挑**代码形状**而不是裸词：本类的注释里必须写清「旧屏幕那套分页」的名字，
+        //    查裸词会在自己的说明文字上误红（本轮踩过一次）。
+        for (String gone : new String[] {"turnPage(", "int layoutPageSize", "fitLabel(", "rowsPerColumn"}) {
+            assertFalse(page.contains(gone),
+                    "R6 要删的就是这套自研分页/标签截断 ⇒ 它不许在新页里复活：" + gone);
+        }
+        assertTrue(page.contains("list.addSmall") && page.contains("list.addHeader")
+                        && page.contains("list.addBig"),
+                "必须走原版 OptionsList 的三个装配方法（滚动、每行两列、标签、关屏 apply 都由原版做）");
+        assertTrue(page.contains("PackPickerCandidates"),
+                "候选与标签仍走 PackPickerCandidates（那份纯逻辑已有单测，不许在新页里重抄一遍）");
     }
 
     @Test

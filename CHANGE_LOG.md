@@ -6,6 +6,54 @@
 ---
 ---
 
+## 2026-10-12（一百二十三）— 🟡 R6 第 6 步后半（M-14 · 上半）：包选项进<b>原版视频设置页</b> —— 新增通路，自研屏幕这一提交先不删
+
+> **verdict = 原版页里现在能选包、能改包选项**：分页/双列/标签截断那一族自己算的版式整个不进新页，
+> 交回原版 `OptionsList`；但旧屏幕还没删（下一提交），所以这是一个「两条通路并存」的中间态。
+
+- **① 为什么挂在 `addOptions` 的 TAIL**：`VideoSettingsScreen:108` 那个 `protected addOptions()`
+  （实现 `OptionsSubScreen:52` 的 abstract）里，原版自己就在往 `list` 加行（`addHeader/addBig/addSmall`）
+  ⇒ TAIL 接上去，vkdisp 那些行天然排在原版行之后，且**一次开屏只跑一趟**（挂 `init` 的 TAIL 会被
+  换尺寸/重建立刻跑第二趟，那是重复加行的形状）。
+- **② 本仓第一个 GUI 屏幕注入点**：`mixin/VideoSettingsPackOptionsMixin` —— 目标类名与方法名都来自
+  `MixinTargets`（`VIDEO_SETTINGS_SCREEN` / `VIDEO_SETTINGS_ADD_OPTIONS`），`@Inject(at=@At("TAIL"),
+  require=1, expect=1)`，方法体一行转发到 `screen/VanillaPackOptionsPage.onAddOptions(list)`（X25）。
+  `OptionsSubScreen#list` 是父类的 `protected` 字段（第 21 行）⇒ 用 `@Shadow` 交出，
+  **不用反射**（反射那一族刚在 R3 清零，不许为新页面再欠一格 GAP-042）。
+  可关闭键 `mixin.packOptionsInVanilla`（默认开）。
+- **③ 新页只做「加行」**：`VanillaPackOptionsPage` 只用原版三个 public 装配方法 ——
+  `addHeader(Component)` / `addBig(OptionInstance|AbstractWidget)` / `addSmall(OptionInstance...)`
+  （后者自己每行配两个）。⇒ 滚动、每行两列、标签绘制、键盘导航与朗读、关屏时
+  `list.applyUnsavedChanges()`（`OptionsSubScreen:72-74`）全是原版在做；
+  旧屏幕那套 `layoutPageSize` / `turnPage` / `fitLabel` / 页码绘制<b>一行都不进新页</b>（守卫按
+  代码形状查这四个名字，注释里提到不算红）。
+- **④ 行的内容与能力平移**：
+  ① 光影包选择 = `OptionInstance<String>`（候选与标签仍走 `PackPickerCandidates`，那份纯逻辑已有单测；
+  含「自动 / 无 / 当前值不在库存时的占位」）；setter 就是旧 `onPick` 的两步 `SHADER_PACK.set + save`，
+  重载仍走 FML 文件监听那条既有通路。
+  ② 声明了取值列表的选项 = 循环按钮行（`values != null && values.contains(current)` 才走这支）。
+  ③ <b>没</b>声明取值列表的选项 = `EditBox` 行，靠 `addSmall(box, captionInstance, null)` 拿到原版标签
+  ⇒ 旧屏幕那批文本框不静默消失（X11）。
+  ④ 两颗按钮：「应用并重载资源包」（文本框终同步 → `session.commit` → `store.save` →
+  `reloadResourcePacks`，落盘失败 = ERROR 且不假装成功）与「重置本包」（只改内存，等应用才落盘）。
+  旧页脚的「放弃」由原版关屏给出 ⇒ 不再自造。
+- **⑤ 一条真实的语义差，写在页头而不是藏起来**：换了包之后，本页那些选项行仍属于<b>开屏那一刻</b>
+  的那个包 —— 原版不给外部「重建这一页」的入口。⇒ 日志与包选择行的回调里都点名「要换一批选项请重开
+  本页」，不假装它与旧屏幕逐字等价。
+- **⑥ 为什么这一提交不删旧屏幕**：`PackPickerScreen` / `PackOptionsScreen` / `PackOptionsDrive` /
+  `ScreenDriveCommand.Page` 与 `VkDispClient` 的 `IConfigScreenFactory` 是<b>当前唯一的入口</b>；
+  M-14 的画面判据（原版页内可滚动、可键盘操作、切包后选项仍在）一条都还没真机跑过。
+  先加通路、后删旧路 ⇒ 每一步都是绿的、且真机失败时不用回滚代码就能退回旧入口。删除动作在下一提交。
+- **影响的文档**：`04-SPEC` §5.0 M-14 行（🟡 整合已落地 + 键名按实现写成 `mixin.packOptionsInVanilla`）。
+- **测试结果**：`./gradlew cleanTest test --offline` → **BUILD SUCCESSFUL**（1167 条，1 条既有 skip）。
+  新守卫：`MixinWiringTest#m14EmbedsPackOptionsIntoVanillaScreen`（TAIL / @Shadow / require=1 / 只转发 /
+  键默认开 / 分页部件不许复活 / 必须走那三个装配方法 / 候选逻辑不许重抄）
+  + `everyInjectionPointHasItsOwnToggle` 补 `mixin.packOptionsInVanilla` 两条断言。
+  `VkDispConfig` 压回 1047 行内（把 M-11 的两行注释并成一行）。
+- **未收口（如实）**：本注入点从没在真机上跑过（`Mixin apply failed=0`、`@Shadow` 是否命中继承来的
+  `list`、原版页里 vkdisp 段是否可见可用可键盘操作）⇒ 三条画面判据 + 一条日志自报都要真机。
+  **下一步**：M-14 下半 —— 删旧屏幕那三件 + `Page` 变体 + 重接 `VkDispClient` 入口 + 跟着改三条测试。
+
 ## 2026-10-12（一百二十二）— ✅ 闸门解锁：`04-SPEC` §5.0.6 ⑤ 三项待核逐条核完（源码级），R7 的成本锁解除
 
 > **verdict = 三项都结在源码里，没一项需要开客户端**；结论里两条**缩小**了 R7 的范围、一条**收窄**了

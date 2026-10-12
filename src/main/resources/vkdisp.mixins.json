@@ -15,7 +15,8 @@
     "FrameGraphPassOrderMixin",
     "LevelRendererChunkSamplerMixin",
     "LevelRendererMainPassCaptureMixin",
-    "SkyRendererViewRedirectMixin"
+    "SkyRendererViewRedirectMixin",
+    "VideoSettingsPackOptionsMixin"
   ],
   "injectors": {
     "defaultRequire": 1

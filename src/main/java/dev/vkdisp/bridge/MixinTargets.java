@@ -222,6 +222,25 @@ public final class MixinTargets {
                     + "Lcom/mojang/renderpearl/api/pipeline/CompiledRenderPipeline;";
 
     /**
+     * {@code net.minecraft.client.gui.screens.options.VideoSettingsScreen} —— M-14 的目标类
+     * （R6：包选项进原版视频设置页）。这是<b>本仓第一个 GUI 屏幕注入点</b>（类别闸门已于
+     * 2026-10-12 废除，见类注释 M1 现行口径）。
+     */
+    public static final String VIDEO_SETTINGS_SCREEN =
+            "net.minecraft.client.gui.screens.options.VideoSettingsScreen";
+
+    /**
+     * {@code VideoSettingsScreen#addOptions()} —— <b>protected、无参</b>，第 <b>108</b> 行
+     * （实现 {@code OptionsSubScreen:52} 的 abstract）。M-14 的注入方法（TAIL）。
+     *
+     * <p>体形（sources jar 核实）：原版自己就在里面调 {@code list.addHeader / addBig / addSmall}
+     * ⇒ 我们在 TAIL 接着加同一种行，滚动、每行两列、标签绘制、关屏 {@code applyUnsavedChanges}
+     * 全是原版在做。列表本身在 {@code OptionsSubScreen} 第 21 行
+     * （{@code protected @Nullable OptionsList list}）⇒ mixin 侧用 {@code @Shadow} 交出。
+     */
+    public static final String VIDEO_SETTINGS_ADD_OPTIONS = "addOptions";
+
+    /**
      * {@code net.minecraft.client.renderer.SkyRenderer} —— M-11 的目标类。
      *
      * <p>原版在 {@code LevelRenderer} 第 372-378 行按 {@code shouldResetSkyRenderer} 重建它，

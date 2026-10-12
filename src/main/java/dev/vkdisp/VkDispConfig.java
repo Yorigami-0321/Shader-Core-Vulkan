@@ -427,9 +427,8 @@ public final class VkDispConfig {
 
     /**
      * U0001f50d **GAP-011 二分诊断**：跳过 `gameRenderer.lighting().setupFor(LEVEL)`。
-     * <p>该调用改的是**全局**光照状态，而我方 pass 跑在 AfterLevel（帧图执行完之后），
- * 结束后没有任何 pass 会重画主目标 ⇒ 残留状态直接作用到**下一帧**。
-     * <p>判据：跳过它之后**天空是否恢复成蓝色**（见 h17 证据）。默认 false = 保持当前行为。
+     * <p>该调用改的是**全局**光照状态，而我方 pass 现在跑在帧图内（R5 起 AfterLevel 车道已删），
+     * 残留状态会作用到同帧后续原版 pass 与下一帧。<p>判据：跳过它之后**天空是否恢复成蓝色**（h17 证据）。默认 false = 保持当前行为。
      */
     public static final ModConfigSpec.BooleanValue MRT_SKIP_LIGHTING_SETUP = BUILDER
             .comment("诊断（GAP-011 二分）：跳过 lighting().setupFor(LEVEL)（默认关 = 保持当前行为）。")
@@ -876,11 +875,15 @@ public final class VkDispConfig {
                     + "关掉 = 回到 mrt.skyPass 的原版重放档；配不上顶点/输出不是单槽 0/这一路抛 ⇒ 自动退回原版档并点名一次，不静默换绑。")
             .define("mrt.skyPackShader", true);
 
-    /** 🔴 R4 / M-11 开关：原版天空取<b>视图实参</b>的那两次调用换成我方 gbuffer（默认开；登记见 04-SPEC §5.0）。
-     *  关档 = 原版天空回主目标、我方槽 0 由地形清屏 ⇒ 黑天空档（A/B 用）。 */
+    /** 🔴 R4 / M-11 开关：原版天空取视图实参的那两次调用换成我方 gbuffer（默认开；04-SPEC §5.0）。关档 = 原版天空回主目标、槽 0 由地形清屏 ⇒ 黑天空档。 */
     public static final ModConfigSpec.BooleanValue MIXIN_SKY_VIEWS = BUILDER
             .comment("R4 M-11：SkyRenderer#render 的两次取视图交出 colortex0 待写代 + gbuffer 深度（旧薄壳已删）。关闭 = 原版天空回主目标。")
             .define("mixin.skyViews", true);
+
+    /** 🔴 R6 / M-14 开关：包选项进原版视频设置页（默认开；登记见 04-SPEC §5.0）。关档 = 本页不出现 vkdisp 那一段。 */
+    public static final ModConfigSpec.BooleanValue MIXIN_PACK_OPTIONS_IN_VANILLA = BUILDER
+            .comment("R6 M-14：把光影包与包选项嵌进原版视频设置页的 OptionsList（滚动、每行两列、标签、关屏 apply 都由原版做）。关闭 = 本页没有 vkdisp 段（自研屏幕已随 R6 删除，只能改配置文件）。")
+            .define("mixin.packOptionsInVanilla", true);
 
     /**
      * GAP-027 第二刀：把**云**画进 gbuffer（默认关）。
