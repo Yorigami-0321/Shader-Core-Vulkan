@@ -14,7 +14,8 @@
     "CloudRendererMeshProbeMixin",
     "FrameGraphPassOrderMixin",
     "LevelRendererChunkSamplerMixin",
-    "LevelRendererMainPassCaptureMixin"
+    "LevelRendererMainPassCaptureMixin",
+    "SkyRendererViewRedirectMixin"
   ],
   "injectors": {
     "defaultRequire": 1

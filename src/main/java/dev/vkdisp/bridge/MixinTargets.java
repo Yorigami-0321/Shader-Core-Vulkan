@@ -221,6 +221,39 @@ public final class MixinTargets {
                     + "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)"
                     + "Lcom/mojang/renderpearl/api/pipeline/CompiledRenderPipeline;";
 
+    /**
+     * {@code net.minecraft.client.renderer.SkyRenderer} —— M-11 的目标类。
+     *
+     * <p>原版在 {@code LevelRenderer} 第 372-378 行按 {@code shouldResetSkyRenderer} 重建它，
+     * 构造参数是 {@code gameRenderer.mainRenderTarget()} ⇒ <b>它持有的那张 RenderTarget 就是主目标</b>。
+     * M-11 不换个壳给它，而是把它<b>取视图的那两次调用</b>换掉（见下两条常量）。
+     */
+    public static final String SKY_RENDERER = "net.minecraft.client.renderer.SkyRenderer";
+
+    /**
+     * {@code SkyRenderer#render(GpuBufferSlice, SkyRenderState)} —— public，第 **132** 行；
+     * M-11 的注入方法。
+     *
+     * <p>体形（sources jar 逐字核实）：第 133 行 {@code setShaderFog(skyFog)}，第 <b>134/135</b> 行
+     * 两次 {@code renderTarget.getXxxTextureView()}，第 137-139 行<b>自己</b>建 "Sky" pass，
+     * 两个附件都是 {@code Optional.empty()/OptionalDouble.empty()} = <b>LOAD 语义</b>。
+     * 🔖 全仓库里它只有一个调用点（{@code LevelRenderer:386}，在 {@code "sky"} pass 体内、
+     * 那一刻没有任何 render pass 打开）⇒ 这两条 @Redirect 的作用域天然只覆盖原版天空那一笔。
+     */
+    public static final String SKY_RENDERER_RENDER =
+            "render(Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;"
+                    + "Lnet/minecraft/client/renderer/state/level/SkyRenderState;)V";
+
+    /** {@code RenderTarget#getColorTextureView()}（第 129 行，返回 {@code @Nullable GpuTextureView}）—— M-11 第一处被替换的调用。 */
+    public static final String RENDER_TARGET_GET_COLOR_TEXTURE_VIEW =
+            "com.mojang.blaze3d.pipeline.RenderTarget.getColorTextureView()"
+                    + "Lcom/mojang/renderpearl/api/textures/GpuTextureView;";
+
+    /** {@code RenderTarget#getDepthTextureView()}（第 137 行）—— M-11 第二处被替换的调用。 */
+    public static final String RENDER_TARGET_GET_DEPTH_TEXTURE_VIEW =
+            "com.mojang.blaze3d.pipeline.RenderTarget.getDepthTextureView()"
+                    + "Lcom/mojang/renderpearl/api/textures/GpuTextureView;";
+
     /** 本契约版本（与 {@link ContractVersion#VERSION} 一致）。 */
     public static final int CONTRACT_VERSION = 1;
 

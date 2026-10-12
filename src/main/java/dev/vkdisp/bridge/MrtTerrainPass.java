@@ -192,6 +192,9 @@ public final class MrtTerrainPass {
         if (!enabled()) {
             return;
         }
+        // 🔴 R4：天空的钩子在<b>两档都要装</b>，所以必须在 afterLevel 的早退<b>之前</b> ——
+        //   它装的是「原版 sky pass 体内由谁画天空」，与地形在哪一档画是两个轴。
+        SkyIntoGbuffer.installHook();
         if (afterLevel()) {
             // A/B 模式：不在帧图里插 pass，改在 AfterLevel 画（见 drawAfterLevel）。
             return;
@@ -202,26 +205,16 @@ public final class MrtTerrainPass {
         // 🔖 M-13：每帧装配开始时清空句柄（帧图 pass 对象**不得**跨帧复用 —— 连到上一帧的
         //   pass 对象等于连到不存在的节点）。
         PassOrder.resetForFrame();
-        // 🔖🔖 天空 pass 必须**显式声明**成地形的先决条件。h48g 实测：只按顺序 addPass 时
-        //   sky 被排到 terrain **之后**执行（执行序由 `FrameGraphBuilder#resolvePassOrder`
-        //   按 `requiredPassIds` 与「写→读」边解析，**插入序不是依赖**），于是天空又被
-        //   地形盖回去 —— `c0@afterSky` 只剩 0.0611（AfterLevel 档同取点 72.85~84.50）。
-        // ✅ 公开入口本轮源码级核实（26.3.0.51-beta `com/mojang/blaze3d/framegraph/FramePass.java`）：
-        //   `void requires(FramePass)` / `<T> void reads(ResourceHandle<T>)` /
-        //   `<T> ResourceHandle<T> readsAndWrites(ResourceHandle<T>)` / `void disableCulling()`。
-        //   `requires` 的语义核实自 `resolvePassOrder`：先递归解析 `requiredPassIds`，
-        //   **再** `output.add(pass)` ⇒ 被要求的一方一定排在前面。
-        FramePass skyPass = null;
-        if (VkDispConfig.MRT_SKY_PASS.get()) {
-            skyPass = event.getFrameGrapBuilder().addPass("vkdisp_gbuffer_sky");
-            skyPass.disableCulling();
-            skyPass.executes(dev.vkdisp.bridge.SkyIntoGbuffer::render);
-        }
+        // 🔖🔖 地形必须排在**原版 "sky" pass 之后**。h48g 实测：只按顺序 addPass 时 sky 被排到
+        //   terrain **之后**执行（执行序由 `FrameGraphBuilder#resolvePassOrder` 按 `requiredPassIds`
+        //   与「写→读」边解析，**插入序不是依赖**），于是天空又被地形盖回去 —— `c0@afterSky`
+        //   只剩 0.0611（正确顺序下同取点 72.85~84.50）。
+        //   🔴 R4 起这条边<b>不再</b>指向「我方自己插的一个 sky pass」：天空整个搬进原版 "sky" pass
+        //   体内（官方天空盒钩子 + M-11 视图 @Redirect），于是那条 requires 由 <b>M-13</b> 经
+        //   {@link PassOrder} 接到原版的 pass 句柄上 —— 旧的 `vkdisp_gbuffer_sky` 与
+        //   `pass.requires(skyPass)` 一起删除（每帧少一个 pass，也少一份「谁清槽 0」的口径分歧）。
         FramePass pass = event.getFrameGrapBuilder().addPass("vkdisp_gbuffer_terrain");
         pass.disableCulling();
-        if (skyPass != null) {
-            pass.requires(skyPass);
-        }
         // 🔖 M-13：把我方这个 pass 交给 PassOrder —— 原版 "sky" pass 在第 382 行才创建（晚于此处），
         //   所以「terrain requires vanilla-sky」这条边由**后到的一方**补上（见 PassOrder 的双向登记）。
         //   有了这条边，R4 才能把天空从「我方自己插一个 sky pass」搬进官方 CustomSkyboxRenderer 钩子。
@@ -349,14 +342,17 @@ public final class MrtTerrainPass {
     private static boolean slot0LoadLogged;
 
     /**
-     * 这一槽本轮是不是**已经被天空写过**（⇒ 地形必须以 LOAD 打开它，不能再清）。
+     * 这一槽本轮是不是**真的被天空写过**（⇒ 地形必须以 LOAD 打开它，不能再清）。
      *
-     * <p>两个条件：天空开关开着（两档挂点都保证天空先跑 —— 帧图档靠 {@code requires(skyPass)}，
-     * AfterLevel 档靠 {@code FullscreenPassHook#paintGbufferAndTerrain} 的调用序），
-     * 且这一槽确实打向池而不是主目标（{@code toMain} 档槽 0 打的是主目标，天空没写它）。
+     * <p>🔴 R4 的口径变更：旧实现读的是「天空开关开着」（配置反推），于是<b>在岩浆 / 粉雪 /
+     * 遮天 / {@code Skybox.NONE} 里也照样 LOAD</b> —— 而那一刻没人写过这张图，LOAD 到的就是
+     * <b>两帧前</b>的内容（GAP-018 双代轮转）⇒ 症状正是 GAP-039 说的「岩浆里还有天空」。
+     * 现在读的是 {@link SkyIntoGbuffer#paintedWriteGeneration()}：那个标记只有官方钩子真被调到、
+     * 或 M-11 的视图交换真发生才置位 ⇒ 「这一刻有没有天空」由<b>数据</b>说，不由配置说。
+     * <p>另两个条件不变：{@code toMain} 档槽 0 打的是主目标（天空没写它），而槽 0 以外没人先写。
      */
     private static boolean skyPrePainted(int slot) {
-        return slot == 0 && VkDispConfig.MRT_SKY_PASS.get() && !toMain();
+        return slot == 0 && !toMain() && SkyIntoGbuffer.paintedWriteGeneration();
     }
 
     /**

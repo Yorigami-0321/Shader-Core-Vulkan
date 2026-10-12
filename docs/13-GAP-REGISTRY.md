@@ -747,7 +747,7 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 | **判据（收口时用）** | ① 固定像素数值判据（不是截图）：同一帧同一像素，`depthtex0` 读数经 `2z−1` 后与 `gbufferProjectionInverse` 反解出的 `viewPos.z` 必须落在**远平面**（与 `far=1024` 同量级），当前开代理时它落在近平面；② 画面侧：`depthGlProxy=true` 那一臂的天空楔形消失、且**星点仍在**（一百一十轮判据不得回退）；③ 两臂（代理开/关）天空必须给出**同一口径**的 `viewPos` 长度。 |
 | **影响面** | `bridge/SkyPackGbuffer.java`（`skyVertexBuffer` 的 z 与 `putAttribute`）、`bridge/DepthGlProxy.java`（`1 − z_en` 的适用范围）、`bridge/FrameApi#chainResolver`（`depthtex*` 取源）、`VkDispConfig` 的 `mrt.depthGlProxy` 与 `mrt.skyPackShader` 两条注释 |
 | **开关 / 回退条件** | 无新开关。当前规避 = 保持 `mrt.depthGlProxy=false`（默认）。任何「翻代理」的取证臂必须先解本条。 |
-| **状态** | 🔴 **已登记、已实测（两臂截图 + 两侧代码逐字定位）、未修** —— 修法 (a)/(c) 都触及深度口径单点化，须与 GAP-022 同轮做 |
+| **状态** | 🔴 **已登记、已实测（两臂截图 + 两侧代码逐字定位）、未修** —— 修法 (a)/(c) 都触及深度口径单点化，须与 GAP-022 同轮做。<br>🟡 **R4（2026-10-12 第 5 步）没有加重它，也没有修它**：天空现在挂的是**同一张** gbuffer 深度（旧的私有空白深度随 `SkyIntoGbuffer` 的改造删掉），但两路天空都**既不测也不写**深度（原版五条天空管线 `depthStencilState == null`；包那条 `ALWAYS_PASS` + 不写；`SkyPackGbuffer#skyVertexBuffer` 的 `Position.z=1.0` 一字未动 ⇒ 星点判据的前提不变）。于是一帧里深度的**清屏仍只有地形那一次**、`1 − z` 换算仍只有一层 ⇒ 「翻两次」的成因 (a) 那条写 1.0 仍在、代理默认仍关（`mrt.depthGlProxy=false`）。任何「翻代理」的取证臂仍必须先解本条 |
 
 ---
 
@@ -777,7 +777,7 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 | **判据（收口时用）** | ① 进岩浆那一帧，`colortex0` 的天空段读数 = 原版「不画天空」口径（固定像素数值，不是截图判读）；② `Skybox.NONE` 维度里我方 gbuffer 天空段不变；③ 搬进官方钩子后，`SkyIntoGbuffer` 的手工互斥分支必须**删掉**而不是留着 —— 留着就是两个所有者。 |
 | **影响面** | `bridge/SkyIntoGbuffer.java`（无条件重放 + 手工互斥）、`bridge/MrtTerrainPass.java`（第 205-215 行的 sky pass 装配与抑制）、`VkDispConfig` 的 `mrt.skyPackShader` 注释 |
 | **开关 / 回退条件** | 不新增开关；沿用 `mrt.skyPackShader`。回退 = 继续无条件重放（今天的行为）。 |
-| **状态** | 🔴 **已登记（源码级），未修**。⚠️ **诚实标注：本条没有真机截图证据** —— 本轮没进岩浆复现，「岩浆里有天空」是源码级推定，不得当已实测症状引用（`X37`）。 |
+| **状态** | 🟡 **修法已落地（2026-10-12 R4 第 5 步），真机判据未取证** —— 天空现在就在原版 `"sky"` pass 体内（包走官方 `CustomSkyboxRenderer.renderSky`、回 true 即由第 385 行的短路给出互斥；原版那一笔走 M-11 视图 `@Redirect`），四道门控**一条都没抄**、由原版判；`MrtTerrainPass.skyPrePainted` 已从「读配置」改成读 `SkyIntoGbuffer.paintedWriteGeneration()` ⇒ 岩浆里没人写过槽 0，地形就按 CLEAR 打开（旧实现是配置反推，那里会 LOAD 到**两帧前**的旧天空）。手工互斥分支（旧 116-119 行）已删，不是留着。**仍开放（判据 ①②）**：进岩浆那一帧 `colortex0` 天空段读数 = 原版「不画天空」口径、`Skybox.NONE` 维度里不变 —— 都是真机数值判据；⚠️ **本条依旧没有真机证据**（源码级推定 + 代码已改），不得当已实测症状引用（`X37`）。另一个未验证前提：装配期那次写字段会不会被 NeoForge 在其后覆写 ⇒ 判据 = 自报行 `钩子被调#` 非零；停在 0 就启用 M-12 把安装点搬进 `addSkyPass` |
 
 ---
 

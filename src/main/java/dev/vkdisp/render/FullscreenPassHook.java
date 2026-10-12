@@ -296,22 +296,20 @@ public final class FullscreenPassHook {
     }
 
     /**
-     * 链模式下的 gbuffer 挂点：天空 → 地形（顺序不可换，理由见 {@code SkyIntoGbuffer} 类注释）。
+     * 链模式下的 gbuffer 挂点：只有<b>地形</b>。
      *
-     * <p>🔖 它单独成方法是为了让两件本该独立的事**在源码结构上就是分开的**（h48 的成因就是
-     * 把「链跑不跑」和「地形何时画」写进了同一个条件）：链的分支只看 {@code chainActive}。
+     * <p>🔖 它单独成方法只为两件事：① 本仓 QD-04 那条「&gt;60 行方法」棘轮（**靠提取降，不靠放宽基线**）；
+     * ② 让「诊断档会毁掉本帧地形内容」这个判断只出现在一处。
      *
-     * <p>🔴 只在 **AfterLevel 档**动手：帧图档（{@code terrainAfterLevel=false}）时天空与地形
-     * 都已经作为帧图 pass 存在（{@code MrtTerrainPass#onFrameGraphSetup} 先插 sky 再插 terrain），
-     * 这里再调一次就是**每帧画两遍天空 + 两遍地形**（GAP-018 之后还会多翻一次代）。
-     * 两个挂点互斥，所以天空每帧恰好一次。
+     * <p>🔴 R4 之后这里<b>不再画天空</b>：天空落在<b>原版 "sky" pass 体内</b>（官方天空盒钩子 +
+     * M-11 视图 @Redirect，见 {@code SkyIntoGbuffer}），由 {@code PassOrder} 那条
+     * 「terrain requires sky」保证它在先 ⇒ 两档（帧图 / AfterLevel）共用同一路天空，
+     * 每帧恰好一次，不需要按档重复调用（旧实现要在两个挂点各接一次，正是 GAP-039 那条
+     * 「我方重放不看原版门控」的成因）。
      */
     private static void paintGbufferAndTerrain() {
         if (!MrtTerrainPass.afterLevel()) {
             return;
-        }
-        if (VkDispConfig.MRT_SKY_PASS.get()) {
-            dev.vkdisp.bridge.SkyIntoGbuffer.render();
         }
         if (MrtTerrainPass.enabled()) {
             MrtTerrainPass.drawAfterLevel();

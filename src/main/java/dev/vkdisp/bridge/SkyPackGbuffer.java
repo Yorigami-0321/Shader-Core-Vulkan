@@ -42,9 +42,10 @@ package dev.vkdisp.bridge;
  *    「静态<b>非 final</b> 字段只许降」（QD-03）。这与 C1 那轮 {@code PackSamplerSuperset} 快照同一条
  *    纪律 —— 真正去处是 B2/B3 的 {@code PackSession}，换成原子持有者只是换写法，不假装债还掉了。
  *
- * <p>🔴 <b>与原版重放互斥</b>：本类接管的那一帧，{@link SkyIntoGbuffer} 的
- *    {@code SkyRenderer.render} <b>必须不跑</b>（两层天空同框 = GAP-027 双云那一族）。
- *    互斥由 {@code SkyIntoGbuffer} 的调用点保证，本类只自报「本帧我画了」。
+ * <p>🔴 <b>与原版那一笔互斥</b>：本类接管的那一帧，{@code SkyRenderer.render} <b>必须不跑</b>
+ *    （两层天空同框 = GAP-027 双云那一族）。R4 起这件事是<b>结构给的</b>：本类由官方
+ *    {@code CustomSkyboxRenderer.renderSky} 调用，回 {@code true} 原版就不再调 {@code render}
+ *    （{@code LevelRenderer:385} 的短路），不需要任何「两个读点自己协调」的纪律。
  */
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
@@ -131,13 +132,15 @@ public final class SkyPackGbuffer {
      *
      * @param color colortex0 的<b>待写那一代</b>视图（代次口径由 {@code SkyIntoGbuffer} 维护，
      *              本类不翻代 —— 翻了地形就会盖到另一代上）
-     * @param depth 一份私有空白深度。🔴 <b>不能传 null</b>：实测那样会让客户端以 exit 1 直接死掉
+     * @param depth <b>gbuffer 那张</b>深度视图（R4 起天空与地形共用一张，不再有私有空白深度）。
+     *              天空对它<b>既不测也不写</b>：原版五条天空管线的 {@code depthStencilState} 都是
+     *              {@code null}（{@code RenderPipeline.java:456} 核实），本类那条是
+     *              {@code ALWAYS_PASS} + 不写 ⇒ 挂上它只为了附件描述与后续 pass 一致，
+     *              深度的清屏与 {@code 1 − z} 换算仍各只有一次（{@code GAP-037} 的口径）。
+     *              🔴 <b>不能传 null</b>：实测那样会让客户端以 exit 1 直接死掉
      *              （日志最后一行就是本类的 builtins 上传 ⇒ 崩在这条 pass 上），
      *              本前端没有 validation layer 所以没有第二句话可看。
-     *              🔖 原版五条天空管线的 {@code depthStencilState} 都是
-     *              {@code null}（{@code RenderPipeline.java:456} 核实）⇒ 天空本来就不测/不写深度，
-     *              本类照抄这个语义，不去碰 gbuffer 那张深度（碰了就是 GAP-027 的云写深度那一族）
-     * @return 真的画了返回 true；否则 false，<b>调用方必须退回原版重放</b>
+     * @return 真的画了返回 true；否则 false，<b>调用方交回原版那一笔</b>（其视图由 M-11 换到同一张图）
      */
     public static boolean render(GpuTextureView color, GpuTextureView depth) {
         String why = contractProblem();

@@ -18,7 +18,8 @@ package dev.vkdisp.bridge;
  * 1. 官方/主实现：原版自己就是「开一个 pass、把 RenderPass 交给 CloudRenderer」。
  * 2. 备选：① 走 {@code RenderSystem.pushPipelineModifier} 换成包的 {@code gbuffers_clouds} ——
  *    <b>本轮不做</b>（那是下一刀，且它需要为云单独生成顶点适配层与绑定组）；
- *    ② 借 {@code GbufferTarget} 薄壳（天空那一格用的）—— <b>不可行</b>：
+ *    ② 借旧天空那一格的 {@code GbufferTarget} 薄壳（该类已随 R4 删除，天空改走官方钩子 + 视图
+ *    {@code @Redirect}）—— 对云本来也<b>不可行</b>：
  *    {@code CloudRenderer#render} 直接收 {@code RenderPass}，不给 {@code RenderTarget}，
  *    硬套薄壳反而要多造一层。
  * 3. 我们的差异点：

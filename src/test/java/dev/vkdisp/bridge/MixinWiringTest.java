@@ -118,6 +118,7 @@ class MixinWiringTest {
         assertTrue(config.contains("mixin.cloudMatrixRedirect"), "M-10 缺少可关闭键 mixin.cloudMatrixRedirect");
         assertTrue(config.contains("mixin.passAwarePipeline"), "M-15 缺少可关闭键 mixin.passAwarePipeline");
         assertTrue(config.contains("mixin.pinPassOrder"), "M-13 缺少可关闭键 mixin.pinPassOrder");
+        assertTrue(config.contains("mixin.skyViews"), "M-11 缺少可关闭键 mixin.skyViews");
         assertTrue(config.contains("define(\"mixin.wireTerrain\", true)"), "M-01 默认应为开");
         assertTrue(config.contains("define(\"mixin.bindTerrainParams\", true)"), "M-01b 默认应为开");
         assertTrue(config.contains("define(\"mixin.captureMainPassArgs\", true)"), "M-06 默认应为开");
@@ -126,6 +127,39 @@ class MixinWiringTest {
         assertTrue(config.contains("define(\"mixin.cloudProbe\", true)"), "M-09 默认应为开");
         assertTrue(config.contains("define(\"mixin.cloudMatrixRedirect\", true)"), "M-10 默认应为开");
         assertTrue(config.contains("define(\"mixin.passAwarePipeline\", true)"), "M-15 默认应为开");
+        assertTrue(config.contains("define(\"mixin.skyViews\", true)"), "M-11 默认应为开");
+    }
+
+    @Test
+    @DisplayName("R4 / M-11：天空的两个视图由 @Redirect 交出 ⇒ GbufferTarget 薄壳与本类自己的 SkyRenderer 必须一起消失")
+    void m11ReplacesTheRenderTargetThinShell() {
+        assertFalse(Files.exists(Path.of("src/main/java/dev/vkdisp/bridge/GbufferTarget.java")),
+                "M-11 之后不再有「视图持有者」那层薄壳：原版 SkyRenderer 实例被复用，只需换它的两个实参。"
+                        + "留着壳 = 同一张 gbuffer 有两个 RenderTarget 声称拥有它（resize/destroyBuffers 那次封死"
+                        + "正是为了防这个）");
+        String mixin = readOrSkip(MIXIN_DIR.resolve("SkyRendererViewRedirectMixin.java"));
+        assertTrue(mixin.contains("MixinTargets.SKY_RENDERER_RENDER"),
+                "M-11 的注入方法必须来自 MixinTargets 常量（M1 编码约束 ①）");
+        assertTrue(mixin.contains("MixinTargets.RENDER_TARGET_GET_COLOR_TEXTURE_VIEW")
+                        && mixin.contains("MixinTargets.RENDER_TARGET_GET_DEPTH_TEXTURE_VIEW"),
+                "两条 @Redirect 要各自指向原版第 134/135 行那两次 getter，少一条就是天空半张图进 gbuffer");
+        assertEquals(2, countCodeOccurrences(mixin, "require = 1"),
+                "两条都要 require=1：命中数一变就硬失败，不许静默不生效（T10）");
+        assertTrue(mixin.contains("SkyIntoGbuffer.onSkyColorViewRequest")
+                        && mixin.contains("SkyIntoGbuffer.onSkyDepthViewRequest"),
+                "注入方法只许转发（X25）：判定与取视图都在 bridge 侧");
+
+        String sky = readOrSkip(Path.of("src/main/java/dev/vkdisp/bridge/SkyIntoGbuffer.java"));
+        assertTrue(sky.contains("implements CustomSkyboxRenderer"),
+                "包天空走官方钩子（LevelRenderer:385），回 true 即与原版互斥 —— 不是再开一个我方 pass");
+        assertTrue(sky.contains("state.customSkyboxRenderer == null"),
+                "只在没人声明时安装：已有别的模组的自定义天空盒就让它优先（不抢所有权）");
+        for (String gone : new String[] {"SkyRenderer renderer",
+                "import net.minecraft.client.renderer.SkyRenderer;", "repoint(", "ensureSkyDepth",
+                "D32_FLOAT"}) {
+            assertFalse(sky.contains(gone),
+                    "本类不该再持有 SkyRenderer / 自抽 SkyRenderState / 自建私有深度（旧做法的三个复制品）：" + gone);
+        }
     }
 
     @Test

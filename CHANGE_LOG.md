@@ -6,6 +6,57 @@
 ---
 ---
 
+## 2026-10-12（一百二十）— 🟡 R4 第 5 步（天空）：包天空搬进官方 `CustomSkyboxRenderer` 钩子 + 原版天空两视图 `@Redirect`（M-11），`GbufferTarget` 整类删除
+
+> **verdict = 天空从「我方自己插一个 pass 无条件重放」改成「就在原版 `"sky"` pass 体内」**：
+> 四道门控由原版判（GAP-039 的修法），复制品（薄壳 / 第二个 `SkyRenderer` / 自抽 state / 私有深度）
+> 一起删 —— 但三条真机判据都没签，本条只算代码落地。
+
+- **① 为什么这一步收益最大**：GAP-039 记的是「我方重放天空一条门控都不看」⇒ 岩浆 / 粉雪 / 遮天 /
+  `Skybox.NONE` 维度里 gbuffer 仍写天空。而官方钩子 `CustomSkyboxRenderer.renderSky` 的调用点
+  （`LevelRenderer:385`）**就在那四道 `if` 之后、且在 `"sky"` pass 体内、那一刻没有 render pass 打开**
+  （原版自己的在 `SkyRenderer:139` 内部才开）⇒ 钩子里能自开我方 pass，**回 `true` 就天然互斥**，
+  一行门控都不用抄。
+- **② 官方钩子这一路**：`bridge/SkyIntoGbuffer` 改成 `implements CustomSkyboxRenderer`，
+  `installHook()` 在装配期（`onFrameGraphSetup`，**排在 `afterLevel` 的早退之前** —— 两个轴互不相干）
+  把单例写进 `LevelRenderState#customSkyboxRenderer`。⚠️ 该字段每帧被 `reset()` 清 ⇒ 必须每帧重装；
+  ⚠️ 只在它**为空**时装（别的模组已有自定义天空盒就让它优先，我方退回「M-11 换视图」那一路）。
+  `renderSky` 里调 `SkyPackGbuffer.render(colortex0 待写代, gbuffer 深度)`，画成了回 `true`。
+  **手工互斥分支（旧 116-119 行）删除** —— 留着就是两个所有者。
+- **③ M-11 这一路**：`mixin/SkyRendererViewRedirectMixin` 两条 `@Redirect`（各自 `require=1/expect=1`）
+  把 `SkyRenderer:134/135` 取视图换成 `poolWriteView(0)` + `depthView()`。源码级依据：`SkyRenderer` 的
+  `renderTarget` 字段**只**在这两行被读 ⇒ 换两实参 = 换落点，几何/管线/状态机逐字不变。
+  颜色那一次顺手做「只清不画」的附件清屏（原版那一笔两个附件都是 LOAD，不清就留着**两帧前**的内容），
+  并借同一个标记做每帧一次的幂等。键 `mixin.skyViews`（默认开）。
+- **④ 删掉的复制品**：`bridge/GbufferTarget.java`（整类，`git rm`）、`SkyIntoGbuffer` 自持的第二个
+  `SkyRenderer` 实例 + `repoint` + `extractRenderState` 自抽 `SkyRenderState` + 私有天空深度
+  （`ensureSkyDepth` / `D32_FLOAT`）、`vkdisp_gbuffer_sky` 那个帧图 pass 与 `pass.requires(skyPass)`
+  （顺序边现在由上一轮的 `PassOrder` 接到**原版** `"sky"` 句柄上，M-13 从此是承重的）、
+  `FullscreenPassHook#paintGbufferAndTerrain` 里的天空那一句（两档共用同一路天空，每帧恰好一次）。
+- **⑤ GAP-039 的收口形状（数据而不是配置）**：`MrtTerrainPass.skyPrePainted(slot)` 从「读
+  `mrt.skyPass`」改成读 `SkyIntoGbuffer.paintedWriteGeneration()` —— 岩浆里原版根本不建 sky pass，
+  钩子与 @Redirect 都不跑 ⇒ 标记保持 false ⇒ 地形按 CLEAR 打开槽 0。旧写法在那里照样 LOAD，
+  LOAD 到的正是两帧前的旧天空（GAP-018 双代轮转），这就是「多画」的机制。
+- **⑥ 取点换挂官方事件**：`c0@afterSky` 现在由 `RenderLevelStageEvent.AfterSky` 触发
+  （`LevelRenderer:388-390`，两路天空共同的「刚画完且 pass 已关」时刻），不再在两路各写一次。
+  观测面自报里新增 **`钩子被调#`**：这是「装配期那次写字段到底生效没有」的判据 —— 停在 0 就说明
+  NeoForge 在我方之后覆写了该字段，那时才启用 M-12 把安装点搬进 `addSkyPass`（不猜）。
+- **影响的文档**：`04-SPEC` §5.0 的 M-11（✅ 代码已落地，键名按实现改成 `mixin.skyViews`）、
+  M-12（首选那条落地 ⇒ 兜底位不启用）、M-13（边变成承重的）三行；`13-GAP-REGISTRY` 的
+  `GAP-039`（🟡 修法落地、判据未签、依旧无真机证据）与 `GAP-037`（🟡 未加重也未修：天空现在共用
+  gbuffer 深度但既不测也不写 ⇒ 清一次 / 翻一次的原口径不变，`skyVertexBuffer` 的 `z=1.0` 一字未动）；
+  `19-IMPROVEMENT-PATHS` §5A.4 的 R4 行。
+- **测试结果**：`./gradlew test --offline` → **BUILD SUCCESSFUL**（1166 条，1 条既有 skip）。
+  跟着改写的守卫：`RenderRouteWiringTest#skyIsDispatchedBeforeTerrain` →
+  `skyIsHandedOffToTheVanillaSkyPass`（改判「钩子在 afterLevel 早退之前装」「sky pass 已删」
+  「`skyPrePainted` 不许再读配置」）；`MixinWiringTest` 加 M-11 一条（含 `GbufferTarget.java`
+  **必须不存在**、`SkyIntoGbuffer` 里 `SkyRenderer` 复制品必须为 0）与 `mixin.skyViews` 的开关断言。
+  `VkDispConfig` 压回 1047 行内（上限不动，靠改注释密度换行数）。
+- **未收口（如实）**：① 岩浆里 `colortex0` 天空段读数 = 原版「不画天空」口径；② `Skybox.NONE`
+  维度里不变；③ 一百一十轮的星点判据不回退；④ `c0@afterSky` 不掉回 0.0611；⑤ `Mixin apply failed=0`；
+  ⑥ 自报行 `钩子被调#` 非零。全部要真机。**下一步**：回来删 `mrt.terrainAfterLevel` 车道收尾 R5，
+  然后第 6 步的 UI（M-14）。
+
 ## 2026-10-12（一百一十九）— 🟡 R5 的 M-13 提前做（第 5 步的前置）：帧图 pass 句柄接住、「terrain requires vanilla-sky」显式声明、ORDER-MARK 反推日志删除
 
 > **verdict = 顺序从「实测反推」改成「显式声明」，但本条只算半边**：车道

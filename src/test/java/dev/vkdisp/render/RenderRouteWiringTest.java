@@ -60,38 +60,42 @@ class RenderRouteWiringTest {
     }
 
     @Test
-    @DisplayName("🔖 天空必须排在地形之前（h48e：地形深度裁不住原版天空）")
-    void skyIsDispatchedBeforeTerrain() {
+    @DisplayName("🔖 R4：天空交回原版 \"sky\" pass（钩子 + 视图 @Redirect），我方不再插 sky pass、也不再在 AfterLevel 补画")
+    void skyIsHandedOffToTheVanillaSkyPass() {
         String hook = readOrSkip(HOOK);
-        // 只看 helper **体内**的次序：onAfterLevel 末尾还有一条「旧三步链档的地形兜底」，
-        // 全文 indexOf 会先撞上它，于是这条守卫会在与顺序无关的改动上误红（本轮实踩过）。
-        int helper = hook.indexOf("private static void paintGbufferAndTerrain() {");
-        assertTrue(helper > 0, "gbuffer 挂点必须是独立方法（链的条件里不许掺 afterLevel）");
-        String body = hook.substring(helper);
-        int sky = body.indexOf("SkyIntoGbuffer.render()");
-        int terrain = body.indexOf("MrtTerrainPass.drawAfterLevel()");
-        assertTrue(sky > 0 && terrain > 0, "AfterLevel 档里天空重放与地形重放都要出现");
-        assertTrue(sky < terrain,
-                "AfterLevel 档的顺序必须是「天空先铺满 colortex0 → 地形 LOAD 盖上去」。h48e 实测："
-                        + "反过来的话原版天空盘把刚画好的地形整片盖掉（gbuffer 深度与空白私有深度"
-                        + "两臂的 c0@afterSky 逐位相同 = 全屏覆盖），链读到的就是纯天空色");
-        int chainCall = hook.indexOf("FrameApi.drawPostChain(");
-        int callSite = hook.indexOf("paintGbufferAndTerrain();");
-        assertTrue(callSite > 0 && chainCall > callSite,
-                "天空不许排在链**之后**：链跑完 colortex0 就是输出图了，之后画进去的东西没人读"
-                        + "（判据 = 挂点的**调用点**在 drawPostChain 之前）");
-        assertTrue(body.contains("if (!MrtTerrainPass.afterLevel())"),
-                "AfterLevel 档的天空挂点必须由 helper 自己判档：帧图档的天空已经在帧图里排好了，"
-                        + "钩子里再画一次就是每帧两遍天空 + 多翻一代（GAP-018 的代次账会算错）");
+        assertFalse(hook.contains("SkyIntoGbuffer.render()"),
+                "AfterLevel 档不得再自己画天空：天空现在落在原版 \"sky\" pass 体内，两档共用同一路 ⇒ "
+                        + "这里再调一次就是每帧两遍天空 + 多翻一代（GAP-018 的代次账会算错）");
+        String helper = hook.substring(hook.indexOf("private static void paintGbufferAndTerrain() {"));
+        assertTrue(helper.indexOf("MrtTerrainPass.drawAfterLevel()") > 0,
+                "gbuffer 挂点仍必须只负责地形（链的条件与地形的挂点各一个轴，h48 的成因）");
+        assertTrue(hook.indexOf("paintGbufferAndTerrain();") < hook.indexOf("FrameApi.drawPostChain("),
+                "地形不许排在链**之后**：链跑完 colortex0 就是输出图了，之后画进去的东西没人读");
 
         String mrt = readOrSkip(MRT);
-        int skyInsert = mrt.indexOf("addPass(\"vkdisp_gbuffer_sky\")");
+        int install = mrt.indexOf("SkyIntoGbuffer.installHook();");
+        int afterLevelReturn = mrt.indexOf("if (afterLevel()) {");
+        assertTrue(install > 0 && afterLevelReturn > install,
+                "钩子必须在 afterLevel 的早退**之前**装：它装的是「原版 sky pass 里由谁画天空」，"
+                        + "与地形在哪一档画是两个轴（A/B 档同样要天空进 gbuffer）");
+        assertFalse(mrt.contains("addPass(\"vkdisp_gbuffer_sky\")"),
+                "我方那个 sky pass 应随 R4 删除：留着它 = 每帧两遍天空，而 GAP-039 的四道门控又回到没人判");
+        assertFalse(mrt.contains("pass.requires(skyPass);"),
+                "requires 的目标现在由 PassOrder 交成**原版**的 \"sky\" 句柄（M-13），不再是自插的 skyPass");
         int terrainInsert = mrt.indexOf("addPass(\"vkdisp_gbuffer_terrain\")");
-        assertTrue(skyInsert > 0 && terrainInsert > 0, "帧图档两条 pass 都要在");
-        assertTrue(mrt.indexOf("pass.requires(skyPass)") > terrainInsert,
-                "帧图档的顺序**必须靠 requires 声明**，不能靠插入序。h48g 实测：执行序由 "
-                        + "FrameGraphBuilder#resolvePassOrder 按资源依赖解析，插入序不是依赖 "
-                        + "⇒ 只按顺序 addPass 时天空跑到地形之后，又被盖回去（c0@afterSky=0.0611）");
+        assertTrue(terrainInsert > 0 && mrt.indexOf("PassOrder.declareOwnTerrain(pass)") > terrainInsert,
+                "h48g 实测：插入序不是依赖，执行序由 resolvePassOrder 按 requires 边解析 ⇒ "
+                        + "\"terrain requires 原版 sky\" 这条边必须在创建我方 pass 之后声明");
+
+        int prePainted = mrt.indexOf("private static boolean skyPrePainted(int slot)");
+        assertTrue(prePainted > 0, "地形那一槽「天空有没有先写」的判定必须仍然存在");
+        String gate = mrt.substring(prePainted, mrt.indexOf("\n    }", prePainted));
+        assertTrue(gate.contains("SkyIntoGbuffer.paintedWriteGeneration()"),
+                "GAP-039 的收口形状：LOAD 与否要读「本帧天空真写过没有」这个数据，"
+                        + "不能读 mrt.skyPass（配置反推 ⇒ 岩浆/遮天/Skybox.NONE 里没人写却照样 LOAD，"
+                        + "于是两帧前的旧天空又进画面）");
+        assertFalse(gate.contains("MRT_SKY_PASS"),
+                "skyPrePainted 里不许再出现配置反推（理由同上一条判据）");
     }
 
     @Test
