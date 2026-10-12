@@ -171,6 +171,59 @@ public final class VkDispConfig {
             .define("mixin.captureTerrainDraws", true);
 
     /**
+     * 🔴 R3 / M-07 开关：地形图集**复用原版那个采样器实例**（默认开）—— 各向异性与
+     * {@code shouldResetChunkLayerSampler} 门控一起继承（{@code GAP-041}）。
+     *
+     * <p>⚠️ 关档不是「画面不变」：退回公开 {@code samplerCache} 的 LINEAR 档 ⇒ 各向异性恒 1，
+     * 且 {@code mrt.terrainAtlasLod0} 那条 maxLod=0 止血不再作用于地形图集（原版实例的 maxLod 是
+     * empty）⇒ 若 {@code GAP-016} 复现，本键就是它的 A/B 位，结论回登记表而不是回这里加拐杖。
+     */
+    public static final ModConfigSpec.BooleanValue MIXIN_REUSE_CHUNK_SAMPLER = BUILDER
+            .comment("R3 M-07：地形图集复用原版 LevelRenderer#chunkLayerSampler（各向异性跟用户设置、"
+                    + "重建门控一并继承）。关闭 = 退回公开 samplerCache 的 LINEAR 档，"
+                    + "各向异性恒 1（GAP-041 的坏档，默认开）。")
+            .define("mixin.reuseChunkSampler", true);
+
+    /**
+     * 🔴 R3 / M-08 开关：地形 draw 条数自报走**访问器**（默认开）。
+     *
+     * <p>关掉只少一行自报（{@code captured draw groups: …}），不改任何渲染行为。
+     * 它替代的是反射那一族：字段改名时访问器在注入期就抛，而反射只会静默 WARN
+     * —— 这正是 {@code GAP-042} 登记的「判据可静默失效」。
+     */
+    public static final ModConfigSpec.BooleanValue MIXIN_TERRAIN_DRAW_PROBE = BUILDER
+            .comment("R3 M-08：地形每层 draw 组条数用 @Accessor 读出并自报（替掉反射）。"
+                    + "关闭 = 少一行诊断自报，渲染行为不变（默认开）。")
+            .define("mixin.terrainDrawProbe", true);
+
+    /**
+     * 🔴 R3 / M-09 开关：云网格 quad 条数走**访问器**（默认开）。
+     *
+     * <p>与 {@link #MIXIN_TERRAIN_DRAW_PROBE} 同族：关掉只少一行自报。它替代的是
+     * {@code CloudsIntoGbuffer} 里三次 {@code getDeclaredField + setAccessible}。
+     */
+    public static final ModConfigSpec.BooleanValue MIXIN_CLOUD_PROBE = BUILDER
+            .comment("R3 M-09：CloudRenderer#quadCount 用 @Accessor 读出并自报（替掉反射）。"
+                    + "关闭 = 少一行诊断自报，渲染行为不变（默认开）。")
+            .define("mixin.cloudProbe", true);
+
+    /**
+     * 🔴 R3 / M-10 开关：云的 modelview 由 {@code @Redirect} 交出**实参**（默认开）。
+     *
+     * <p>开 = 原版 {@code CloudRenderer} 第 226 行取位姿时拿到的是装配期相机矩阵，
+     * 我方重放因此<b>不再</b>压/还原 {@code RenderSystem.getModelViewStack()}
+     * —— 「漏还原 ⇒ 污染同帧后续原版 pass」这一族事故类别从代码里消失。
+     *
+     * <p>⚠️ 关掉 = 交回原版那句 {@code getModelViewMatrixCopy()}：原版云不受影响
+     * （它自己那两条路径的栈顶本来就是相机矩阵），但我方重放读的是裸栈
+     * ⇒ 云网格锚错、放射长条复现（旧症状），bridge 侧 WARN 一次说明代价。
+     */
+    public static final ModConfigSpec.BooleanValue MIXIN_CLOUD_MATRIX_REDIRECT = BUILDER
+            .comment("R3 M-10：@Redirect 原版云取 modelview 的实参为我方相机矩阵，"
+                    + "于是不再压/还原全局栈。关闭 = 原版路径不变、我方重放回到锚错位姿的坏档（默认开）。")
+            .define("mixin.cloudMatrixRedirect", true);
+
+    /**
      * 🔴 GAP-003 方案 A 的地形多附件 gbuffer 开关 —— <b>默认关</b>（与 {@link #MRT_PACK_TERRAIN_SHADER} 成对）。
      *
      * <p>打开后我方在帧图里插一个 pass，把地形（OPAQUE 组）画进 {@code N} 个 colortex 附件。

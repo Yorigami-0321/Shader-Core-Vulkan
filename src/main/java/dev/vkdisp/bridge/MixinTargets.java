@@ -124,6 +124,56 @@ public final class MixinTargets {
     /** {@code LevelRenderer#prepareChunkRendersIndirect(Matrix4fc, boolean)} —— M-05 注入方法之二。 */
     public static final String LEVEL_RENDERER_PREPARE_CHUNK_RENDERS_INDIRECT = "prepareChunkRendersIndirect";
 
+    // ── R3（2026-10-12 第 2 步）新增：M-07 / M-08 / M-09 / M-10 ────────────────────
+    /**
+     * {@code LevelRenderer#chunkLayerSampler} —— private 字段，sources jar 第 **146** 行
+     * （类型 {@code @Nullable GpuSampler}；其按需重建在第 437-449 行的 pass 体内）。M-07 访问器目标。
+     */
+    public static final String LEVEL_RENDERER_CHUNK_LAYER_SAMPLER = "chunkLayerSampler";
+
+    /**
+     * {@code net.minecraft.client.renderer.CloudRenderer} —— M-09（访问器）与 M-10（{@code @Redirect}）
+     * 的共同目标类。原版由 {@code LevelRenderer} 第 132 行 {@code new CloudRenderer()} 持有，
+     * 第 1345 行 {@code public CloudRenderer cloudRenderer()} 交出引用（我方重放用的就是它）。
+     */
+    public static final String CLOUD_RENDERER = "net.minecraft.client.renderer.CloudRenderer";
+
+    /** {@code CloudRenderer#quadCount} —— private 字段，第 **58** 行。M-09 访问器目标。 */
+    public static final String CLOUD_RENDERER_QUAD_COUNT = "quadCount";
+
+    /**
+     * {@code CloudRenderer} 的 <b>private</b> 重载 {@code render(RenderPass, RenderPipeline)}
+     * （第 225 行）—— M-10 的注入方法。
+     *
+     * <p>⚠️ 必须写<b>完整描述符</b>：{@code CloudRenderer} 上有三个叫 {@code render} 的重载
+     * （第 197 行 public、第 207 行 public {@code renderOit} 内又调它、第 225 行 private），
+     * 只写方法名会让 {@code @Redirect} 命中多个方法而报「too many injections」。
+     */
+    public static final String CLOUD_RENDERER_RENDER_INNER =
+            "render(Lcom/mojang/renderpearl/api/commands/RenderPass;"
+                    + "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)V";
+
+    /**
+     * {@code RenderSystem#getModelViewMatrixCopy()} —— M-10 被替换的那次<b>调用</b>
+     * （{@code @At(value="INVOKE", target=…)}）。声明见第 296 行：
+     * {@code public static Matrix4f getModelViewMatrixCopy()}，实现是 {@code new Matrix4f(modelViewStack)}
+     * ⇒ 替换者的返回类型必须是 {@code Matrix4f}（放宽成 {@code Matrix4fc} 不保证被接受）。
+     */
+    public static final String RENDER_SYSTEM_GET_MODEL_VIEW_MATRIX_COPY =
+            "com.mojang.blaze3d.systems.RenderSystem.getModelViewMatrixCopy()Lorg/joml/Matrix4f;";
+
+    /**
+     * {@code ChunkSectionsToRender.DrawIndirect} —— M-08 目标（<b>嵌套变体</b>，不是基类）。
+     *
+     * <p>为什么写 {@code $} 而不是类字面量：要读的字段 {@code drawGroupsPerLayer} 声明在这个
+     * {@code public static final class} 上（第 96-97 行），基类 {@code ChunkSectionsToRender} 没有它。
+     */
+    public static final String CHUNK_SECTIONS_TO_RENDER_DRAW_INDIRECT =
+            "net.minecraft.client.renderer.chunk.ChunkSectionsToRender$DrawIndirect";
+
+    /** {@code DrawIndirect#drawGroupsPerLayer} —— private 字段，第 **97** 行。M-08 访问器目标。 */
+    public static final String CHUNK_SECTIONS_TO_RENDER_DRAW_GROUPS = "drawGroupsPerLayer";
+
     /** 本契约版本（与 {@link ContractVersion#VERSION} 一致）。 */
     public static final int CONTRACT_VERSION = 1;
 

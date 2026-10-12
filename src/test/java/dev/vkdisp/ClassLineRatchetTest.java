@@ -53,7 +53,12 @@ class ClassLineRatchetTest {
             "dev/vkdisp/bridge/PipelineApi.java", 1163,
             "dev/vkdisp/bridge/TerrainPipelineApi.java", 1131,
             "dev/vkdisp/bridge/TargetReadback.java", 1112,
-            "dev/vkdisp/bridge/MrtTerrainPass.java", 1069);
+            "dev/vkdisp/bridge/MrtTerrainPass.java", 1069,
+            // ⚠️ 第 7 个巨类（2026-10-12 R3 第 2 步登记）：M-07…M-10 四个注入点各要一个
+            // 可关闭键（X29 硬要求），本类从 997 行越过 1000。上限锁在**实测值**、不许再长。
+            // 19 §3.4 的下一格就是按域拆它（mixin.* / mrt.* / pack.* 各一个配置类）——
+            // 拆之前，这里只许降不许升。
+            "dev/vkdisp/VkDispConfig.java", 1047);
 
     /** 允许的「拆小后未降基线」余量：超过就必须更新 {@link #CAPS}（把进步锁住）。 */
     private static final int SLACK = 40;

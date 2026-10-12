@@ -807,7 +807,7 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 | **判据（收口时用）** | ① 同一机位同帧，「纹理过滤 = 各向异性」与「= 双线性」两档下，我方 colortex0 的图集锐度**跟着变**（现状不变 ⇒ 即本条复现）；② 用户设置变更后不泄漏 GPU 对象（`GpuSampler` 关闭计数）。 |
 | **影响面** | `bridge/MrtTerrainPass.java`（第 889-908 行 + 自建采样器门控）、`bridge/PackSamplerViews.java`（采样器实例来源变了要同步） |
 | **开关 / 回退条件** | `mixin.reuseChunkSampler`（M-07）；回退 = 自建采样器（今天）。 |
-| **状态** | 🔴 **已登记（源码级），未修** —— 从 2026-10-03 的「实现时注意」升格为缺口，因为它现在**已经在生产形态里**（`mrt.terrain` 取证档常开） |
+| **状态** | 🟡 **修法已落地（2026-10-12 R3 第 2 步），判据未取证** —— M-07 已把自建采样器（含 `maxAnisotropy=1` 与自备门控）整块删掉，地形图集绑的是原版 `LevelRenderer#chunkLayerSampler` 实例。**仍开放**：本条的收口判据是「同一机位同帧，纹理过滤两档下锐度**跟着变**」，那是真机 A/B，本轮只交了代码。🔴 顺带记一个新风险：原版实例 maxLod=empty ⇒ `mrt.terrainAtlasLod0` 那条 **GAP-016 止血不再作用于地形图集**，若地图采样回到恒 0，本键（`mixin.reuseChunkSampler`）就是 A/B 位，结论回 `GAP-016` |
 
 ---
 
@@ -822,7 +822,7 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 | **判据（收口时用）** | ① 两处的 WARN 分支**物理删除**（不再存在「读不到」这条路）；② 启动日志 `Mixin apply failed` 0 命中（`07` §1.4.1 ③）；③ 同一存档同机位，读到的条数与今天反射值**逐字相同**。 |
 | **影响面** | `bridge/MrtTerrainPass.java`（第 943-970 行）、`bridge/CloudsIntoGbuffer.java`（第 312-327 行）、`vkdisp.mixins.json`（新增两个 client mixin）、`bridge/MixinTargets`（新增 M-08/M-09 常量） |
 | **开关 / 回退条件** | `mixin.terrainDrawProbe` / `mixin.cloudProbe`；回退 = 恢复反射（可退，但会重新引入本条）。 |
-| **状态** | 🟡 **已登记，未修** —— 低风险、纯删码，排 `19` §5A.4 阶梯 **R3** 第一批 |
+| **状态** | 🟡 **两处反射已物理删除（2026-10-12 R3 第 2 步），第三处判据未取证** —— `src/main/java` 的**代码**里 `getDeclaredField\|setAccessible` 现已零命中（注释里留着「被否决的反射方案」的记述，`grep` 全文会连注释一起数）：M-08 走 `ChunkSectionsToRender$DrawIndirect` 访问器（且 `drawCount` 那半改用 `public record` 的公开访问器，旧反射本就多余），M-09 走 `CloudRenderer#quadCount` 访问器；两条 `catch` ⇒ WARN 分支随反射一起消失。仍开放的部分：判据 ③「同存档同机位读数与反射时代逐字相同」要真机跑一趟才能签 |
 
 ---
 
@@ -850,7 +850,7 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 | **修法** | `apply` 内**禁止现读配置**：把开关移到 push 的那一刻（沿用 `CloudsIntoGbuffer` 已有的调用点闸门形态），或者为**每种开关组合注册一个独立 key**（key 只能启动期注册，见 `GAP-045`）。同时把「`apply` 只许是入参管线的纯函数」写进 `07` §1.4.2 那两条硬约束下面。 |
 | **判据（收口时用）** | ① `GbufferPipelineSwaps.apply` 里不再出现 `VkDispConfig.*.get()`；② 冷启动后先 A 臂再 B 臂（同一进程内翻档），两臂的**云深度写入行为**必须不同（现状是可能相同）；③ `RenderSystem.popPipelineModifier` 配对不破（帧尾 `ensureEmpty` 不抛）。 |
 | **开关 / 回退条件** | 不新增开关；沿用 `mrt.cloudsNoCull` / `mrt.cloudsNoDepthWrite`。 |
-| **状态** | 🔴 **已登记（源码级），未修** —— 当前**无用户可见症状**，属「将来复用这条通道前必须先修」的前置债（直接挡 R1 的原始设想，见 `GAP-045`） |
+| **状态** | 🟡 **已修（2026-10-12 R3 第 2 步）—— 但只在「云这一条 modifier」上修**：`apply` 里不再出现 `VkDispConfig.*.get()`；改成注册**两个 key**（`clouds_no_cull` / `clouds_no_cull_no_depth_write`），由调用点 `CloudsIntoGbuffer` 每帧现读配置后选 key ⇒ 冻结值随每次 push 现算。⚠️ 本条的**通用**部分仍开放：「`apply` 只许是入参管线的纯函数」这条纪律要写进 `07` §1.4.2 并挡住下一次复用（`GAP-045` 正是它挡掉的 R1 原设想） |
 
 ---
 

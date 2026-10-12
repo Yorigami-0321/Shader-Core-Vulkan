@@ -54,8 +54,9 @@ import net.minecraft.client.renderer.oit.OitRenderPassProvider;
 import net.minecraft.client.renderer.oit.OitStage;
 import net.minecraft.client.renderer.state.level.LevelRenderState;
 import net.neoforged.neoforge.client.CustomCloudsRenderer;
+import net.neoforged.neoforge.client.pipeline.PipelineModifier;
+import net.minecraft.resources.ResourceKey;
 import org.joml.Matrix4f;
-import org.joml.Matrix4fStack;
 import org.joml.Matrix4fc;
 
 /** 原版云 → gbuffer colortex0 的重放器（渲染线程独占，无锁）。 */
@@ -69,6 +70,9 @@ public final class CloudsIntoGbuffer {
 
     /** 诊断清屏那条 WARN 的哨兵。 */
     private static boolean clearWarned;
+
+    /** 「{@code mixin.cloudMatrixRedirect=false} 的代价」那条 WARN 的哨兵（M-10，热路径不刷屏）。 */
+    private static boolean matrixRedirectOffWarned;
 
     /** 跳过原因的一次性自报集合（「为什么没画」必须看得见，X11）。 */
     private static final java.util.Set<String> SKIP_NOTED =
@@ -141,17 +145,45 @@ public final class CloudsIntoGbuffer {
     /**
      * 本帧相机的 modelview（原版云 pass 在 executes 里用的就是它）。
      *
-     * <p>🔴 <b>为什么必须自己压栈</b>（2026-10-10 真机长条云根因）：{@code CloudRenderer} 的
-     * 云网格定位走 {@code RenderSystem.getModelViewMatrixCopy()}（DynamicTransforms），
-     * 而原版 clouds pass 在 executes 里把<b>装配期捕获的相机矩阵</b>压进全局栈再画；
-     * 我方重放点读的是裸栈（非相机位姿）⇒ 云网格锚错 ⇒ 透视拉成放射长条
-     * （GAP-027 h49l 登记的「位姿/相机偏移那一半未查」就是这一半）。
-     * 矩阵取 {@code CameraRenderState#viewRotationMatrix} —— 与原版云 pass 捕获的是同一个
+     * <p>🔖 <b>它现在只被 {@link #onCloudModelViewRequest()} 用</b>（M-10，2026-10-12）：
+     * 旧实现是「画前把它压进全局栈、画后还原」，代价是多一个 {@code finally} 纪律，
+     * 而漏还原会污染同帧后续读这条栈的原版 pass。现在由 {@code @Redirect} 把它作为
+     * {@code CloudRenderer} 第 226 行那次取矩阵的**实参**交出 —— 全局栈不再被碰。
+     *
+     * <p>矩阵取 {@code CameraRenderState#viewRotationMatrix} —— 与原版云 pass 捕获的是同一个
      * 公开字段（{@code GameRenderer} 逐字把它当 modelViewMatrix 传下去）。
      */
     private static Matrix4fc cameraModelView() {
         return Minecraft.getInstance().gameRenderer.gameRenderState()
                 .levelRenderState.cameraRenderState.viewRotationMatrix;
+    }
+
+    /**
+     * M-10 的转发点：原版云取 modelview 时<b>交给它</b>的矩阵（由
+     * {@code mixin.CloudRendererMatrixRedirectMixin} 在第 226 行那次调用上调用本方法）。
+     *
+     * <p>🔖 <b>对原版路径这是恒等变换</b>（源码级核实）：原版只在
+     * {@code LevelRenderer} 第 738 行（main pass 体内）与第 646 行（OIT 分支）画云，
+     * 这两处栈顶本来就是装配期相机矩阵 ⇒ 交出同一个矩阵，原版云的落点逐字不变。
+     *
+     * <p>⚠️ 关档（{@code mixin.cloudMatrixRedirect=false}）= 交回原版那句
+     * {@code RenderSystem.getModelViewMatrixCopy()}：原版仍不受影响，但我方重放读的是<b>裸栈</b>
+     * （非相机位姿）⇒ 云网格锚错、透视拉成放射长条（旧症状复现）。这是 A/B 档，代价只 WARN 一次。
+     *
+     * @return 交予 {@code writeTransform} 的矩阵（返回类型随原版那句调用 = {@code Matrix4f}）
+     */
+    public static Matrix4f onCloudModelViewRequest() {
+        if (!VkDispConfig.MIXIN_CLOUD_MATRIX_REDIRECT.get()) {
+            if (!matrixRedirectOffWarned) {
+                matrixRedirectOffWarned = true;
+                VkDisp.LOGGER.warn("vkdisp: [GAP-027/clouds] mixin.cloudMatrixRedirect=false ⇒ 云取裸栈的"
+                        + " getModelViewMatrixCopy()，而我方重放已不再压栈（M-10 删掉了那次压还原）"
+                        + " ⇒ 云网格锚错、放射长条会复现；这是 A/B 档不是产品档");
+            }
+            return RenderSystem.getModelViewMatrixCopy();
+        }
+        // 一次拷贝：与原版那句自己那次 `new Matrix4f(stack)` 同量级，不是新增的分配类别。
+        return new Matrix4f(cameraModelView());
     }
 
     /**
@@ -272,27 +304,28 @@ public final class CloudsIntoGbuffer {
                 .createRenderPass(descriptor)) {
             // 原版在 CloudRenderer#render 内部自己调 bindDefaultUniforms（第 201 行），
             // 这里**不**重复调：多调一次不报错，但会让人以为云依赖我方绑的东西。
-            // 🔴 画前把相机位姿压进全局 modelview 栈、画后还原（根因见 {@link #cameraModelView()}）：
-            //   不压 = 云网格锚错 = 放射长条；不还原 = 污染同帧后续读这条栈的原版 pass。
-            Matrix4fStack stack = RenderSystem.getModelViewStack();
-            Matrix4f saved = new Matrix4f(stack);
-            stack.set(cameraModelView());
-            try {
-                if (VkDispConfig.MRT_CLOUDS_NO_CULL.get()) {
-                    // 🔌 管线替换（GAP-027 第一次用这条官方通道）：
-                    //   CloudRenderer 内部走 RenderSystem.getCompiledPipeline(...)
-                    //   → getCompiledPipelineNullable 的**首条语句**就是 PIPELINE_MODIFIERS.apply
-                    //   ⇒ 在它的调用期间 push 我们的 modifier 就够了，不必 mixin、也不必预注册管线
-                    //   （PipelineCache#get 未命中会就地编译）。
-                    //   renderWithPipelineModifier 自带 push/pop 配对 —— 不用手写 finally：
-                    //   漏 pop 会让 ClientHooks 的 ensurePipelineModifiersEmpty() 在帧尾**抛**。
-                    RenderSystem.renderWithPipelineModifier(GbufferPipelineSwaps.CLOUDS_NO_CULL,
-                            () -> renderer.render(status, renderPass));
-                } else {
-                    renderer.render(status, renderPass);
-                }
-            } finally {
-                stack.set(saved);
+            // 🔖 位姿**不再走全局栈**（M-10，2026-10-12）：原版第 226 行取 modelview 的那次调用被
+            //   @Redirect 换成装配期相机矩阵 ⇒ 这里既不压栈也不还原，
+            //   「漏还原 ⇒ 污染同帧后续读这条栈的原版 pass」这一族事故类别从代码里消失。
+            //   矩阵取法与关档代价见 {@link #onCloudModelViewRequest()}。
+            if (VkDispConfig.MRT_CLOUDS_NO_CULL.get()) {
+                // 🔌 管线替换（GAP-027 用的官方通道）：
+                //   CloudRenderer 内部走 RenderSystem.getCompiledPipeline(...)
+                //   → getCompiledPipelineNullable 的**首条语句**就是 PIPELINE_MODIFIERS.apply
+                //   ⇒ 在它的调用期间 push 我们的 modifier 就够了，不必 mixin、也不必预注册管线
+                //   （PipelineCache#get 未命中会就地编译）。
+                //   renderWithPipelineModifier 自带 push/pop 配对 —— 不用手写 finally：
+                //   漏 pop 会让 ClientHooks 的 ensurePipelineModifiersEmpty() 在帧尾**抛**。
+                // 🔖 GAP-044：配置在**调用点**读，不在 modifier 的 apply 里读 ——
+                //   PipelineModifierStack 的结果按 (modifier, 入参管线) 缓存且没有失效路径，
+                //   apply 里现读会把「第一次 push 那一刻的值」永久冻结（改设置要重启才生效且无提示）。
+                ResourceKey<PipelineModifier> swap = VkDispConfig.MRT_CLOUDS_NO_DEPTH_WRITE.get()
+                        ? GbufferPipelineSwaps.CLOUDS_NO_CULL_NO_DEPTH_WRITE
+                        : GbufferPipelineSwaps.CLOUDS_NO_CULL;
+                RenderSystem.renderWithPipelineModifier(swap,
+                        () -> renderer.render(status, renderPass));
+            } else {
+                renderer.render(status, renderPass);
             }
         }
     }
@@ -308,22 +341,20 @@ public final class CloudsIntoGbuffer {
                 : Optional.empty();
     }
 
-    /** 反射读云渲染器的私有网格状态（只为自报；失败给出失败原因而不是猜一个值）。 */
+    /**
+     * 云网格状态（M-09：走 {@link IVkdispCloudMeshProbe} 访问器；反射与那条「反射失败」分支
+     * 已<b>物理删除</b>，改名从「静默 WARN」变成「注入期硬失败」）。
+     *
+     * <p>🔖 只交 {@code quadCount} 一个数就够：{@code quadCount != 0} 蕴含 {@code texture != null}
+     * （网格只能在纹理就位后算出），而原版第 198 行的早退条件正是这两者的合取 ⇒ 判据等价。
+     * 为什么不交出另外两个引用字段，逐字写在 {@link IVkdispCloudMeshProbe} 的类注释第 3 条。
+     */
     private static String meshState(CloudRenderer renderer) {
-        try {
-            java.lang.reflect.Field quads = renderer.getClass().getDeclaredField("quadCount");
-            quads.setAccessible(true);
-            java.lang.reflect.Field tex = renderer.getClass().getDeclaredField("texture");
-            tex.setAccessible(true);
-            java.lang.reflect.Field utb = renderer.getClass().getDeclaredField("utb");
-            utb.setAccessible(true);
-            return "quadCount=" + quads.getInt(renderer)
-                    + " textureReady=" + (tex.get(renderer) != null)
-                    + " facesBufferReady=" + (utb.get(renderer) != null)
-                    + "（quadCount=0 ⇒ 原版内部静默早退、一条 draw 都不发）";
-        } catch (Throwable t) {
-            return "quadCount 不可得（反射失败：" + t + "）⇒ 本臂不能区分「没发 draw」与「发了没落地」";
+        if (!VkDispConfig.MIXIN_CLOUD_PROBE.get()) {
+            return "mixin.cloudProbe=false ⇒ 本臂不读 quadCount（关掉只少这一行自报）";
         }
+        int quads = ((IVkdispCloudMeshProbe) renderer).vkdisp$quadCount();
+        return "quadCount=" + quads + "（quadCount=0 ⇒ 原版内部静默早退、一条 draw 都不发）";
     }
 
     /** 跳过原因只报一次（同一原因每帧刷 = 把日志当 printf，本仓反复踩过）。 */

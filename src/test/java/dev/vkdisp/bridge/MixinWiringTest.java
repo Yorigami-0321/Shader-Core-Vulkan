@@ -112,9 +112,17 @@ class MixinWiringTest {
         assertTrue(config.contains("mixin.wireTerrain"), "M-01 缺少可关闭键 mixin.wireTerrain");
         assertTrue(config.contains("mixin.bindTerrainParams"), "M-01b 缺少可关闭键 mixin.bindTerrainParams");
         assertTrue(config.contains("mixin.captureTerrainDraws"), "M-05 缺少可关闭键 mixin.captureTerrainDraws");
+        assertTrue(config.contains("mixin.reuseChunkSampler"), "M-07 缺少可关闭键 mixin.reuseChunkSampler");
+        assertTrue(config.contains("mixin.terrainDrawProbe"), "M-08 缺少可关闭键 mixin.terrainDrawProbe");
+        assertTrue(config.contains("mixin.cloudProbe"), "M-09 缺少可关闭键 mixin.cloudProbe");
+        assertTrue(config.contains("mixin.cloudMatrixRedirect"), "M-10 缺少可关闭键 mixin.cloudMatrixRedirect");
         assertTrue(config.contains("define(\"mixin.wireTerrain\", true)"), "M-01 默认应为开");
         assertTrue(config.contains("define(\"mixin.bindTerrainParams\", true)"), "M-01b 默认应为开");
         assertTrue(config.contains("define(\"mixin.captureTerrainDraws\", true)"), "M-05 默认应为开");
+        assertTrue(config.contains("define(\"mixin.reuseChunkSampler\", true)"), "M-07 默认应为开");
+        assertTrue(config.contains("define(\"mixin.terrainDrawProbe\", true)"), "M-08 默认应为开");
+        assertTrue(config.contains("define(\"mixin.cloudProbe\", true)"), "M-09 默认应为开");
+        assertTrue(config.contains("define(\"mixin.cloudMatrixRedirect\", true)"), "M-10 默认应为开");
     }
 
     @Test
@@ -165,26 +173,41 @@ class MixinWiringTest {
     }
 
     @Test
-    @DisplayName("M1 编码约束 ③：注入方法体首行是埋点转发（防静默失败）")
+    @DisplayName("M1 编码约束 ③：注入方法体首行是埋点转发；纯访问器类改查「接口 + 零反射」")
     void injectMethodsStartWithProbe() throws java.io.IOException {
         Assumptions.assumeTrue(Files.isDirectory(MIXIN_DIR), "mixin 目录不存在");
         try (var files = Files.list(MIXIN_DIR)) {
             for (Path p : files.filter(f -> f.getFileName().toString().endsWith("Mixin.java")).toList()) {
                 List<String> lines = Files.readAllLines(p);
+                String text = String.join("\n", lines);
+                // 🔖 R3 起有两种注入点形状，判据必须分开，不能逼访问器类去补一个没用的 @Inject：
+                //   ① @Inject / @Redirect —— 有方法体 ⇒ 首行必须是 bridge 埋点转发；
+                //   ② @Accessor（M-07/M-08/M-09）—— 抽象方法**没有体**，埋点无处放 ⇒
+                //      证据换成「它把字段交进 bridge 声明的 IVkdisp* 接口，且文件里没有反射」。
+                if (countCodeOccurrences(text, "@Inject(") == 0
+                        && countCodeOccurrences(text, "@Redirect(") == 0) {
+                    assertTrue(countCodeOccurrences(text, "@Accessor(") > 0,
+                            p.getFileName() + "：没有 @Inject/@Redirect 就必须是 @Accessor 访问器注入点");
+                    assertTrue(countCodeOccurrences(text, "implements IVkdisp") > 0,
+                            p.getFileName() + "：访问器类必须 implements bridge 的 IVkdisp* 接口"
+                                    + "（否则 bridge 侧取不到值，只能退回反射）");
+                    assertEquals(0, countCodeOccurrences(text, "getDeclaredField"),
+                            p.getFileName() + "：访问器已经替掉反射，文件里不许再出现 getDeclaredField");
+                    continue;
+                }
                 int injectAt = -1;
                 for (int i = 0; i < lines.size(); i++) {
-                    String raw = lines.get(i);
-                    String trimmed = raw.trim();
+                    String trimmed = lines.get(i).trim();
                     // ⚠️ 必须跳过注释行：类 javadoc 的【参考调研】里会引用 "@Inject(...)" 字样。
                     if (trimmed.startsWith("*") || trimmed.startsWith("//") || trimmed.startsWith("/*")) {
                         continue;
                     }
-                    if (trimmed.contains("@Inject(")) {
+                    if (trimmed.contains("@Inject(") || trimmed.contains("@Redirect(")) {
                         injectAt = i;
                         break;
                     }
                 }
-                assertTrue(injectAt >= 0, p.getFileName() + " 里没有 @Inject");
+                assertTrue(injectAt >= 0, p.getFileName() + " 里没有 @Inject/@Redirect");
                 // 先定位方法体的开括号（签名可能跨多行），再取体内第一条语句。
                 int bodyAt = -1;
                 for (int i = injectAt; i < lines.size() && i < injectAt + 20; i++) {
@@ -193,7 +216,7 @@ class MixinWiringTest {
                         break;
                     }
                 }
-                assertTrue(bodyAt > 0, p.getFileName() + " 的 @Inject 之后找不到方法体开括号");
+                assertTrue(bodyAt > 0, p.getFileName() + " 的注入注解之后找不到方法体开括号");
                 String firstStatement = null;
                 for (int i = bodyAt; i < lines.size() && i < bodyAt + 12; i++) {
                     String line = lines.get(i).trim();
@@ -203,8 +226,9 @@ class MixinWiringTest {
                     firstStatement = line;
                     break;
                 }
-                // 🔖 不写死类名：M-01/M-01b 转发到 TerrainPipelineApi.on*，
-                // M-05 转发到 TerrainDrawCapture.onCaptured —— 判据是「首行是 bridge 侧埋点转发」。
+                // 🔖 不写死类名：M-01/M-01b 转发到 TerrainPipelineApi.on*，M-05 转发到
+                //    TerrainDrawCapture.onCaptured，M-10 转发到 CloudsIntoGbuffer.onCloudModelViewRequest
+                //    —— 判据是「首行是 bridge 侧埋点转发」。
                 assertTrue(firstStatement != null
                                 && firstStatement.matches(".*\\w+\\.on\\w*\\(.*"),
                         p.getFileName() + " 的注入方法体首行必须是埋点转发（实测 "
@@ -225,6 +249,20 @@ class MixinWiringTest {
         assertEquals("net.minecraft.client.renderer.LevelRenderer", MixinTargets.LEVEL_RENDERER);
         assertEquals("prepareChunkRenders", MixinTargets.LEVEL_RENDERER_PREPARE_CHUNK_RENDERS);
         assertEquals("prepareChunkRendersIndirect", MixinTargets.LEVEL_RENDERER_PREPARE_CHUNK_RENDERS_INDIRECT);
+        // R3（M-07…M-10）新增的目标 —— 逐字对着 26.3.0.41-beta sources jar 的声明核。
+        assertEquals("net.minecraft.client.renderer.CloudRenderer", MixinTargets.CLOUD_RENDERER);
+        assertEquals("quadCount", MixinTargets.CLOUD_RENDERER_QUAD_COUNT);
+        assertEquals("chunkLayerSampler", MixinTargets.LEVEL_RENDERER_CHUNK_LAYER_SAMPLER);
+        assertEquals("net.minecraft.client.renderer.chunk.ChunkSectionsToRender$DrawIndirect",
+                MixinTargets.CHUNK_SECTIONS_TO_RENDER_DRAW_INDIRECT);
+        assertEquals("drawGroupsPerLayer", MixinTargets.CHUNK_SECTIONS_TO_RENDER_DRAW_GROUPS);
+        // M-10 的两条硬事实：private 重载必须带完整描述符（CloudRenderer 上有三个叫 render 的方法），
+        // 而被替换的那次调用返回 Matrix4f（不是 Matrix4fc）—— 替换者的返回类型跟着它。
+        assertEquals("render(Lcom/mojang/renderpearl/api/commands/RenderPass;"
+                        + "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)V",
+                MixinTargets.CLOUD_RENDERER_RENDER_INNER);
+        assertEquals("com.mojang.blaze3d.systems.RenderSystem.getModelViewMatrixCopy()Lorg/joml/Matrix4f;",
+                MixinTargets.RENDER_SYSTEM_GET_MODEL_VIEW_MATRIX_COPY);
         assertEquals(1, MixinTargets.MIXIN_CONFIG_COUNT,
                 "MIXIN_CONFIG_COUNT 必须与 neoforge.mods.toml 里启用的 [[mixins]] 数一致");
     }

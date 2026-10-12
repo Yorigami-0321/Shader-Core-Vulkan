@@ -134,29 +134,39 @@ class VolumeStubCapabilityTest {
     }
 
     @Test
-    @DisplayName("🔖🔖 atlasSampler 的创建不得被 colortex 的状态门控（级联的根）")
+    @DisplayName("🔖🔖 采样器不得被 colortex 的状态门控（级联的根）—— R3 之后它连建都不建")
     void atlasSamplerIsNotGatedOnColortex() {
         String pass = readOrSkip(PASS);
         String ensureTargets = bodyOf(pass, "private static void ensureTargets(RenderTarget main)");
         assertTrue(ensureTargets.contains("ensureColortex("),
                 "colortex 必须拆成独立的 ensure（尺寸/resize 与资源创建分开）");
-        assertTrue(ensureTargets.contains("ensureAtlasSampler()"),
-                "🔴 ensureTargets 必须**无条件**调用 ensureAtlasSampler —— "
-                        + "h33 的级联正是因为它被放在了 colortex==null 分支里");
         assertTrue(ensureTargets.contains("ensureShadowStubs()"),
                 "阴影桩同理：必须每帧兜底，不能只在首次创建路径里");
         assertTrue(ensureTargets.contains("VolumeStubs.init()"),
                 "3D 桩同理：必须在建 pass 之前调用（那时才能建 encoder）");
+        // 🔴 R3 / M-07 之后本类的不变量换了形状，但**说的还是 h33 那件事**：
+        //   旧：ensureTargets 必须无条件调 ensureAtlasSampler（漏调 ⇒ 每帧 null sampler ⇒ 2702 条）。
+        //   新：我方**不再拥有**采样器 ⇒ 它根本不该出现在资源装配路径里，而是在绘制点现取
+        //       （原版会 close+重建，缓存等于用死对象）。缺席时只让**它自己**那条 draw 停。
+        assertFalse(ensureTargets.contains("atlasSampler"),
+                "🔴 ensureTargets 里不该再出现采样器（M-07：图集采样器归原版所有，绘制点现取）");
+        assertTrue(bodyOf(pass, "private static void drawTerrain()").contains("atlasSampler()"),
+                "绘制点必须每帧现取（原版实例会被它自己 close 并重建）");
     }
 
     @Test
-    @DisplayName("🔖🔖 采样器创建必须幂等（每帧兜底，不是每帧新建）")
-    void atlasSamplerCreationIsIdempotent() {
+    @DisplayName("🔖🔖 地形图集必须绑原版实例，我方零自建（M-07 / GAP-041）")
+    void atlasSamplerComesFromVanilla() {
         String pass = readOrSkip(PASS);
-        String ensure = bodyOf(pass, "private static void ensureAtlasSampler()");
-        assertTrue(ensure.contains("if (atlasSampler == null)"),
-                "🔴 每帧兜底的前提是**幂等**：已是 sampler 就直接返回，"
-                        + "否则每帧新建 = 每帧泄漏一个 GPU 对象");
+        assertFalse(pass.contains("getDevice().createSampler"),
+                "🔴 自建采样器（各向异性恒 1、与原版不可比）已按 GAP-041 删除，"
+                        + "出现 createSampler 就是把它加回去了");
+        assertTrue(pass.contains("IVkdispChunkLayerSamplerAccess"),
+                "原版 private 字段必须经 @Accessor 交出（反射那条路已判死，见 GAP-042）");
+        assertTrue(pass.contains("MIXIN_REUSE_CHUNK_SAMPLER"),
+                "复用档必须能一键关（X29）；关档走公开 samplerCache，不许退回自建");
+        assertTrue(pass.contains("getSamplerCache()"),
+                "关档臂必须用公开 samplerCache（零 GPU 对象所有权）");
     }
 
     @Test
@@ -164,12 +174,15 @@ class VolumeStubCapabilityTest {
     void missingSamplerStopsBeforeDraw() {
         String pass = readOrSkip(PASS);
         String draw = bodyOf(pass, "private static void drawTerrain()");
-        assertTrue(draw.contains("atlasSamplerReady()"),
+        assertTrue(draw.contains("sampler == null") && draw.contains("noteAtlasSamplerMissing()"),
                 "🔴 绘制前必须判采样器可用 —— 否则症状是看不出根因的"
-                        + " 'textureView and sampler must both or neither be null'（h33 实测 2702 条）");
-        String ready = bodyOf(pass, "private static boolean atlasSamplerReady()");
-        assertTrue(ready.contains("ERROR") || ready.contains("LOGGER.error"),
+                        + " 'textureView and sampler must both or neither be null'（h33 实测 2702 条）。"
+                        + "M-07 之后「不可用」= 原版实例本帧还没建出来");
+        String note = bodyOf(pass, "private static void noteAtlasSamplerMissing()");
+        assertTrue(note.contains("LOGGER.error"),
                 "不可用时必须**报错并说明原因**（X11：禁止静默降级成什么都不做）");
+        assertTrue(note.contains("atlasSamplerMissingNoted"),
+                "只报一次（h33 那 2702 行的教训）");
     }
 
     @Test

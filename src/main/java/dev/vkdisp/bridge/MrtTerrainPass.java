@@ -8,7 +8,7 @@ package dev.vkdisp.bridge;
  *    ② 原版 {@code ChunkSectionsToRender#renderGroup(ChunkSectionLayerGroup, RenderPass, GpuSampler, GpuTextureView, boolean)}
  *    （同 jar 第 45 行，**public**）；
  *    ③ NeoForge 26.3 {@code FrameGraphSetupEvent}（LGPL-2.1：只观察事件签名与触发时机）；
- *    ④ 原版 {@code RenderSystem.bindDefaultUniforms} / {@code GpuDevice#createSampler} /
+ *    ④ 原版 {@code RenderSystem.bindDefaultUniforms} / {@code RenderSystem.getSamplerCache} /
  *    {@code TextureManager#getTexture} / {@code TextureAtlas.LOCATION_BLOCKS}（均 public，签名逐个核实）。
  *    许可证：Mojang EULA + NeoForge LGPL-2.1。**只调用公开 API，零源码搬运、零着色器文本搬运。**
  *    → 能否并入本项目（MIT）：可以 —— 本文件为独立编写的桥接封装
@@ -18,8 +18,10 @@ package dev.vkdisp.bridge;
  *    {@code FrameGraphBuilder#addPass}（帧图装配期插 pass 的官方路径，{@code SceneCaptureApi} 已在用）。
  * 2. 备选：① 在 {@code addMainPass}（M-04 = 方案 B）里做 ⇒ 要改原版 pass 的附件语义，
  *    且四类 draw 全部受牵连；**否决**（风险高一档，见 {@code 04-SPEC.md} §5.0.4 取舍表）。
- *    ② 复用原版的 {@code chunkLayerSampler} ⇒ **不可行**：它是 {@code LevelRenderer} 的
- *    private 字段（第 146 行），只能自建同款（{@code GpuDevice#createSampler} 是 public）。
+ *    ② 复用原版的 {@code chunkLayerSampler} —— <b>现已成立</b>（R3 / M-07，2026-10-12）：
+ *    它是 {@code LevelRenderer} 的 private 字段（第 146 行），用 {@code @Accessor} 读出即可
+ *    （旧记载写的是「不可行 ⇒ 只能自建同款」，那是 M1 类别白名单还在时的口径；
+ *    白名单已废 ⇒ 自建那 42 行连带硬编码的 {@code maxAnisotropy=1} 一起删除，见 {@code GAP-041}）。
  * 3. 我们的差异点（**本类最要紧的设计**）：
  *    <ul>
  *      <li>🔖 <b>写自己的 colortex，不碰主目标</b> ⇒ 原版主 pass 照常把地形画进 main，
@@ -42,7 +44,6 @@ import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
-import com.mojang.renderpearl.api.textures.AddressMode;
 import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.renderpearl.api.textures.GpuSampler;
 import com.mojang.renderpearl.api.textures.GpuTexture;
@@ -112,9 +113,6 @@ public final class MrtTerrainPass {
     /** 我方深度目标（地形要深度测试/写深度；与 colortex 同尺寸）。 */
     private static TextureTarget colortexDepth;
 
-    /** 我方图集采样器（懒建；🔖 绝不每帧新建 —— 会泄漏 GPU 对象，见类注释第 3 条）。 */
-    private static GpuSampler atlasSampler;
-
     /** 是否正处于我方 MRT 地形 pass 内（M-01 据此选管线变体；**渲染线程内**使用）。 */
     private static boolean inMrtPass;
 
@@ -139,7 +137,7 @@ public final class MrtTerrainPass {
      */
     private static boolean shadowStubsWarned;
 
-    /** 「图集采样器缺失」是否已打过（同样只打一次，见上）。 */
+    /** 「图集采样器这一帧拿不到」是否已打过（同样只打一次，见上）。 */
     private static boolean atlasSamplerMissingNoted;
 
     private MrtTerrainPass() {
@@ -501,21 +499,23 @@ public final class MrtTerrainPass {
                 }
             }
             GpuTextureView atlas = blockAtlas();
-            // 🔴 h33：采样器没建出来就在这里停。旧实现把 null 一路传到 setUniform，
-            //   症状是看不出根因的 'textureView and sampler must both or neither be null'
-            //   （实测 2702 条/次运行）。停在这里 + 说明原因才是可定位的失败。
-            if (!atlasSamplerReady()) {
+            // 🔴 h33：拿不到采样器就在这里停。把 null 一路传到 setUniform 的症状是看不出根因的
+            //   'textureView and sampler must both or neither be null'（实测 2702 条/次运行）。
+            //   停在这里 + 说明原因才是可定位的失败。
+            GpuSampler sampler = atlasSampler();
+            if (sampler == null) {
+                noteAtlasSamplerMissing();
                 return;
             }
             // 🔖 GAP-003：包地形片元要绑的 uniform（VkDispBuiltins + 它自由声明的 sampler）。
             //   **必须在 renderGroup 之前**：STRICT_VALIDATION 下 validateDraw 按布局逐条校验，
             //   少一条即抛 Missing uniform 名（响亮失败，不是静默）。
-            TerrainPipelineApi.bindPackTerrainUniforms(renderPass, atlasSampler, atlas,
+            TerrainPipelineApi.bindPackTerrainUniforms(renderPass, sampler, atlas,
                     colortexDepth.getDepthTextureView(), slotView(0));
             if (fullscreenProbe()) {
                 drawFullscreenProbe(renderPass);
             }
-            draws.renderGroup(ChunkSectionLayerGroup.OPAQUE, renderPass, atlasSampler, atlas, false);
+            draws.renderGroup(ChunkSectionLayerGroup.OPAQUE, renderPass, sampler, atlas, false);
             // 🔴🔴 GAP-027：**水一直只被注册、从来没被画过**（h48 七十四 ③ 记的就是这一条）。
             //   管线、契约、附件数取 max、逐程序绑定全都到位了，但本方法只发出过一次
             //   `renderGroup(OPAQUE)` ⇒ `gbuffers_water` 的片元一次都没跑过。
@@ -660,14 +660,20 @@ public final class MrtTerrainPass {
             second.withColorAttachment(view(slot), Optional.empty());
         }
         second.withDepthAttachment(colortexDepth.getDepthTextureView(), OptionalDouble.empty());
+        // 🔖 采样器在**开 pass 之前**取：pass 内才发现拿不到就只能带着已开的 pass return。
+        GpuSampler sampler = atlasSampler();
+        if (sampler == null) {
+            noteAtlasSamplerMissing();
+            return;
+        }
         inMrtPass = true;
         try (RenderPass renderPass = encoder.createRenderPass(second.build())) {
             RenderSystem.bindDefaultUniforms(renderPass);
-            TerrainPipelineApi.bindPackGbufferUniforms(renderPass, atlasSampler, blockAtlas(),
+            TerrainPipelineApi.bindPackGbufferUniforms(renderPass, sampler, blockAtlas(),
                     colortexDepth.getDepthTextureView(), slotView(0),
                     dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM);
             draws.renderGroup(ChunkSectionLayerGroup.TRANSLUCENT, renderPass,
-                    atlasSampler, blockAtlas(), false);
+                    sampler, blockAtlas(), false);
             reportWaterGroup(draws);
             drainDeviceDebugMessages();
         } finally {
@@ -702,7 +708,10 @@ public final class MrtTerrainPass {
     }
 
     /**
-     * 懒建 colortex + 深度 + 采样器（尺寸跟随主目标；尺寸变化时 resize，不每帧重建）。
+     * 懒建 colortex + 深度（尺寸跟随主目标；尺寸变化时 resize，不每帧重建）。
+     *
+     * <p>🔖 采样器<b>不在这里建</b>了（R3 / M-07）：它每帧现取原版那一个，取法见本类下方的
+     * {@code atlasSampler()} 方法。
      *
      * <p>🔴🔴 <b>为什么拆成四个互相独立的 ensure（h33 实测修的坑）</b>：
      * 旧版是一个「建到一半就 return」的顺序块，而 early-return 只看 {@code colortex != null}。
@@ -710,7 +719,7 @@ public final class MrtTerrainPass {
      * 建不出 3D 纹理 ⇒ {@code UnsupportedOperationException}），就会：
      * <pre>
      *   colortex        已赋值 ✅
-     *   atlasSampler    永远没被赋值 ❌   ← 它在 VolumeStubs.init() 的**下一行**
+     *   atlasSampler    永远没被赋值 ❌   ← 它在 VolumeStubs.init() 的**下一行**（h33 当时的情形）
      *   下一帧          early-return 看到 colortex != null ⇒ 认为「都建好了」⇒ 永不补建
      *   结果            每帧 setUniform(name, view, null)
      *                  ⇒ IllegalArgumentException: textureView and sampler must both or neither be null
@@ -718,7 +727,7 @@ public final class MrtTerrainPass {
      * </pre>
      * ⇒ <b>一个 sampler 的问题被升级成了整个 pass 不可用</b>。
      * ⇒ 现在每个资源各管各的：某一步失败只让**它自己**缺席，其余照常。
-     * 缺席的资源在使用点有独立的、可见的失败路径（{@link #atlasSamplerReady()}）。
+     * 缺席的资源在使用点有独立的、可见的失败路径（{@link #noteAtlasSamplerMissing()}）。
      */
     private static void ensureTargets(RenderTarget main) {
         ensureColortex(main);
@@ -744,14 +753,14 @@ public final class MrtTerrainPass {
         //   🔴 h33：原版 26.3 建不出 3D 纹理 ⇒ 这里**不会**再抛（见 VolumeStubs#noteUnsupported），
         //   它只记一次 ERROR 并让 sampler3D 走「不绑 + 报错」路径。
         VolumeStubs.init();
-        ensureAtlasSampler();
+        // 🔖 采样器**不再在这里建**（R3 / M-07）：归原版所有，绘制点每帧现取。
         // 🔴 h34 修正：这条「targets ready」**原来挂在首次创建分支里**（只打一次），
         //   h33 拆 ensure 时把它挪到了 ensureTargets 末尾 ⇒ 变成**每帧一条 INFO**。
         //   实测一次运行刷了 **499 行** —— 与 h25 的 M-01 埋点 600→250000、
         //   以及本文件自己注释里写的节流纪律，**是同一课**。
         //   ⇒ 它描述的是「colortex 建好了」，归 ensureColortex 建好时打一次；
         //   resize 路径有它自己那一条（见下）。资源是否就绪的判据不是日志，是
-        //   {@link #atlasSamplerReady()} 与 {@code colortex != null}。
+        //   {@link #noteAtlasSamplerMissing()} 与 {@code colortex != null}。
     }
 
     /** colortex 池 / 深度目标：懒建 + 尺寸变化时 resize（池内部处理；不含任何可能抛的资源）。 */
@@ -879,94 +888,85 @@ public final class MrtTerrainPass {
     }
 
     /**
-     * 图集采样器 —— <b>每帧兜底</b>，不是「只在首次创建时建」。
+     * 图集采样器 —— <b>复用原版那一个</b>（M-07），我方不再 {@code createSampler}。
      *
-     * <p>🔖 <b>为什么必须是每帧兜底</b>：h33 实测的故障正是
-     * 「前一步抛异常把它跳过了，而 early-return 又只看 colortex」。
-     * 只要兜底与 colortex 解耦，那类级联就再也伤不到它。
-     * {@code ShadowStubs} / {@link VolumeStubs} 自己已是幂等 ensure，这里同理。
+     * <p>🔖 <b>为什么每帧现取、不缓存</b>：原版会在它自己的 pass 体里 {@code close()} 旧实例并重建
+     * （第 437-449 行，由 {@code shouldResetChunkLayerSampler} 门控）⇒ 缓存住一个被 close 的
+     * GPU 对象就是用死对象。各向异性与那套门控因此是<b>一起继承</b>的（{@code GAP-041} 要的就是这个）。
+     *
+     * <p>⚠️ <b>可能返回 null</b>：原版实例在它自己的 pass 体内才建，首帧/换世界后第一帧我方 pass
+     * 若排在它前面就是 null ⇒ 调用点必须先判空再绘制（h33 那条纪律不变），见
+     * {@link #noteAtlasSamplerMissing()}。
+     *
+     * <p>🔌 关档（{@code mixin.reuseChunkSampler=false}）退回公开的
+     * {@code samplerCache.getClampToEdge(LINEAR)}：各向异性<b>恒为 1</b> = {@code GAP-041} 的坏档
+     * ⇒ 它是 A/B 位，不是「更安全的默认」。
      */
-    private static void ensureAtlasSampler() {
-        if (atlasSampler == null) {
-            // 🔴 GAP-016（h45/h46 三臂交叉定位）：包片元对图集的**隐式导数 LOD 选了坏 mip**
-            //   ⇒ texture() 恒 0，而 textureLod(…,0.0) 与 textureGrad 都非零。
-            //   止血 = 图集采样器 maxLod=0（钉 mip0）；关掉即回到坏行为并 WARN 说明代价。
-            boolean lod0 = dev.vkdisp.VkDispConfig.MRT_TERRAIN_ATLAS_LOD0.get();
-            atlasSampler = RenderSystem.getDevice().createSampler(
-                    AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE,
-                    FilterMode.LINEAR, FilterMode.LINEAR, 1,
-                    lod0 ? OptionalDouble.of(0.0) : OptionalDouble.empty());
-            if (lod0) {
-                VkDisp.LOGGER.info("vkdisp: [GAP-016] terrain atlas sampler created with maxLod=0"
-                        + " (workaround: implicit-derivative LOD picks a bad mip;"
-                        + " mrt.terrainAtlasLod0=false restores it — SEE registry)");
-            } else {
-                VkDisp.LOGGER.warn("vkdisp: [GAP-016] mrt.terrainAtlasLod0=false —— 图集采样回到"
-                        + "隐式导数 LOD；h45/h46 实测该路径对包片元恒给 0（GAP-008 的当前主因）");
-            }
+    @Nullable
+    private static GpuSampler atlasSampler() {
+        if (!VkDispConfig.MIXIN_REUSE_CHUNK_SAMPLER.get()) {
+            return RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         }
+        net.minecraft.client.renderer.LevelRenderer renderer = Minecraft.getInstance().levelRenderer;
+        return renderer == null ? null
+                : ((IVkdispChunkLayerSamplerAccess) renderer).vkdisp$chunkLayerSampler();
     }
 
     /**
-     * 采样器可用吗？不可用时**只报一次** ERROR 并让调用点跳过绘制。
-     *
-     * <p>🔖 <b>为什么要这一层</b>：没有它，{@code atlasSampler == null} 会一路传到
-     * {@code setUniform}，变成一个<b>看不出根因</b>的
-     * {@code textureView and sampler must both or neither be null}（h33 实测的那 2702 条）。
-     * 在这里停下来并说明「采样器没建出来」，才是可定位的失败（01-DEV-LOOP §6 第 2 步）。
+     * 这一帧拿不到图集采样器 ⇒ 本帧不画，并<b>只报一次</b>原因。null 一路传到 {@code setUniform}
+     * 会变成一个看不出根因的 {@code textureView and sampler must both or neither be null}
+     * （h33 实测的那 2702 条）—— 停在这里并说明「原版实例还没建出来」才是可定位的失败
+     * （01-DEV-LOOP §6 第 2 步）。
      */
-    private static boolean atlasSamplerReady() {
-        if (atlasSampler != null) {
-            return true;
+    private static void noteAtlasSamplerMissing() {
+        if (atlasSamplerMissingNoted) {
+            return;
         }
-        if (!atlasSamplerMissingNoted) {
-            atlasSamplerMissingNoted = true;
-            VkDisp.LOGGER.error("vkdisp: [GAP-003/A] 图集采样器未创建成功 —— 跳过地形 MRT 绘制。"
-                    + "**不会**用 null sampler 继续（那会让 draw 抛一个看不出根因的"
-                    + " 'textureView and sampler must both or neither be null'）；"
-                    + "本次不画的原因请看本行之前最近一条 vkdisp ERROR");
-        }
-        return false;
+        atlasSamplerMissingNoted = true;
+        VkDisp.LOGGER.error("vkdisp: [GAP-003/A] 原版图集采样器本帧还不可得 —— "
+                + "LevelRenderer#chunkLayerSampler 仍是 null（它在原版 main pass 体内才建，"
+                + "首帧/换世界后第一帧我方 pass 可能排在它前面）⇒ 跳过本帧地形 MRT 绘制，下一帧自愈。"
+                + "**不会**用 null sampler 继续（那会让 draw 抛一个看不出根因的"
+                + " 'textureView and sampler must both or neither be null'）");
     }
 
     /**
-     * 反射读出捕获对象里**各层实际要提交的 draw 条数**（只诊断一次）。
+     * 自报捕获对象里<b>各层实际要提交的 draw 条数</b>（M-08：访问器 + 公开 record 访问器，反射已删）。
      *
-     * <p>🔖 <b>为什么必须反射</b>：{@code ChunkSectionsToRender.DrawIndirect.drawGroupsPerLayer}
-     * 与 {@code GpuMultiDrawIndexedIndirect.drawCount()} 都是 private，
-     * 而「pass 跑通、0 报错、colortex 只有清屏色」这个症状**无法区分**
-     * 「一条 draw 都没提交」与「提交了但全被丢弃」。
-     * 这是本轮卡得最久的一环 —— 没有这个数字就只能靠猜。
+     * <p>🔖 <b>为什么这个数字必须在</b>：「pass 跑通、0 报错、colortex 只有清屏色」这个症状
+     * <b>无法区分</b>「一条 draw 都没提交」与「提交了但全被丢弃」—— 当初卡得最久的一环，
+     * 没有这个数字就只能靠猜。
      *
-     * <p>⚠️ 反射失败只打 WARN 不抛：诊断手段本身不该把功能拖挂。
+     * <p>🔖 <b>取法换了</b>：{@code drawGroupsPerLayer} 由
+     * {@code mixin.ChunkSectionsToRenderDrawProbeMixin} 的访问器交出（字段改名 ⇒ 注入期硬失败，
+     * 不再是一行可以被忽略的 WARN）；{@code drawCount} 那一半<b>本来就不需要反射</b> ——
+     * {@code GpuMultiDrawIndexedIndirect} 是 {@code public record}，{@code drawCount()} 是公开访问器。
      */
     private static void probeDrawCounts(ChunkSectionsToRender draws) {
-        try {
-            Class<?> cls = draws.getClass();
-            java.lang.reflect.Field groupsField = cls.getDeclaredField("drawGroupsPerLayer");
-            groupsField.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            java.util.Map<net.minecraft.client.renderer.chunk.ChunkSectionLayer, ? extends java.util.List<?>> groups =
-                    (java.util.Map<net.minecraft.client.renderer.chunk.ChunkSectionLayer, ? extends java.util.List<?>>)
-                            groupsField.get(draws);
-            StringBuilder sb = new StringBuilder();
-            for (var e : groups.entrySet()) {
-                int items = e.getValue() == null ? -1 : e.getValue().size();
-                long drawSum = 0L;
-                if (e.getValue() != null && !e.getValue().isEmpty()) {
-                    java.lang.reflect.Field dc = e.getValue().getFirst().getClass().getDeclaredField("drawCount");
-                    dc.setAccessible(true);
-                    for (Object o : e.getValue()) {
-                        drawSum += ((Number) dc.get(o)).longValue();
-                    }
-                }
-                sb.append(' ').append(e.getKey()).append("{groups=").append(items)
-                        .append(",draws=").append(drawSum).append('}');
-            }
-            VkDisp.LOGGER.info("vkdisp: [GAP-003/A] captured draw groups: {}", sb);
-        } catch (Throwable t) {
-            VkDisp.LOGGER.warn("vkdisp: [GAP-003/A] draw-count probe unavailable: {}", t.toString());
+        if (!VkDispConfig.MIXIN_TERRAIN_DRAW_PROBE.get()) {
+            return;
         }
+        if (!(draws instanceof IVkdispTerrainDrawProbe probe)) {
+            // indirect 变体才有访问器（本机 lavapipe 走这条）。另一变体就直说是哪条，
+            //   不伪装成「探针坏了」—— 旧实现那行 WARN 把「变体不对」与「反射失败」混成一件事。
+            VkDisp.LOGGER.info("vkdisp: [GAP-003/A] captured draws 变体={} —— M-08 只覆盖 indirect"
+                    + " 变体，本臂无 draw 计数（要覆盖另一变体先按 X28 登记）",
+                    draws.getClass().getSimpleName());
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (var entry : probe.vkdisp$drawGroupsPerLayer().entrySet()) {
+            List<?> groups = entry.getValue();
+            long drawSum = 0L;
+            for (Object group : groups) {
+                drawSum += group instanceof ChunkSectionsToRender.GpuMultiDrawIndexedIndirect indirect
+                        ? indirect.drawCount()
+                        : 1L;
+            }
+            sb.append(' ').append(entry.getKey()).append("{groups=").append(groups.size())
+                    .append(",draws=").append(drawSum).append('}');
+        }
+        VkDisp.LOGGER.info("vkdisp: [GAP-003/A] captured draw groups: {}", sb);
     }
 
     /**

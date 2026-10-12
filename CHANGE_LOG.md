@@ -6,6 +6,52 @@
 ---
 ---
 
+## 2026-10-12（一百一十六）— ✅ R3 第 2 步落地：**反射清零**（M-08/M-09 访问器）、**自建采样器 42 行删除**（M-07 复用原版实例）、**云的压栈/还原删除**（M-10 `@Redirect` 改实参）、**modifier 现读配置移到调用点**（GAP-044）
+
+> **verdict = 纯删码轮**：四条改动都不新增渲染语义，只把「可静默失效的取值方式」换成「升版即硬失败的取值方式」。
+> 判据里两条**要真机的还没签**（见文末「未验证」），代码侧的红线已经划到位置上。
+
+- **① M-08/M-09：反射清零**。新增 `mixin/ChunkSectionsToRenderDrawProbeMixin`（目标
+  `ChunkSectionsToRender$DrawIndirect` —— 字段在嵌套变体上，基类没有它）与
+  `mixin/CloudRendererMeshProbeMixin`（`quadCount`），配 `bridge/IVkdispTerrainDrawProbe` /
+  `bridge/IVkdispCloudMeshProbe`。`MrtTerrainPass#probeDrawCounts` 与 `CloudsIntoGbuffer#meshState`
+  里那两处 `getDeclaredField + setAccessible` 连**同一条 `catch` ⇒ WARN 分支**一起物理删除。
+  🔖 口径如实：**「零命中」指代码，不指 grep 全文** —— 本轮新写的注释里留了 9 处
+  「被否决的反射方案」字样（`2. 备选：① 反射 …` 那一格），`grep getDeclaredField` 会连注释一起数。
+  🔖 顺带查实：`drawCount` 那一半**反射本就是多余的** —— `GpuMultiDrawIndexedIndirect` 是 `public record`。
+  ⚠️ 两条如实的范围收缩：M-08 只覆盖 indirect 变体（本机走这条，另一变体命中时自报**直说变体名**）；
+  M-09 只交出 `quadCount`（判据等价：`quadCount!=0` ⇒ `texture!=null`；`utb` 为 null 会**抛 NPE**，
+  不属静默失效那一族 —— 拿它当判据会把响亮失败登记成静默失效）。
+- **② M-07：地形图集绑原版那个实例**。`mixin/LevelRendererChunkSamplerMixin` + `bridge/IVkdispChunkLayerSamplerAccess`
+  读出 `LevelRenderer#chunkLayerSampler`（private，第 146 行）⇒ `MrtTerrainPass` 的 `atlasSampler` 静态字段与
+  `ensureAtlasSampler()` 整块删除（各向异性恒 1 那个偏差 = `GAP-041` 本体）。取法改成**绘制点每帧现取**，
+  因为原版会在自己 pass 体内 `close()` 并重建 ⇒ 缓存等于用死对象。首帧为 null ⇒ 判空后本帧不画 + ERROR 一次
+  （h33 那条「不许把 null 传给 setUniform」的纪律换形状、没换含义）。
+  🔴 **新风险如实登记**：原版实例 maxLod=empty ⇒ `mrt.terrainAtlasLod0` 那条 `GAP-016` 止血不再作用于地形图集；
+  若地图采样回到恒 0，`mixin.reuseChunkSampler` 是 A/B 位，结论回 `GAP-016` 而不是回代码里加拐杖。
+- **③ M-10：云不再碰全局栈**。`mixin/CloudRendererMatrixRedirectMixin` `@Redirect` 掉
+  `CloudRenderer:226` 那次 `RenderSystem.getModelViewMatrixCopy()`（目标写**完整描述符** —— 该类有三个 `render`）
+  ⇒ `CloudsIntoGbuffer` 的 `stack.set` + `saved` + `finally` 整块删除。🔖 对原版是**恒等变换**：原版只在
+  `LevelRenderer:738`/`:646` 画云，那两处栈顶本就是装配期相机矩阵。
+- **④ GAP-044：`apply` 里的现读配置移到调用点**。`GbufferPipelineSwaps` 注册**两个 key**
+  （`clouds_no_cull` / `clouds_no_cull_no_depth_write`），两个 modifier 都不读配置；`CloudsIntoGbuffer`
+  每帧现读 `mrt.cloudsNoDepthWrite` 后**选 key** ⇒ 「第一次 push 那刻的值被永久冻结」这一族解除。
+- **影响的文档**：`04-SPEC` §5.0 的 M-07…M-10 四行（候选 → 已实现 + 范围收缩与关档代价）；
+  `13` 的 GAP-041/042/044 三条状态；本文与 `19` §5A.4 的 R3 行（代码完成、验证未结）。
+  `MixinTargets` 新增 7 个常量；`vkdisp.mixins.json` 从 3 个 client mixin 到 **7 个**。
+- **测试**：`./gradlew test --offline` → **1165 tests, 0 failed, 1 skipped**（那 1 条 skip 是既有的
+  `PackUniformBslTest`）。守卫跟着改而不是绕开：`MixinWiringTest` 的「注入首行必须埋点转发」现在
+  分两种形状（有体 ⇒ 查转发；`@Accessor` 无体 ⇒ 查 `implements IVkdisp*` + 文件里零反射）；
+  `VolumeStubCapabilityTest` 那三条采样器守卫按 M-07 新不变量重写（其中一条此前因方法被删而**静默 skip**，
+  现在是真的在断言）。⚠️ 代价如实登记：四个新键把 `VkDispConfig` 顶过 1000 行 ⇒ 它成为**第 7 个巨类**、
+  进了 `ClassLineRatchetTest` 的 CAPS（1047，只许降）；按域拆配置类是 `19` §3.4 的下一格。
+- **未验证（不许当已收口）**：① 各向异性两档锐度随用户设置变（真机 A/B）；② 同机位同帧读数与今天相同
+  （`c0@afterTerrain` / `c0@afterClouds` 探针）；③ 启动日志 `Mixin apply failed` = 0 —— 本轮新增 4 个
+  mixin 类、其中两个是 `@Accessor`，**没有真机跑过就意味着 applier 侧还没被证明**。
+- **提交**：✅ 本地提交并推送（本轮结束时 `git status` 干净）。
+
+
+
 ## 2026-10-12（一百一十五）— 🔴 R1 的幂等收敛设想被**证伪**（改判回 M-01 + 新增 M-15）；M-04 牵连面清单交付，范围缩小到 1 个 GPU pass、真实风险改型为「开放集合」
 
 > **verdict = 同日第二轮调研 + 自我改判轮，零 `src/` 改动**：用户要求「确认 R1 幂等收敛方案与 M-04 牵连面清单」。

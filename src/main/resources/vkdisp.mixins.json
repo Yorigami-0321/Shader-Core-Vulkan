@@ -6,8 +6,12 @@
   "mixins": [],
   "client": [
     "ChunkSectionLayerPipelineMixin",
+    "ChunkSectionsToRenderDrawProbeMixin",
     "ChunkSectionsToRenderMixin",
-    "LevelRendererChunkCaptureMixin"
+    "CloudRendererMatrixRedirectMixin",
+    "CloudRendererMeshProbeMixin",
+    "LevelRendererChunkCaptureMixin",
+    "LevelRendererChunkSamplerMixin"
   ],
   "injectors": {
     "defaultRequire": 1
