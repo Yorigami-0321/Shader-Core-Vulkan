@@ -6,6 +6,26 @@
 ---
 ---
 
+## 2026-10-12（一百二十七）— 🔴 第一次真机 `runClient` 就炸出四个注入点：handler 形状全部照真机改过，客户端现在能进世界
+
+> **verdict = 上一轮那句「`Mixin apply failed = 0` 仍未验证」还掉了五轮的账，本轮一次跑清**：四趟 `runClient -PquickPlay`（19:57 崩 bootstrap → 20:03 崩 CloudRenderer apply → 20:08 崩 `Operation.call` 条数 → 20:11 **进世界并稳定跑**）。测试 1168 条 0 失败。
+
+- **① 崩法一（M-15 两个变体）**：`@WrapOperation` 包住的是**静态**调用 `RenderSystem.getCompiledPipeline(RenderPipeline)` ⇒ handler 不能有接收者，而两个 handler 都以 `ChunkSectionsToRender self` 开头 ⇒ apply 期 `InvalidInjectionException: Found unexpected argument type ChunkSectionsToRender at index 0, expected RenderPipeline`，**模组加载阶段就崩**。同时 `@Local(argsOnly = true, ordinal = 0)` 写两遍是歧义写法，改成按类型匹配。
+- **② 崩法二（M-13 两处 + M-04 一处，本轮新学的一条规则）**：`Operation.call(...)` 在**运行期**按条数硬校验，包住**虚调用**时必须把**接收者**一起交回去 —— `IncorrectArgumentCountException: Expected 2 but got 1`。⚠️ M-04 那处的形状是 `original.apply(replaceIfNeeded(d))`：**开关关着也走转发**，所以「默认档」同样是每次建 pass 必崩（第一炸点 `TextureAtlas.uploadAnimationFrames`）。M-13 同族：`original.call(name)` → `original.call(builder, name)`。
+- **③ 崩法三（M-10）**：`@Redirect` 的形参表以**运行期那次调用**为准，不是以 sources jar 那行为准 —— `RenderSystem.getModelViewMatrixCopy` 在 26.3 运行时带 `(RenderPass, RenderPipeline)` 两个实参（sources 里第 296 行是无参的），照 sources 抄就 apply 失败。Mixin 的报错会直接给出 `Expected signature:`，照它抄最快。
+- **④ 顺带抓到一条观测面缺陷（GAP-048）**：`[R4/sky]` 自报里「接管方」16200 帧全是「还没写」—— 它读的 `paintedThisFrame` 在**同一帧的后面**才置真、且每帧开头被清回 false ⇒ 那个表达式结构上只能取到 false。改成打印本帧此刻的判定（`whoWillPaint()`），并在注释里点名「有没有真写要看 `paintedWriteGeneration()`」（那条是活的，地形 LOAD/CLEAR 判据用的就是它）。
+- **✅ 真机签到的东西（vkdisp 自己这一侧的客户端，854×480，`time set 6000` 后 `dayTime=7154`、`raining=false`）**：
+  ① 日志 0 条 `Mixin apply for mod vkdisp failed`、0 条 `IncorrectArgumentCountException`；
+  ② `[M-13] terrain requires vanilla-sky 边已声明=true` ⇒ 第 6 步那条 `requires` 边**真的连上了**（h48g 那个坏形状没回来）；
+  ③ `[M-15] pass-aware getCompiledPipeline hits=1200` ⇒ 第 4 步的通道在跑；
+  ④ `[R4/sky] 钩子被调# = 天空帧#`（16200 = 16200）⇒ 官方天空盒钩子**每帧都被原版调到**（M-12 那条证伪判据今天有了反向证据）；
+  ⑤ 画面：日景、天空蓝且有太阳辉光（`skyColor=(0.500, 0.630, 1.000)`）、雪地与树叶带包的地形着色与 AO、HUD 正常 ⇒ 第 5 步「黑天空」那一族症状在这一档不复现；
+  ⑥ `[M-04/⑤-a] 建 pass 观察=16800 主 pass 接管=0 尺寸不合拒绝=0 开关=false` ⇒ 挂点每帧路过 ~27 次建 pass，关档时**一次都不接管**（这正是默认档该有的样子）。
+- **⚠️ 仍未签的**：这一档是**手写取证 toml**（`mrt.terrain` + `mrt.packTerrainShader` 同开、BSL 包），不是代码默认档 ⇒ 不许据此说「用户开箱即得」；像素级判据（各向异性两档、进水那一帧的雾、岩浆里没天空、深度只翻一次）本轮**只跑了「不崩 + 通道在跑」这一层**，逐项对照还没做。
+- **纪律（本轮改流程）**：**每交一个注入点，当轮就 `runClient` 一次**，别把「apply 过没有」留给下一轮 —— 文本守卫覆盖不了 handler 形状，这是 `01-DEV-LOOP` §0 的原意。
+
+---
+
 ## 2026-10-12（一百二十六）— 🟡 R7 第 ⑤-a 步**代码落地**：主 pass 的颜色附件换成我方 colortex 阵列（`MainPassAttachmentMixin` + `MainPassTakeover`），开关默认**关**
 
 > **verdict = §5.0.7 那条五步执行序的第一步交了代码，但它的判据没签字**：⑤-a 的证据是「下一次 `setPipeline` 当场抛附件数不匹配」，那句抛只能在真机上看，本轮**一次真机都没跑** ⇒ 状态写「已落地待取证」，不写「已完成」。测试 1168 条（本轮 +7）、0 失败。

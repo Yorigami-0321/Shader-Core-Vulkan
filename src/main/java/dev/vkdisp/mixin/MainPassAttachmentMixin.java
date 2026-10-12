@@ -52,15 +52,20 @@ public abstract class MainPassAttachmentMixin {
     /**
      * 包住 6 参重载内部第 95 行那一次 {@code createRenderPass(descriptor)}。
      *
-     * @param encoder    被调用方法的接收者（本方法不用它，签名要求它在）
+     * <p>⚠️ {@code Operation.call(…)} 的实参表 = <b>接收者 + 被包住方法的全部实参</b>（MixinExtras 0.5.5
+     * 在运行期按条数硬校验：{@code IncorrectArgumentCountException: Expected 2 but got 1}，实测踩过）。
+     * 所以这里必须把 {@code encoder} 一起交回去 —— bridge 只见得到描述符，绑接收者这件事留在注入类里做。
+     *
+     * @param encoder    被调用方法的接收者（= {@code FrontendCommandEncoder} 自己）
      * @param descriptor 原版刚造好的那条描述符（单颜色附件 + 可选深度 + renderArea）
-     * @param original   被包住的那次调用 —— 不接管时传的必须是<b>同一个</b> descriptor
+     * @param original   被包住的那次调用
      */
     @WrapOperation(method = {MixinTargets.FRONTEND_ENCODER_CREATE_PASS_SIX},
             at = @At(value = "INVOKE", target = MixinTargets.FRONTEND_ENCODER_CREATE_PASS_DESCRIPTOR),
             require = 1, expect = 1)
     private RenderPass vkdisp$takeOverMainPassAttachments(FrontendCommandEncoder encoder,
             RenderPassDescriptor descriptor, Operation<RenderPass> original) {
-        return MainPassTakeover.onCreateRenderPass(descriptor, original::call);
+        return MainPassTakeover.onCreateRenderPass(descriptor,
+                replaced -> original.call(encoder, replaced));
     }
 }

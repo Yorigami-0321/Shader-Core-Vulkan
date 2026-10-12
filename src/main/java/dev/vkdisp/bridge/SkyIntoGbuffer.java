@@ -264,8 +264,22 @@ public final class SkyIntoGbuffer implements CustomSkyboxRenderer {
                 color == null ? "null" : String.format("%.3f", color.x()),
                 color == null ? "null" : String.format("%.3f", color.y()),
                 color == null ? "null" : String.format("%.3f", color.z()),
-                String.format("%.3f", rain), renders, hookCalls,
-                paintedThisFrame ? (lastFrameByPack ? "包的 skybasic" : "原版那一笔(M-11)") : "还没写");
+                String.format("%.3f", rain), renders, hookCalls, whoWillPaint());
+    }
+
+    /**
+     * 自报里那一格「接管方」。<b>本帧此刻的判定</b>，不是「上一帧谁写的」：
+     * 🔴 这条自报跑在 {@code renderSky} 的<b>开头</b>（第 146 行），而 {@code paintedThisFrame} 要到
+     * 第 170/193 行才置真、且每帧在 {@link #installHook} 里被清回 false ⇒ 读那个布尔永远只会得到
+     * 「还没写」（2026-10-12 真机自报实测：那一格 16200 帧全是「还没写」）。
+     * 真要知道「本帧到底有没有人写进槽 0」，读 {@link #paintedWriteGeneration()}
+     * （地形那一槽的 LOAD/CLEAR 判据用的就是它）。
+     */
+    private static String whoWillPaint() {
+        if (SkyPackGbuffer.enabled()) {
+            return "包的 skybasic(本帧要写)";
+        }
+        return viewsIntoGbuffer() ? "原版那一笔(M-11)" : "都不写(gbuffer 关档)";
     }
 
     /**

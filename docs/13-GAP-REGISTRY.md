@@ -885,6 +885,33 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 
 ---
 
+### GAP-047 · 🔴 **四个注入点的 handler 形状是照文档猜的，从没在真机 apply 过 ⇒ 客户端从启动期就崩**（2026-10-12 真机实测并修掉）
+
+| 字段 | 内容 |
+|---|---|
+| **为什么会去查这条** | 阶梯第 2/4/6 步与 R7 ⑤-a 各交了一个 `@Redirect` / `@WrapOperation` 注入点，守卫测试全是**文本断言**（注解在不在、`require=1` 在不在）⇒ 它们看不见 handler 的**形参表**是否被 Mixin 接受。本轮第一次真机 `runClient` 就把这件事炸出来了。 |
+| **事实（三条，逐条实测）** | ① `@WrapOperation` 包住**静态**调用时 handler **不带接收者**：M-15 那两个变体把 `ChunkSectionsToRender self` 写在 index 0 ⇒ apply 期 `InvalidInjectionException: Found unexpected argument type ChunkSectionsToRender at index 0, expected RenderPipeline`（bootstrap 崩，游戏根本起不来）。② 同一个注解的 `Operation.call(...)` 在**运行期**按条数硬校验：包住**虚调用**时必须把**接收者一起交回去**，只交实参 ⇒ `IncorrectArgumentCountException: Expected 2 but got 1`（M-13 两处、M-04 一处都是这个形状；M-04 那处**与开关无关** —— 转发本身就走这条路，所以「默认档」也是每次建 pass 必崩）。③ `@Redirect` 的形参表以**运行期那次调用**为准，不以 sources jar 为准：`RenderSystem.getModelViewMatrixCopy` 在 26.3 运行时带 `(RenderPass, RenderPipeline)` 两个实参（sources 里那行是无参的），handler 少写就 apply 失败。 |
+| **后果** | 不是「某个功能没生效」，是**整个模组加载失败 / 每一帧建 pass 就崩**。而 CHANGE_LOG 一百二十~一百二十六 那五轮把「`Mixin apply failed = 0`」当**待签判据**写在纸上，一直没跑 —— 本轮跑第一下就中了四条。 |
+| **修法** | ① 静态调用：handler = `[实参...] + Operation`，去掉接收者；② 虚调用：`original.call(接收者, 实参...)`；③ `@Local(argsOnly = true)` **按类型匹配**，别写两个 `ordinal = 0`；④ 目标实参表以真机为准，写错时 Mixin 的报错会直接给出「Expected signature」—— 照它抄，别照 sources jar 抄。 |
+| **判据（已签）** | 真机 `runClient -PquickPlay`：日志 0 条 `Mixin apply for mod vkdisp failed`、0 条 `IncorrectArgumentCountException`；进世界后 `[M-13] terrain requires vanilla-sky 边已声明=true`、`[M-15] pass-aware getCompiledPipeline hits=1200`、`[R4/sky] 钩子被调# = 天空帧#`（16200 = 16200）三行都在 ⇒ 这四个注入点**真的在跑**。 |
+| **影响面** | `mixin/ChunkSectionsToRender{Separate,Indirect}PipelineMixin`、`mixin/CloudRendererMatrixRedirectMixin`、`mixin/FrameGraphPassOrderMixin`、`mixin/MainPassAttachmentMixin`；守卫补在 `MainPassTakeoverTest.mixinForwardsExactlyOnce`（那条 `original.call(encoder, replaced)` 的断言就是本轮炸出来的）。 |
+| **开关 / 回退条件** | 无开关可退 —— 这四条是「注入点存在性」层面的缺陷，只能改代码。 |
+| **状态** | ✅ **已修 + 真机已签**（本轮）。🔴 **教训进纪律**：文本守卫覆盖不了 handler 形状；**每交一个注入点，当轮就要跑一次 `runClient`**，别把「apply 过没有」留给下一轮（`01-DEV-LOOP` §0 那条本来就是这个意思）。 |
+
+### GAP-048 · 🟡 **一条只能打印一个值的观测面**：`[R4/sky]` 的「接管方」永远显示「还没写」（2026-10-12 真机实测并改掉）
+
+| 字段 | 内容 |
+|---|---|
+| **为什么会去查这条** | 第 5 步（R4）的判据要看「天空这一笔到底谁写进 colortex0」，而自报那一格 16200 帧全是「还没写」。 |
+| **事实** | 自报调用点在 `SkyIntoGbuffer#renderSky` 的**开头**（第 146 行），而它读的 `paintedThisFrame` 要到第 170/193 行才置真、且每帧在 `installHook`（第 109 行）里先被清回 false ⇒ 这个表达式**结构上**只能取到 false 那一支。 |
+| **后果** | 观测面失去区分力：接管方是谁、有没有人写，从这一格永远读不出来 —— 比没有更坏，因为它看起来像个读数。 |
+| **修法** | 那一格改成打印**本帧此刻的判定**（`whoWillPaint()`：包的 skybasic / 原版那一笔(M-11) / 都不写(gbuffer 关档)），并在注释里点名「真要知道有没有写就读 `paintedWriteGeneration()`」（地形那一槽的 LOAD/CLEAR 判据用的就是它，那条是活的）。 |
+| **判据** | 下一趟真机自报里「接管方」必须出现三种值之一，不再恒为「还没写」。 |
+| **状态** | 🟡 **已改，待下一趟真机回读**（本轮那趟跑的是改前的码）。 |
+
+
+---
+
 ## 4. 快速自检
 
 ```

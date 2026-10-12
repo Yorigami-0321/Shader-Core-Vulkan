@@ -23,9 +23,10 @@ package dev.vkdisp.mixin;
  * 5. 性能基线：热路径 —— 每次云 draw 一次 {@code new Matrix4f(...)} 拷贝，
  *    与原版 {@code getModelViewMatrixCopy()} 自己那次拷贝同量级（不是新增分配类别）。
  */
+import com.mojang.renderpearl.api.commands.RenderPass;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import dev.vkdisp.bridge.CloudsIntoGbuffer;
 import dev.vkdisp.bridge.MixinTargets;
-import net.minecraft.client.renderer.CloudRenderer;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -56,16 +57,16 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 public abstract class CloudRendererMatrixRedirectMixin {
 
     /**
-     * 替换第 226 行那次 {@code RenderSystem.getModelViewMatrixCopy()} 调用。
+     * 替换第 226 行那次 {@code RenderSystem.getModelViewMatrixCopy(...)} 调用。
      *
-     * @param renderer 原版 {@code CloudRenderer} 实例（被注入方法所属对象；本方法不用它 ——
-     *                 矩阵来自渲染状态，与哪个实例在画无关）
-     * @return 交予 {@code writeTransform} 的 modelview 矩阵
+     * <p>⚠️ 形参表按<b>运行期实测</b>写：26.3 的 blaze3d 把这次取矩阵做成了<b>带管线上下文</b>的
+     * 静态调用（handler 必须与它一致，Mixin 在 apply 期就会拒绝别的形状）。两个实参本方法不用 ——
+     * 交出去的矩阵就是装配期捕获的相机位姿，与哪条管线在问无关。
      */
     @Redirect(method = {MixinTargets.CLOUD_RENDERER_RENDER_INNER},
             at = @At(value = "INVOKE", target = MixinTargets.RENDER_SYSTEM_GET_MODEL_VIEW_MATRIX_COPY),
             require = 1, expect = 1)
-    private Matrix4f vkdisp$cloudModelView(CloudRenderer renderer) {
+    private Matrix4f vkdisp$cloudModelView(RenderPass renderPass, RenderPipeline renderPipeline) {
         return CloudsIntoGbuffer.onCloudModelViewRequest();
     }
 }

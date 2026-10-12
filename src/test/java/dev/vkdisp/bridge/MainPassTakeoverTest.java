@@ -80,8 +80,13 @@ class MainPassTakeoverTest {
     @DisplayName("接线：注入类只做「换实参 + 一次 original.call」，且 require/expect 都是 1")
     void mixinForwardsExactlyOnce() {
         String mixin = readOrSkip(MIXIN);
-        assertTrue(mixin.contains("MainPassTakeover.onCreateRenderPass(descriptor, original::call)"),
+        assertTrue(mixin.contains("MainPassTakeover.onCreateRenderPass(descriptor,"),
                 "⑤-a 只换实参、不接管 pass 的生命周期（X25：注入类里不许长逻辑，Operation 交给 bridge）");
+        // 🔴 这条是被真机教出来的：Operation.call 的实参表 = 接收者 + 被包住方法的实参，条数少了
+        //    就在运行期抛 IncorrectArgumentCountException（且开关关着也抛 —— 转发本身就走这条路）。
+        assertTrue(mixin.contains("original.call(encoder, replaced)"),
+                "转发必须把接收者一起交回 Operation.call：只交描述符 = 每一次建 pass 都崩，"
+                        + "与开关状态无关（实测 TextureAtlas.uploadAnimationFrames 那一路先炸）");
         assertTrue(mixin.contains("require = 1, expect = 1"),
                 "这个点没包上的症状 = 与今天逐字节相同 ⇒ 必须是硬失败，不能静默");
         assertFalse(mixin.contains("MrtTerrainPass"),

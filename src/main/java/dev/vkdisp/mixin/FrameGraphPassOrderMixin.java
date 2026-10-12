@@ -60,7 +60,7 @@ public abstract class FrameGraphPassOrderMixin {
             require = 1, expect = 1)
     private FramePass vkdisp$pinSkyPassOrder(FrameGraphBuilder builder, String name,
             Operation<FramePass> original) {
-        return PassOrder.onPassDeclared(name, original.call(name));
+        return PassOrder.onPassDeclared(name, original.call(builder, name));
     }
 
     /** 包住 {@code LevelRenderer#addMainPass} 内的 {@code frame.addPass("main")}（第 403 行）。 */
@@ -69,6 +69,6 @@ public abstract class FrameGraphPassOrderMixin {
             require = 1, expect = 1)
     private FramePass vkdisp$pinMainPassOrder(FrameGraphBuilder builder, String name,
             Operation<FramePass> original) {
-        return PassOrder.onPassDeclared(name, original.call(name));
+        return PassOrder.onPassDeclared(name, original.call(builder, name));
     }
 }

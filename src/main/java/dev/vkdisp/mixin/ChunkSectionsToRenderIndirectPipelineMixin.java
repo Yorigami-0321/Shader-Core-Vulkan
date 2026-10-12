@@ -29,7 +29,6 @@ import dev.vkdisp.bridge.MrtTerrainPass;
 import dev.vkdisp.bridge.PassAwarePipelines;
 import dev.vkdisp.bridge.TerrainPipelineApi;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
-import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 
@@ -56,10 +55,10 @@ public abstract class ChunkSectionsToRenderIndirectPipelineMixin {
     @WrapOperation(method = {MixinTargets.CHUNK_SECTIONS_TO_RENDER_RENDER_INNER},
             at = @At(value = "INVOKE", target = MixinTargets.RENDER_SYSTEM_GET_COMPILED_PIPELINE),
             require = 1, expect = 1)
-    private CompiledRenderPipeline vkdisp$passAwarePipeline(ChunkSectionsToRender self,
+    private CompiledRenderPipeline vkdisp$passAwarePipeline(
             RenderPipeline requested, Operation<CompiledRenderPipeline> original,
-            @Local(argsOnly = true, ordinal = 0) ChunkSectionLayer layer,
-            @Local(argsOnly = true, ordinal = 0) RenderPass renderPass) {
+            @Local(argsOnly = true) ChunkSectionLayer layer,
+            @Local(argsOnly = true) RenderPass renderPass) {
         PassAwarePipelines.onHit();
         return original.call(PassAwarePipelines.select(
                 TerrainPipelineApi.layerNameOf(layer), MULTI_DRAW,
