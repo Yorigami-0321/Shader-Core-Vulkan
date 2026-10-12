@@ -137,9 +137,20 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 `ExtractLevelRenderStateEvent` 提取 ⇒ 它**可能**是「接管地形 pass 时拿不到 draw 数据」的零 mixin 出口，
 **属待实测，不得当既成事实**。
 
-**当前立场（2026-10-12 更新）**：🔴 **从「待评估」升级为「已登记的主线阶梯 R1」** —— 本轮源码级核实它**确实覆盖地形 draw**：地形两条取管线分支（`ChunkSectionsToRender` 第 121 行多重绘制 / 第 176 行单独绘制）都经 `RenderSystem.getCompiledPipeline` ⇒ 都落到 `getCompiledPipelineNullable` 第 107 行的 `PIPELINE_MODIFIERS.apply`。⇒ 它不仅**能**替掉 M-01，而且替掉之后附带消灭三处「判断自己此刻在不在我方 pass 里」的 hack（`inMrtPass` 静态标志、`finally` 清位纪律、h20 守卫 —— 后者见 `GAP-040`：`hasExpectedAttachmentCount()` 实测就是 `return inMrtPass`，与 `active()` 同义，防的那类状态它测不出来）。
-方案与排期在 `19-IMPROVEMENT-PATHS.md` §5A.4 阶梯 R1；M-01 保留为 A/B 对照臂（X52 单变量），基线仍是 `h08` 的地形像素平均绝对差 **48.22** / **39.03%** 像素变化。
-🔴 **前置是那条「必须幂等」硬约束**：上表已写明本项目现状不满足 ⇒ R1 的第一步是**把 4 个开关的生效时机收敛到注册期**，不是先写 modifier。
+**当前立场（2026-10-12 同日两次，以本次为准）**：🟠 **通道核实成立，但它换不掉 M-01** ——
+`RenderSystem.getCompiledPipelineNullable` 首行确实 apply modifier（第 **106-107** 行），地形两条取管线分支
+（`ChunkSectionsToRender` 第 **121 / 176** 行）也确实都经它；**但**缓存结构是
+`Map<modifier key, Map<入参管线, 结果管线>>` 且**没有任何失效路径**（`PipelineModifierStack:47-70`），
+而 modifier key **只能启动期注册**（`ClientHooks:796 / 797-800 / 825-826` + `RegisterPipelineModifiersEvent:28-32` 的 `putIfAbsent`）
+⇒ **包代次进不了缓存、也进不了 key** ⇒ 切包后会继续返回上一代那条派生管线（把 `GAP-032` 那类脏状态永久化）。
+⇒ 结论：**M-01 保留**；原想删的那三件（`inMrtPass` 静态标志、`finally` 清位纪律、`GAP-040` 的空转守卫）
+改由 **M-15**（`@WrapOperation` 读 `renderPass` 实参）给出 pass 身份 —— 不依赖 modifier，成本反而更低。
+详见 `GAP-045`（改判依据）与 `GAP-044`（现有云 modifier 在 `apply` 里现读配置 ⇒ 首推即永久冻结）。
+🔖 上一轮在此写的「M-01 可被 modifier 替掉」是**已作废的中间结论**，别再据此开工。
+
+**两条硬约束的现行读法**：上表的「必须幂等」不是「把配置读挪到注册期就满足了」——
+真正的口径是 **`apply` 必须是入参管线的纯函数**，且**凡影响返回值的东西都必须能进缓存键**；
+进不去的（包代次、每帧状态）就**不能用 modifier 表达**。⇒ 写 modifier 前先问这一句。
 
 **为什么「优先官方 API」不再写成禁令**：2026-10-12 之前的措辞是「官方 API 可用时不许 mixin」，
 它实际挡住过三件工程上更优的事（见 §1.4 背景表末行）。现行口径：**两把尺子同时量**——

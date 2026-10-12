@@ -839,6 +839,50 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 | **开关 / 回退条件** | 随 `mixin.wireTerrain`（M-01）。R1 完成即本条自然关闭。 |
 | **状态** | 🔴 **已登记（两个调用点行号核实），当前无画面症状** —— 属**潜在**缺陷，触发条件是 `GAP-007` 落地 |
 
+### GAP-044 · 🔴 **现有 modifier 在 `apply` 里现读配置** ⇒ 第一次 push 那一刻的值被**永久冻结**（`PipelineModifierStack` 的缓存没有失效路径；2026-10-12 源码级核实）
+
+| 字段 | 内容 |
+|---|---|
+| **为什么会去查这条** | 结 §7-5 那条待判（「R1 的幂等收敛怎么做」）时，必须先看本项目**唯一已实测生效**的 modifier 用例合不合规 —— 就是云那条（`GAP-027` 的 `h49p` 取证）。 |
+| **事实** | ① 引擎侧：`net/neoforged/neoforge/client/pipeline/PipelineModifierStack` 的 `apply`（第 **47-70** 行）对每个 key 维护 `Map<RenderPipeline, RenderPipeline>`（`Reference2ReferenceOpenHashMap`），**只在 `xformCache.get(pipeline) == null` 时才调 `apply`**，结果 `put` 之后**没有任何 remove / clear / 失效入口** ⇒ 同一 `(modifier key, 入参管线对象)` 的结果**进程内永久有效**；② 我方侧：`bridge/GbufferPipelineSwaps.java` 第 **112** 行在 `apply` 体内现读 `VkDispConfig.MRT_CLOUDS_NO_DEPTH_WRITE` ⇒ **第一次 push 时的开关值被写进缓存，之后翻档不生效**。 |
+| **为什么今天没暴露** | 闸门开在**调用点**而不是 `apply` 里：`CloudsIntoGbuffer` 第 **281** 行读 `mrt.cloudsNoCull` 决定是否走 `renderWithPipelineModifier`（第 **289** 行）。⇒ 只要**只有一个地方** push 这个 key，被冻结的那个值恰好等于当帧实际用到的那个。这是**运气**，不是设计。 |
+| **后果** | ① 任何第二处 push 同一 key（比如将来把同样的写法带到地形上）会得到「配置改了没反应」这种**零报错零告警**的症状（`X11` 族）；② 取证时翻档做 A/B，若两臂都 push 过同一个 key，**后一臂读的是前一臂的冻结值** ⇒ 对照失效（`X52` 违例，且是「两臂其实只差一个不存在的变量」那种假单变量）。 |
+| **修法** | `apply` 内**禁止现读配置**：把开关移到 push 的那一刻（沿用 `CloudsIntoGbuffer` 已有的调用点闸门形态），或者为**每种开关组合注册一个独立 key**（key 只能启动期注册，见 `GAP-045`）。同时把「`apply` 只许是入参管线的纯函数」写进 `07` §1.4.2 那两条硬约束下面。 |
+| **判据（收口时用）** | ① `GbufferPipelineSwaps.apply` 里不再出现 `VkDispConfig.*.get()`；② 冷启动后先 A 臂再 B 臂（同一进程内翻档），两臂的**云深度写入行为**必须不同（现状是可能相同）；③ `RenderSystem.popPipelineModifier` 配对不破（帧尾 `ensureEmpty` 不抛）。 |
+| **开关 / 回退条件** | 不新增开关；沿用 `mrt.cloudsNoCull` / `mrt.cloudsNoDepthWrite`。 |
+| **状态** | 🔴 **已登记（源码级），未修** —— 当前**无用户可见症状**，属「将来复用这条通道前必须先修」的前置债（直接挡 R1 的原始设想，见 `GAP-045`） |
+
+---
+
+### GAP-045 · 🔴 **`PipelineModifier` 换不掉 M-01**：缓存键里没有包代次，而 modifier key 只能在启动期注册 ⇒ 「把配置读挪到注册期就能幂等」这个设想被**证伪**（2026-10-12 源码级核实，并据此改判 M-01）
+
+| 字段 | 内容 |
+|---|---|
+| **为什么会去查这条** | 上一轮（同日）我把 M-01 登记成「候选下线，由 `PipelineModifier` 替」，并在 `19` §7-5 留了一条待判：「R1 的幂等收敛怎么做」。本轮就是去结这条待判 —— 结论是**原设想不成立**，所以 M-01 改判回「保留」，并新登记本条。 |
+| **事实（三条，逐条有行号）** | ① 缓存键只有 `(modifier key, 入参管线对象)`，且**永不失效**：`PipelineModifierStack` 第 **47-70** 行（`modifierTransformCache`，`Reference2ReferenceOpenHashMap`，无 remove/clear）；② modifier key **不能运行期增删**：`ClientHooks` 第 **826** 行 `PipelineModifiers.init()` 与第 **825** 行 `RegisterRenderPipelinesEvent` 同在 `initClientHooks`（第 **796** 行，二次调用即抛，守卫在第 **797-800** 行）⇒ 与注册管线**同一个一次性窗口**；`RegisterPipelineModifiersEvent` 第 **28-32** 行是 `putIfAbsent`（重复 key 抛），`PipelineModifiers` 第 **16** 行是包内 `static final` map ⇒ 没有公开增删 API；③ 我方 MRT 地形管线的**身份**随包代次变（片元程序 = 包的 `gbuffers_terrain`，附件数 = 冻结契约 `MrtPlan.freezePackPrograms:169-197`）。 |
+| **推论（本条的核心）** | ② + ③ ⇒ 「包代次」既进不了缓存键（①里没有这一维），也进不了 modifier key（②不允许运行期造新 key）⇒ **切包之后 modifier 会继续返回上一代那条管线**。而这正是 `GAP-032`（切包后派生管线与绑定组不同代 ⇒ `validateDraw` 抛 `Missing uniform` 崩帧）那一类问题 —— 差别是：`GAP-032` 现在还能靠「改包选项就冷启动」规避，走 modifier 之后**缓存替我们把脏状态记住了**，比现在更难退。 |
+| **顺带查清的另一件事（不是缺陷，是设计约束）** | 全仓 grep：`TerrainPipelineApi` 的派生表 `DERIVED` / `DERIVED_MRT`（定义第 **72 / 82** 行）**只有两处 put（`:157` / `:222`），没有任何 remove/clear** ⇒ 我方现在也**没有**「切包重建派生管线」的机制，`GAP-032` 的「未修」状态与此吻合。别把「换 modifier」当成绕开它的路。 |
+| **改判后的正确形态（R1a）** | 不下线 M-01，改为**新增 M-15**：`@WrapOperation` 包住 `ChunkSectionsToRender` 第 **176 / 121** 行的 `RenderSystem.getCompiledPipeline(...)`，handler 顺带拿外层 `renderPass` 实参 ⇒「在不在我方 pass」由数据给出。删的是 `inMrtPass`（`MrtTerrainPass:119` + `finally` 纪律 `:532-539`）、空转守卫（`:320-322`，`GAP-040`）、`MRT_GUARD_FALLBACK`（`TerrainPipelineApi:530`）——**这三件才是原设想想删的东西，删得掉，而且不依赖 modifier**。 |
+| **判据（收口时用）** | ① M-01 仍在且**不再读 `active()`**（只按层名查表）；② M-15 里 `renderPass` 身份与我方 pass 对象**同一性相等**才交 MRT 变体（可用一次故意错配的注入测试证明它会拒绝）；③ 切包一次，地形管线表与绑定组同代（若仍不同代即撞 `GAP-032`，本条判据不放行）。 |
+| **影响面** | `docs/04-SPEC.md` §5.0 的 M-01 行（已改判）+ 新增 M-15 行、`19-IMPROVEMENT-PATHS.md` §5A.3 表第 1 行与 §5A.4 的 R1（已改判）、`docs/07-CONSTRAINTS.md` §1.4.2（「优先于 mixin」的口径要加这条边界）、`bridge/TerrainPipelineApi.java`、`bridge/MrtTerrainPass.java` |
+| **开关 / 回退条件** | `mixin.passAwarePipeline`（M-15）。回退 = 回到 `inMrtPass` 静态标志那一族（会重新引入 `GAP-040`）。 |
+| **状态** | 🔴 **已登记（源码级），结论已定**：R1 的「M-01 → modifier」形态**作废**，现行形态是 **R1a = M-15**；`19` §7-5 的那条待判按此结案 |
+
+---
+
+### GAP-046 · 🔴 **M-04 的派生面是开放集合**：六处阶段事件把主 `renderPass` 直接交给在场任意 mod ⇒ 「列全 60 条」收不了口（2026-10-12 源码级核实）
+
+| 字段 | 内容 |
+|---|---|
+| **为什么会去查这条** | 交付 `04-SPEC` §5.0.6 那张牵连面清单时，把主 pass 内的管线数出来是 **≈58–62 条**；继续读 `LevelRenderer` 发现这个数**不是上限**。 |
+| **事实** | 原版在 `"main"` 那个 GPU pass 的**同一个 `renderPass` 对象**里，向 mod 开放了六个阶段事件：第 **536 / 540 / 723 / 731 / 735 / 745** 行（`AfterOpaqueBlocks`、`AfterOpaqueFeatures`、`AfterTranslucentFeatures`、`AfterTranslucentBlocks`、`AfterTranslucentParticles`、`AfterWeather`），每个都带 `renderPass` 实参。⇒ 任何装了别的渲染 mod 的实例，会有**未知管线**在这个 pass 里被 `setPipeline`。 |
+| **后果** | 主 pass 一旦改成 N 附件，未知管线（声明 1 个 target）会直接撞 `FrontendRenderPass` 第 **111-114** 行的「数量必须相等」⇒ **当场抛**，不是静默降级。这与 L11（零第三方集成）**不矛盾**：本项目不为第三方 mod 做适配，但 M-04 也不该把别人送进崩溃路径（支柱②稳定）。 |
+| **修法（不是「列全清单」，是通用配方）** | 走 §5.0.6 ④ 那条**通用派生公式**：`pipeline.toBuilder()`（`RenderPipeline:135`）→ target0 原样 → 其余槽 `withColorTargetState(i, new ColorTargetState(Optional.empty(), RGBA8_UNORM, WRITE_NONE))`（`ColorTargetState:14-21`）。四条约束都过：数量（`FrontendRenderPass:111-114`）、格式（`:116-122`，主 pass 里所有管线的 target0 都是 `RGBA8_UNORM` ⇒ 补同格式最省）、混合（`RenderPipeline:421-434`：present 值必须同一个，`empty` 可与任何值共存 ⇒ 补槽用 `empty`）、上限（`ColorTargetState:22` + `RenderPipeline:190` ⇒ **N ≤ 8，无余量**）。🔴 对**格式不是 `RGBA8_UNORM`** 的未知管线，通用公式会撞格式校验 ⇒ 必须有一条「派生失败就**不 push 我方 pass、交回原版路径**」的退路，并计数打点（不许静默）。 |
+| **判据（收口时用）** | ① 裸环境（只有本模组）：主 pass 附件数 = N、地形/实体/云/天气/边界全画、`setPipeline` 零抛；② 故意塞一条 `RGBA16_FLOAT` target0 的测试管线：走退路、**画面交回原版**、日志有计数（不得 0 命中）；③ N=8 那一档必须实测（`MAX_COLOR_TARGETS=8` 是编译期数组大小，`>8` 会在 `RenderPipeline:420` 的 `Arrays.copyOf` 越界）；④ `GAP-003` 那条「`DRAWBUFFERS:08367` 需 9 槽 ⇒ 显式拒绝」的口径与本条一致，不得回退成「截断到 8」。 |
+| **影响面** | `04-SPEC` §5.0.6（清单本节）、`bridge/MrtTerrainPass.java`（pass 装配与通用派生入口）、`bridge/PipelineApi.java`（预建管线族）、`bridge/TerrainPipelineApi.java`（派生表）、`VkDispConfig` 的 `mrt.attachments`（N 的取值面） |
+| **开关 / 回退条件** | 沿用 `mixin.ownTerrainPass`（M-04）；退路分支单独记数，便于「关掉 M-04 即逐字节等于今天」的对照臂。 |
+| **状态** | 🔴 **已登记（源码级），R7 未开工** —— 本条是 R7 的**设计约束**，不是 R7 的阻塞；但待核 1（`water_mask` 属哪个 pass，`RenderTypes:716`）未结之前**不许报 R7 成本** |
+
 ---
 
 ## 4. 快速自检

@@ -6,8 +6,62 @@
 ---
 ---
 
+## 2026-10-12（一百一十五）— 🔴 R1 的幂等收敛设想被**证伪**（改判回 M-01 + 新增 M-15）；M-04 牵连面清单交付，范围缩小到 1 个 GPU pass、真实风险改型为「开放集合」
+
+> **verdict = 同日第二轮调研 + 自我改判轮，零 `src/` 改动**：用户要求「确认 R1 幂等收敛方案与 M-04 牵连面清单」。
+> 结果一条是**证伪**（推翻的是一百一十四轮我自己写下的结论），一条是**交付 + 范围缩小**。
+> 原版/NF 侧每条都逐行核过（`/tmp/mc-src` = 26.3 反编译源，`/tmp/nf-src` = NeoForge 26.3.0.51-beta 源）。
+
+- **① R1 幂等收敛：原设想不成立 ⇒ M-01 改判「保留」**。缓存结构是
+  `Map<modifier key, Map<入参管线, 结果管线>>`（`PipelineModifierStack:47-70`，`Reference2ReferenceOpenHashMap`，
+  **只有 get/put、没有任何失效入口**），而 modifier key **只能在启动期注册**（nf `ClientHooks:796 / 797-800 / 825-826`
+  那个一次性窗口 + `RegisterPipelineModifiersEvent:28-32` 的 `putIfAbsent` + `PipelineModifiers:16` 包内 `static final`）。
+  ⇒ **「包代次」既进不了缓存的第二维、也进不了 key**，而我方 MRT 地形管线的身份随切包变
+  （片元 = 包的 `gbuffers_terrain`，附件数 = `MrtPlan.freezePackPrograms:169-197`）⇒ modifier 会在切包后继续返回
+  **上一代**那条 —— 等于把 `GAP-032`（绑定组不同代 ⇒ `Missing uniform` 崩帧）的脏状态**永久化**。
+  🔖 顺带查实：`TerrainPipelineApi` 的派生表 `DERIVED`/`DERIVED_MRT`（定义 `:72/:82`）**只有两处 put（`:157`/`:222`），
+  全仓无任何 remove/clear** ⇒ 我方今天也没有「切包重建派生管线」的机制，别把换通道当绕开 `GAP-032` 的路。
+- **② R1 的现行形态 = R1a（新增 M-15）**：`@WrapOperation` 包住 `ChunkSectionsToRender` 第 **176 / 121** 行的
+  `RenderSystem.getCompiledPipeline(...)`，handler 读外层 `renderPass` 实参 ⇒「在不在我方 pass」由**数据**给出。
+  删的仍是原设想想删的三件（`inMrtPass` `MrtTerrainPass:119` + `finally` 纪律 `:532-539` + 空转守卫 `:320-322`
+  + `MRT_GUARD_FALLBACK` `TerrainPipelineApi:530`），**但不依赖 modifier、不动注册时机**，成本 2–3 天 → **1–2 天**。
+- **③ 新登记 `GAP-044`（既有缺陷，源码级）**：`GbufferPipelineSwaps:112` 就**在 `apply` 里现读** `MRT_CLOUDS_NO_DEPTH_WRITE`
+  ⇒ 第一次 push 那刻的开关值被缓存永久冻结；今天靠**调用点闸门**（`CloudsIntoGbuffer:281/289`）掩盖 —— 只要出现第二处
+  push 同一 key 就会变成「改了配置不生效」的零报错症状，且会污染同进程内的翻档 A/B（`X52`）。修法 3 行：`apply` 禁现读配置。
+- **④ M-04 牵连面清单已交付（`04-SPEC` 新增 §5.0.6）**，四个要点：
+  (a) 🔖 **前提纠偏**：`"main"` 是 FramePass，其 `executes` 体内开着 **5 个互相独立的 GPU render pass**
+  （`:455-463` 主 / `executeOit :583-673` / `executeOutline :750-761` / `executeSeeThrough :487-496` / `executeAlwaysOnTop :498-522`），
+  而 `FrontendRenderPass:107-124` 的附件校验是**逐 GPU pass** ⇒ **M-04 只需改 `:455-463` 那一个**；
+  第 405-433 行那堆 `pass.readsAndWrites` 只是帧图资源声明，写入者各在别的 pass ⇒ 不冲突。
+  (b) **必派生量级 ≈ 58–62 条**（地形 4 + 半透明 2 + 线框 2、`RenderTypes` 非 OIT ≈52、粒子 2、云 2、天气 1、世界边界 1；
+  分母 = `RenderPipelines` 全表 **195** 条）；`prepareTranslucents`（`:451`，实现 `:544-581`）**一条管线都不取** ⇒ 代价 0。
+  (c) 🔴 **真实风险不是这个数**：六处阶段事件（`:536/540/723/731/735/745`）把主 `renderPass` **交给在场任意 mod**
+  ⇒ 派生面是**开放集合**，只能靠**通用派生公式**（`toBuilder()` + target0 原样 + 补槽 `RGBA8_UNORM`/`WRITE_NONE`/无混合，
+  依据 `ColorTargetState:14-22`、`RenderPipeline:190/:288-291/:421-434`、`FrontendRenderPass:111-122`），
+  且**格式不匹配时必须有「交回原版路径」的退路 + 计数**（新登记 `GAP-046`）。N 的硬上限 = **8 且无余量**
+  （`MAX_COLOR_TARGETS = 8` + `new ColorTargetState[8]` + `Arrays.copyOf`）⇒ 与 `GAP-003` 那条「`DRAWBUFFERS:08367` 需 9 槽 ⇒ 显式拒绝」同口径。
+  (d) ⛔ **三项待核未结之前不许给 R7 报成本**：非 OIT 的 `water_mask` 落在哪个 pass（`RenderTypes:716`，决定「一条管线要不要出两个变体」）、
+  默认 `renderArea` 尺寸取自哪个附件、后端深度格式是否被硬编码（关系 `GAP-022`/`GAP-037`）。
+- **改了什么（五份文档）**：`04-SPEC` §5.0（M-01 改判 + 新增 **M-15** 行 + M-04 行指向清单）、新增 **§5.0.6** 全节；
+  `07-CONSTRAINTS` §1.4.2（「M-01 可被 modifier 替掉」标为**已作废的中间结论** + 幂等口径改写为
+  「`apply` 必须是入参管线的纯函数，且凡影响返回值的东西都必须能进缓存键」）；
+  `13-GAP-REGISTRY` 新增 `GAP-044`/`045`/`046`；`19` §5A.3 新增缓存那一行 + §5A.4 的 R1 行改写 + §6 打分表把 R1b 划掉 +
+  新增 **§7-6** + 执行序改为 `… → R6 →（结三项待核）→ R7`；`00-INDEX` 的 19 号索引行同步。
+- **测试结果**：`./gradlew test --offline --tests "*VulkanEvidenceDisciplineTest" --tests "*MixinWiringTest"`
+  ⇒ 前者 **4 项 / 0 失败**、后者 **9 项 / 0 失败**（本轮只动文档）。零 `src/` 改动 ⇒ 未跑全量。
+- **下一步**：执行序不变，但 **R1 换内容**（`R0 → R3 → R2 → R1a → R4 → R5 → R6 →（待核①②③）→ R7`）；
+  `GAP-044` 那 3 行随 R3 同轮做（它是「以后复用 modifier 通道」的地基）。
+
+
+
+---
+
 ## 2026-10-12（一百一十四）— 🔴 mixin 的「类别」红线按用户裁决废除；全仓调研落成 9 个候选注入点 + 6 格新缺陷 + 阶梯 R0…R7
 
+> 🔴 **同日已被一百一十五轮部分改判**：本条结论 ①（「M-01 应被 `PipelineModifier` 替掉」）**已作废** ——
+> modifier 的缓存键没有「包代次」这一维、key 又不能运行期增删 ⇒ M-01 保留，R1 改形态为 **R1a（新增 M-15）**。
+> 其余结论（废类别白名单 / X24 作废 / M-06…M-14 登记 / `GAP-038`…`043` / M-04 排下一轮）**不变**。详见 §7-6 与 `GAP-045`。
+>
 > **verdict = 调研 + 定案轮，零 `src/` 改动**：用户指令「重新调研：已经实现的功能里哪些用 mixin 写更好」，
 > 随后追加「**不用考虑红线**」⇒ 三条裁决落档（`19-IMPROVEMENT-PATHS.md` §7-5）。
 > 取证方式：四域并行（地形链路 / 帧图与回读 / 天空与云 / 包装载与 UI），原版侧每条断言都对着

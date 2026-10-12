@@ -20,7 +20,11 @@
 > ✅ **§7-5 已裁决（2026-10-12）**：mixin 的**类别**限制废除（**登记制 / 可关闭制 / 逐个开启三条保留**）、
 >   **X24 作废**、**X23 保留**、**M-04 整主 pass 多附件排为下一轮目标**。
 >   ⇒ 方案与阶梯见新增的 **§5A**（R0…R7）；逐点登记见 `04-SPEC.md` §5.0 的 M-04 / M-06…M-14；
->   本轮新登记的缺陷是 `GAP-038`…`GAP-043`。⏳ §5A 自带一条待判：**R1 的幂等收敛怎么做**（那才是 R1 的真实工作量）。
+>   本轮新登记的缺陷是 `GAP-038`…`GAP-043`。
+> ✅ **§7-6 同日已判（2026-10-12 第二轮）**：§5A 那条待判（「R1 的幂等收敛怎么做」）**结论是原设想被证伪** ——
+>   modifier 的缓存键没有「包代次」这一维、key 又不能运行期增删 ⇒ **M-01 保留**，R1 改形态为 **R1a（新增 M-15）**；
+>   M-04 的牵连面清单已交付在 `04-SPEC` §5.0.6（范围缩小到 1 个 GPU pass、量级 ≈58–62 条、真实风险是开放集合）。
+>   新登记 `GAP-044`…`GAP-046`。⛔ R7 仍不许开工，直到 §5.0.6 ⑤ 的三项待核结掉。
 > 前提更正两处：§7-2 的「要新增原生分发」不成立、§7-3 的「只差太阳方向」不成立 —— 见各节。
 > §2.6-A0 / §3.5-B0 / §5.4-D1 属「不等裁决即可做」。
 
@@ -437,7 +441,10 @@ C2b 要动每帧路径，按 QD-04 的教训必须单独一轮；
 > **裁决依据**：§7-5（2026-10-12 三条裁决：废 M1 类别白名单 / X24 作废 X23 保留 / M-04 排为下一轮目标）。
 > 逐条注入点已登记在 `04-SPEC.md` §5.0 的 **M-04 / M-06…M-14**；本轮新登记的缺陷是
 > `GAP-038`（不设雾）`GAP-039`（天空门控）`GAP-040`（空转守卫）`GAP-041`（采样器各向异性）
-> `GAP-042`（反射判据）`GAP-043`（M-01 牵连建网格侧）。
+> `GAP-042`（反射判据）`GAP-043`（M-01 牵连建网格侧）；
+> 同日第二轮（§7-6）另登记 **`GAP-044`**（现有 modifier 在 `apply` 里现读配置 ⇒ 首推即永久冻结）、
+> **`GAP-045`**（缓存键无包代次 ⇒ 「M-01 → modifier」作废，R1 改判为 R1a / M-15）、
+> **`GAP-046`**（M-04 的派生面是开放集合 ⇒ 必须通用派生 + 退路）。
 > 🔖 **本节所有原版侧行号都对着 26.3 反编译源逐条核过**，不是引用旧文档。
 
 ### 5A.1 现状：本仓「挂在哪儿」的五类机制（全部 `file:line`）
@@ -461,7 +468,8 @@ C2b 要动每帧路径，按 QD-04 的教训必须单独一轮；
 
 | 结论 | 出处（本轮核实） | 用途 |
 |---|---|---|
-| `getCompiledPipelineNullable` **方法体首行**就 `PIPELINE_MODIFIERS.apply(pipeline)`；`push`/`pop`/`renderWithPipelineModifier` 公开；栈空直通零开销；结果按 `(modifier, pipeline)` 缓存但**要求返回值换 location** | `RenderSystem:106-107 / 502 / 507 / 513 / 519`、`PipelineModifierStack:47 / 58 / 59-62` | ⇒ **M-01 可下线**（R3），且 push/pop 天然给出 pass 身份 ⇒ 解 `GAP-040` |
+| `getCompiledPipelineNullable` **方法体首行**就 `PIPELINE_MODIFIERS.apply(pipeline)`；`push`/`pop`/`renderWithPipelineModifier` 公开；栈空直通零开销；结果按 `(modifier, pipeline)` 缓存但**要求返回值换 location** | `RenderSystem:106-107 / 502 / 507 / 513 / 519`、`PipelineModifierStack:47 / 58 / 59-62` | ⚠️ **通道确实覆盖地形 draw，但换不掉 M-01**（同日改判，理由见下一行与 `GAP-045`） |
+| 🔴 **modifier 的结果缓存按 `(modifier key, 入参管线对象)` 建，且没有任何失效路径**；而 modifier key **只能在启动期注册**（`putIfAbsent`，`PipelineModifiers` 是包内 `static final` map） | `PipelineModifierStack:47-70`（`Reference2ReferenceOpenHashMap`，只 get/put）、nf 源 `ClientHooks:796 / 797-800 / 825-826`、`RegisterPipelineModifiersEvent:28-32`、`PipelineModifiers:16` | ⇒ **「M-01 → `PipelineModifier`」作废**：包代次既进不了缓存键、也进不了 key ⇒ 切包后继续返回**上一代**管线（把 `GAP-032` 那类脏状态**永久化**）。R1 的现行形态 = **R1a（新增 M-15，`@WrapOperation` 读 `renderPass` 实参）**；顺带查出既有云 modifier 在 `apply` 里现读配置 ⇒ 新登记 `GAP-044` |
 | 地形两条取管线分支都经上面那个入口 | `ChunkSectionsToRender:121`（多重绘制）/ `:176`（单独绘制） | ⇒ modifier **覆盖地形 draw 成立**，不是推定 |
 | `RenderPipeline.toBuilder()` / `withColorTargetState(index)` / `withColorTargetStates(start,end,supplier)` | `RenderPipeline:135 / 273 / 279` | ⇒ 派生管线**不必手抄** define 与混合 |
 | `addMainPass` 是**两支汇合的必经单点**，形参同时带 `terrainFog` 与 `ChunkSectionsToRender`；官方事件的实参里没有这两个 | `LevelRenderer:272 / 274 / 277 / 396-401`、`FrameGraphSetupEvent` 字段表 | ⇒ M-05 两点收一点（R2）+ 顺手补雾（`GAP-038`） |
@@ -480,7 +488,7 @@ C2b 要动每帧路径，按 QD-04 的教训必须单独一轮；
 | 阶 | 内容 | 对应注入点 / GAP | 改动面 | 判据 | 成本 | 动热路径？ |
 |---|---|---|---|---|---|---|
 | **R0** | 注释与常量口径同步（M1 旧「装配层」措辞、`MixinTargets` 里「永久禁止注入 `RenderSystem`」那句、`FrameApi`/`PipelineApi` 头部「`FrameGraphSetupEvent` 插 pass 调研否决」的过期记载） | — | 只改注释 | 注释与 `07` §1.4 现行口径逐条对得上 | 0.5 h | ❌ |
-| **R1** | **M-01 → `PipelineModifier`**，并删 `inMrtPass` / 空转守卫 / `MRT_GUARD_FALLBACK` | M-01、`GAP-040`、`GAP-043` | `TerrainPipelineApi` + `MrtTerrainPass` + `GbufferPipelineSwaps` 同族 | 单变量 A/B 对 `h08` 基线 **48.22 / 39.03%**；`Mixin apply failed` = 0；建网格侧（`SectionRenderDispatcher:76` / `LevelRenderer:796`）拿到的是**原版**管线 | 2–3 天（**大头是幂等收敛**，不是写 modifier） | 🔴 每帧 2–6 次取管线 |
+| **R1** | 🔴 **改判（同日两次，以本次为准）：不做「M-01 → `PipelineModifier`」，改做 R1a = 新增 M-15** —— `@WrapOperation` 包住 `ChunkSectionsToRender:176 / :121` 的 `getCompiledPipeline(...)`，handler 读外层 `renderPass` 实参；**M-01 保留**但退化成「只按层名查表，不再判 `active()`」 | **M-15**、M-01（保留）、`GAP-040`、`GAP-043`、`GAP-045`（改判依据） | `TerrainPipelineApi`（去掉 `active()` 依赖）+ `MrtTerrainPass`（删 `inMrtPass:119` / `finally:532-539` / 空转守卫 `:320-322`）+ `TerrainPipelineApi:530`（删 `MRT_GUARD_FALLBACK`） | ① MRT 变体只在 `renderPass` 身份命中我方 pass 时才交出（故意错配一次必须**拒绝**）；② 单变量 A/B 对 `h08` 基线 **48.22 / 39.03%**；③ `Mixin apply failed` = 0；④ M-01 的代码里不再出现 `active()` | 1–2 天（**比原设想省**：不需要幂等收敛，也不需要动注册时机） | 🔴 每帧 2–6 次取管线 |
 | **R2** | **M-06 一点替两点** + 补 `setShaderFog` | M-06（替 M-05）、`GAP-038` | 新增 1 注入点；删 `TerrainDrawCapture` 的 `volatile Object` + `instanceof` | 原版那次 draw 与注入点里 `terrainFog` 的 buffer hash 一致；进水那一帧雾端读数**跟着变** | 1 天 | 🟡 每帧一次赋值 |
 | **R3** | **删反射族**：M-07 复用原版采样器 / M-08 / M-09 访问器 / M-10 云矩阵 `@Redirect` | M-07…M-10、`GAP-041`、`GAP-042` | 删两处反射块 + 42 行自建采样器 + 云的栈压还原 | 反射的 WARN 分支**物理删除**；各向异性两档锐度随用户设置变；云与今天同帧读数相同 | 1 天 | ❌（判据侧）/ 🟡（采样器） |
 | **R4** | **天空**：包天空搬进官方 `CustomSkyboxRenderer` 钩子 + M-11 视图 `@Redirect`（M-12 仅兜底） | M-11、M-12、`GAP-037`、`GAP-039` | 删 `GbufferTarget` **整类** + `SkyIntoGbuffer` 的第二个 `SkyRenderer` 实例 / 自抽 state / 手工互斥 | 岩浆里**没有**天空；天空深度**只被翻一次**；一百一十轮的星点判据**不回退** | 2 天 | 🟡 |
@@ -490,10 +498,11 @@ C2b 要动每帧路径，按 QD-04 的教训必须单独一轮；
 
 **R7 的第一步不是写注入**：先交**牵连面清单**（`executeSolid` / `executeClassicTransparency` / `executeOit` /
 `executeOutline` / `executeSeeThrough` / `executeAlwaysOnTop` 六支各用哪些管线、要派生成几条 N 附件版本），
-这份清单没出来之前，R7 不许开工。
+✅ **清单已交付（同日第二轮，见 §7-6 / `04-SPEC` §5.0.6）** ⇒ 但 R7 仍**不许开工**，直到 §5.0.6 ⑤ 那三项待核结掉
+（尤其待核 1：非 OIT 的 `water_mask` 落在哪个 pass —— 它决定「一条管线要不要出两个变体」，从而决定 R7 的真实成本）。
+🔴 在此之前，「R7 的成本」一律写「未估」，不许引用本节任何数字。
 
-**执行序**：`R0 → R3 → R2 → R1 → R4 → R5 → R6 → R7`（R3 最先是因为它**零渲染语义变化**、纯删码；
-R1 排在 R2 之后是因为 R2 先把「pass 身份从哪来」定了，R1 换通道才好归因）。
+**执行序**：`R0 → R3 → R2 → R1 → R4 → R5 → R6 →（结三项待核）→ R7`（R3 最先是因为它**零渲染语义变化**、纯删码；R1 排在 R2 之后是因为 R2 先把「pass 身份从哪来」定了，R1 才好归因）。
 
 ### 5A.5 验收纪律（本节特有，别漏）
 
@@ -543,12 +552,13 @@ C2a (光空间数学，可单测、不碰 GPU) → C2b (包 shadow pass 装配) 
 |---|---|---|---|---|---|
 | **R3**（删反射族 M-07…M-10） | ★（判据不会静默消失） | ★★★（升版硬失败替静默降级） | 0 | 1 天 | ❌ |
 | **R2**（M-06 一点替两点 + 补雾） | ★（雾口径与原版同源） | ★★★（消「残值当本帧值」那类静默错） | 0（每帧一次赋值） | 1 天 | 🟡 一帧判据即可 |
-| **R1**（M-01 → `PipelineModifier`） | ★★（少一层「档不一致」风险） | ★★★（`GAP-040` 的假守卫被真通道替掉） | 🔴 热路径，须报 B1/B3 | 2–3 天 | 🔴 单变量 A/B 一轮 |
+| **R1**（R1a：新增 M-15，用 `renderPass` 实参定 pass 身份） | ★★（少一层「档不一致」风险） | ★★★（`GAP-040` 的假守卫被真判据替掉） | 🔴 热路径，须报 B1/B3 | 1–2 天 | 🔴 单变量 A/B 一轮 |
+| ~~R1b（M-01 → `PipelineModifier`）~~ | — | — | — | — | 🔴 **已作废**（`GAP-045`：缓存键无包代次、key 不能运行期增删） |
 | **R7**（M-04 整主 pass 多附件） | ★★★（gbuffer 第一次**就是**主目标 ⇒ 双绘与图外同步一族消失） | ★★（少一套手工同步，但改的是原版 pass 语义） | 少一遍地形绘制 —— ⚠️ 本机 llvmpipe **不可量化**（`00` 铁律 ①） | 未估 | 🔴 牵连整帧，需完整回归 |
 
 ---
 
-## 7. 裁决记录（7-1 … 7-5）与待判点
+## 7. 裁决记录（7-1 … 7-6）与待判点
 
 ### 7-1 ✅ 已裁决（2026-10-10）：允许移植第三方代码
 
@@ -642,10 +652,42 @@ C2a 不碰 GPU ⇒ 它的判据是**单测矩阵断言**，跑真机只会得到
 - `04-SPEC` M-01 行仍写「零 mixin 无法达成（`02` §5.1）」，而 `07:84` 早已撤回该推论 ⇒ 本轮改判为
   **「候选下线（R1 由 `PipelineModifier` 替）」**。
 
-⏳ **本节新增一条待判（不阻塞 R0 / R2 / R3）**：R1 的**幂等收敛怎么做** ——
-`07` §1.4.2 两条硬约束之一要求 modifier 对同一输入返回同一结果，而现状是 4 个开关 + 虚拟包源与
-`RegisterRenderPipelinesEvent` 约 **4.5 秒**的时序差（`GAP-035` 同源）。
-🔴 **这才是 R1 的真实工作量**，不是「写一个 modifier」；开工前必须先定这条。
+⏳ ~~**本节新增一条待判（不阻塞 R0 / R2 / R3）**：R1 的**幂等收敛怎么做**~~
+🔴 **已于同日结案 ⇒ 见 §7-6**（结论：原设想被证伪，R1 改形态；M-04 清单已交付）。
+
+### 7-6 ✅ 已判（2026-10-12 同日第二轮）：**R1 的幂等收敛方案** 与 **M-04 牵连面清单**
+
+用户要求「确认 R1 幂等收敛方案与 M-04 牵连面清单」。两条都查到底了，其中 R1 是**证伪**（我自己的上一轮结论被自己推翻），M-04 是**范围缩小 + 风险改型**。
+
+**① R1 幂等收敛：原设想作废，改做 R1a**
+
+| 项 | 结论 |
+|---|---|
+| 原设想 | 「把配置读挪到注册期 ⇒ modifier 就幂等 ⇒ M-01 下线」 |
+| 证伪依据 | 缓存是 `Map<ResourceKey<PipelineModifier>, Map<RenderPipeline, RenderPipeline>>`，`Reference2Reference`，**只有 get/put、没有任何失效入口**（`PipelineModifierStack:47-70`）；而 modifier key **只能在启动期注册**（`ClientHooks:796 / 797-800 / 825-826` 那个一次性窗口 + `RegisterPipelineModifiersEvent:28-32` 的 `putIfAbsent`）⇒ **包代次既进不了缓存的第二维，也进不了 key** |
+| 为什么致命 | 我方 MRT 地形管线的**身份**随包变（片元 = 包的 `gbuffers_terrain`，附件数 = 冻结契约 `MrtPlan.freezePackPrograms:169-197`）⇒ 切包后 modifier 继续返回**上一代**那条，等于把 `GAP-032`（切包后绑定组不同代 ⇒ `Missing uniform` 崩帧）的脏状态**由缓存永久记住**，比现状更难退 |
+| 顺带查出的既有债 | `GbufferPipelineSwaps:112` 就在 `apply` 里现读 `mrt.cloudsNoDepthWrite` ⇒ 首推那刻的值被永久冻结，今天靠**调用点闸门**（`CloudsIntoGbuffer:281/289`）掩盖 ⇒ 新登记 `GAP-044` |
+| 现行形态 **R1a** | 新增 **M-15**：`@WrapOperation` 包住 `ChunkSectionsToRender:176 / :121` 的 `getCompiledPipeline(...)`，handler 读外层 `renderPass` 实参 ⇒ pass 身份由**数据**给出。删的是 `inMrtPass` + `finally` 纪律 + 空转守卫（`GAP-040`）+ `MRT_GUARD_FALLBACK` —— **这三件原设想想删的东西照样删得掉，且不依赖 modifier**；M-01 保留但退化成「只按层名查表」。成本从 2–3 天降到 **1–2 天** |
+| 登记的落点 | `04-SPEC` §5.0 M-01 行（改判）、新增 M-15 行、`GAP-045`（本条结论）、`GAP-044`（既有云 modifier）；本文 §5A.3 表新增一行、§5A.4 的 R1 行改写、§6 打分表把 R1b 划掉 |
+
+**② M-04 牵连面清单：已交付在 `04-SPEC` §5.0.6**，四个要点：
+
+1. 🔖 **前提纠偏**：`"main"` 是 FramePass，其 `executes` 体内开着 **5 个互相独立的 GPU render pass**
+   （`:455-463` 主 / `executeOit :583-673` / `executeOutline :750-761` / `executeSeeThrough :487-496` / `executeAlwaysOnTop :498-522`）。
+   附件校验是**逐 GPU pass** 判的 ⇒ **M-04 只要改 `:455-463` 那一个**，范围比旧记载小；
+   第 405-433 行 `pass.readsAndWrites` 那一堆只是帧图声明，各自的写入者在别的 pass 里 ⇒ 不冲突。
+2. **必派生量级 ≈ 58–62 条**（地形 4 + 半透明 2 + 线框 2、`RenderTypes` 非 OIT ≈52、粒子 2、云 2、天气 1、世界边界 1；
+   分母是 `RenderPipelines` 全表 **195** 条）；`prepareTranslucents`（`:451`，实现 `:544-581`）**一条管线都不取** ⇒ 代价 0。
+3. 🔴 **真实风险不是这个数**：六处阶段事件（`:536/540/723/731/735/745`）把主 `renderPass` **交给在场任意 mod**
+   ⇒ 派生面是**开放集合**，必须有一条「未知管线也补到 N 槽」的**通用派生公式**
+   （`toBuilder()` + target0 原样 + 补槽 `RGBA8_UNORM` / `WRITE_NONE` / 无混合），
+   并且**格式不匹配时必须有「交回原版路径」的退路 + 计数**（已登记 `GAP-046`）。
+4. ⛔ **三条待核，未结之前不许给 R7 报成本**：① 非 OIT 的 `water_mask` 到底在哪个 pass（`RenderTypes:716`）——
+   若同一条管线跨两个 pass，就必须复用 M-15 的 pass 身份判据；② 默认 `renderArea` 尺寸取自哪个附件；
+   ③ 后端深度格式是否被硬编码（关系到 `GAP-022` / `GAP-037` 的深度口径单点化）。
+
+**执行序更新**：`R0 → R3 → R2 → **R1a** → R4 → R5 → R6 →（待核 ①②③）→ R7`。
+`GAP-044`（`apply` 内禁现读配置）排在 **R3 同轮**做，因为它只有 3 行、且是「以后复用 modifier 通道」的地基。
 
 ---
 
