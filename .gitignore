@@ -106,6 +106,8 @@ local.properties
 ### ⚠️ 以下文件必须入库，不要加进忽略规则 ###
 # gradlew / gradlew.bat                    构建入口
 # gradle/wrapper/gradle-wrapper.jar        wrapper 本体（缺了 clone 后无法构建）
+# libs/*.jar                               A2 差分探针的第三方 jar：build.gradle 用 files() 引用，
+#                                          它不查任何仓库 ⇒ 干净检出缺 libs/ 时 compileTestJava 直接红
 # gradle/wrapper/gradle-wrapper.properties wrapper 版本配置
 # gradle.properties                        mod_id / 版本号唯一数据源
 # settings.gradle                          工程配置
@@ -132,6 +134,3 @@ __pycache__/
 
 ### 取证产物（截图 / 测量输出，60MB 级）：本地保留，不入库 ###
 /evidence/
-
-### A2 差分探针的本地 jar（curl --noproxy 手动下载，不入库）###
-/libs/

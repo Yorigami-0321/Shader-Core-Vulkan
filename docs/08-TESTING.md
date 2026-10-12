@@ -396,6 +396,11 @@ grep -a "\[C1\] 全屏步 sampler 快照" run/logs/latest.log # 声明数 / 超�
 | 文件 | 内容 |
 |---|---|
 | `docs/Vitrail Shaders下运行的BSL.png` | **金标准**：Vitrail 0.12.0-beta 上跑同一 `BSL_v10.1.8.zip`（profile HIGH，0 项用户改动），MC 26.3 / Vulkan 1.4.325 / Radeon 780M。环境信息取自图内 F3，未二次加工 |
+| `docs/Vitrail Shaders下运行的BSL-正午.png` | 同一参考面的**时段系列**之一：正午，团状体积云 + 蓝天渐变，地面雪林照度正常 |
+| `docs/Vitrail Shaders下运行的BSL-日落.png` | 日落档：地平线一带橙色渐变、太阳贴地平线，高空仍是团状云（图内聊天栏 = 刚 `/time set` 到 `night` 之前） |
+| `docs/Vitrail Shaders下运行的BSL-夜里.png` | 夜里档：深蓝夜空 + 星点在场 + **一排贴着地平线的带状云**，月是方的 |
+| `docs/Vitrail Shaders下运行的BSL-午夜.png` | 午夜档：比夜里更暗，贴地平线的云带更明显，方形月 |
+| 🔖 **这四张的用法（2026-10-12 补，起因是一次误判）** | 它们是**参考面**，不是本仓的症状图。夜里 / 午夜两张说明：**「云贴着地平线拉成一排带状」加上「月是方的」在 Vitrail 上就是 BSL 的正常形态** ⇒ 拿本仓画面去追这两个形态的"根因"之前，必须先做**固定机位两两对照**确认本仓确实更坏。`13-GAP-REGISTRY` GAP-033 那格就是这么误判又撤回的，别再来一次 |
 | `docs/vkdisp对照Vitrail-BSL-h48.png` | **对照图**：左 = 绿带 = 上面那张金标准；右 = 橙带 = vkdisp 现状（h48，正午、晴天、`mrt.skyPass=false`、854×480 最近邻放大到同高）。合成器 `tools/vulkan-local/compare_images.py`（stdlib，本机可复跑） |
 
 **对照图逐条读出来的差距（诚实版，不因为并排放了就等于接近）**：

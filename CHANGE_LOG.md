@@ -6,6 +6,52 @@
 ---
 ---
 
+## 2026-10-12（一百一十三）— ✅ CI 连红 6 次的因拔掉（`libs/` 被 ignore 掉）；🔴 顺带撤回 GAP-033「条形云新臂」（那四张是 Vitrail 参考图，不是本仓症状图）
+
+> **verdict = 复查 + 构建修复轮，零 `src/` 改动**：用户问「这六次提交做了什么、为什么构建全红」。
+> 红是**一个**根因，与这六次的业务内容无关（连只改文档的 #153 也红在同一处）；
+> 核对图证时另撞出一格结论站不住，按用户裁决「降级：图证不成立、待重判」处理。
+> `./gradlew build --offline` 退出码 **0**，`build/test-results` 实测 **1165 项 / 0 失败 / 1 skip**；未抬任何棘轮基线。
+
+- **CI 从 #148 红到 #153 的因（一条，代码级）**：`2a8ceb8` 把 A2 差分探针的依赖写成
+  `build.gradle:327` `testImplementation files('libs/jcpp-1.4.14.jar', 'libs/slf4j-api-1.7.12.jar', 'libs/java-semver-0.8.0.jar')`，
+  而**同一个提交**在 `.gitignore` 末尾加了 `/libs/`（`git ls-files libs/` = 0）。
+  `files()` 不查任何仓库、不做解析 ⇒ 干净检出没有 `libs/`，入库的
+  `JcppDifferentialProbeTest.java:11-16` 那 7 行 `import org.anarres.cpp.*` 就编不过
+  ⇒ **红在 `compileTestJava`，`test` 任务根本没跑到**（旁证：6 次运行总时长 48~59s，而本机全量测试单跑就要 1 分钟以上）。
+- **实测复现（不是推理）**：把本机 `libs/` 改名模拟干净检出，`compileTestJava` 报
+  「程序包 org.anarres.cpp 不存在」×7 + 符号找不到 ×12，退出码 1；改回即绿。
+  另试了 `git worktree` 走完整冷构建，但本机出网拦 neoforged maven ⇒ 卡在 `createMinecraftArtifacts`，到不了编译测试源码那步（所以用前一种办法）。
+- **修法（用户选方案 1：入库）**：`.gitignore` 删掉 `/libs/`、在「必须入库」清单里补一条说明；
+  三个 jar 连同新增的 `libs/README.md` 一起入库；`build.gradle` 那条注释补上「为什么必须入库 + 不入库的代价」。
+  `libs/README.md` 记：坐标 / 许可证（jcpp **Apache-2.0**、slf4j-api 与 java-semver **MIT**，
+  前两个从 jar 内嵌 POM 核出、jcpp 依 `07-CONSTRAINTS` §423 的既有核实）/ SHA-256 / 上游 / 重新获取命令，
+  并写明**未修改上游构件** ⇒ `07-CONSTRAINTS` §1.3 的「声明改动」义务不适用；
+  作用域是 `testImplementation` ⇒ 不进发布 jar、运行期零依赖（§480 那条自检针对分发产物）。
+  🔖 顺带核实了"为什么要三个"：jcpp 的 `Preprocessor`/`MacroTokenSource` 里有 `org.slf4j.Logger` 字段、
+  `BuildMetadata` 引用 `com.github.zafarkhaja.semver` ⇒ 少一个就 `NoClassDefFoundError`。
+- **为什么本机九十多轮看不出来（同族第二次，和上一轮「代码默认档没跑过」一个形状）**：
+  增量构建命中 `compileTestJava UP-TO-DATE` + jar 就在本地磁盘上。这六次的提交信息每条都写
+  「`./gradlew build` 退出码 0，1164/1165 项 0 失败」——**在本机口径下句句为真，换台干净机器不成立**。
+  🔖 纪律补一条：「build 绿」要在**干净检出**上取，本机增量不算。
+- **🔴 GAP-033「条形云新臂」撤回（用户核对后）**：上一轮据以判「夜里复现」的四张图，
+  实为 **Vitrail 上跑 BSL 的正常画面**，不是本仓 runClient 的症状图。⇒ 那格的图证不成立，
+  「新臂三项写全」降级为**参数写全、画面未证**；连带作废的还有「月亮是亮方块 ⇒ `gbuffers_skytextured` 未接」
+  这条推断（那颗方块月出自 Vitrail）。**不依赖那四张、仍然保留**的两格：① `depthGlProxy=true` 把天空碎成
+  三块硬边楔形（本轮在 vkdisp 上单变量翻档当场看到，图未落盘）；② **GAP-037 是代码级结论**
+  （`SkyPackGbuffer#skyVertexBuffer` 的 `z=1.0` × `DepthGlProxy:71-72`/`:129` 的 `1−z_en` = 天空被翻第二次），不靠画面。
+- **改名**：`docs/gap033-{day-clouds-ok-102859,sunset-clouds-ok-102622,strip-clouds-night-102712,strip-clouds-midnight-102759}.png`
+  → `docs/Vitrail Shaders下运行的BSL-{正午,日落,夜里,午夜}.png`（与既有金标准 `Vitrail Shaders下运行的BSL.png` 同族），
+  并登记进 `docs/08-TESTING.md` §10.1 作**参考面**。🔴 方法论约束写进那张表：Vitrail 的夜里/午夜**本来就是**一排贴地平线的带状云
+  ⇒ 别把这种形态当症状追根因，要重开 GAP-033 先做本仓夜里实拍、固定机位两两对照。
+- **影响的文档**：`docs/13-GAP-REGISTRY.md`（GAP-033 那格拆成「图证更正」+「仍成立的两格」两行、GAP-037 溯源行加一句不受撤回影响）、
+  `docs/08-TESTING.md` §10.1（参考图 4 行 + 用法 1 行）、`.gitignore`、`build.gradle`、新增 `libs/README.md`、本文件。
+- **测试结果**：`./gradlew build --offline` 退出码 0；1165 项 / 0 失败 / 1 skip（从 `build/test-results` 数的，不是手抄）。
+  🔴 **CI 是否转绿只能推一次看**：本机跑不出干净检出构建（网络），所以本轮的「绿」在本机、不在 CI 上取证。
+- **是否已提交**：✅ 提交并推送（本轮结束即推，用户口径；推送同时就是 CI 的那次实测）。
+
+---
+
 ## 2026-10-12（一百一十二）— 🟡 半开档定性完成；**翻默认试了、被自家取证挡回来**（坏包 + 包路线 = 崩帧）
 
 > **verdict = 取证轮（Windows / RTX 4060 / Vulkan，四档冷启动）**：用户裁决「先补默认档取证再翻」+「顺手判半开档是有意的 A/B 档还是缺配对守卫」。
