@@ -12,6 +12,7 @@
     "ChunkSectionsToRenderSeparatePipelineMixin",
     "CloudRendererMatrixRedirectMixin",
     "CloudRendererMeshProbeMixin",
+    "FrameGraphPassOrderMixin",
     "LevelRendererChunkSamplerMixin",
     "LevelRendererMainPassCaptureMixin"
   ],

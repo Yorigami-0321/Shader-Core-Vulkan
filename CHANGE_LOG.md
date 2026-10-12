@@ -6,6 +6,40 @@
 ---
 ---
 
+## 2026-10-12（一百一十九）— 🟡 R5 的 M-13 提前做（第 5 步的前置）：帧图 pass 句柄接住、「terrain requires vanilla-sky」显式声明、ORDER-MARK 反推日志删除
+
+> **verdict = 顺序从「实测反推」改成「显式声明」，但本条只算半边**：车道
+> （`mrt.terrainAfterLevel`）与天空那一格（R4）还没动 —— 见文末「为什么插队」。
+
+- **① 为什么插队（这一步不是打乱顺序，是第 5 步的前置）**：R4 要把天空搬进官方
+  `CustomSkyboxRenderer.renderSky`（`LevelRenderer:385`，就在 `"sky"` pass 体内、那一刻无 pass 打开），
+  或按 M-11 把原版天空的两个视图 `@Redirect` 到我方 colortex0/gbuffer 深度 —— 两种做法都让
+  **天空落在原版 `"sky"` pass 里**，于是我方地形 pass 必须排到它之后。而帧图执行序由
+  `resolvePassOrder` 按依赖边解析、**插入序不是依赖** ⇒ 没有这条边就是 h48g 那个形状
+  （`c0@afterSky` 只剩 0.0611，正确顺序下同取点 72.85~84.50）。所以先把边显式化。
+- **② M-13 落地**：`mixin/FrameGraphPassOrderMixin` 两个 `@WrapOperation` ——
+  包住 `addSkyPass:382` 与 `addMainPass:403` 里的 `FrameGraphBuilder#addPass(String)`，
+  先 `original.call(name)` 拿到**原版创建的真对象**再登记（`@Inject HEAD` 拿不到：那一刻 pass 还不存在）。
+  `bridge/PassOrder` 做**双向登记**：我方 pass 在第 249 行的事件里最早创建，所以边由后到的 sky 那一方补；
+  每帧装配开始 `resetForFrame()`（帧图 pass 对象**不能**跨帧复用）。
+  新注入点各有 `require=1/expect=1`，可关闭键 `mixin.pinPassOrder`（默认开）。
+- **③ 删掉的东西**：`ORDER-MARK vanilla-main-pass executing`（`AfterOpaqueBlocks` 事件 + 哨兵）与
+  `ORDER-MARK my-pass executing` —— 自报改成 `[M-13] terrain requires vanilla-sky 边已声明=?`，
+  即「连没连上」这一格直接可读，不再需要比对两行日志的行号。
+- **④ 巨类没长**：`VkDispConfig` 因新键一度到 1059 行 ⇒ 压缩注释回到 **1046**（上限 1047，只许降）；
+  `MrtTerrainPass` 因删 ORDER-MARK 掉到 1059（上限 1069）。新逻辑落在独立类 `PassOrder`（棘轮口径）。
+- **影响的文档**：`04-SPEC` §5.0 M-13 行（候选 → 🟡 半边已实现，写清「未收口」的两项）、
+  本文与 `19` §5A.4 的 R5 行。mixin 清单 9 → **10** 个 client 类。
+- **测试**：`./gradlew test --offline` → **BUILD SUCCESSFUL**（1165 条，1 条既有 skip）；
+  `MixinWiringTest` 认 `@WrapOperation` 为「有体注入」并查首行转发、新增 `mixin.pinPassOrder` 键断言。
+- **未验证（不许当已收口）**：① 这条边真机是否生效（判据 = `c0@afterSky` 回到 72.85~84.50 量级，
+  仍是 0.0611 就是没生效）；② 新注入点自身：`Mixin apply failed = 0`。两条都要跑客户端。
+- **下一步（顺序不变）**：第 5 步天空（官方钩子 + M-11 视图 `@Redirect` + 删 `GbufferTarget`），
+  然后回来删 `mrt.terrainAfterLevel` 车道收尾 R5。
+- **提交**：✅ 本地提交并推送。
+
+---
+
 ## 2026-10-12（一百一十八）— ✅ R1a 第 4 步落地：**pass 身份由数据给出**（M-15 两支 `@WrapOperation`）；`inMrtPass` + `finally` + 空转守卫 + `MRT_GUARD_FALLBACK` 一并删除，M-01 退化成「只按层名查表」
 
 > **verdict = 把「靠记得清标志位才正确」换成「读手里就有的数据」**：判据从静态布尔换成

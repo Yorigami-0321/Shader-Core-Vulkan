@@ -199,6 +199,9 @@ public final class MrtTerrainPass {
         // 🔴 GAP-027：frameGraph 档里原版 clouds pass 与链无依赖边、排在链之后 ⇒ 不抑制就会
         //   「gbuffer 云 + 原版云」两层同框（2026-10-10 真机截图）。装配期挂钩子，executes 期生效。
         dev.vkdisp.bridge.CloudsIntoGbuffer.installSuppression();
+        // 🔖 M-13：每帧装配开始时清空句柄（帧图 pass 对象**不得**跨帧复用 —— 连到上一帧的
+        //   pass 对象等于连到不存在的节点）。
+        PassOrder.resetForFrame();
         // 🔖🔖 天空 pass 必须**显式声明**成地形的先决条件。h48g 实测：只按顺序 addPass 时
         //   sky 被排到 terrain **之后**执行（执行序由 `FrameGraphBuilder#resolvePassOrder`
         //   按 `requiredPassIds` 与「写→读」边解析，**插入序不是依赖**），于是天空又被
@@ -219,6 +222,10 @@ public final class MrtTerrainPass {
         if (skyPass != null) {
             pass.requires(skyPass);
         }
+        // 🔖 M-13：把我方这个 pass 交给 PassOrder —— 原版 "sky" pass 在第 382 行才创建（晚于此处），
+        //   所以「terrain requires vanilla-sky」这条边由**后到的一方**补上（见 PassOrder 的双向登记）。
+        //   有了这条边，R4 才能把天空从「我方自己插一个 sky pass」搬进官方 CustomSkyboxRenderer 钩子。
+        PassOrder.declareOwnTerrain(pass);
         // 🔖🔖 **必须在 pass 体里读捕获，不能在这里读**（本轮真踩过，症状极具欺骗性）：
         //   帧图「装配」发生在 LevelRenderer#render 第 249 行（官方事件处），
         //   而 M-06 的捕获发生在第 277 行的 addMainPass HEAD —— **装配早于捕获**。
@@ -332,27 +339,6 @@ public final class MrtTerrainPass {
 
     /** 顺序标记是否已打过（每轮只打一次，避免日志 I/O 进热路径）。 */
     private static boolean orderMarkerLogged;
-
-    /** 原版主 pass 的顺序标记是否已打过。 */
-    private static boolean vanillaMarkerLogged;
-
-    /**
-     * 🔖 **帧图执行顺序标记**：本事件在原版 {@code executeSolid} 内部触发
-     * （{@code LevelRenderer:536}），也就是**原版主 pass 正在执行中**。
-     * 与「我方 pass 执行」那条日志比对行号，就能**直接读出**我方 pass 排在哪一步 ——
-     * 这是本轮要区分的核心未知（「帧图内插 pass 从未成功」到底是不是顺序问题）。
-     *
-     * <p>为什么值得专门做：帧图的执行顺序由 {@code resolvePassOrder} 按资源依赖解析，
-     * 我方 pass 不声明任何依赖 ⇒ 只能实测，不能靠读 API 猜。
-     */
-    @SubscribeEvent
-    static void onAfterOpaqueBlocks(net.neoforged.neoforge.client.event.RenderLevelStageEvent.AfterOpaqueBlocks event) {
-        if (!enabled() || vanillaMarkerLogged) {
-            return;
-        }
-        vanillaMarkerLogged = true;
-        VkDisp.LOGGER.info("vkdisp: [GAP-003/A] ORDER-MARK vanilla-main-pass executing");
-    }
 
     /** A/B 模式开关：把绘制从帧图内挪到帧图执行之后。 */
     public static boolean afterLevel() {
@@ -594,7 +580,13 @@ public final class MrtTerrainPass {
         framesDrawn++;
         if (!orderMarkerLogged) {
             orderMarkerLogged = true;
-            VkDisp.LOGGER.info("vkdisp: [GAP-003/A] ORDER-MARK my-pass executing ({} mode)", afterLevel() ? "afterLevel" : "frameGraph");
+            // 🔖 M-13：这里原来是 ORDER-MARK「my-pass executing vs vanilla-main-pass executing」两条
+            //   日志对行号反推顺序（h48g 那轮就这么定位到「天空被排到地形之后」）。现在顺序由
+            //   PassOrder 显式声明 ⇒ 自报改成「这条边到底连上没有」。
+            VkDisp.LOGGER.info("vkdisp: [M-13] terrain requires vanilla-sky 边已声明={}（{} 档）"
+                            + " —— false ⇒ 顺序退回按依赖猜，天空可能被排到地形之后（h48g 的坏形状）",
+                    dev.vkdisp.bridge.PassOrder.edgeDeclared(),
+                    afterLevel() ? "afterLevel" : "frameGraph");
         }
         // 🔖 探针**不能**在首帧跑：首帧区块还没网格化，drawGroups 必然是空的
         //（本轮踩过：首帧打出 groups=0，一度被误读成「捕获到的数据是空的」）。

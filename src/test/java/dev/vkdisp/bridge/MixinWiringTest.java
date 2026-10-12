@@ -117,6 +117,7 @@ class MixinWiringTest {
         assertTrue(config.contains("mixin.cloudProbe"), "M-09 缺少可关闭键 mixin.cloudProbe");
         assertTrue(config.contains("mixin.cloudMatrixRedirect"), "M-10 缺少可关闭键 mixin.cloudMatrixRedirect");
         assertTrue(config.contains("mixin.passAwarePipeline"), "M-15 缺少可关闭键 mixin.passAwarePipeline");
+        assertTrue(config.contains("mixin.pinPassOrder"), "M-13 缺少可关闭键 mixin.pinPassOrder");
         assertTrue(config.contains("define(\"mixin.wireTerrain\", true)"), "M-01 默认应为开");
         assertTrue(config.contains("define(\"mixin.bindTerrainParams\", true)"), "M-01b 默认应为开");
         assertTrue(config.contains("define(\"mixin.captureMainPassArgs\", true)"), "M-06 默认应为开");

@@ -170,10 +170,8 @@ public final class VkDispConfig {
     /**
      * 🔴 R3 / M-07 开关：地形图集**复用原版那个采样器实例**（默认开）—— 各向异性与
      * {@code shouldResetChunkLayerSampler} 门控一起继承（{@code GAP-041}）。
-     *
-     * <p>⚠️ 关档不是「画面不变」：退回公开 {@code samplerCache} 的 LINEAR 档 ⇒ 各向异性恒 1，
-     * 且 {@code mrt.terrainAtlasLod0} 那条 maxLod=0 止血不再作用于地形图集（原版实例的 maxLod 是
-     * empty）⇒ 若 {@code GAP-016} 复现，本键就是它的 A/B 位，结论回登记表而不是回这里加拐杖。
+     * ⚠️ 关档不是「画面不变」：退回公开 {@code samplerCache} 的 LINEAR 档 ⇒ 各向异性恒 1，
+     * 且 {@code mrt.terrainAtlasLod0} 那条 maxLod=0 止血不再作用于地形图集（GAP-016 复现时本键是 A/B 位）。
      */
     public static final ModConfigSpec.BooleanValue MIXIN_REUSE_CHUNK_SAMPLER = BUILDER
             .comment("R3 M-07：地形图集复用原版 LevelRenderer#chunkLayerSampler（各向异性跟用户设置、"
@@ -188,24 +186,30 @@ public final class VkDispConfig {
     public static final ModConfigSpec.BooleanValue MIXIN_PASS_AWARE_PIPELINE = BUILDER
             .comment("R1a M-15：地形多附件变体由 renderPass 的对象身份决定要不要交出"
                     + "（取代 inMrtPass 静态标志 + finally 纪律，GAP-040）。关闭 = 我方 pass 里只用"
-                    + "单附件版 ⇒ setPipeline 当场抛，属 A/B 档（默认开）。")
+                    + "单附件版 ⇒ setPipeline 当场抛，属 A/B 档。")
             .define("mixin.passAwarePipeline", true);
 
     /**
-     * 🔴 R3 / M-08 开关：地形 draw 条数自报走**访问器**（默认开）。关掉只少一行自报，不改渲染行为；
+     * 🔴 R5 / M-13 开关：显式声明「我方 gbuffer pass requires 原版 sky pass」（默认开）。
+     * 帧图执行序按依赖解析、<b>插入序不是依赖</b> ⇒ 不连边时天空可被排到地形之后（h48g 实测
+     * {@code c0@afterSky} 只剩 0.0611，正确顺序下同取点 72.85~84.50）。⚠️ 关档 = 不连边。
+     */
+    public static final ModConfigSpec.BooleanValue MIXIN_PIN_PASS_ORDER = BUILDER
+            .comment("R5 M-13：声明「我方 gbuffer pass requires 原版 sky pass」这条帧图边。"
+                    + "关闭 = 不连边、顺序回到按依赖猜（默认开）。")
+            .define("mixin.pinPassOrder", true);
+
+    /**
+     * 🔴 R3 / M-08 开关：地形 draw 条数自报走**访问器**（默认开）。关掉只少一行自报、不改渲染行为 ——
      * 它替代的是反射那一族（{@code GAP-042}：改名即哑、失败只 WARN）。
      */
     public static final ModConfigSpec.BooleanValue MIXIN_TERRAIN_DRAW_PROBE = BUILDER
-            .comment("R3 M-08：地形每层 draw 组条数用 @Accessor 读出并自报（替掉反射）。"
-                    + "关闭 = 少一行诊断自报，渲染行为不变（默认开）。")
+            .comment("R3 M-08：地形每层 draw 组条数用 @Accessor 读出并自报（替掉反射）。默认开。")
             .define("mixin.terrainDrawProbe", true);
 
-    /**
-     * 🔴 R3 / M-09 开关：云 quadCount 自报走**访问器**（默认开）。同 M-08，关掉只少一行自报。
-     */
+    /** 🔴 R3 / M-09 开关：云 quadCount 自报走**访问器**（默认开）。同 M-08，关掉只少一行自报。 */
     public static final ModConfigSpec.BooleanValue MIXIN_CLOUD_PROBE = BUILDER
-            .comment("R3 M-09：CloudRenderer#quadCount 用 @Accessor 读出并自报（替掉反射）。"
-                    + "关闭 = 少一行诊断自报，渲染行为不变（默认开）。")
+            .comment("R3 M-09：CloudRenderer#quadCount 用 @Accessor 读出并自报（替掉反射）。默认开。")
             .define("mixin.cloudProbe", true);
 
     /**
@@ -214,8 +218,8 @@ public final class VkDispConfig {
      * ⚠️ 关档 = 交回原版那句：原版不受影响，我方重放读裸栈 ⇒ 放射长条复现（A/B 档，WARN 一次）。
      */
     public static final ModConfigSpec.BooleanValue MIXIN_CLOUD_MATRIX_REDIRECT = BUILDER
-            .comment("R3 M-10：@Redirect 原版云取 modelview 的实参为我方相机矩阵，"
-                    + "于是不再压/还原全局栈。关闭 = 原版路径不变、我方重放回到锚错位姿的坏档（默认开）。")
+            .comment("R3 M-10：@Redirect 原版云取 modelview 的实参为我方相机矩阵，于是不再压/还原全局栈。"
+                    + "关闭 = 原版路径不变、我方重放回到锚错位姿的坏档（默认开）。")
             .define("mixin.cloudMatrixRedirect", true);
 
     /**

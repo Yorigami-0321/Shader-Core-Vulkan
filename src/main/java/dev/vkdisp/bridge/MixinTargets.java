@@ -98,6 +98,30 @@ public final class MixinTargets {
     // ── 帧图插入点（P3 阶段曾评估启用；现状 = OPT-1 可选，非必需，优先走官方事件）────
     /** {@code net.minecraft.client.renderer.LevelRenderer} —— 影子 pass 插入（addMainPass HEAD）。 */
     public static final String LEVEL_RENDERER = "net.minecraft.client.renderer.LevelRenderer";
+
+    /**
+     * {@code com.mojang.blaze3d.framegraph.FrameGraphBuilder#addPass(String)} —— M-13 被包住的调用。
+     *
+     * <p>公开 API（sources jar 核实）：{@code public FramePass addPass(String name)}，实现按调用序
+     * 把 pass 入表；{@code requires} 的边要到 {@code execute} 里的 {@code resolvePassOrder} 才解析
+     * ⇒ <b>后创建的 pass 也能被先创建的 pass 引用</b>。这正是 M-13 成立的前提：我方 pass 在第 249 行
+     * 的事件里创建，而原版 {@code "sky"} 在第 382 行、{@code "main"} 在第 403 行才创建。
+     *
+     * <p>🔴 必须<b>限定调用点</b>（原版别处也调 addPass）：本注入点写在 {@code LevelRenderer} 的
+     * 两个方法上各包一次（{@link #LEVEL_RENDERER_ADD_SKY_PASS} 与 {@link #LEVEL_RENDERER_ADD_MAIN_PASS}）。
+     */
+    public static final String FRAME_GRAPH_BUILDER_ADD_PASS =
+            "com.mojang.blaze3d.framegraph.FrameGraphBuilder.addPass(Ljava/lang/String;)"
+                    + "Lcom/mojang/blaze3d/framegraph/FramePass;";
+
+    /** {@code LevelRenderer#addSkyPass(FrameGraphBuilder, CameraRenderState, GpuBufferSlice)} —— M-13 注入方法之一（private，第 369 行）。 */
+    public static final String LEVEL_RENDERER_ADD_SKY_PASS = "addSkyPass";
+
+    /** 原版天空 pass 的 id（第 382 行 {@code frame.addPass("sky")}）。 */
+    public static final String VANILLA_SKY_PASS_ID = "sky";
+
+    /** 原版主 pass 的 id（第 403 行 {@code frame.addPass("main")}）。 */
+    public static final String VANILLA_MAIN_PASS_ID = "main";
     /**
      * {@code LevelRenderer#addMainPass} —— 帧图主 pass 追加点（04-SPEC §3.4），**private、5 参**。
      *
