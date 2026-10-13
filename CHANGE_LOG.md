@@ -6,6 +6,20 @@
 ---
 ---
 
+## 2026-10-13（一百三十三）— ✅ R7 ⑤-c 第三~五族：主 pass 内的非 OIT 取管线点全部接上补槽；天气已过，云/边界「已放开未取证」
+
+> **verdict = ⑤-c 这一族按真机指的位置推进到「主 pass 内非 OIT 全部放开」**，同时把三族的证据分成三等写，不把「装了」写成「过了」。
+
+- **新增 3 条 mixin（第 16–18 条）**：`CloudRendererPipelineMixin`（包私有 `render(RenderPass, RenderPipeline)` —— 经典云与 OIT 云的**收敛点**）、`WeatherEffectRendererPipelineMixin`（包私有 `render(state, RenderPass, RenderPipeline)`，同样一条覆盖经典 + OIT）、`WorldBorderRendererPipelineMixin`（包公开 `render(state, RenderPass, Vec3, double)`；边界**没有**收敛点，`renderOit` 那份留给 OIT 一族）。形状与第一/二族逐字相同：形参 `RenderPass` 给身份 ⇒ `selectForMainPass(isTakenOverPass(renderPass), requested)`。
+- ✅ **天气 = 已过（真机）**：MCP `weather rain` 之后 `分站点={PreparedRenderType#draw=402368, QuadParticle#drawLayers=20595, WeatherEffectRenderer#render=9637}`、`[M-04/⑤-b] 派生=10 交回原版=0 记忆命中=443390`、0 崩 —— 雨那条管线补槽之后确实过了 `setPipeline`（不过就会像 ⑤-a/⑤-b 那样当场抛）。
+- 🟡 **云 / 边界 = 已放开，本趟未取证**：`run/options.txt` 里 `renderClouds` 是关的、镜头离世界边界远（`state.alpha == 0` 时那句根本不执行）⇒ 分站点表里**没有**这两条。这一等只有「apply 成功 + 整趟不崩」这一半，**取管线那一刻没被证明补过** ⇒ 判据不许提前收口（下一趟要做的事：开云 + 走到边界，或直接接 OIT 那一臂）。
+- 🔴 **一条自己造的启动期崩（`GAP-047` ⑤）**：边界的描述符我把 `Vec3` 写成 `org.joml.Vec3`（正确是 `net.minecraft.world.phys.Vec3`）。✅ 因为写了 `require = 1 / expect = 1`，症状是**启动期点名硬失败**（`could not find any targets matching 'render(…)'`，crash report 直接指出 mixin 类），不是「静默不生效」—— 这是那条纪律第一次以「正面样本」的形式记进台账；定位办法是 `javap -p -cp build/moddev/artifacts/minecraft-patched-26.3.0.51-beta.jar`。
+- 🔖 **改掉两条我自己上一轮写错的分类**（`04-SPEC` §5.0.7 末的新表）：`CubeMap:69` 与 `LevelRenderer:518` **不是**主 pass 内的点 —— 它们各自 `createRenderPass(...)` 开自己的 pass（"Cubemap" / "Integrate always on top depth"）⇒ 归「不该补」。于是「主 pass 内还剩 8 处」这个数被更正为：**非 OIT 已全部放开**，剩下的都在 OIT 那一侧（`CloudRenderer:215`、`WorldBorderRenderer:170`、`LevelRenderer:670/690/694/706`）。
+- **默认档零变化**：三处都要求 `MainPassTakeover.isTakenOverPass(renderPass)`，`mixin.ownTerrainPass=false`（默认）时逐字原样返回；取证档跑完已回退（`ownTerrainPass=false`、`ADVANCED_MATERIALS` 行删除）。测试 **1174 条 0 失败**、0 条 mixin apply 失败。
+- **下一步**：要么把「云 / 边界」这两条补成真机取证（开 `renderClouds` + 走到边界），要么直接进 OIT 那一族（同一趟里把改进透明打开，一次覆盖 `:215/:170` 与 OIT 四条）；两者都完之后再谈 ⑤-d 关双绘（前置仍是 `GAP-049` 那件「池尺寸锚在另一张主目标」的活）。
+
+---
+
 ## 2026-10-12（一百三十二）— ✅ R7 ⑤-c 第二族签掉 + 第一次「接管后不崩」的一帧（截图正常），但「没崩」不等于「全族都过了」
 
 > **verdict = 两件事同时成立**：① ⑤-c 的机制可复制（第二处注入点，形状与第一处逐字相同）；② 主 pass 被换成 8 附件之后，客户端**第一次**跑过了一整帧不崩 —— 而这一帧没碰到云/天气/边界那几处，所以「没崩」只能读成「已放开的族过了」。

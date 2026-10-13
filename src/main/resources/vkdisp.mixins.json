@@ -12,6 +12,7 @@
     "ChunkSectionsToRenderSeparatePipelineMixin",
     "CloudRendererMatrixRedirectMixin",
     "CloudRendererMeshProbeMixin",
+    "CloudRendererPipelineMixin",
     "FrameGraphPassOrderMixin",
     "LevelRendererChunkSamplerMixin",
     "LevelRendererMainPassCaptureMixin",
@@ -19,7 +20,9 @@
     "PreparedRenderTypePipelineMixin",
     "QuadParticleFeatureRendererPipelineMixin",
     "SkyRendererViewRedirectMixin",
-    "VideoSettingsPackOptionsMixin"
+    "VideoSettingsPackOptionsMixin",
+    "WeatherEffectRendererPipelineMixin",
+    "WorldBorderRendererPipelineMixin"
   ],
   "injectors": {
     "defaultRequire": 1

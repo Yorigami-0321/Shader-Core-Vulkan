@@ -686,18 +686,31 @@ FramePass pass = frame.addPass("main");
 > |---|---|---|---|
 > | 地形两条 | `chunk/ChunkSectionsToRender:121, :176` | ✅ | 已过（M-15 + ⑤-b 补槽） |
 > | **全部 RenderType**（实体/粒子/方块层/水/玻璃/文本…） | `rendertype/PreparedRenderType:43` | ✅ | ✅ **本轮已过**（一处顶十几族） |
-> | 特性渲染器（四边形粒子等） | `feature/QuadParticleFeatureRenderer:89` | ✅（`executeSolid`） | 🔴 **下一个**（真机现在正崩在这儿） |
-> | 云 | `CloudRenderer:215, :229` | ✅ | 待放开 |
-> | 天气 | `WeatherEffectRenderer:165` | ✅ | 待放开 |
-> | 世界边界 | `WorldBorderRenderer:158, :170` | ✅ | 待放开 |
-> | 方块色立方图 | `CubeMap:69` | ✅ | 待放开 |
-> | OIT / 深度合成 / 描边 | `LevelRenderer:518, :670, :690, :694, :706`、`DebugCrosshairRenderer:72, :78` | ✅ | 待放开（`LevelRenderer:518` 在 `executeSolid` 内） |
+> | 特性渲染器（四边形粒子） | `feature/QuadParticleFeatureRenderer:89` | ✅（`executeSolid`） | ✅ **已过**（同日第二族，崩点从 `executeClassicTransparency` 挪进 `executeSolid`） |
+> | 云 | `CloudRenderer:229`（收敛点：私有 `render(RenderPass, RenderPipeline)`，经典与 OIT 都走它） | ✅ | 🟡 **已放开，本趟未走到**（`renderClouds` 是关的 ⇒ 只有「apply 成功 + 不崩」这一半，取管线未取证）；`:215` 那句 `BLIT_DEPTH_DURING_DEPTH_BOUNDS` 在 `renderOit` 内 ⇒ 归 OIT 一族 |
+> | 天气 | `WeatherEffectRenderer:165`（同一个收敛点形状：私有 `render(state, RenderPass, RenderPipeline)`） | ✅ | ✅ **已过**（`/weather rain` 之后 `WeatherEffectRenderer#render=9637` 次取管线、0 崩 ⇒ 雨的管线补槽后过了 `setPipeline`） |
+> | 世界边界 | `WorldBorderRenderer:158`（`render`） | ✅ | 🟡 **已放开，本趟未走到**（镜头离边界远 ⇒ `state.alpha == 0`，那句根本不执行）；`:170` 是 `renderOit` 里另一份逐字相似的代码 ⇒ 归 OIT 一族 |
+> | 方块色立方图 | `CubeMap:69` | ❌ **自己开 pass**（`createRenderPass(() -> "Cubemap", …)`） | **不该补**（🔖 本行原来误标成「在主 pass 里」，本轮按 javap + 源码逐字改掉） |
+> | 深度合成 / OIT / 描边 | `LevelRenderer:518`（`Integrate always on top depth`，**自己开 pass**）、`:670/:690/:694/:706`（OIT 那四条）、`DebugCrosshairRenderer:72/:78` | ❌ 各自开 pass / 只在开改进透明时 | **不该补**（同上：`518` 那条本行也误标过）；OIT 四条要等「用户开 OIT」那一臂 |
 > | 天空 | `SkyRenderer:167, :180, :256, :274, :298, :314` | ❌（自己的 sky pass） | **不该补**（M-11 那两条判据担） |
 > | GUI / 后处理 / 动画图集 / 光照图 | `GuiRenderer:388`、`GameRenderer:283, :284, :286, :742`、`PostChain:114`、`PostPass:121`、`Lightmap:84`、`texture/SpriteContents:388, :392`、`texture/TextureAtlas:189` | ❌ | **不该补**（补了就是「modifier 看不到 pass ⇒ 全帧一起坏」那个坑） |
 >
-> ⇒ 于是 ⑤-c 的成本是**一个注入点一族**、且**主 pass 内还剩 8 处**（特性渲染器/云×2/天气/边界×2/立方图/`LevelRenderer:518`）
-> + OIT 那四处（`LevelRenderer:670/690/694/706`，走 `executeOit` 分支，取决于用户有没有开改进透明）。
-> 🔖 最后一行的「不该补」是这一族**判据的一半**：判据不只是「补到了」，还要能证明**没补错地方**。
+> ⇒ **⑤-c 的净结论（同日第三~五族放开之后重算）**：主 pass 内的**非 OIT** 取管线点已经**全部**接上补槽
+> （地形两条 + `PreparedRenderType` + 特性渲染器 + 云 + 天气 + 边界 = 7 处、5 个注入类），
+> 剩下的全在「要用户开改进透明才会走到」那一侧：`CloudRenderer:215`、`WorldBorderRenderer:170`、
+> `LevelRenderer:670/690/694/706`（4 条 OIT 合成/裁剪），以及 `DebugCrosshairRenderer`（调试十字准星，自己开 pass）。
+> 🔖 「不该补」那一半同样是判据：判据不只是「补到了」，还要能证明**没补错地方** ——
+> 立方图与 `LevelRenderer:518` 两条本轮从「在主 pass 里」改成「自己开 pass」，就是这一半在起作用。
+>
+> ✅ **第三~五族已落地（同日再下一轮，2026-10-12）+ 真机状态分三等，不含糊**：
+> `CloudRendererPipelineMixin` / `WeatherEffectRendererPipelineMixin` / `WorldBorderRendererPipelineMixin`
+> （各包一处私有/公开 `render`，形参给 pass 身份）。**天气=已过**（`/weather rain` 之后
+> `WeatherEffectRenderer#render=9637`、0 崩 ⇒ 雨的管线补槽后真的过了 `setPipeline`，`派生=10 交回原版=0`）；
+> **云 / 边界=已放开但未取证**（`renderClouds` 关着、镜头离边界远 ⇒ 那两句根本没执行，只有「apply 成功 +
+> 不崩」这一半）。⚠️ 这一等**不许写成「已过」**：判据要求的是「取管线那一刻真的被补过」。
+> 🔖 顺带一条纪律的正面样本：边界的描述符我第一版把 `Vec3` 写成 `org.joml.Vec3`（正确的是
+> `net.minecraft.world.phys.Vec3`），`require = 1` 让它在**启动期**就报 `could not find any targets matching`
+> 而不是静默不生效（`GAP-047` ⑤）。
 >
 > ✅ **第二族已落地 + 真机已签（同日再下一轮，2026-10-12）**：`QuadParticleFeatureRenderer#drawLayers`
 > 那处（`mixin/QuadParticleFeatureRendererPipelineMixin`）—— 就是上一段说的「真机指出来的下一处」。

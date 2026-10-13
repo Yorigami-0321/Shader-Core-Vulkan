@@ -273,6 +273,50 @@ public final class MixinTargets {
                     + "Lnet/minecraft/client/renderer/oit/OitStage;)V";
 
     /**
+     * {@code CloudRenderer#render(RenderPass, RenderPipeline)}（<b>private</b>，第 225 行）。
+     *
+     * <p>🔖 云有<b>两个</b> {@code render} 重载（第 197 行 {@code render(CloudStatus, RenderPass)} 是公开的），
+     * 所以这里必须写<b>完整描述符</b>。选<b>私有那一条</b>而不是公开那条：经典云与 OIT 云
+     * （{@code renderOit} 第 223 行）都收敛到它 ⇒ 一个注入点覆盖两族路径，而它第 2 个形参就是
+     * {@code RenderPass}（pass 身份的数据来源）。
+     */
+    public static final String CLOUD_RENDER_INNER =
+            "render(Lcom/mojang/renderpearl/api/commands/RenderPass;"
+                    + "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)V";
+
+    /**
+     * {@code net.minecraft.client.renderer.WeatherEffectRenderer} +
+     * 它的 {@code private void render(WeatherRenderState, RenderPass, RenderPipeline)}（第 157 行）。
+     * 与云同一形状：经典天气（第 165 行）与 {@code renderOit} 都收敛到这一个私有方法。
+     */
+    public static final String WEATHER_EFFECT_RENDERER = "net.minecraft.client.renderer.WeatherEffectRenderer";
+
+    public static final String WEATHER_RENDER_INNER =
+            "render(Lnet/minecraft/client/renderer/state/level/WeatherRenderState;"
+                    + "Lcom/mojang/renderpearl/api/commands/RenderPass;"
+                    + "Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)V";
+
+    /**
+     * {@code net.minecraft.client.renderer.WorldBorderRenderer} +
+     * 它的 {@code public void render(WorldBorderRenderState, RenderPass, Vec3, double)}（第 151 行）。
+     *
+     * <p>⚠️ 边界<b>没有</b>收敛点：{@code render}（经典，第 158 行）与 {@code renderOit}（第 170 行）
+     * 是两份逐字相似的代码 ⇒ 本步只注经典那一条，OIT 那条留给 OIT 那一族一起处理。
+     */
+    public static final String WORLD_BORDER_RENDERER = "net.minecraft.client.renderer.WorldBorderRenderer";
+
+    /**
+     * ⚠️ 第三个形参是 <b>{@code net.minecraft.world.phys.Vec3}</b>（原版自己的向量类），<b>不是</b>
+     * {@code org.joml.Vec3}（joml 根本没有这个类）—— 写错时 {@code require = 1} 让它在<b>启动期</b>就报
+     * {@code could not find any targets matching 'render(…)'}（实测 2026-10-12 崩在
+     * {@code LevelRenderer.<init>:133} 的类变换期）。描述符里的每个包名都必须逐字核实，别按「哪个包最像」猜。
+     */
+    public static final String WORLD_BORDER_RENDER =
+            "render(Lnet/minecraft/client/renderer/state/level/WorldBorderRenderState;"
+                    + "Lcom/mojang/renderpearl/api/commands/RenderPass;"
+                    + "Lnet/minecraft/world/phys/Vec3;D)V";
+
+    /**
      * {@code net.minecraft.client.gui.screens.options.VideoSettingsScreen} —— M-14 的目标类
      * （R6：包选项进原版视频设置页）。这是<b>本仓第一个 GUI 屏幕注入点</b>（类别闸门已于
      * 2026-10-12 废除，见类注释 M1 现行口径）。
