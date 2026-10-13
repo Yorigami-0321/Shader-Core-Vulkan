@@ -951,6 +951,20 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 | **开关 / 回退条件** | 无独立开关：跟着 `mixin.passAwarePipeline` 与 `mixin.ownTerrainPass`。回退 = 若哪天原版把编译挪到 `setPipeline` 里面（本条的 (a) 就不成立），这层记忆表应删掉而不是留着 —— 判据是「`记忆命中=` 长期为 0 而 `派生=` 每次 draw 都在涨」。 |
 | **状态** | ✅ **已登记并已处置（本轮）**；⚠️ 类头那句「每条管线一次」的过期口径已就地更正（`MainPassPipelineDerivation` 第 5 条）。<br>🔖 **真机读数（同日下一轮，取证档 `ownTerrainPass=true` + `slots=8`）**：`[M-04/⑤-b] 派生=7 交回原版=0 记忆命中=42593` —— 7 条管线被建出来、42593 次 draw 侧取用直接复用；没有这层记忆就是 **42593 次 `toBuilder().build()`**。同轮还撞到本条的**节流形状**：分母只算 `derived + refused` 时这一行永远打不出来（加了记忆层之后两个数都只涨到几十）⇒ 已把 `memoHits` 计入分母，「日志里没有这行」不许被读成「公式没跑」。 |
 
+### GAP-052 · 🔴 **改进透明（OIT）开着时，一帧里有两条画布**：OIT 那一族的接口仍然钉在 `gameRenderer.mainRenderTarget()` 上，而接管后的主 pass 已经搬进 colortex 池（2026-10-13 源码级核实，⑤-c 数站点时撞见；同日再逐行读完 OIT 三条 pass 的描述符把口径收紧）
+
+| 字段 | 内容 |
+|---|---|
+| **为什么会去查这条** | ⑤-c 收尾要回答「OIT 那 6 处取管线点要不要补槽」。数的时候发现它们<b>不在主 pass 里</b>——各自 `createRenderPass` 开自己的 pass，所以<b>不该补</b>；但顺着「它们用哪张图当画布」再看一眼，就撞出这条。 |
+| **事实（26.3.0.51-beta sources jar 逐字）** | ①开 OIT 时<b>同一条主 pass 的 label 会变</b>：`LevelRenderer:458` 是 `() -> useImprovedTransparency ? "Solid" : "Main"`，且 `:465-467` 那条 pass 里只跑 `executeSolid`，透明那一半改由 `:471-472` 的 `executeOit` 承担。②`executeOit` 里地形由 `chunkSectionsToRender.renderOit(…)`（`:628`）画进 OIT 自己的 pass（`:630`，`OitRenderPassProvider.createRenderPass(stage, () -> "Features, World Border, Weather", params)`），而那组 `Parameters` 的深度实参是 `mainDepthTextureView = this.gameRenderer.mainRenderTarget().getDepthTextureView()`（`:589`、组装在 `:604-606/:610-612/:620`）。③最后合成那条 `"OIT Composite"`（`:657-661`）的<b>颜色画布就是 `renderTarget.getColorTextureView()`，`renderTarget = this.gameRenderer.mainRenderTarget()`（`:655`）</b>。④另外两条：`"OIT cull Depth Bounds"`（`:680-688`）颜色写自己的 `targets.depthBoundsCulled`、深度借 `mainRenderTarget().getDepthTextureView()`（`:686`）；`"Water mask"`（`:699-710`）是深度-only 描述符挂在 `targets.oitTerrainWithWaterPatchDepth`，而它 `:707` 读的是 `mainTarget.getDepthTextureView()`（`mainTarget = this.targets.main.get()`，`:590`）。⇒ 结论<b>不是</b>「三条的颜色画布全是原版主目标」（那是本轮初稿写宽了），而是：<b>OIT 那一族的对外接口钉在原版主目标这一对图（颜色 + 深度）上，只有 `:657` 那条真的写它的颜色</b>。 |
+| **后果（如果不管这一层）** | 接管开着 + 用户开改进透明 ⇒ 前半帧（主 pass：地形 solid / 实体 / 粒子 / 云 / 天气）的颜色写进<b>池</b>，后半帧（OIT 合成）在<b>原版主目标的颜色附件上</b>出结果 ⇒ 同一帧两条画布。🔴 而且<b>谁都不会抛</b>：附件数校验只在各自 pass 内成立，跨画布这件事在 Vulkan 层是不可见的 ⇒ 症状是「半透明/水/合成结果对不上场景」这种<b>静默错</b>，比崩难查一个量级（`GAP-040`/`GAP-046` 那一族的最终形态）。⚠️ <b>深度那一维本条未核</b>：接管只换颜色附件（`MainPassTakeover.withOurColorAttachments:341-344` 逐字沿用原描述的深度附件），所以两条链的深度<b>可能</b>同源 —— 但颜色维已经确定分叉，结论不依赖深度维。 |
+| **修法（本轮已落的这一半）** | **这一档不接管**：`MainPassTakeover.takeoverAllowed(count, label, improvedTransparency)`（纯函数）= 形状判据 ∧ <b>没开 OIT</b>；开着就逐字退回原版路径，并 `refusedOit` 计数 + 首次 WARN 点名（把<b>实际看到的 label 值</b>打进那行，`OIT拒绝=` 也进了 ⑤-a 的自报）。🔖 两条拒绝分开：`尺寸不合拒绝=`（= 两张主目标尺寸不同）与 `OIT拒绝=`（= 本条），别混成一条红灯；「判据不匹配」那条红灯（`warnIfNeverMatched`）仍然只代表「label 改名 / 视图不同源」。🔑 因为 `:458` 会改名成 `"Solid"`，<b>label 表必须覆盖三元式两边</b>（`MAIN_PASS_LABELS = ["Main","Solid"]`），否则 OIT 那一臂会掉进「判据不匹配」那条假红灯 —— 这条真值表已由单测钉住（`matchesMainPass(1,"Solid")` 与 `takeoverAllowed(1,"Solid",true)==false` 两行）。 |
+| **另一半天然是 ⑤-e 的活** | 真要「OIT + 接管」同时成立，得把 OIT 那一族的对外接口整体换成池：`mainDepthTextureView` 的来源（`:589`）+ `"OIT Composite"` 的颜色画布（`:655/:660`）+ `OitRenderPassProvider` 的三个描述符，并顺带解决「谁清深度、谁翻 z」—— 那正是 `GAP-022/023/037` 收敛成单点的 ⑤-e。⇒ 本轮<b>不</b>动 OIT 的画布，只把「不接管」做成可观测的守法。 |
+| **判据** | 单测（`MainPassTakeoverTest.improvedTransparencyBlocksTakeover`）钉六格真值表 + 「两条红灯不混」；真机：开改进透明那一臂应当看到 `OIT拒绝=>0` 且 `主 pass 接管=0`、画面逐字等于今天（⚠️ 这一条<b>未取证</b> —— 本轮 mcpfabric 连接器不在会话里，改 `options.txt` 开 OIT 需要真机读日志）。⚠️ 那条顺序针本轮差点<b>假绿</b>：把 `refuseOitFork()` 改成 `refuseOitFork(label)` 后 needle 在源码里消失 ⇒ `indexOf` 返回 -1，而 `-1 < 任何下标` 让断言白过。⇒ 本仓「文本针」纪律多一种失效模式（不是误报，是<b>假绿</b>）：<b>比顺序之前先用 `contains` 钉住两根针都在</b>（测试已按这个形状改）。 |
+| **影响面** | `bridge/MainPassTakeover.java`（`takeoverAllowed` / `takeoverAllowedFor` / `refuseOitFork(label)` / 自报多一格 `OIT拒绝=`）。 |
+| **开关 / 回退条件** | 不需要新键：这一挡只在 `mixin.ownTerrainPass=true`（默认关）时才有意义。回退条件 = ⑤-e 把 OIT 的对外接口统一到池之后，删掉 `improvedTransparency` 那一挡（判据：`:657` 那条 pass 的颜色附件已经是池里的视图）。 |
+| **状态** | 🟡 **已登记，「不接管」这一半已落地（离线可证）；「OIT + 接管共存」那一半挂在 ⑤-e**。 |
+
 ---
 
 ## 4. 快速自检

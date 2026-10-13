@@ -97,6 +97,9 @@ public final class MainPassTakeover {
          */
         private int mainWidth;
         private int mainHeight;
+        /** 🔴 因「改进透明（OIT）开着」而拒绝接管的次数（{@code GAP-052}：OIT 那几条 pass 的画布是另一张图）。 */
+        private long refusedOit;
+        private boolean reportedOitFork;
         private boolean reportedViewMismatch;
         private boolean reportedFirstHit;
         private boolean warnedNoMatch;
@@ -167,16 +170,15 @@ public final class MainPassTakeover {
         STATS.seen++;
         if (STATS.seen % REPORT_PERIOD == 0L) {
             VkDisp.LOGGER.info("vkdisp: [M-04/⑤-a] 建 pass 观察={} 主 pass 接管={} label命中={} 视图同源={}"
-                            + " 尺寸不合拒绝={} 开关={}",
+                            + " 尺寸不合拒绝={} OIT拒绝={} 开关={}",
                     STATS.seen, STATS.takenOver, STATS.labelHits, STATS.viewHits, STATS.refusedSize,
-                    VkDispConfig.MIXIN_OWN_TERRAIN_PASS.get());
+                    STATS.refusedOit, VkDispConfig.MIXIN_OWN_TERRAIN_PASS.get());
         }
         if (!VkDispConfig.MIXIN_OWN_TERRAIN_PASS.get()) {
             return descriptor;
         }
         String label = labelOf(descriptor);
-        if (!matchesMainPass(descriptor.colorAttachments().size(), label)) {
-            warnIfNeverMatched();
+        if (!takeoverAllowedFor(descriptor, label)) {
             return descriptor;
         }
         GpuTextureView target0 = onlyColorView(descriptor);
@@ -242,6 +244,72 @@ public final class MainPassTakeover {
      */
     public static boolean matchesMainPass(int colorAttachmentCount, @Nullable String label) {
         return colorAttachmentCount == 1 && isMainLabel(label);
+    }
+
+    /**
+     * 接管到底要不要发生（<b>纯函数</b>）：形状判据 {@link #matchesMainPass} <b>且</b>没开改进透明。
+     *
+     * <p>🔴 为什么 OIT 开着就不接管（{@code GAP-052}，源码级核实 {@code LevelRenderer}）：
+     * 开改进透明时同一条 GPU pass 的 label 从 {@code "Main"} 变成 {@code "Solid"}（{@code :458} 的三元式），
+     * 它里面只跑 {@code executeSolid}（{@code :465}），透明那一半改由 {@code executeOit}（{@code :471-472}）承担；
+     * 而那条链<b>全程用 {@code gameRenderer.mainRenderTarget()} 当画布/深度源</b> ——
+     * 地形画进 OIT 自己的 pass（{@code :628/:630}）但其深度是 {@code mainRenderTarget()} 的
+     * （{@code mainDepthTextureView}，{@code :589}），最后 {@code "OIT Composite"}
+     * 直接<b>写进 {@code mainRenderTarget()} 的颜色附件</b>（{@code :655} 取、{@code :660} 用作画布），
+     * {@code "OIT cull Depth Bounds"}（{@code :686}）与 {@code "Water mask"}（{@code :707}）读它的深度。
+     * 把主 pass 换成我方池子之后：前半帧的实体进池、后半帧在原版那张图上合成并出屏 ⇒
+     * <b>池子成了孤儿而谁都不抛</b>（两张图都是合法附件 ⇒ <b>静默错</b>，比崩难查一个量级）。
+     * 所以：要么哪天把 OIT 那一族也改指向池（⑤-e 的活），要么这一档<b>不接管</b>。
+     * 本类选后者，并且<b>计数 + 点名</b>，不静默（口径同 {@code GAP-046} 的退路分支）。
+     */
+    public static boolean takeoverAllowed(int colorAttachmentCount, @Nullable String label,
+            boolean improvedTransparency) {
+        return !improvedTransparency && matchesMainPass(colorAttachmentCount, label);
+    }
+
+    /** 改进透明（OIT）此刻开着吗？客户端/渲染器还没起来时按「没开」处理（装配期不炸）。 */
+    private static boolean improvedTransparencyOn() {
+        var minecraft = net.minecraft.client.Minecraft.getInstance();
+        return minecraft != null && minecraft.gameRenderer != null
+                && minecraft.gameRenderer.useImprovedTransparency();
+    }
+
+    /**
+     * 「这条描述符能不能接管」+ 两种<b>不同</b>的拒绝各归各的读数（抽出来是为了让
+     * {@link #attachmentReplaced} 留在 {@code QD-04} 那条 60 行方法棘轮以内）。
+     */
+    private static boolean takeoverAllowedFor(RenderPassDescriptor descriptor, @Nullable String label) {
+        boolean improvedTransparency = improvedTransparencyOn();
+        if (takeoverAllowed(descriptor.colorAttachments().size(), label, improvedTransparency)) {
+            return true;
+        }
+        if (improvedTransparency && matchesMainPass(descriptor.colorAttachments().size(), label)) {
+            // 形状对得上、但因为 OIT 而**不该**接管 ⇒ 单独计数，别混进「判据不匹配」那条红灯
+            refuseOitFork(label);
+        } else {
+            warnIfNeverMatched();
+        }
+        return false;
+    }
+
+    /** 因为 OIT 画布分叉而拒绝接管：计数 + 首次点名（口径同 {@code GAP-046} 的退路分支）。 */
+    private static void refuseOitFork(@Nullable String label) {
+        STATS.refusedOit++;
+        if (STATS.reportedOitFork) {
+            return;
+        }
+        STATS.reportedOitFork = true;
+        VkDisp.LOGGER.warn("vkdisp: [M-04/⑤-a] 主 pass 的形状对得上（单附件 + label='{}'），但「改进透明（OIT）」开着"
+                + " ⇒ 这一档不接管：OIT 那一族全程以 gameRenderer.mainRenderTarget() 为画布/深度源"
+                + "（最后 \"OIT Composite\" 写它的颜色），而我方主 pass 会写进 colortex 池"
+                + " ⇒ 池子成了孤儿、屏幕照旧出图且谁都不抛（GAP-052）。"
+                + "要么关掉改进透明，要么等 ⑤-e 把 OIT 的画布也统一到池子。计数={}",
+                    label, STATS.refusedOit);
+    }
+
+    /** 因 OIT 而拒绝接管的次数（诊断/单测读数）。 */
+    public static long oitRefusalCount() {
+        return STATS.refusedOit;
     }
 
     /** 判据②那一腿单独拆出来：自报要分得清是「label 不匹配」还是「视图不同源」。 */

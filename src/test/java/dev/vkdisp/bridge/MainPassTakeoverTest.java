@@ -128,4 +128,35 @@ class MainPassTakeoverTest {
         assertEquals(-1, takeover.indexOf("MrtTerrainPass.poolView("),
                 "poolView 给的是**被读那一代**（后处理链用）：拿它当附件 = 同一帧既读又写同一张图");
     }
+
+    @Test
+    @DisplayName("GAP-052：改进透明（OIT）开着 ⇒ 形状对得上也不接管，且这条拒绝不混进「判据不匹配」的红灯")
+    void improvedTransparencyBlocksTakeover() {
+        assertFalse(MainPassTakeover.takeoverAllowed(1, "Main", true),
+                "🔴 OIT 那一族全程以 gameRenderer.mainRenderTarget() 为画布/深度源（最后 \"OIT Composite\""
+                        + " 写它的颜色），而接管后的主 pass 写进池子 ⇒ 池子成孤儿、谁都不抛（静默错）⇒ 这一档不接管");
+        // 🔑 开 OIT 时那条 pass 的 label 不是 "Main" 而是 "Solid"（LevelRenderer:458 的三元式）⇒
+        //    这一行同时钉住两件事：形状判据认得 "Solid"（label 表覆盖三元式两边），而 OIT 闸门确实拦得住它
+        //    （否则这条守卫在实际运行里永远不会触发 = 死码）。
+        assertTrue(MainPassTakeover.matchesMainPass(1, "Solid"), "label 表要覆盖 :458 三元式的两边");
+        assertFalse(MainPassTakeover.takeoverAllowed(1, "Solid", true),
+                "这一档真机上会以 label='Solid' 走到这里 ⇒ 必须走「OIT 拒绝」而不是「判据不匹配」那条红灯");
+        assertTrue(MainPassTakeover.takeoverAllowed(1, "Main", false), "关着 ⇒ 与今天签过的那几臂一致");
+        assertFalse(MainPassTakeover.takeoverAllowed(2, "Main", false), "多附件的那条本来就不是主 pass（⑤-a 判据）");
+        assertFalse(MainPassTakeover.takeoverAllowed(1, "Water mask", false), "label 不在表内（OIT 自己那条 pass）");
+
+        String takeover = readOrSkip(TAKEOVER);
+        assertTrue(takeover.contains("STATS.refusedOit++") && takeover.contains("oitRefusalCount()"),
+                "这一族必须计数 + 读数拿得到（口径同 GAP-046 的退路分支：退路不许静默）");
+        assertTrue(takeover.contains("reportedOitFork"), "首次点名一条就够（节流纪律）");
+        // 🔖 只在 takeoverAllowedFor <b>方法体</b>内比顺序：warnIfNeverMatched() 在 attachmentReplaced 里
+        //    还有别的调用点（拿不到 target0 那一支），整文件比位置会被它先命中。
+        String gate = takeover.substring(takeover.indexOf("private static boolean takeoverAllowedFor("));
+        // 🔴 先钉「两个针都在」，再比顺序：needle 消失时 indexOf 给 -1，而 -1 < 任何下标 ⇒ 顺序断言会**假绿**
+        assertTrue(gate.contains("refuseOitFork(label);") && gate.contains("warnIfNeverMatched();"),
+                "两条拒绝都得还在方法体里（改调用形状时要同步改这两根针）");
+        assertTrue(gate.indexOf("refuseOitFork(label);") < gate.indexOf("warnIfNeverMatched();"),
+                "两条红灯不许混：「形状对但被 OIT 挡」≠「判据不匹配（label 改名）」——"
+                        + "后者才该怀疑注入失效");
+    }
 }

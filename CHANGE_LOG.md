@@ -6,6 +6,21 @@
 ---
 ---
 
+## 2026-10-13（一百三十七）— ✅ R7 ⑤-c 范围收口 + `GAP-052` 落半：开改进透明就不接管，且这条拒绝与「判据不匹配」那条红灯分开
+
+> **verdict = OIT 那一族在接管档下是到不了的（源码级定案），「不接管」这一半已落地；真机那一臂未取证**。
+
+- **⑤-c 的收尾问题是「OIT 那 6 处取管线点要不要补槽」**。逐行读完 `LevelRenderer:583-712` 之后答案变了：不是「等用户开 OIT 再补」，而是**它们与接管后的主 pass 不在同一条画布上** ⇒ 登记为 `GAP-052`。
+- 🔑 **本轮核出的三条新事实**（前一条直接决定实现形状）：①开 OIT 时**同一条主 pass 的 label 从 `"Main"` 变成 `"Solid"`**（`:458` 的三元式），且那条 pass 里只跑 `executeSolid`（`:465`），透明那一半搬到 `executeOit`（`:471-472`）；②`executeOit` 的地形由 `chunkSectionsToRender.renderOit`（`:628`）画进 OIT 自己的 pass（`:630`），其 `Parameters` 的深度实参是 `gameRenderer.mainRenderTarget().getDepthTextureView()`（`:589`）；③最后那条 `"OIT Composite"`（`:657-661`）**颜色画布就是 `mainRenderTarget()`**（`:655` 取、`:660` 用作附件）。⇒ 补槽公式在这里无用武之地（那几条各自开 pass、附件数由 `OitRenderPassProvider` 决定），而**颜色维的画布分叉是确定的**。
+- **落地的这一半**：`MainPassTakeover.takeoverAllowed(count, label, improvedTransparency)`（纯函数）= 形状判据 ∧ 没开 OIT；开着 ⇒ 逐字退回原版路径 + `refusedOit` 计数 + 首次 WARN **把实际看到的 label 打进去**（不静默，口径同 `GAP-046` 的退路分支）。⑤-a 那行自报多一格 `OIT拒绝=`。抽了 `takeoverAllowedFor(...)` 让 `attachmentReplaced` 留在 60 行方法棘轮以内。
+- 🔴 **两条红灯不许混**（这条决定了单测的形状）：「形状对得上但被 OIT 挡」走 `refuseOitFork`，「label 改名 / 视图不同源」才走 `warnIfNeverMatched`。因为 `:458` 会改名，**label 表必须覆盖三元式两边**（`MAIN_PASS_LABELS = ["Main","Solid"]`）—— 否则 OIT 那一臂会掉进假红灯，而这条守卫本身也永远不会触发（= 死码）。单测因此钉了 `matchesMainPass(1,"Solid")` 与 `takeoverAllowed(1,"Solid",true)==false` 两行。
+- ⚠️ **初稿口径被自己收紧**：上一版写的是「OIT 三条 pass 的颜色画布全是原版主目标」—— 逐行读后发现只有 `:657` 那条真写它的颜色，另两条（`:680-688` / `:699-710`）颜色写 OIT 自己的 `RenderTarget`、只是**深度借** `mainRenderTarget()`（`:686`/`:707`）。结论不依赖这一维（颜色分叉已经足够），但事实必须按源改写。深度那一维**本条未核**：接管只换颜色附件（`withOurColorAttachments:341-344` 逐字沿用深度），两条链可能同源 —— 记成未核而不是记成已核。
+- **默认档零变化**：这一挡只在 `mixin.ownTerrainPass=true`（默认关）时才有意义 ⇒ 关掉时逐字等于今天。
+- 🔴 **未取证**：开改进透明那一臂应当看到 `OIT拒绝=>0` 且 `主 pass 接管=0`、画面逐字等于今天 —— 这一趟 mcpfabric 连接器不在会话里（改 `options.txt` 开 OIT 需要真机读日志），挂在下一趟。⑤-c 剩下的另一件是边界那一族的取证（`/worldborder set` + 传送）。
+- **测试 1182 条 0 失败**（新增 `MainPassTakeoverTest.improvedTransparencyBlocksTakeover`：六格真值表 + 一条「两条红灯不混」的顺序针）。⚠️ 写这条时踩到自己埋的雷：把 `refuseOitFork()` 改成 `refuseOitFork(label)` 之后，那条顺序针的 needle `refuseOitFork();` 在源码里**消失** ⇒ `indexOf` 返回 **-1**，而 `-1 < 任何下标` ⇒ **断言白过**。本仓那条「文本针要 code 形状」的纪律今天多了一种失效模式：不是**误报**，是**假绿** —— 改被钉的代码形状时必须同步改针，最好让针 `assertTrue(needle 存在)` 一次。
+
+---
+
 ## 2026-10-13（一百三十六）— 🟡 R7 ⑤-d 第一刀落地：地形双绘可关闭地跳掉，日志证明「只剩主 pass 那一笔」
 
 > **verdict = 双绘确实关掉了（代码级判据过了），但 d 还没完成**：画面级对照图没取到（MCP 桥不在会话里），死码也还在。

@@ -691,14 +691,18 @@ FramePass pass = frame.addPass("main");
 > | 天气 | `WeatherEffectRenderer:165`（同一个收敛点形状：私有 `render(state, RenderPass, RenderPipeline)`） | ✅ | ✅ **已过**（`/weather rain` 之后 `WeatherEffectRenderer#render=9637` 次取管线、0 崩 ⇒ 雨的管线补槽后过了 `setPipeline`） |
 > | 世界边界 | `WorldBorderRenderer:158`（`render`） | ✅ | 🟡 **已放开，本趟未走到**（镜头离边界远 ⇒ `state.alpha == 0`，那句根本不执行）；`:170` 是 `renderOit` 里另一份逐字相似的代码 ⇒ 归 OIT 一族 |
 > | 方块色立方图 | `CubeMap:69` | ❌ **自己开 pass**（`createRenderPass(() -> "Cubemap", …)`） | **不该补**（🔖 本行原来误标成「在主 pass 里」，本轮按 javap + 源码逐字改掉） |
-> | 深度合成 / OIT / 描边 | `LevelRenderer:518`（`Integrate always on top depth`，**自己开 pass**）、`:670/:690/:694/:706`（OIT 那四条）、`DebugCrosshairRenderer:72/:78` | ❌ 各自开 pass / 只在开改进透明时 | **不该补**（同上：`518` 那条本行也误标过）；OIT 四条要等「用户开 OIT」那一臂 |
+> | 深度合成 / OIT / 描边 | `LevelRenderer:518`（`Integrate always on top depth`，**自己开 pass**）、`:670/:690/:694/:706`（OIT 那四条）、`DebugCrosshairRenderer:72/:78` | ❌ 各自开 pass / 只在开改进透明时 | **不该补**（同上：`518` 那条本行也误标过）—— 🔴 理由不是「等 OIT 那一臂就补」，而是**它们根本不在被接管的那条 pass 里**：开 OIT 时 `:458` 把同一条 pass 改名成 `"Solid"` 且里面只跑 `executeSolid`（`:465`），透明那一半搬到 `executeOit`（`:471-472`），后者的地形由 `chunkSectionsToRender.renderOit`（`:628`）画进 OIT 自己的 pass（`:630`）。补槽公式换的是「附件数与管线声明数」的匹配，而这四条各自开 pass、附件数由 `OitRenderPassProvider` 决定 ⇒ 补了就是往别人的 pass 里塞槽。**代价另记为 `GAP-052`**：OIT 那一族的对外接口仍钉在 `gameRenderer.mainRenderTarget()`（`:589` 的深度、`:655/:660` 那条 `"OIT Composite"` 直接写它的颜色），而接管后的主 pass 颜色进池 ⇒ 同帧两条画布、谁都不抛。所以本档的处理是 **开 OIT 就不接管**（`MainPassTakeover.takeoverAllowed(…, improvedTransparency)`，单独计数 `OIT拒绝=`），把画布统一到池是 ⑤-e 的活 |
 > | 天空 | `SkyRenderer:167, :180, :256, :274, :298, :314` | ❌（自己的 sky pass） | **不该补**（M-11 那两条判据担） |
 > | GUI / 后处理 / 动画图集 / 光照图 | `GuiRenderer:388`、`GameRenderer:283, :284, :286, :742`、`PostChain:114`、`PostPass:121`、`Lightmap:84`、`texture/SpriteContents:388, :392`、`texture/TextureAtlas:189` | ❌ | **不该补**（补了就是「modifier 看不到 pass ⇒ 全帧一起坏」那个坑） |
 >
-> ⇒ **⑤-c 的净结论（同日第三~五族放开之后重算）**：主 pass 内的**非 OIT** 取管线点已经**全部**接上补槽
+> ⇒ **⑤-c 的净结论（同日第三~五族放开之后重算，再经 `GAP-052` 收口）**：主 pass 内的**非 OIT** 取管线点已经**全部**接上补槽
 > （地形两条 + `PreparedRenderType` + 特性渲染器 + 云 + 天气 + 边界 = 7 处、5 个注入类），
 > 剩下的全在「要用户开改进透明才会走到」那一侧：`CloudRenderer:215`、`WorldBorderRenderer:170`、
 > `LevelRenderer:670/690/694/706`（4 条 OIT 合成/裁剪），以及 `DebugCrosshairRenderer`（调试十字准星，自己开 pass）。
+> 🔖 **那一侧在接管档下是到不了的**（2026-10-13 定案）：开 OIT ⇒ `MainPassTakeover.takeoverAllowed` 直接返回 false
+> ⇒ 主 pass 不接管 ⇒ `isTakenOverPass` 永假 ⇒ 五个注入类全部走「逐字原样」那支。所以 ⑤-c 的范围**不是**「还欠 6 处没补」，
+> 而是「这 6 处属于另一条画布（`GAP-052`），要等 ⑤-e 把 OIT 的对外接口统一到池那天再判」。
+> ⇒ **⑤-c 的接线范围就此收口**；剩下的活是取证（边界那一族还需 `/worldborder set`）与 ⑤-d 的后半。
 > 🔖 「不该补」那一半同样是判据：判据不只是「补到了」，还要能证明**没补错地方** ——
 > 立方图与 `LevelRenderer:518` 两条本轮从「在主 pass 里」改成「自己开 pass」，就是这一半在起作用。
 >
