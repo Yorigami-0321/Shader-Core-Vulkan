@@ -32,6 +32,7 @@ import dev.vkdisp.bridge.TerrainDrawCapture;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.gen.Accessor;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -71,6 +72,23 @@ public abstract class LevelRendererMainPassCaptureMixin {
             ChunkSectionsToRender chunkSectionsToRender, boolean consistentDepthRequired,
             CallbackInfo ci) {
         // 首行埋点 + 转发（M1 编码约束 ③）：计数、首次自报与开关判定都在 bridge 侧。
-        TerrainDrawCapture.onCaptured(chunkSectionsToRender, terrainFog);
+        //   第三个实参是 **GAP-038 的雾读数**用的：`terrainFog` 只是一块 UBO 切片（看不出内容），
+        //   而它的<b>来源</b>是 `cameraState.fogData`（原版 `FogRenderer#updateBuffer` 每帧从它写进切片，
+        //   源码级核实：`GameRenderer:671` 先 `updateBuffer(cameraState.fogData)` 再 `getBuffer(WORLD)`）
+        //   ⇒ 读 FogData 与读切片是同一份数据，但不必去猜 std140 的字节布局。
+        TerrainDrawCapture.onCaptured(chunkSectionsToRender, terrainFog, vkdisp$levelRenderState());
     }
+
+    /**
+     * 取 {@code LevelRenderer#levelRenderState}（第 129 行那个<b>包私有</b> final 字段）交给 bridge，
+     * 由 bridge 再走一步到 {@code cameraRenderState}（{@code fogType} 与 {@code fogData} 都是 public 字段）。
+     *
+     * <p>🔴 为什么是 {@code @Accessor} 而不是反射：反射读私有字段是 {@code GAP-042} 那一族
+     * （升版改名即静默失去判据，失败只 WARN）。这里 {@code require = 1} ⇒ 字段改名会在<b>启动期硬失败</b>。
+     * 口径同 M-08/M-09（{@code IVkdispChunkLayerSamplerAccess} 那一族）。
+     * <p>🔖 为什么「走一步到 cameraRenderState」放在 bridge 而不是这里：X25 要求 mixin 只转发
+     * （方法体第一条语句就是那次 {@code onXxx(} 调用）⇒ 取字段、判空、格式化全在 bridge 侧。
+     */
+    @Accessor("levelRenderState")
+    abstract net.minecraft.client.renderer.state.level.LevelRenderState vkdisp$levelRenderState();
 }

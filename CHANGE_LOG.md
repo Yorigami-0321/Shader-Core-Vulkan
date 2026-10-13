@@ -6,6 +6,21 @@
 ---
 ---
 
+## 2026-10-13（一百四十二）— 🟢 GAP-038 的**判据仪器**落地：雾的参数第一次被打印出来（此前那格判据根本没有读数）
+
+> **verdict = 仪器已在真机读到活数据；但「进水那一帧读数跟着变」这一格仍未签** —— 那一趟 mcpfabric 的 `command.run` 回了 `no_server`。
+
+- **为什么这是「下一步」而不是「顺手加日志」**：第 3 步的判据写着「进水那一帧雾端读数跟着变（现状不变就是复现）」，可今天**没有任何地方**输出雾的内容 —— M-06 那行只报 `fogPresent=true/false`，而 `terrainFog` 是一块 UBO 切片，肉眼读不出参数。**没有仪器的判据 = 一条永远签不掉的空账**。
+- **形状**：`LevelRendererMainPassCaptureMixin` 加 `@Accessor("levelRenderState")` 交出关卡状态；bridge 走一步到 `cameraRenderState.fogData`（`fogType` 与 `FogData` 的六个距离 + 颜色**都是 public 字段**），每 300 帧（第 1 帧也打）输出一行 `[GAP-038/雾]`。格式化是**纯函数** `fogSummary(...)`（只收原语 ⇒ 测试运行时没有 MC 类也不炸，`GAP-050` 那一族）。
+- 🔖 **为什么读 `FogData` 而不是解析切片**：原版 `FogRenderer#updateBuffer` 用 `Std140Builder` 写（`vec4 color` + 6 个 float），自己去数偏移就是拿猜测当判据；而 `GameRenderer:671-672` 显示切片的内容**就是** `cameraState.fogData`（先 `updateBuffer(fogData)` 再 `getBuffer(WORLD)`）⇒ 同源、不猜布局。单测里有一条针专门钉「不许出现 `getFloat(` / `.buffer()`」。
+- ✅ **真机读数（默认档，非取证档）**：`capture#2400 fogType=NONE env=[0.000,1024.000] renderDistance=[230.400,256.000] skyEnd=256.000 cloudEnd=1024.000 color=(0.651,0.731,0.881,1.000)`；10 秒后 `capture#2700` 的 `color=(0.724,0.818,0.987,1.000)` ⇒ 逐帧跟着日时钟走，不是常量。
+- 🔴 **仍未签的那格**：`tp` / `fill`（造水把镜头淹进去）被 mcpfabric 回 **`no_server`**，而同一时刻客户端在正常渲染关卡（雾读数在打）⇒ 这一趟没能做出「进水那一帧」。下一趟补：`fill <玩家周围> minecraft:air minecraft:water` 后读同一行，`fogType` 必须 `NONE → WATER`、`env` 两端塌到水雾量级；**不变就是 GAP-038 复现**。
+- ⚠️ **两条本轮踩到的硬事实**：① `@Accessor` 的方法**必须是 abstract**（写成 `{ throw null; }` 会在启动期抛 `InvalidAccessorException: @Accessor method … is not abstract`）—— 注意这是**我们想要的失败形状**：响亮、启动期、不静默；② javac 25 那条老坑复现：形参里写 `@Nullable a.b.Outer.Inner`（限定名）直接编译失败，改成 import + 简单名。
+- **默认档零变化**：这一族本来就挂在 `mixin.captureMainPassArgs`（默认开、只读捕获）下，新增的只是**日志与一个 @Accessor**，不改任何渲染行为。测试 **1189 条 0 失败**（新增 `TerrainDrawCaptureFogTest` 2 条）。
+
+
+---
+
 ## 2026-10-13（一百四十一）— 🟢 -e 第一格落地：接管时把主 pass 的**深度附件**也换成 gbuffer 深度（真机 `深度换=1098`、0 崩）；另登记 `GAP-054` 一块黑色楔形
 
 > **verdict = 这一步买到的是「链的 depthtex 从此有内容可取」；它不修 ⑤-d（代次归属没动）**。顺带撞见一块与它无关的黑色楔形，只登记不归因。

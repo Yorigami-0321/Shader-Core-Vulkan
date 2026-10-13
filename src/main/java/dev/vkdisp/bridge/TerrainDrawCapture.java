@@ -32,6 +32,7 @@ import dev.vkdisp.VkDisp;
 import dev.vkdisp.VkDispConfig;
 import java.util.concurrent.atomic.AtomicLong;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
+import net.minecraft.client.renderer.state.level.LevelRenderState;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -71,12 +72,14 @@ public final class TerrainDrawCapture {
     }
 
     /**
-     * 注入点回调：保存两个引用（<b>只读捕获，不改原版任何行为</b>）。
+     * 注入点回调：保存两个引用（<b>只读捕获，不改原版任何行为</b>）+ 打一行<b>雾读数</b>。
      *
      * @param draws 原版形参 —— 地形 draw 数据（两支汇成这一点，故不用像旧 M-05 那样注两个方法）
      * @param terrainFog 原版形参 —— 地形雾切片（第 436 行交给 {@code setShaderFog} 的就是它）
+     * @param levelState 由 {@code @Accessor} 交出来的关卡渲染状态 —— <b>只为读它的 {@code fogData}</b>
      */
-    public static void onCaptured(@Nullable ChunkSectionsToRender draws, @Nullable GpuBufferSlice terrainFog) {
+    public static void onCaptured(@Nullable ChunkSectionsToRender draws, @Nullable GpuBufferSlice terrainFog,
+            @Nullable LevelRenderState levelState) {
         if (!enabled()) {
             return;
         }
@@ -90,6 +93,54 @@ public final class TerrainDrawCapture {
                     + " (capture#{}, variant={}, fogPresent={}; read-only capture, vanilla behaviour unchanged)",
                     count, capturedVariant, terrainFog != null);
         }
+        noteFog(count, levelState);
+    }
+
+    /** 雾读数的节拍（帧）：300 ≈ 5 秒；第 1 帧也打一次，免得「等 300 帧」把取证拖成一趟重启。 */
+    private static final long FOG_REPORT_PERIOD = 300L;
+
+    /**
+     * GAP-038 的<b>判据仪器</b>：把这一帧交给 {@code setShaderFog} 的那份雾参数打进日志。
+     *
+     * <p>🔴 为什么读 {@code FogData} 而不是解析那块切片：切片是 std140 字节（原版
+     * {@code FogRenderer#updateBuffer} 用 {@code Std140Builder} 写：vec4 color + 6 个 float），
+     * 自己去数偏移就是拿猜测当判据。而切片的<b>来源</b>就是 {@code cameraState.fogData}
+     * （源码级核实 {@code GameRenderer:671-672}：先 {@code updateBuffer(cameraState.fogData)}
+     * 再 {@code getBuffer(FogMode.WORLD)}）⇒ 读同一份数据，不猜布局。
+     */
+    private static void noteFog(long count,
+            @Nullable LevelRenderState levelState) {
+        if (count != 1L && count % FOG_REPORT_PERIOD != 0L || levelState == null) {
+            return;
+        }
+        var cameraState = levelState.cameraRenderState;
+        var fog = cameraState == null ? null : cameraState.fogData;
+        if (fog == null) {
+            return;
+        }
+        VkDisp.LOGGER.info("vkdisp: [GAP-038/雾] capture#{} {}", count,
+                fogSummary(String.valueOf(cameraState.fogType), fog.environmentalStart, fog.environmentalEnd,
+                        fog.renderDistanceStart, fog.renderDistanceEnd, fog.skyEnd, fog.cloudEnd,
+                        fog.color.x(), fog.color.y(), fog.color.z(), fog.color.w()));
+    }
+
+    /**
+     * 一行雾读数（<b>纯函数</b>）：测试运行时没有 MC 类（{@code GAP-050}）⇒ 这里只收原语，
+     * 「进水那一帧读数必须变」这条判据因此可以在不启动客户端的情况下被钉住形状。
+     */
+    public static String fogSummary(String fogType, float environmentalStart, float environmentalEnd,
+            float renderDistanceStart, float renderDistanceEnd, float skyEnd, float cloudEnd,
+            float red, float green, float blue, float alpha) {
+        return "fogType=" + fogType
+                + " env=[" + fogNum(environmentalStart) + "," + fogNum(environmentalEnd) + "]"
+                + " renderDistance=[" + fogNum(renderDistanceStart) + "," + fogNum(renderDistanceEnd) + "]"
+                + " skyEnd=" + fogNum(skyEnd) + " cloudEnd=" + fogNum(cloudEnd)
+                + " color=(" + fogNum(red) + "," + fogNum(green) + "," + fogNum(blue) + "," + fogNum(alpha) + ")";
+    }
+
+    /** 三位小数、{@code Locale.ROOT}（不许被系统区域设置改成逗号）。 */
+    private static String fogNum(float value) {
+        return String.format(java.util.Locale.ROOT, "%.3f", value);
     }
 
     /**
