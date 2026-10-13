@@ -870,6 +870,12 @@ public final class VkDispConfig {
                     + "⚠️ ⑤-b 的通用派生公式没接之前开着就是崩（附件数 ≠ 管线颜色目标数）⇒ 默认关，只给取证档。")
             .define("mixin.ownTerrainPass", false);
 
+    /** 🔴 R7 ⑤-d 第一刀（默认<b>关</b>）：主 pass 已被接管时，我方 gbuffer pass <b>不再</b>自己画地形（关双绘）。 */
+    public static final ModConfigSpec.BooleanValue MRT_TERRAIN_SINGLE_DRAW = BUILDER
+            .comment("R7 ⑤-d：关掉地形双绘。开着且主 pass 真被我方接管 ⇒ MrtTerrainPass 不再发 renderGroup(OPAQUE/TRANSLUCENT)，"
+                    + "地形只由原版那一笔画一次。⚠️ 只在 mixin.ownTerrainPass=true 时才有意义（否则没人画地形）。")
+            .define("mrt.terrainSingleDraw", false);
+
     /**
      * GAP-027 第二刀：把**云**画进 gbuffer（默认关）。
      *

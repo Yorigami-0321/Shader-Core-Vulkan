@@ -481,7 +481,11 @@ public final class MrtTerrainPass {
             if (fullscreenProbe()) {
                 drawFullscreenProbe(renderPass);
             }
-            draws.renderGroup(ChunkSectionLayerGroup.OPAQUE, renderPass, sampler, atlas, false);
+            // ⑤-d 第一刀：主 pass 已被接管 ⇒ 地形那一笔就是画进我方 colortex 阵列的那一笔，这里不再画。
+            //   跳过的是 draw，<b>不</b>跳过 pass 本身与深度快照（⑤-e 才动所有权）。
+            if (!TerrainSingleDraw.drawnByMainPass()) {
+                draws.renderGroup(ChunkSectionLayerGroup.OPAQUE, renderPass, sampler, atlas, false);
+            }
             // 🔴🔴 GAP-027：**水一直只被注册、从来没被画过**（h48 七十四 ③ 记的就是这一条）。
             //   管线、契约、附件数取 max、逐程序绑定全都到位了，但本方法只发出过一次
             //   `renderGroup(OPAQUE)` ⇒ `gbuffers_water` 的片元一次都没跑过。
@@ -641,8 +645,10 @@ public final class MrtTerrainPass {
             TerrainPipelineApi.bindPackGbufferUniforms(renderPass, sampler, blockAtlas(),
                     colortexDepth.getDepthTextureView(), slotView(0),
                     dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM);
-            draws.renderGroup(ChunkSectionLayerGroup.TRANSLUCENT, renderPass,
-                    sampler, blockAtlas(), false);
+            if (!TerrainSingleDraw.drawnByMainPass()) {
+                draws.renderGroup(ChunkSectionLayerGroup.TRANSLUCENT, renderPass,
+                        sampler, blockAtlas(), false);
+            }
             reportWaterGroup(draws);
             drainDeviceDebugMessages();
         }

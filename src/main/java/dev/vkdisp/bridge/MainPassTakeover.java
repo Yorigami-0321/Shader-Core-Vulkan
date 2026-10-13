@@ -132,6 +132,16 @@ public final class MainPassTakeover {
         return renderPass != null && renderPass == STATS.takenOverPass;
     }
 
+    /**
+     * 主 pass <b>有没有至少被接管过一次</b>（= 我方附件真的挂在原版主 pass 上）。
+     *
+     * <p>🔴 ⑤-d 用它当第二个条件：只开「单绘」而没接管 ⇒ <b>谁都不画地形</b>（空屏），
+     * 那是自伤不是优化。这里读的是 {@link #STATS} 里那条被记下的 pass 对象，不是任何标志位。
+     */
+    public static boolean takeoverHappened() {
+        return STATS.takenOverPass != null;
+    }
+
     /** 接管后的主 pass 有几个颜色附件（= ⑤-b 要补到的条数）；没接管返回 0。 */
     public static int takenOverSlots() {
         return STATS.takenOverSlots;
