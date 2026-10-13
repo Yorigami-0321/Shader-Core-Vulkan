@@ -87,6 +87,54 @@ public final class SkyPackGbuffer {
 
     private static final AtomicBoolean TOOK_OVER = new AtomicBoolean(false);
 
+    /** 观测面（装在持有者里，不动 QD-03 那条静态字段棘轮）：<b>不参与</b>任何判定。 */
+    private static final class Stats {
+        private long refusedGeometry;
+    }
+
+    private static final Stats STATS = new Stats();
+
+    /**
+     * 包顶点终稿把 {@code Position} <b>原样</b>交出去（= 我方可以直接喂 NDC 坐标）？
+     *
+     * <p>🔴 实测<b>不是</b>：转译终稿逐字 {@code gl_Position = gbufferProjection * gbufferModelView
+     * * vec4(Position, 1.0);}（{@code build/dump-head1/world0_gbuffers_skybasic-VERTEX.glsl:240}，
+     * 另一批 {@code dump-comp/…:1454} 同句）。
+     */
+    private static final boolean VERTEX_STAGE_PASSES_POSITION_THROUGH = false;
+
+    /**
+     * 这一族的 {@code gbufferModelView}/{@code gbufferProjection} 是<b>恒等</b>？
+     *
+     * <p>🔴 也不是：{@code OfUniformManager.putCameraMatrices} 第 <b>377-378</b> 行交的是<b>真·相机</b>
+     * 矩阵，{@code Family.CHAIN} 只翻深度口径（{@code glDepthConvention} ⇒ {@code convention.forward}），
+     * 不翻成恒等。⇒ 天空被分到 CHAIN 族（{@code GbufferVertexSources.builtinsFamily}）只解决了
+     * 「片元按 GL 口径写分支」，<b>顶点那一族仍被真投影打过一遍</b>。
+     */
+    private static final boolean CAMERA_MATRICES_ARE_IDENTITY = false;
+
+    /**
+     * 「喂一张 NDC 全屏大三角」这条几何路线什么时候成立（{@code GAP-054} 的判据本体，<b>纯函数</b>）。
+     *
+     * <p>两条途径任一即可：① 顶点终稿把 {@code Position} 原样交出去（我方 passthrough 顶点），
+     * 或 ② 这次 gather 给这一族供的是<b>恒等</b> view/projection。两条都不成立时，那张
+     * {@code (-1,-1),(3,-1),(-1,3)} 的大三角会被当成<b>视空间 z=1 的世界几何</b>过一遍透视
+     * ⇒ 屏幕上留下一个切过半个画面的巨型三角形（真机实测：默认档、镜头朝地平线，
+     * 左半一堵被拉到巨大的草/叶纹理墙，边界是一条竖直边 + 一条斜边）。
+     *
+     * <p>🔖 为什么写成整数决策之外的<b>布尔或</b>而不是一张表：这里只有「能不能喂全屏三角」
+     * 一个问题，两个入参就是它的全部自由度（口径同 {@code MainPassTakeover.depthDecision}）。
+     */
+    static boolean ndcTriangleRouteValid(boolean vertexStagePassesPositionThrough,
+            boolean cameraMatricesAreIdentity) {
+        return vertexStagePassesPositionThrough || cameraMatricesAreIdentity;
+    }
+
+    /** 诊断读数：因几何路线不成立而交回原版的次数（不参与判定）。 */
+    public static long refusedGeometryCount() {
+        return STATS.refusedGeometry;
+    }
+
     /** 只报一次的闸门（接管与退回各一次；刷屏会把别的行挤掉，h34/h33 那一族）。 */
     private static final AtomicBoolean REPORTED = new AtomicBoolean(false);
 
@@ -115,6 +163,17 @@ public final class SkyPackGbuffer {
 
     /** 契约可用性判定；返回 {@code null} = 可用，否则返回<b>不可用的原因</b>（自报用）。 */
     private static @Nullable String contractProblem() {
+        // 🔴 GAP-054：几何路线先要对，才轮到契约。这一条排在最前，因为它拒的是「画出来一半屏幕」
+        //    这种<b>不报错的错</b>（无 validation layer ⇒ 错几何照样提交），而契约那两条会响亮地抛。
+        if (!ndcTriangleRouteValid(VERTEX_STAGE_PASSES_POSITION_THROUGH, CAMERA_MATRICES_ARE_IDENTITY)) {
+            STATS.refusedGeometry++;
+            return "本前端的包天空<b>顶点终稿不是恒等 MVP</b>：转译后的 gbuffers_skybasic 顶点阶段逐字"
+                    + " gl_Position = gbufferProjection * gbufferModelView * vec4(Position, 1.0)"
+                    + "（实测 build/dump-head1/world0_gbuffers_skybasic-VERTEX.glsl:240），"
+                    + "而我方喂的是一张 NDC 全屏大三角 ⇒ 它会被当成视空间几何过一遍透视，"
+                    + "在屏幕上留下一个切过半个画面的巨型三角形（GAP-054 真机实测）。"
+                    + " 修法在 GAP-028 ③：按 draw 供 renderStage 并把包天空改喂<b>原版天空几何</b>。";
+        }
         PackTerrainProgram program = VkDispVirtualPack.packContract(PackTerrainSource.SKY_PROGRAM);
         if (program == null) {
             return "包没有可用的 gbuffers_skybasic 契约（转译/编译失败，或包里就没有这条程序）";
