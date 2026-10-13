@@ -14,6 +14,7 @@
 - **归因那一刀**：17 个注入键一次全关 ⇒ **平面没了**（`mean 68.1 → 116.2`）⇒ 确认是我方产物；再逐键单独关 ⇒ 只有 **`mrt.skyPackShader=false`** 翻掉签名（`mean=145.1`、硬边 0 列），`skyViews=false`、`packTerrainShader=false` 都还在。日志同源：`[GAP-027/sky] 派生天空管线已建: … vertex=vkdisp_pack:skybasic_pack_adapter` ⇒ 画它的是**派生包天空的顶点适配器**。
 - 🔴 **一条自我更正**：上一轮「三条候选全清」里「包天空已排除」用的是 `mrt.skyPass`（整个天空 pass 关不断），而「包天空自己画错」讲的是**用哪条天空程序**（`mrt.skyPackShader`）⇒ 那一格作废，本轮翻案。云与 M-11 视图重定向那两格仍然成立。
 - ⚠️ **取证方法本身打崩了驱动**：17 键「全关再全开」的热重载风暴 ⇒ `EXCEPTION_ACCESS_VIOLATION`，Problematic frame **`nvoglv64.dll+0xebd971`**，客户端进程直接没了；同一批重载里还出现 `Couldn't find source for VERTEX shader (vkdisp_pack:skybasic_pack_adapter)`（**冷启动那两批没有** ⇒ 不能拿它解释平面）。⇒ 立规矩：**一次只切一个键、每次等满一次完整重载**。
+- 🔴 **机制已在代码级定位（同一趟，读代码读出来的）**：`SkyPackGbuffer.java:280-290` 喂的是 **NDC 大三角**（`(-1,-1),(3,-1),(-1,3)`、z 写死 1.0，前提是「恒等 MVP」），而包的 `gbuffers_skybasic` 顶点阶段逐字是 `gl_Position = gbufferProjection * gbufferModelView * position`（`OfUniformManager.java:344-345` / `:619`），`:377-378` 交出去的是**真·相机矩阵**（CHAIN 族只翻深度口径，`:370`）⇒ 那张全屏三角被当成视空间 z=1 的世界几何过了一遍透视 ⇒ 「一条竖直边 + 一条斜边」的巨型三角形，与画面逐字对上。**还差一步真机对照**（给这一路供恒等 view/projection，平面应变回整屏天空）才算定案。
 - **下一刀（已写进 `GAP-054`）**：读 `skybasic_pack_adapter` 的生成侧，核它 `gl_Position` 用的矩阵与那次 draw 实际绑定的 `ModelView`/`Projection` 是否同源；切法是把适配器换成「直通」版看天空是否恢复正常。
 - **默认档零变化**：取证键全部复原（`run/config/vkdisp-client.toml` 逐键回 `true`，客户端已退出，25599 无监听）。本轮**只有文档**（代码零改动，测试仍 **1193 条 0 失败**）。
 
