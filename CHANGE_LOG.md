@@ -15,6 +15,9 @@
 - 🔴 **`GAP-056`（新账，取证方法级）**：臂 2 跑完后 `mrt.packTerrainShader` **在文件里自己变成了 `false`**（臂 3 起跑即报 `[GAP-036/半开档] mrt.terrain=true 而 mrt.packTerrainShader=false`，而我一个字都没动它）⇒ **单键臂会跨趟变成两键臂，且日志不说「我改了配置」**。新纪律：**每臂起跑后先回读 `[route]` 与半开档那两行自报**，实际档 ≠ 写下的档 ⇒ 那一臂当场作废。
 - 🟡 **`GAP-039` 粉雪那一格 = 前置缺失，不是失败**：头与脚都在粉雪里（`fill` 125 格、`get_block` 两处回读 `powder_snow`）跨约 30 秒，`[GAP-038/雾]` 三行**恒 `fogType=NONE`**、画面无白化 ⇒ 原版那道 `fogType != POWDER_SNOW` 门控**根本没进入** ⇒ 这一格既没签成也没否证。仪器没坏（同一台在进水那一格翻成 `WATER`）。下一刀先读原版 `FogRenderer` 的粉雪分支（取点是脚还是眼）。世界已复原（同坐标 fill 回 air 125 格），同趟 `Mixin apply.*failed` = 0。
 - **臂 4（总开关 `enabled=false`，冷启动）⇒ 平面消失、画面是干净原版 ⇒ 「摘账」那一支关闭**：先核实这个键**真有消费点**（`FullscreenPassHook:129`、`SceneCaptureApi:82`、`VkDispPackScan:83`、`VkDispVirtualPack:852/1003`），起跑后三行兜底自报逐字确认（`built-in passthrough fallback` / `pack scan skipped` / `fullscreen pass skipped`）。同机位取图：天空与地形都正常、右下角树叶回到正常尺寸，那堵图集墙与平坦浅绿面**全部不存在**，且 `Close the existing render pass` **0 条**（反证 `GAP-055` 由半开档引入）。⇒ `GAP-054` 的账**留在本项目**，范围 = 我方内部、**只剩天空那一族**。💡 另一条省事结论：**原版对照不必拆 `run/mods/`**，`enabled=false` 就是干净兜底臂。另：这一臂跑完后配置文件 md5 逐字回到 `cf3db1ad…` ⇒ `GAP-056` 的回写**只在半开档那一趟发生**，不是每趟都写。
+- **臂 5（单键 `mrt.skyPass=false`，冷启动）⇒ 天空 pass 排除**：起跑先回读 `[route] = chain=true`（链在跑、画面可判、无半开档 WARN），取图 **天空整片变黑**（键确实每帧生效）而**三块巨型贴图面照旧**。
+- **臂 6（单键 `mixin.wireTerrain=false`，冷启动）⇒ M-01 排除，本轮假设被自己证伪**：起跑前立的假设「`mrt.terrain=false` 只关我方 pass，M-01 仍在**原版地形那几笔**上换成派生管线 ⇒ 适配器画成错位巨型四边形」逐字解释了臂 2 的结果；实测画面与基线**同形** ⇒ 假设不成立。
+- 📉 **六臂之后的形状与下一刀（写死，别再逐键猜）**：冷启动单键已排除 5 条（`mrt.terrain` / `mrt.postChain` / `mrt.skyPass` / `mixin.wireTerrain` / 上一轮的 `mrt.skyPackShader`），而 `enabled=false` 才让平面消失 ⇒ 生产者**在我方、却不在任何主路上**。下一臂 = **`[mixin]` 整块 11 键一次全关**（冷启动，跑完立刻 `md5sum` 比对防 `GAP-056` 回写）：平面还在 ⇒ 键族不在 mixin 侧，转 `[mrt]` 侧二分（`shadowStubs` / `packWater` / `depthGlProxy` / `attachments`）；不在 ⇒ 对半切（5+6），两臂内落到单键。
 - **收尾**：`run/config/vkdisp-client.toml` 已逐字复原到起跑前（md5 `cf3db1ad…`）、客户端与 25599 均已停、无孤儿 JVM。**本轮无 `src/` 改动**。
 
 ---
