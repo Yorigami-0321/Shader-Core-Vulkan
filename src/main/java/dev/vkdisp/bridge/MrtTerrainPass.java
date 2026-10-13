@@ -439,6 +439,8 @@ public final class MrtTerrainPass {
         try (RenderPass renderPass = encoder.createRenderPass(descriptor.build())) {
             // 🔖 M-15：记下本帧我方这个 pass 对象；多附件变体只在 draw 的 renderPass 与之同一对象时交出。
             ownPass = renderPass;
+            // 🔖 GAP-053 定序：我方 gbuffer pass 打开的那一刻（与主 pass 那次成对 ⇒ 判帧内先后）。
+            GbufferPassOrder.noteOwnGbufferPass();
             // 🔴🔴 GAP-038：pass 体**第一行**就把本帧地形雾交出去 —— 原版的 executes 体第一句就是它
             //   （LevelRenderer:436）。我方此前只绑默认 uniform 从不设雾 ⇒ Fog UBO 吃**残值**
             //   （症状：进水那一帧雾端读数不动）。必须在 bindDefaultUniforms **之前**。

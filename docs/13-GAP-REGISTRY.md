@@ -980,7 +980,7 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 | **判据（下一轮要过的）** | 单绘档截图里**必须有地形**（与双绘档逐像素差落到 A′↔A 那个量级：`>10` 占比 <2%、`>40` 占比 0%），且 `[M-15] 地形两条 hits` 仍按主 pass 那一笔的速率上涨。⚠️ 只看亮度带均值不算过。 |
 | **影响面** | `bridge/MrtTerrainPass.java`（`drawTerrain` 的附件清屏决策）、`bridge/TerrainSingleDraw.java`（它的语义从「跳过两笔 draw」变成「整条 pass 的归属」）、`docs/04-SPEC.md` §5.0.7 ⑤ 行 d。 |
 | **开关 / 回退条件** | 键 `mrt.terrainSingleDraw` 默认 `false` ⇒ 本条只在取证档可见，用户路线零影响。回退条件 = 单绘档截图里地形在、且与双绘档逐像素差在噪声量级。 |
-| **状态** | 🔴 **已登记，判据为红（功能未完成，非回归）**；⑤-d 的后半（删死码 + 把池锚点换成 target0）**必须排在本条之后**。 |
+| **状态** | 🔴 **已登记，判据为红（功能未完成，非回归）**；⑤-d 的后半（删死码 + 把池锚点换成 target0）**必须排在本条之后**。🟡 **定序仪器已落地**（`bridge/GbufferPassOrder.java` + `GbufferPassOrderTest` 3 条：三态判定 / 两点接线 / 「不许读配置」），⚠️ **读数未取** —— 那一趟 `QuickPlay.joinSingleplayerWorld:92` 抛栈停在主菜单（`接管=0` 是「没到那一刻」，不是判据不匹配；怀疑是上一趟强杀客户端留下的 `session.lock`）。 |
 
 ---
 

@@ -215,6 +215,7 @@ public final class MainPassTakeover {
             return descriptor;
         }
         STATS.takenOver++;
+        GbufferPassOrder.noteMainPass();
         if (!STATS.reportedFirstHit) {
             STATS.reportedFirstHit = true;
             VkDisp.LOGGER.info("vkdisp: [M-04/⑤-a] 主 pass 的颜色附件已换成我方 colortex 阵列：{} 个"
