@@ -87,19 +87,53 @@ public final class PassAwarePipelines {
      */
     public static RenderPipeline select(String layer, boolean multiDraw, boolean ourPass,
             boolean takenOverMainPass, RenderPipeline requested) {
-        if (!VkDispConfig.MIXIN_PASS_AWARE_PIPELINE.get()) {
-            return requested;
+        switch (routeOf(VkDispConfig.MIXIN_PASS_AWARE_PIPELINE.get(), ourPass, takenOverMainPass)) {
+            case ROUTE_MRT_LAYER_TABLE: {
+                RenderPipeline mrt = TerrainPipelineApi.mrtVariantOrNull(layer, multiDraw);
+                return mrt == null ? requested : mrt;
+            }
+            case ROUTE_PADDED_MAIN_PASS:
+                // ⑤-b：主 pass 现在是 N 附件 ⇒ 地形这两条也要有 N 个颜色目标，否则 setPipeline 抛。
+                //        补不动的形状（声明比附件多等）由公式自己交回原版并计数（GAP-046）。
+                return MainPassPipelineDerivation.derive(requested, MainPassTakeover.takenOverSlots());
+            default:
+                return requested;
+        }
+    }
+
+    /** 原样返回入参（开关关着，或<b>两条身份都不成立</b> = 故意错配那一格）。 */
+    public static final int ROUTE_VERBATIM = 0;
+    /** 走 M-01 那张层名表（多附件地形管线）。 */
+    public static final int ROUTE_MRT_LAYER_TABLE = 1;
+    /** 走 ⑤-b 的补槽公式（被接管的主 pass）。 */
+    public static final int ROUTE_PADDED_MAIN_PASS = 2;
+
+    /**
+     * 这次取管线该走哪条身份（<b>纯函数</b>，且是 {@link #select} <b>唯一</b>的判定入口）。
+     *
+     * <p>🔴 为什么要把它从 {@code select} 里抽出来：判据「故意错配一次必须被拒」讲的是<b>行为</b>，
+     * 而 {@code select} 的入参与返回都是 renderpearl 的 {@code RenderPipeline} —— 测试运行时没有那些类
+     * （{@code GAP-050}），于是那条判据此前只能用「源码里有两句 {@code return requested;}」这种<b>形状针</b>
+     * 来近似。抽成整数决策之后，真值表可以逐格跑；而 {@code select} 只剩「按格子执行」，
+     * 两者由 {@code MrtTerrainPassWiringTest} 那根「select 必须调 routeOf」的针钉在一起，<b>不许各长一份</b>。
+     *
+     * @param flagOn            {@code mixin.passAwarePipeline}（关掉 = 可关闭制 X29，逐字退回原版）
+     * @param ourPass           {@code renderPass} 就是我方 MRT pass 那个对象（对象身份，mixin 侧比好传进来）
+     * @param takenOverMainPass {@code renderPass} 是接管后的主 pass（{@link MainPassTakeover#isTakenOverPass}）
+     */
+    public static int routeOf(boolean flagOn, boolean ourPass, boolean takenOverMainPass) {
+        if (!flagOn) {
+            return ROUTE_VERBATIM;
         }
         if (ourPass) {
-            RenderPipeline mrt = TerrainPipelineApi.mrtVariantOrNull(layer, multiDraw);
-            return mrt == null ? requested : mrt;
+            // 同一帧里一个 pass 对象不可能既是我方 MRT pass 又是接管后的主 pass；真出现时先走表那一支
+            // （它查不到就原样返回，不会把 8 附件管线塞进单附件 pass）。
+            return ROUTE_MRT_LAYER_TABLE;
         }
         if (takenOverMainPass) {
-            // ⑤-b：主 pass 现在是 N 附件 ⇒ 地形这两条也要有 N 个颜色目标，否则 setPipeline 抛。
-            //        补不动的形状（声明比附件多等）由公式自己交回原版并计数（GAP-046）。
-            return MainPassPipelineDerivation.derive(requested, MainPassTakeover.takenOverSlots());
+            return ROUTE_PADDED_MAIN_PASS;
         }
-        return requested;
+        return ROUTE_VERBATIM;
     }
 
     /**

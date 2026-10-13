@@ -3,7 +3,19 @@
 > 格式与流程依据：docs/15-ITERATION.md「变更记录模板」。最新条目在最上方。
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
----
+
+## 2026-10-13（一百四十四）— 🟢 第 4 步那条「故意错配一次必须被拒」第一次被**跑**起来（此前只是源码形状针）
+
+> **verdict = 判据从「形状近似」升为「行为真值表」**；渲染行为零变化（纯重构 + 一条新测试文件）。
+
+- **为什么单开一步**：判据讲的是**行为**，而 `PassAwarePipelines.select` 的入参与返回都是 renderpearl 的 `RenderPipeline` —— 测试运行时没有 MC / renderpearl 类（`GAP-050`），于是这条判据一直只能用 `MrtTerrainPassWiringTest` 里「源码有两句 `return requested;`」这种**形状针**近似。形状针两个方向都能骗：行为坏了而形状还在（绿），形状换了而行为没变（假红）。
+- **做法**：把身份判定抽成纯函数 `PassAwarePipelines.routeOf(flagOn, ourPass, takenOverMainPass)` → 整数路由（`ROUTE_VERBATIM=0` / `ROUTE_MRT_LAYER_TABLE=1` / `ROUTE_PADDED_MAIN_PASS=2`），`select` 只剩「按格子执行」的 `switch`。**开关也作为入参进去** ⇒ 「关掉逐字退回原版」（可关闭制 X29）那一格同样进了真值表。
+- **新测试 `PassAwarePipelineRouteTest`（4 条）**：① 真值表 —— 两条身份都对不上 ⇒ `ROUTE_VERBATIM`（🔴 这就是「故意错配必须被拒」），我方 MRT pass ⇒ 查层名表，接管后的主 pass ⇒ 补槽公式，两者同时为真先走表（保守：宁可让 `setPipeline` 响亮地抛，不静默错配）；② 开关关着压过两条身份（4 格全 `ROUTE_VERBATIM`）；③ 三个路由码互不相同且 **0 号 = 原样返回**（新格子默认落回原版那一支）；④ **反漂移针** —— `select` 里 `routeOf(` 必须出现且只出现一次，不许再长一份 `if (ourPass)` / `if (takenOverMainPass)`，也不许用「开关 && 身份」就地拼布尔绕过真值表。
+- 🔖 **诚实记一笔被改的旧针**：`MrtTerrainPassWiringTest:106` 那根 `if (!VkDispConfig.MIXIN_PASS_AWARE_PIPELINE.get()) {` 在重构后**物理消失**（判定读的是入参 `flagOn`），我把针改成 `if (!flagOn) {` 并把主判据让给真值表 —— 形状针随重构误报正是它不该当主判据的理由。
+- **文档**：`docs/13` `GAP-003` 判据行 ②（那一格标为「已可跑」并注明旧形状针）、`docs/19` §5A.4 R1 行的判据列（错配被拒 = 可跑；`Mixin apply failed=0` 已真机签；仍待 `h08` 同量级 A/B）。
+- **测试 1193 条 0 失败**（1189 → 1193）。**默认档零变化**：`routeOf` 每一格的返回与重构前 `select` 的分支逐条对齐，没动任何 GPU 调用，也没开任何取证键。
+
+
 ---
 
 ## 2026-10-13（一百四十三）— ✅ **第 3 步的雾判据签过了：进水那一帧读数真的变了**（`GAP-038` 的修法成立）
