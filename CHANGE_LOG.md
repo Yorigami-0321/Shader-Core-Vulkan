@@ -18,6 +18,8 @@
 - **臂 5（单键 `mrt.skyPass=false`，冷启动）⇒ 天空 pass 排除**：起跑先回读 `[route] = chain=true`（链在跑、画面可判、无半开档 WARN），取图 **天空整片变黑**（键确实每帧生效）而**三块巨型贴图面照旧**。
 - **臂 6（单键 `mixin.wireTerrain=false`，冷启动）⇒ M-01 排除，本轮假设被自己证伪**：起跑前立的假设「`mrt.terrain=false` 只关我方 pass，M-01 仍在**原版地形那几笔**上换成派生管线 ⇒ 适配器画成错位巨型四边形」逐字解释了臂 2 的结果；实测画面与基线**同形** ⇒ 假设不成立。
 - 📉 **六臂之后的形状与下一刀（写死，别再逐键猜）**：冷启动单键已排除 5 条（`mrt.terrain` / `mrt.postChain` / `mrt.skyPass` / `mixin.wireTerrain` / 上一轮的 `mrt.skyPackShader`），而 `enabled=false` 才让平面消失 ⇒ 生产者**在我方、却不在任何主路上**。下一臂 = **`[mixin]` 整块 11 键一次全关**（冷启动，跑完立刻 `md5sum` 比对防 `GAP-056` 回写）：平面还在 ⇒ 键族不在 mixin 侧，转 `[mrt]` 侧二分（`shadowStubs` / `packWater` / `depthGlProxy` / `attachments`）；不在 ⇒ 对半切（5+6），两臂内落到单键。
+- **臂 7（`[mixin]` 整块 11 键一次全关，冷启动）⇒ 整个注入族排除**：起跑回读 `[route] = chain=true`、无半开档 WARN、`Mixin apply.*failed` = 0、异常 0 条；画面近乎全黑（链读空 colortex 的预期）**而那块巨型贴图平面照旧**。⇒ M-01/M-01b/M-06/M-07/M-08/M-09/M-10/M-11/M-13/M-14/M-15 **一臂全排除**。
+- ✅ **臂 8（`shaderPack="none"`，其余沿用臂 7）⇒ 平面消失 ⇒ 「包带来的」**：自报确认 `不加载库存包，使用内置 passthrough 兜底` + `地形片元不接线`；同机位取图 **地形回到正常尺寸与正常贴图**（图集墙、平坦浅绿面、巨型树叶全没了）。臂 7 与臂 8 只差 `shaderPack` 一个变量 ⇒ **生产者在包的加载/生成侧，不在这 11 个注入点里**。⇒ `GAP-054` 的下一刀进包侧：① 保留包但不注册任何派生程序（切「包的资源 vs 包的程序」）② 先补 §7-8 早就写着的那条生成侧自报（`FullscreenPipelineRegistrar` / `GeneratedSources.adapters`）③ `[pack]` 逐键二分。
 - **收尾**：`run/config/vkdisp-client.toml` 已逐字复原到起跑前（md5 `cf3db1ad…`）、客户端与 25599 均已停、无孤儿 JVM。**本轮无 `src/` 改动**。
 
 ---
