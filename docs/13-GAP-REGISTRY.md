@@ -789,6 +789,7 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 
 | ✅ **真机签字（2026-10-13，岩浆那一格）** | 冷启动真机、这份手写 `run/config/vkdisp-client.toml` 档（`mixin.ownTerrainPass=false`、`mrt.enabled=false`、`mixin.skyViews=true`、`mrt.skyPass=true`、`mrt.skyPackShader=true`），机位 `(-45, 102, -94)`、`yaw=0 pitch=0`、每帧前 `time set 6000`。签名 = 「全帧里天空蓝像素占比」（判据 `B>140 且 B>R+25 且 G>R`）。三臂 A-B-A：**空气里 36.66%**（岩浆橙 0.25%）→ **头浸进岩浆（`fill` 5×4×5 共 70 格换成 `minecraft:lava`，命令 output 回「已成功替换 70 个方块」）⇒ 天空蓝 0.09%、岩浆橙 96.13%** → **换回空气 ⇒ 天空蓝 34.89%**（可逆，不是一次性抖动）。⇒ **第 5 步的「岩浆里没有天空」这一格签过**，同趟 `Mixin apply failed` = 0。⚠️ 读数口径要说清：这一格判的是「画面里不该有天空蓝」，头浸在岩浆里时整帧被岩浆占满（96.13%），所以它**证的是「不画天空」而不是「岩浆表面正确」**；表面级的判据要等 `GAP-054` 那块平面清掉之后再取。 |
 | 🔴 **仍未签的两格** | 本条源码级核实列了**四道门控**（岩浆 / 粉雪 / `Skybox.NONE` 维度 / …），本轮只签了**岩浆**那一格。粉雪要 `powder_snow` 那一格（同机位灌粉雪，口径与本轮 `fill` 完全一致，成本一臂）；`Skybox.NONE` 要**换维度**（`execute in minecraft:the_end run tp …`，而超界/末地的画布正是 `GAP-052` 记的那条对外接口 ⇒ 别在超界那一臂上顺手判它）。 |
+| 🔴 **粉雪那一格的前置在真机不成立（2026-10-13，冷启动基线档）** | 头与脚都在粉雪里：`fill -46 104 -96 -42 108 -92 minecraft:powder_snow replace minecraft:air` → output「已成功填充 125 个方块」，`get_block` 回读 `(-45,105,-94)=minecraft:powder_snow` 与 `(-45,104,-94)=minecraft:powder_snow`。跨约 30 秒的三行 `[GAP-038/雾]` 读数 **`fogType=NONE env=[0.000,1024.000]` 一条都没翻**，画面也没有粉雪白化。⇒ 原版那道 `fogType != POWDER_SNOW` 门控**根本没进入**，于是「粉雪里没有天空」这一格**既没签成也没否证 —— 缺的是判据前提，不是判据结果**。⚠️ 不是仪器坏了：同一台仪器在岩浆/水那一族是活的（进水翻成 `WATER`、岩浆里天空蓝 0.09%）。两条待分：26.3 的粉雪雾另有取点条件（`isInPowderSnow` 是**脚**那一格还是**眼**那一格），或我方把相机雾状态改坏了 ⇒ **下一刀先读原版 `FogRenderer` 的粉雪分支**再决定这一臂怎么造。世界已复原（同坐标 `fill … minecraft:air replace minecraft:powder_snow`，125 格），同趟 `Mixin apply.*failed` = 0。
 
 ### GAP-040 · 🔴 **h20 守卫是空转**：`hasExpectedAttachmentCount()` 逐字就是 `return inMrtPass` ⇒ 与 `active()` 同义，它声称防的那类状态永远测不出（2026-10-12 逐字核实）
 
@@ -1024,6 +1025,9 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 | 🔴 **冷启动第一臂「不可判」（2026-10-13 收尾）** | 台账里那一刀按 `mixin.wireTerrain=false` + `mrt.terrain=false` **两把一起关**跑了一臂冷启动 ⇒ 整屏近乎全黑（`全片 mean=5.8`、左块 `mean=0.0`、无 x≈361 硬边）。这正是记忆里那条**已知的半开档形状**（「地形只进 colortex 而链不跑 ⇒ 屏幕预期全黑」），所以**「平面消失」这一格没证成** —— 黑屏里既没有平面也没有可判的画面。⚠️ 别把它读成「地形那一笔是生产者」。同臂另一条读数是干净的：`Mixin apply failed` = 0（两把关掉后 mixin 仍全部应用成功）。⇒ **正确的下一臂改成单键**：只关 `mrt.terrain=false`、`wireTerrain` 保持 `true`（链照跑、画面非黑），冷启动、同机位、每帧前 `time set 6000`，看 x≈361 那条硬边还在不在。 |
 | 🔧 **下一刀（探针给出的形状）** | 别再在 `SkyPackGbuffer` / 这四个出口上加东西。两件事按顺序做：① **冷启动两臂**各取一帧（一臂 `skyPackShader=true`、一臂 `false`，中间不热重载）—— 若两臂都有平面，则上一轮的 bisect 结论作废、`GAP-054` 与包天空无关；若只有 `true` 那臂有，才回到「谁用它」；② 若 ① 指向 `true` 臂，探针往**生成侧**挪一格：自报「这次生成了哪几条程序的产物、注册了哪些管线位置」（`GeneratedSources.fragments/adapters` 与 `FullscreenPipelineRegistrar`），因为那条路径不经过上面四个出口。⚠️ 顺带一条新事实：调用链里有 `MrtTerrainPass#drawTerrain:382` ⇒ 这份手写 toml 档里**我方 gbuffer pass 确实在开、在画地形**（`mrt.enabled=false` 只关诊断覆盖层），所以「默认档」这三个字在 `GAP-054` 上下文里**不等于**「我方什么都没画」。 |
 | 🔧 **真凶位置（改判后的下一刀）** | `mrt.skyPackShader` 还有**第二个消费者**：`VkDispVirtualPack:223` 用它决定**要不要注册/替换那条派生天空程序**（指纹在 `:1031`）。默认档里 `SkyPackGbuffer` 不跑，但**原版 `SkyRenderer` 那一笔的穹顶/日月/星几何**照样被我方派生的包 `gbuffers_skybasic` 程序接走 ⇒ 「屏幕空间的包片元 × 原版世界空间几何」= 屏幕上那块巨型斜切贴图面。⇒ 修法应落在**那一处替换的门槛**上：只有当喂的几何与程序约定一致（`renderStage` 逐 draw 供值 + 屏幕空间那一笔，`GAP-028` ③）才允许替换，否则把这条程序交回原版并计数。 |
+| ✅ **基线内联图（2026-10-13 本轮，`mrt.terrain=true` 全基线档）** | 同机位 `tp Dev -44.6 104 -93.6` + `yaw=-30 pitch=2`、每帧前 `time set 6000`（output 逐条回读）。打开看图：左半一堵被拉到巨大的草/叶图集墙 + 中景一整片平坦浅绿面 + **右下角一个巨型树叶 sprite**，地平线右侧一条纯黑带 ⇒ 与台账里 `硬边列=[361,362,363] 左块 mean=79.2 全片 mean=123.5` 那一档**同一现象**。⚠️ 本轮读数口径要如实降级：`vision.screenshot {path}` 那条直连 `/rpc` 通道被本机权限层拦下（读 token + 发请求判为越权）⇒ **拿不到 PNG 文件**，判据从「硬边列 + 左块 mean」改成 **MCP `screenshot` 内联图的目视 A-B-A**。这条判据要的答案是二元的（平面在不在），目视够用；但**任何要数值的格（`GAP-053`/星点/`h08` A-B）在本机需要先解决取图通道**。
+| ✅ **冷启动第二臂（单键 `mrt.terrain=false`，其余逐字同基线）⇒ 地形那一笔排除** | 冷启动、**只翻这一个键**（`mixin.wireTerrain` 保持 `true`、`packTerrainShader` 保持 `true`）、同机位同 `time set 6000`。读数：**整帧除 HUD 外近乎全黑，而那块被拉到巨大的草/叶贴图平面照旧在右下角**（同一形状、同一条笔直斜边、同一张方块图集）。⇒ **`mrt.terrain` 不是生产者**，`GAP-030` 那一族「我方 gbuffer 地形被错矩阵画成巨型四边形」在**冷启动单键**这一档也被否掉（上一轮热重载那一格现在有干净版本了）。⚠️ 这一臂另有一条新账：**每帧抛异常**，另立 `GAP-055`。⇒ 候选从三条收窄到**两条**：**链自己**（`mrt.postChain`）与**天空那一族**；下一臂 = 单键 `mrt.postChain=false`（本轮已起跑）。
+| ✅ **第三臂（本想单键 `mrt.postChain=false`，实际是两键 —— 见 `GAP-056`）⇒ 链也不是生产者** | 冷启动、同机位、每帧前 `time set 6000`。画面近乎全黑（半开档预期，日志 `[GAP-036/半开档] mrt.terrain=true 而 mrt.packTerrainShader=false` 点名），**而右下角那块巨型草/叶贴图平面照旧、与上一臂逐字同形同位**。⇒ 在「链关 + 包地形片元关 + 我方 gbuffer pass 开」这一档平面仍在 ⇒ **`mrt.postChain` 排除**（这一臂虽是两键，但「链关着而平面还在」这一条只依赖 `postChain=false` 那一半，够判）。⇒ **三条候选已排除两条**（地形路线、后处理链），只剩**天空那一族**（`mrt.skyPass` / `mixin.skyViews` / 原版天空那一笔被谁改了状态）。**下一臂 = 单键 `mrt.skyPass=false`**，镜头必须钉在地平线（上一轮「朝天 ⇒ 全黑不可判」那条坑写死），且起跑后先回读 `[route]` 与半开档那两行自报确认档没被回写（`GAP-056`）。
 | **状态** | 🟡 **已登记 + 已归因（不是 M-04 的账；是 `mrt.skyPackShader` 那条派生天空管线的顶点侧）+ 未修**。⚠️ 三条别读错：a) 上一轮「三条候选全清」里**「包天空已排除」那一格作废**（切错键），云与 M-11 视图重定向那两格仍然成立；b) 它**不是**屏幕空间产物（tp 130 格就没了）；c) 深度换确实**改变了它的填充**（黑区 4.5%→9.3%），这一维留待修完再看。 |
 
 ---
@@ -1041,3 +1045,30 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 [ ] 回退条件是可判定的，不是"以后再说"
 [ ] 业务包没有 import platform/ 的内部实现
 ```
+
+### GAP-055 · 🔴 **半开档 `mrt.terrain=false`（`mrt.packTerrainShader` 仍 `true`）⇒ 每帧抛 `IllegalStateException: Close the existing render pass before performing additional commands`**（2026-10-13 真机，冷启动单键）
+
+| 字段 | 内容 |
+|---|---|
+| **怎么撞见的** | 跑 `GAP-054` 的冷启动第二臂（台账 `19` §7-8 第 8 格指定的那一刀）时，日志开始刷异常。 |
+| **计数（不是背景噪声）** | `run/logs/latest.log` 里 `noisetex FAILED` 与那句 `IllegalStateException` **逐分钟 4692 + 2613 = 7305 条**，且**全部落在这一臂的两分钟内**；上一臂（`mrt.terrain=true`，20:50–20:55）**零命中**。⇒ 由这一档引入，不是既有噪声。 |
+| **站点（栈顶逐字）** | `com.mojang.renderpearl.frontend.FrontendCommandEncoder.writeToTexture:410/399` ← `dev.vkdisp.bridge.PackTextures.builtinNoiseView:189` ← `PackTextures.view:151` ← `FrameApi.lambda$chainResolver$0:1370` ← `PackSamplerViews.resolve:90`。⇒ **链在解析采样器**的那一刻去写内置 `noisetex`，而那一刻**有一个 render pass 开着** —— 后端不许在 pass 内做 `writeToTexture`。 |
+| **后果** | ① `noisetex` 回落显式占位（日志自报「缺席可见」）；② 整帧除 HUD 与 `GAP-054` 那块平面外近乎全黑；③ 每帧抛在**帧图 pass 体内**、无人接 ⇒ 与 `GAP-036` ④ / `GAP-047` 那条「pass 体内抛异常缺兜底」同根，而那两次的最终形态是 `nvoglv64.dll` 原生崩溃。 |
+| **为什么半开档会走到这条** | `mrt.terrain=false` ⇒ 我方 gbuffer pass 不建，但 `packTerrainShader=true` 仍让**链**照跑 ⇒ 链解析采样器时不再有「pass 已关」的窗口。⇒ 台账里那句「只开 `mrt.terrain` 而关 `packTerrainShader` = 全黑」现在要补**另一侧**：只关 `mrt.terrain` 而留 `packTerrainShader` = **全黑 + 每帧异常**。这一对键不是「可独立关」的，而今天**没有任何装配期检测**拦住半开。 |
+| **修法（方向，未开工）** | 首选把 `builtinNoiseView` 的写纹理**挪出 pass 体**（装配期或帧首一次性写，之后只读）；次选在 `PackSamplerViews.resolve` 里判「此刻有 pass 开着」就不写并计数。⚠️ 别用「给半开档加一条日志」交差 —— 那是把每帧异常换成每帧日志。 |
+| **判据（收口时用）** | ① 单键 `mrt.terrain=false` 冷启动 ⇒ 该异常 **0 条**、`noisetex` 自报「已写入」；② 全基线档读数不回退（平面、天空、雾三台仪器同趟自报）；③ 半开档要么被装配期显式拒绝并点名，要么画面正常 —— **不接受「静默全黑」**。 |
+| **状态** | 🔴 **已登记、已实测、未修**（本轮只取证）。它是 `GAP-054` 第二臂的连带产物，**不是** `GAP-054` 的因（平面在 `mrt.terrain=true` 的基线档同样在）。 |
+
+---
+### GAP-056 · 🔴 **换臂会被回写污染：跑完 `mrt.terrain=false` 那一臂之后，`run/config/vkdisp-client.toml` 里的 `mrt.packTerrainShader` 自己变成了 `false`**（2026-10-13 实测，取证方法级）
+
+| 字段 | 内容 |
+|---|---|
+| **事实链** | ① 起跑前用 python **断言全文唯一**后只翻一个键（`	terrain = true
+` → `false`），run 2 的日志与画面确实是「terrain=false」那一档；② run 2 停止后，同一份文件里 `packTerrainShader` 已是 `false` —— 证据 = run 3 起跑即报 `[GAP-036/半开档] mrt.terrain=true 而 mrt.packTerrainShader=false`（那一趟我写的是 `postChain=false`，`packTerrainShader` 一个字都没动过）。⇒ **单键臂会跨趟变成两键臂**。 |
+| **为什么要紧** | 本仓的归因纪律是「一次一臂、一律冷启动」。回写**静默打断**这条纪律：下一趟实际生效的档 ≠ 作者写下的档，而日志里没有任何一行说「我改了配置」。本轮要不是 `GAP-036` 那条半开档 WARN 恰好把两个键都打出来，就会把 run 3 当成「单键 `postChain`」签掉。 |
+| **待分（两条候选，未定）** | ① 半开档守卫在内存里把 `packTerrainShader` 强制成 `false`，FML 在**退出时把内存值写回文件**；② `VkDispConfigHotReload` 的某条路径写了值（`VkDispConfigHotReload:232` 一带）。⇒ 定位办法：每趟 run 结束立刻 `md5sum` 该文件与起跑前比对；并在守卫改写任何键时**自报一行**「本次把 X 强制为 Y」。 |
+| **纪律（本轮起，取证必做）** | 每臂起跑后的第一件事 = 回读日志里 `[route] 本帧渲染路径 = …` 与 `[GAP-036/半开档]` 那两行，**确认实际生效的键值组合逐字等于作者写下的那一档**；不一致 ⇒ 那一臂当场作废、按实际档重记。口径同记忆里那条「包选项每臂必须回读 `[OPTION_OVERRIDE_SUMMARY]`」。 |
+| **状态** | 🔴 **已登记、未修**。修法方向：半开档要么**显式拒绝并不回写**（把内存值与文件值分开），要么回写时点名自报 —— 现在这种「静默改档」对取证是负资产。 |
+
+---

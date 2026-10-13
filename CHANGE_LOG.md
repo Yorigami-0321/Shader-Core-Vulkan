@@ -4,6 +4,20 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-13（一百五十一）— 🟢 `GAP-054` 冷启动三臂：地形与链**都排除**，只剩天空那一族；另立 `GAP-055`（半开档每帧抛异常）与 `GAP-056`（换臂被回写污染）
+
+> **verdict = 生产者候选从三条砍到一条**；本轮零代码改动，全是取证 + 两条新登记的账。
+
+- **臂 1（基线复现）**：`mrt.terrain=true` 全基线档、机位 `tp Dev -44.6 104 -93.6` + `yaw=-30 pitch=2`、每帧前 `time set 6000` ⇒ 平面在（左半图集墙 + 中景平坦浅绿面 + 右下角巨型树叶 sprite）。⚠️ 读数口径本轮**降级为目视 A-B-A**：`vision.screenshot {path}` 那条直连 `/rpc` 通道被本机权限层判为越权拦下 ⇒ 拿不到 PNG 文件，`硬边列=[361,362,363] / 左块 mean=79.2` 这类**数值**签名今天取不了。⇒ 凡是要数值的格（`GAP-053`、星点、`h08` A-B）**先要解决取图通道**，这条已写进 `19` §7-8 第 8 格。
+- **臂 2（单键 `mrt.terrain=false`，`mixin.wireTerrain` 保持 `true`）⇒ 地形那一笔排除**：整帧除 HUD 外近乎全黑，**平面照旧**。⇒ `GAP-030` 那一族「我方 gbuffer 地形被错矩阵画成巨型四边形」在冷启动单键这一档也被否掉（上一轮热重载那一格现在有干净版本）。
+- **臂 3（`mrt.postChain=false`，但被回写污染成两键）⇒ 链也排除**：画面全黑（半开档预期），**平面仍在右下角、逐字同形**。⇒ 三条候选砍到只剩**天空那一族**；下一臂 = 单键 `mrt.skyPass=false`（镜头钉地平线，别学上一轮朝天）。
+- 🔴 **`GAP-055`（新账）**：`mrt.terrain=false` 那一臂**每帧抛** `IllegalStateException: Close the existing render pass before performing additional commands` —— 站点 `PackTextures.builtinNoiseView:189 ← PackTextures.view:151 ← FrameApi.lambda$chainResolver$0:1370 ← PackSamplerViews.resolve:90`，即**链解析采样器那一刻去写内置 `noisetex`，而那时有一个 render pass 开着**。计数 = `noisetex FAILED` 逐分钟 **4692 + 2613 = 7305 条，全部落在这一臂**（基线那一趟同文件零命中）。⇒ 「只关 `mrt.terrain` 而留 `packTerrainShader`」= **全黑 + 每帧异常**，与已知的另一侧半开档成对；这一对键不是可独立关的，而今天没有装配期检测拦半开。
+- 🔴 **`GAP-056`（新账，取证方法级）**：臂 2 跑完后 `mrt.packTerrainShader` **在文件里自己变成了 `false`**（臂 3 起跑即报 `[GAP-036/半开档] mrt.terrain=true 而 mrt.packTerrainShader=false`，而我一个字都没动它）⇒ **单键臂会跨趟变成两键臂，且日志不说「我改了配置」**。新纪律：**每臂起跑后先回读 `[route]` 与半开档那两行自报**，实际档 ≠ 写下的档 ⇒ 那一臂当场作废。
+- 🟡 **`GAP-039` 粉雪那一格 = 前置缺失，不是失败**：头与脚都在粉雪里（`fill` 125 格、`get_block` 两处回读 `powder_snow`）跨约 30 秒，`[GAP-038/雾]` 三行**恒 `fogType=NONE`**、画面无白化 ⇒ 原版那道 `fogType != POWDER_SNOW` 门控**根本没进入** ⇒ 这一格既没签成也没否证。仪器没坏（同一台在进水那一格翻成 `WATER`）。下一刀先读原版 `FogRenderer` 的粉雪分支（取点是脚还是眼）。世界已复原（同坐标 fill 回 air 125 格），同趟 `Mixin apply.*failed` = 0。
+- **收尾**：`run/config/vkdisp-client.toml` 已逐字复原到起跑前（md5 `cf3db1ad…`）、客户端与 25599 均已停、无孤儿 JVM。**本轮无 `src/` 改动**。
+
+---
+
 ## 2026-10-13（一百五十）— 🟢 `GAP-037` 的判据仪器落地并拿到**第一次真机读数**：本帧天空深度被翻 **1 次**
 
 > **verdict = 读数「1 次 = 通过」，但成立的原因是第二个所有者当前没参与** —— 这条判据既没复发也没被证伪，仪器从此是它的回归闸门。
