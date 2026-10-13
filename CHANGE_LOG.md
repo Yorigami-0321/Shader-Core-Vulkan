@@ -4,6 +4,22 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-13（一百四十五）— ✅ `GAP-054` 归因拿到：那块切过半个屏幕的巨型平面是**我方派生的包天空管线**（`mrt.skyPackShader`）的**顶点侧**
+
+> **verdict = 归因完成、未修**；同时**撤回上一轮「包天空已排除」那一格**（那一刀切的是 `mrt.skyPass`，不是同一个键）。
+
+- **怎么拿到的**：默认档（`ownTerrainPass=false`、`mrt.enabled=false`）冷启动进世界，镜头回地平线（`control.look` 后 `players.list` 当场回读 `yaw=-30 pitch=2`），每格取帧前 `time set 6000` 钉住日时钟。签名换成「左半那条 x≈361 的竖直硬边 + 其左侧 `mean≈68`」而不是整帧亮度 —— 第一版没钉日时钟，所有臂指标**单调下滑**（319→293），那是太阳在动。
+- **四刀排除**：`mrt.postChain=false`（`mean` 68.1→68.1）、`mrt.terrain=false`（68.1→63.99，整帧 `>40` 差 0.00%）、`cloudMatrixRedirect` / `cloudsNoCull` / `cloudProbe` 三格全在 ⇒ **`GAP-030` 那一族「地形被错矩阵画成巨型四边形」的假设作废**（`docs/13` 里那一行已标 🔴 保留原文）。
+- **它是世界几何**：`tp Dev` 北移 130 格 ⇒ 硬边消失（左块 `mean 68.1 → 108.6`），回原位 ⇒ **逐字复现 68.1** ⇒ 屏幕空间 blit / 视口错配那一类排除。⚠️ 顺带又踩一次「`ok=true` 不等于成功」：`tp @s` 在控制台**没有 self**，原版回「未找到实体」而 mcpfabric 照样回 `ok=true`（与 `/fill` 那条同族）。
+- **归因那一刀**：17 个注入键一次全关 ⇒ **平面没了**（`mean 68.1 → 116.2`）⇒ 确认是我方产物；再逐键单独关 ⇒ 只有 **`mrt.skyPackShader=false`** 翻掉签名（`mean=145.1`、硬边 0 列），`skyViews=false`、`packTerrainShader=false` 都还在。日志同源：`[GAP-027/sky] 派生天空管线已建: … vertex=vkdisp_pack:skybasic_pack_adapter` ⇒ 画它的是**派生包天空的顶点适配器**。
+- 🔴 **一条自我更正**：上一轮「三条候选全清」里「包天空已排除」用的是 `mrt.skyPass`（整个天空 pass 关不断），而「包天空自己画错」讲的是**用哪条天空程序**（`mrt.skyPackShader`）⇒ 那一格作废，本轮翻案。云与 M-11 视图重定向那两格仍然成立。
+- ⚠️ **取证方法本身打崩了驱动**：17 键「全关再全开」的热重载风暴 ⇒ `EXCEPTION_ACCESS_VIOLATION`，Problematic frame **`nvoglv64.dll+0xebd971`**，客户端进程直接没了；同一批重载里还出现 `Couldn't find source for VERTEX shader (vkdisp_pack:skybasic_pack_adapter)`（**冷启动那两批没有** ⇒ 不能拿它解释平面）。⇒ 立规矩：**一次只切一个键、每次等满一次完整重载**。
+- **下一刀（已写进 `GAP-054`）**：读 `skybasic_pack_adapter` 的生成侧，核它 `gl_Position` 用的矩阵与那次 draw 实际绑定的 `ModelView`/`Projection` 是否同源；切法是把适配器换成「直通」版看天空是否恢复正常。
+- **默认档零变化**：取证键全部复原（`run/config/vkdisp-client.toml` 逐键回 `true`，客户端已退出，25599 无监听）。本轮**只有文档**（代码零改动，测试仍 **1193 条 0 失败**）。
+
+
+---
+
 ## 2026-10-13（一百四十四）— 🟢 第 4 步那条「故意错配一次必须被拒」第一次被**跑**起来（此前只是源码形状针）
 
 > **verdict = 判据从「形状近似」升为「行为真值表」**；渲染行为零变化（纯重构 + 一条新测试文件）。
