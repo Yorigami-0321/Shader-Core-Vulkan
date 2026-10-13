@@ -785,6 +785,9 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 
 ---
 
+| ✅ **真机签字（2026-10-13，岩浆那一格）** | 冷启动真机、这份手写 `run/config/vkdisp-client.toml` 档（`mixin.ownTerrainPass=false`、`mrt.enabled=false`、`mixin.skyViews=true`、`mrt.skyPass=true`、`mrt.skyPackShader=true`），机位 `(-45, 102, -94)`、`yaw=0 pitch=0`、每帧前 `time set 6000`。签名 = 「全帧里天空蓝像素占比」（判据 `B>140 且 B>R+25 且 G>R`）。三臂 A-B-A：**空气里 36.66%**（岩浆橙 0.25%）→ **头浸进岩浆（`fill` 5×4×5 共 70 格换成 `minecraft:lava`，命令 output 回「已成功替换 70 个方块」）⇒ 天空蓝 0.09%、岩浆橙 96.13%** → **换回空气 ⇒ 天空蓝 34.89%**（可逆，不是一次性抖动）。⇒ **第 5 步的「岩浆里没有天空」这一格签过**，同趟 `Mixin apply failed` = 0。⚠️ 读数口径要说清：这一格判的是「画面里不该有天空蓝」，头浸在岩浆里时整帧被岩浆占满（96.13%），所以它**证的是「不画天空」而不是「岩浆表面正确」**；表面级的判据要等 `GAP-054` 那块平面清掉之后再取。 |
+| 🔴 **仍未签的两格** | 本条源码级核实列了**四道门控**（岩浆 / 粉雪 / `Skybox.NONE` 维度 / …），本轮只签了**岩浆**那一格。粉雪要 `powder_snow` 那一格（同机位灌粉雪，口径与本轮 `fill` 完全一致，成本一臂）；`Skybox.NONE` 要**换维度**（`execute in minecraft:the_end run tp …`，而超界/末地的画布正是 `GAP-052` 记的那条对外接口 ⇒ 别在超界那一臂上顺手判它）。 |
+
 ### GAP-040 · 🔴 **h20 守卫是空转**：`hasExpectedAttachmentCount()` 逐字就是 `return inMrtPass` ⇒ 与 `active()` 同义，它声称防的那类状态永远测不出（2026-10-12 逐字核实）
 
 | 字段 | 内容 |
