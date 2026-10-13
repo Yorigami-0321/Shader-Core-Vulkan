@@ -100,6 +100,10 @@ public final class MainPassTakeover {
         /** 🔴 因「改进透明（OIT）开着」而拒绝接管的次数（{@code GAP-052}：OIT 那几条 pass 的画布是另一张图）。 */
         private long refusedOit;
         private boolean reportedOitFork;
+        /** ⑤-e 第一格：深度附件被换成 gbuffer 深度的次数 / 因视图缺失退回不换的次数与点名位。 */
+        private long depthSwapped;
+        private long depthRefused;
+        private boolean warnedNoDepthView;
         private boolean reportedViewMismatch;
         private boolean reportedFirstHit;
         private boolean warnedNoMatch;
@@ -170,9 +174,10 @@ public final class MainPassTakeover {
         STATS.seen++;
         if (STATS.seen % REPORT_PERIOD == 0L) {
             VkDisp.LOGGER.info("vkdisp: [M-04/⑤-a] 建 pass 观察={} 主 pass 接管={} label命中={} 视图同源={}"
-                            + " 尺寸不合拒绝={} OIT拒绝={} 开关={}",
+                            + " 尺寸不合拒绝={} OIT拒绝={} 深度换={} 深度退回={} 开关={}",
                     STATS.seen, STATS.takenOver, STATS.labelHits, STATS.viewHits, STATS.refusedSize,
-                    STATS.refusedOit, VkDispConfig.MIXIN_OWN_TERRAIN_PASS.get());
+                    STATS.refusedOit, STATS.depthSwapped, STATS.depthRefused,
+                    VkDispConfig.MIXIN_OWN_TERRAIN_PASS.get());
         }
         if (!VkDispConfig.MIXIN_OWN_TERRAIN_PASS.get()) {
             return descriptor;
@@ -340,11 +345,66 @@ public final class MainPassTakeover {
             builder.withColorAttachment(ours[slot], Optional.empty());
         }
         var depth = descriptor.depthAttachment();
-        if (depth != null) {
+        // 🔴 ⑤-e 第一格（`mrt.takeoverDepthToGbuffer`，默认关）：接管时连**深度附件**也换成我方 gbuffer 深度。
+        //   为什么这是 ⑤-d 的前置而不是可选项：定序读数（GAP-053）证明主 pass 跑在我方 gbuffer pass
+        //   **之后**，而链的 depthtex0/1/2 取的是 `colortexDepth` 的快照 ⇒ 不换深度，主 pass 画的地形深度
+        //   永远进不了链（颜色对了也是空深度）。清屏语义**沿用原描述符**（原版这里是 LOAD：
+        //   主深度早在 clear pass 里清过，而我方 pass 本帧已把 colortexDepth 清到 0.0 并画过地形）。
+        boolean swapDepthRequested = VkDispConfig.MRT_TAKEOVER_DEPTH_TO_GBUFFER.get();
+        GpuTextureView gbufferDepth = swapDepthRequested ? MrtTerrainPass.depthView() : null;
+        int decision = depthDecision(swapDepthRequested, gbufferDepth != null);
+        if (decision == DEPTH_SWAP_TO_GBUFFER) {
+            builder.withDepthAttachment(gbufferDepth,
+                    depth == null ? java.util.OptionalDouble.empty() : depth.clearValue());
+            STATS.depthSwapped++;
+        } else if (depth != null) {
+            if (decision == DEPTH_SWAP_REFUSED_NO_VIEW) {
+                noteDepthViewUnavailable();
+            }
             builder.withDepthAttachment(depth.textureView(), depth.clearValue());
         }
         builder.withRenderArea(descriptor.renderArea());
         return builder.build();
+    }
+
+    /** 深度附件「不换」（今天的形状：只换颜色）。 */
+    public static final int DEPTH_KEEP = 0;
+    /** 深度附件换成我方 gbuffer 深度。 */
+    public static final int DEPTH_SWAP_TO_GBUFFER = 1;
+    /** 要求换，但那一刻池的深度还不存在 ⇒ **不静默**：退回不换 + 点名一次。 */
+    public static final int DEPTH_SWAP_REFUSED_NO_VIEW = 2;
+
+    /**
+     * 换不换深度附件（<b>纯函数</b>）：测试运行时没有 renderpearl ⇒ 这里只判整数三态，
+     * 设备侧才去取真的视图（口径同 {@code MainPassPipelineDerivation.refusalReason}）。
+     */
+    public static int depthDecision(boolean swapRequested, boolean gbufferDepthAvailable) {
+        if (!swapRequested) {
+            return DEPTH_KEEP;
+        }
+        return gbufferDepthAvailable ? DEPTH_SWAP_TO_GBUFFER : DEPTH_SWAP_REFUSED_NO_VIEW;
+    }
+
+    /** 「要换但视图还没建出来」—— 退路必须看得见（X11：不许静默降级）。 */
+    private static void noteDepthViewUnavailable() {
+        STATS.depthRefused++;
+        if (STATS.warnedNoDepthView) {
+            return;
+        }
+        STATS.warnedNoDepthView = true;
+        VkDisp.LOGGER.warn("vkdisp: [M-04/⑤-e] mrt.takeoverDepthToGbuffer=true 但 colortex 池的深度视图此刻还不存在"
+                + " ⇒ 这一帧**不换**深度（逐字退回今天的形状，主 pass 仍写原版主深度）。"
+                + "这通常意味着我方 gbuffer pass 还没建过池；计数={}", STATS.depthRefused);
+    }
+
+    /** 深度被换成 gbuffer 的次数（诊断/单测读数）。 */
+    public static long depthSwapCount() {
+        return STATS.depthSwapped;
+    }
+
+    /** 因视图缺失而退回不换的次数。 */
+    public static long depthRefusalCount() {
+        return STATS.depthRefused;
     }
 
     /** 颜色附件<b>恰好一条</b>且那条非 null 时才返回它挂的视图，否则 null（= 不是我们要的 pass）。 */

@@ -876,6 +876,12 @@ public final class VkDispConfig {
                     + "地形只由原版那一笔画一次。⚠️ 只在 mixin.ownTerrainPass=true 时才有意义（否则没人画地形）。")
             .define("mrt.terrainSingleDraw", false);
 
+    /** 🔴 R7 ⑤-e 第一格（默认<b>关</b>）：接管主 pass 时把它的<b>深度附件</b>也换成我方 gbuffer 深度。 */
+    public static final ModConfigSpec.BooleanValue MRT_TAKEOVER_DEPTH_TO_GBUFFER = BUILDER
+            .comment("R7 ⑤-e：接管主 pass 时连深度附件一起换成 colortex 池的 gbuffer 深度（默认关 = 只换颜色，"
+                    + "主 pass 的地形深度仍进原版主深度 ⇒ 链的 depthtex0/1/2 看不到它，见 GAP-053 的「修法」行）。")
+            .define("mrt.takeoverDepthToGbuffer", false);
+
     /**
      * GAP-027 第二刀：把**云**画进 gbuffer（默认关）。
      *

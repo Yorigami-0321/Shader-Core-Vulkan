@@ -159,4 +159,22 @@ class MainPassTakeoverTest {
                 "两条红灯不许混：「形状对但被 OIT 挡」≠「判据不匹配（label 改名）」——"
                         + "后者才该怀疑注入失效");
     }
+
+    @Test
+    @DisplayName("⑤-e 第一格：深度附件换不换由三态纯函数给；要求换但视图没建出来 ⇒ 退回不换且必须点名（X11 不许静默降级）")
+    void depthAttachmentSwapDecision() {
+        assertEquals(MainPassTakeover.DEPTH_KEEP, MainPassTakeover.depthDecision(false, true),
+                "键关着 ⇒ 逐字今天的形状（只换颜色）——默认档必须零变化");
+        assertEquals(MainPassTakeover.DEPTH_KEEP, MainPassTakeover.depthDecision(false, false),
+                "关着时连视图都不该去取");
+        assertEquals(MainPassTakeover.DEPTH_SWAP_TO_GBUFFER, MainPassTakeover.depthDecision(true, true));
+        assertEquals(MainPassTakeover.DEPTH_SWAP_REFUSED_NO_VIEW, MainPassTakeover.depthDecision(true, false),
+                "要换但池的深度那一刻还不存在 ⇒ 走「拒绝」那一格，不许悄悄当没发生");
+
+        String takeover = readOrSkip(TAKEOVER);
+        assertTrue(takeover.contains("MRT_TAKEOVER_DEPTH_TO_GBUFFER"),
+                "这一挡必须有独立开关（X29），而且要能在同一趟里 A/B（每帧现读）");
+        assertTrue(takeover.contains("noteDepthViewUnavailable();") && takeover.contains("深度退回="),
+                "退路要计数 + 进自报：否则「深度没换」这件事在日志里是隐形的");
+    }
 }
