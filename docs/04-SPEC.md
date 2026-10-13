@@ -687,7 +687,7 @@ FramePass pass = frame.addPass("main");
 > | 地形两条 | `chunk/ChunkSectionsToRender:121, :176` | ✅ | 已过（M-15 + ⑤-b 补槽） |
 > | **全部 RenderType**（实体/粒子/方块层/水/玻璃/文本…） | `rendertype/PreparedRenderType:43` | ✅ | ✅ **本轮已过**（一处顶十几族） |
 > | 特性渲染器（四边形粒子） | `feature/QuadParticleFeatureRenderer:89` | ✅（`executeSolid`） | ✅ **已过**（同日第二族，崩点从 `executeClassicTransparency` 挪进 `executeSolid`） |
-> | 云 | `CloudRenderer:229`（收敛点：私有 `render(RenderPass, RenderPipeline)`，经典与 OIT 都走它） | ✅ | 🟡 **已放开，本趟未走到**（`renderClouds` 是关的 ⇒ 只有「apply 成功 + 不崩」这一半，取管线未取证）；`:215` 那句 `BLIT_DEPTH_DURING_DEPTH_BOUNDS` 在 `renderOit` 内 ⇒ 归 OIT 一族 |
+> | 云 | `CloudRenderer:229`（收敛点：私有 `render(RenderPass, RenderPipeline)`，经典与 OIT 都走它） | ✅ | ✅ **已过**（第二趟把 `renderClouds` 打开 ⇒ `CloudRenderer#render=4174` 次取管线、0 崩 ⇒ 云的管线补槽后过了 `setPipeline`）；`:215` 那句 `BLIT_DEPTH_DURING_DEPTH_BOUNDS` 在 `renderOit` 内 ⇒ 归 OIT 一族 |
 > | 天气 | `WeatherEffectRenderer:165`（同一个收敛点形状：私有 `render(state, RenderPass, RenderPipeline)`） | ✅ | ✅ **已过**（`/weather rain` 之后 `WeatherEffectRenderer#render=9637` 次取管线、0 崩 ⇒ 雨的管线补槽后过了 `setPipeline`） |
 > | 世界边界 | `WorldBorderRenderer:158`（`render`） | ✅ | 🟡 **已放开，本趟未走到**（镜头离边界远 ⇒ `state.alpha == 0`，那句根本不执行）；`:170` 是 `renderOit` 里另一份逐字相似的代码 ⇒ 归 OIT 一族 |
 > | 方块色立方图 | `CubeMap:69` | ❌ **自己开 pass**（`createRenderPass(() -> "Cubemap", …)`） | **不该补**（🔖 本行原来误标成「在主 pass 里」，本轮按 javap + 源码逐字改掉） |
@@ -711,6 +711,14 @@ FramePass pass = frame.addPass("main");
 > 🔖 顺带一条纪律的正面样本：边界的描述符我第一版把 `Vec3` 写成 `org.joml.Vec3`（正确的是
 > `net.minecraft.world.phys.Vec3`），`require = 1` 让它在**启动期**就报 `could not find any targets matching`
 > 而不是静默不生效（`GAP-047` ⑤）。
+>
+> ✅ **同日第二趟补证（2026-10-13）**：把 `run/options.txt` 的 `renderClouds` 从 `"false"` 打开 ⇒
+> `分站点={CloudRenderer#render=4174, WeatherEffectRenderer#render=4174, PreparedRenderType#draw=67774, QuadParticle#drawLayers=4278}`、
+> 0 崩 ⇒ **云那一族也从「已放开未取证」升到「已过」**。🔴 **边界仍是第三等**：要让 `WorldBorderRenderer#render`
+> 执行需要把玩家带到边界力场附近（`/worldborder set` + 传送），而这一趟 mcpfabric 连接器**掉线**
+> （`mcp_list` 里已无 minecraft 服务器 ⇒ 桥在，但游戏没在跑时连接器不出现；见 memory 的 Windows 车道条）
+> ⇒ 边界这一族留到下一趟能驱动游戏时补。⚠️ 取证档跑完全部回退：`ownTerrainPass=false`、
+> `ADVANCED_MATERIALS` 行删除、`renderClouds` 改回 `"false"`（游戏退出时会把它写成 `"true"`，必须手动改回）。
 >
 > ✅ **第二族已落地 + 真机已签（同日再下一轮，2026-10-12）**：`QuadParticleFeatureRenderer#drawLayers`
 > 那处（`mixin/QuadParticleFeatureRendererPipelineMixin`）—— 就是上一段说的「真机指出来的下一处」。

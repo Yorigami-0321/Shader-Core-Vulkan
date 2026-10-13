@@ -6,6 +6,19 @@
 ---
 ---
 
+## 2026-10-13（一百三十四）— ✅ ⑤-c 补证：云那一族升到「已过」；边界仍是第三等（连接器掉线，没驱动到边界附近）
+
+> **verdict = 上一轮台账里两族「已放开未取证」，这一趟补掉一族**：分站点计数把「装了」与「真的在那一刻被补过」分开，正是这个区别让本轮能准确说「云过了、边界没过」。
+
+- **做法**：把 `run/options.txt` 的 `renderClouds` 从 `"false"` 改成 `"fancy"`（`CloudStatus` 是 `OFF/FAST/FANCY`，`javap` 复核过），其余取证档与上一轮相同（`ownTerrainPass=true` + BSL `ADVANCED_MATERIALS` ⇒ `slots=8`）。
+- ✅ **云已过**：`[M-04/⑤-c] 取管线注入点首次命中：CloudRenderer#render`，累计 `分站点={CloudRenderer#render=4174, WeatherEffectRenderer#render=4174, PreparedRenderType#draw=67774, QuadParticle#drawLayers=4278}`、**0 崩** ⇒ 云那条管线补到 8 槽之后确实过了 `FrontendRenderPass#setPipeline`（不过就会像 ⑤-a 那样当场抛）。
+- 🔴 **边界仍是第三等（已放开、未取证）**：`WorldBorderRenderer#render` 在 `state.alpha <= 0` 时整段不执行 ⇒ 要 `/worldborder set` 把边界收进视野 + 传送/转向。这一趟 **mcpfabric 连接器不在会话里**（`mcp_list` 查 minecraft 返回 0 条；桥只在客户端在跑时出现 ⇒ 见 memory 的 Windows 车道条）⇒ 没有驱动手段，**不提前收口**。
+- ⚠️ **一条取证档的收尾细节**：客户端退出时会把 `options.txt` 重写成 `renderClouds:"true"`（不是我们写的 `"fancy"`）⇒「跑完要回退」这一条不止 toml 与包选项，**options.txt 也要回读并改回原值**，否则本地默认档的外观被悄悄换掉。本轮已改回 `"false"`。
+- **代码零改动**（只动 `CHANGE_LOG` 与 `04-SPEC` §5.0.7 的表/末注）；测试沿用上一轮的全绿（1174 条 0 失败）。
+- **下一步（按顺序）**：① 能驱动游戏时补边界那一族（或并进 OIT 那一趟：开改进透明一次覆盖 `CloudRenderer:215` / `WorldBorderRenderer:170` / `LevelRenderer:670-706`）；② ⑤-d 关双绘，前置是 `GAP-049` 那件「池尺寸锚在另一张主目标」的活；③ ⑤-e 深度口径单点化；④ 第 2–5 步仍欠的画面级判据（各向异性两档锐度、进水那一帧雾、岩浆里没有天空、深度只翻一次、星点不回退、原版视频设置页里的包选项页）。
+
+---
+
 ## 2026-10-13（一百三十三）— ✅ R7 ⑤-c 第三~五族：主 pass 内的非 OIT 取管线点全部接上补槽；天气已过，云/边界「已放开未取证」
 
 > **verdict = ⑤-c 这一族按真机指的位置推进到「主 pass 内非 OIT 全部放开」**，同时把三族的证据分成三等写，不把「装了」写成「过了」。
