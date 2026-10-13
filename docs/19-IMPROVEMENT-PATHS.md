@@ -703,6 +703,26 @@ C2a 不碰 GPU ⇒ 它的判据是**单测矩阵断言**，跑真机只会得到
 
 ---
 
+### 7-7 ✅ 已核（2026-10-13）：**第 2~6 步「必须物理消失」的那一栏，逐条 grep 核过账**
+
+> 为什么专门记一格：这五步的判据里有一半是「**某段代码不在了**」，而「不在了」最容易被后来的会话拿注释里的旧名词当成「还在」。
+> 本轮把每一条**逐字 grep 过一遍**，结论：**代码侧全部已删**，剩下的只有画面判据没签 —— 两者不该混在一张账上。
+
+| 步 | 必须消失的东西 | grep 结果 | 证据形状 |
+|---|---|---|---|
+| 2 | `getDeclaredField` / `setAccessible` / `getDeclaredMethod`（`bridge/` 全域） | ✅ **代码里 0 处** | 只剩三处**注释**在讲「反射已否决」：`IVkdispChunkLayerSamplerAccess:19`、`IVkdispCloudMeshProbe:15`、`IVkdispTerrainDrawProbe:21,24`（后一条还记下「那次 `setAccessible` 本来就是多余的」） |
+| 2 | 云那次 `stack.set` + `saved` + `finally` | ✅ **0 处** | `CloudsIntoGbuffer` 里两个符号都搜不到 ⇒ M-10 的 `@Redirect` 是唯一路径 |
+| 3 | `prepareChunkRenders*` 的 RETURN 注入、`TerrainDrawCapture` 的 `volatile Object` + `instanceof` | ✅ **0 处** | 命中的两行是 `TerrainDrawCapture:24,25` 的 javadoc（「字段从 `volatile Object` 变成**类型化**」——它在解释为什么没有了） |
+| 4 | `inMrtPass` 静态布尔 + `finally` 纪律、空转守卫、`MRT_GUARD_FALLBACK` | ✅ **0 处代码** | 四处命中全在注释（`MainPassTakeover:59`、`MrtTerrainPass:118,320`、`VkDispConfig:167`），且 `MrtTerrainPass:320` 那条正是 `GAP-040`「拿标志位证明标志位」的墓碑 |
+| 5 | `GbufferTarget` **整类** | ✅ **类文件不存在** | 五个文件引用这个名字，全是注释/「备选（都否决）」段（`CloudsIntoGbuffer:21`、`SkyIntoGbuffer:24,30`、`SkyRendererViewRedirectMixin:17,19`） |
+| 6 | `ORDER-MARK` 日志与 `mrt.terrainAfterLevel` 车道 | ✅ **日志与键都没了** | `MrtTerrainPass:565` 写着「这里原来是 ORDER-MARK…」；`VkDispConfig` 里**没有** `terrainAfterLevel` 的 `define`（只有 `:240` 一句「随车道退役一起失效」） |
+| 6 | 自研 `PackPickerScreen` + 自研分页 | ✅ **类文件不存在** | 唯一引用是 `VkDispClient:38` 的注释（「旧做法是【临时 · 测试用】…」） |
+
+**⇒ 这一栏之后不必再核**；要重开只能拿**新的 grep 证据**来，不许拿「注释里提到它」来。
+**⚠️ 别读成「第 2~6 步已完成」**：这五步的**画面级判据**（各向异性两档锐度、进水那一帧雾端读数、岩浆里没有天空、天空深度只翻一次、星点不回退、A/B 对 h08 基线、原版视频设置页那一屏）**仍未逐条签掉** —— 已签的只有第 4 步那条 `Mixin apply failed = 0`（2026-10-13，全量 `latest.log` 六种注入失败标记全为 0）。
+
+---
+
 ## 附录 A · 复算命令（本轮数字全部由此而来）
 ```bash
 # A1 静态非 final 字段总数与分布（口径：单行声明；不含 static final）
