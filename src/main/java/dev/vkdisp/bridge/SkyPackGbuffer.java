@@ -235,6 +235,9 @@ public final class SkyPackGbuffer {
             TerrainPipelineApi.bindPackGbufferUniforms(pass, ensureSampler(),
                     MrtTerrainPass.blockAtlas(), depth, color, PackTerrainSource.SKY_PROGRAM);
             pass.setVertexBuffer(0, skyVertexBuffer().slice());
+            // 🔬 GAP-037：这一笔的深度口径来自**顶点常量**（Position.z 写死 1.0），
+            //   与代理那趟全屏 1−z 是两个独立的所有者 —— 两个都记上，读数才会说「翻了两次」。
+            dev.vkdisp.bridge.DepthFlipLedger.note("SkyPackGbuffer 顶点常量 Position.z=1.0");
             pass.draw(3, 1, 0, 0);
         } catch (Throwable t) {
             // 🔴 退回不是「静默换绑」：这一帧画不出来就交给原版重放，但必须点名 + 只点一次。

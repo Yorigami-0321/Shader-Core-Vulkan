@@ -753,6 +753,8 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 
 ---
 
+| ✅ **第一次真机读数（2026-10-13，`DepthFlipLedger`）** | 判据「天空深度只被翻一次」此前**没有仪器**（与 `GAP-038` 那条雾判据同一种空账）⇒ 新建 `bridge/DepthFlipLedger.java`：每个「对天空那批像素做了深度口径换算的所有者」在自己那一刻 `note()`，帧首 `beginFrame()` 结算并每 300 帧自报一行 `[GAP-037/翻]`；判定本体 `verdict(int)` 是<b>纯函数</b>（三态：1 次才打勾，**0 次也报红** —— 天空停在引擎口径时包按 `z==1.0` 认天空的分支会判否，正是夜里无星那一族）。计数**不参与任何渲染决定**（T10，口径同 `GbufferPassOrder`）。<br>**真机**（冷启动、`mrt.depthGlProxy=true` 那一臂，`SkyPackGbuffer` 已接 + `DepthGlProxy.renderFlipPass` 已接）：`本帧天空深度被翻 1 次（判据：恰好 1 次）：DepthGlProxy.renderFlipPass(全屏 1−z)；累计「>1 次」的帧=0`，三行读数跨 20 秒一致。⇒ **这一格现在读数是「1 次」= 通过**，⚠️ **但要说清它为什么是 1**：第二个所有者（`SkyPackGbuffer` 的 `Position.z=1.0` 顶点常量）这一臂**根本没参与** —— 它被本轮为 `GAP-054` 加的那条几何路线守卫拒掉了（`contractProblem()` 先返回 ⇒ `render()` 到不了那笔 draw）。⇒ 本条的「翻两次」**没有复发**，但**也没有被证伪**：等 `GAP-028` ③（逐 draw 供 `renderStage` + 改喂原版天空几何）把包天空那条路重新接上时，这台仪器就是回归闸门 —— 读数必须仍是 1 次，若变成 2 次就是 `GAP-037` 复发。 |
+
 ### GAP-038 · 🔴 **我方 MRT 地形 pass 从不设雾**：`src/main/java/dev/vkdisp/` 全目录 `setShaderFog` **0 命中** ⇒ 地形那次 draw 绑的是残值（2026-10-12 源码级核实）
 
 | 字段 | 内容 |

@@ -258,6 +258,9 @@ public final class DepthGlProxy {
      */
     public static void renderFlipPass(CommandEncoder encoder, String label,
             @Nullable GpuTextureView engineDepth) {
+            // 🔬 GAP-037 判据仪器：这一趟全屏 1−z 每帧恰好一次 ⇒ 顺手做帧首结算，再记上自己这个所有者。
+            dev.vkdisp.bridge.DepthFlipLedger.beginFrame();
+            dev.vkdisp.bridge.DepthFlipLedger.note("DepthGlProxy.renderFlipPass(全屏 1−z)");
         boolean enabled = VkDispConfig.MRT_DEPTH_GL_PROXY.get();
         CompiledRenderPipeline pipeline = flipPipelineOrNull();
         boolean engineReady = engineDepth != null;
