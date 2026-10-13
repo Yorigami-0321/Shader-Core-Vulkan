@@ -6,6 +6,20 @@
 ---
 ---
 
+## 2026-10-13（一百三十五）— ✅ GAP-049 处置完：池尺寸锚点从「靠巧合」变成「每次建池核对 + 三态计数」，⑤-d 的前清掉了
+
+> **verdict = ⑤-d（关掉地形双绘，R7 真正省下的那笔）的**前置**已清**：那条「两张主目标今天恰好同尺寸」的侥幸，现在每次建池都被核对并点名。
+
+- **新增 `bridge/GbufferSizeAnchor.java`**：`MrtTerrainPass#ensureColortex` 在 `POOL.ensure(...)` **之后**核对「池尺寸 vs 主 pass 自己的 target0 尺寸」，三态计数 `同尺寸 / 漂移 / 还没看过`；首次同尺寸打一条「**巧合而不是约束**」，首次漂移 WARN 并写明「⑤-d 不许开工」。判定本体 `mismatch(...)` 是纯 int 函数 ⇒ 真值表能单测（renderpearl 不在测试运行时，`GAP-050` 那一族）。
+- **`MainPassTakeover` 记下那个数**：`Stats.mainWidth/mainHeight` + `mainPassTargetWidth()/Height()`，记在**拒绝接管之前** —— 尺寸不合本身就是 `GAP-049` 要看的信息，不能只在接管成功时看得见。
+- 🔖 **为什么是「核对 + 计数」而不是当场改成以 target0 建池**：池必须早于任何 pass 建出来（管线注册在启动期，`GAP-045` 那条时序铁律），而那一刻主 pass 还没被看过、那个数**不存在**。锚点真正换过去是 ⑤-d 自己的事（那时「主 pass 是唯一画布」才成立），本轮只负责把它变成**看得见的条件**。核对类不碰资源：不许 `resize`、不许重建池（那是把两件事混进一次改动，出错分不开）。
+- ✅ **真机读数**（取证档 `ownTerrainPass=true` + BSL `ADVANCED_MATERIALS` ⇒ `slots=8`）：`[GAP-049] 两张主目标同尺寸（854x480）⇒ 池的锚点今天不出错，但这仍是巧合而不是约束…`，同趟 `主 pass 接管=5021` 帧、0 崩、0 条 mixin apply 失败。
+- **默认档零影响**：`mixin.ownTerrainPass=false` 时 `mainPassTargetWidth()` 恒为 0 ⇒ 走「还没看过」那一态，只计数、不打日志、不改任何尺寸。取证档跑完全部回退（toml / 包选项 / `options.txt` 的 `renderClouds` 都改回原值）。
+- **测试 1178 条 0 失败**（新增 `GbufferSizeAnchorTest` 4 条：三态真值表、核对必须在 `POOL.ensure` 之后、不许顺手 repair、通过也要有读数）。
+- **下一步**：⑤-d 本体 —— `MrtTerrainPass` 不再自开 pass / 不再 `renderGroup(OPAQUE)`，删自绘路径与 `ColortexPool` 双代轮转的一侧、删 `M-01` 的层名查表退化件，并把池的锚点真正换成主 pass 的 target0；之后再走 ⑤-e（深度口径单点化）。⑤-c 仍欠边界那一族的真机取证（要能驱动游戏时补）。
+
+---
+
 ## 2026-10-13（一百三十四）— ✅ ⑤-c 补证：云那一族升到「已过」；边界仍是第三等（连接器掉线，没驱动到边界附近）
 
 > **verdict = 上一轮台账里两族「已放开未取证」，这一趟补掉一族**：分站点计数把「装了」与「真的在那一刻被补过」分开，正是这个区别让本轮能准确说「云过了、边界没过」。

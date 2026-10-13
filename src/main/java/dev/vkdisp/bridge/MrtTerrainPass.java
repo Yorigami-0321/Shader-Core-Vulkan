@@ -741,6 +741,10 @@ public final class MrtTerrainPass {
         pool = Math.max(pool, actualSlots);
         boolean first = POOL.size() == 0;
         POOL.ensure(pool, main.width, main.height, RenderSystem.getDevice());
+        // 🔴 GAP-049：这里的 {@code main} 是 {@code gameRenderer.mainRenderTarget()}，而主 pass 实际画进去的
+        //   是<b>另一张</b>图（真机实测连纹理都不同源）⇒ 每次建池核对一次两者尺寸：
+        //   同尺寸 = 点名一次「这是巧合不是约束」，漂移 = ⑤-d（关双绘）不许开工的红灯。
+        GbufferSizeAnchor.checkPoolSize(main.width, main.height);
         if (colortexDepth == null) {
             colortexDepth = new TextureTarget("vkdisp gbuffer depth", main.width, main.height,
                     null, GpuFormat.D32_FLOAT);

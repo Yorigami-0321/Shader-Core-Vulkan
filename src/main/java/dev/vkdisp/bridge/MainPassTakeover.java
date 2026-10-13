@@ -90,6 +90,13 @@ public final class MainPassTakeover {
         private long viewHits;
         private RenderPass takenOverPass;
         private int takenOverSlots;
+        /**
+         * 主 pass <b>自己那条 target0</b> 的尺寸（{@code GAP-049} 要的那个数：不是
+         * {@code gameRenderer.mainRenderTarget()} 的宽/高，而是描述符里那条附件的）。
+         * 0 = 还没看过（首帧之前一定是 0 —— 管线注册早于任何 pass）。
+         */
+        private int mainWidth;
+        private int mainHeight;
         private boolean reportedViewMismatch;
         private boolean reportedFirstHit;
         private boolean warnedNoMatch;
@@ -130,6 +137,22 @@ public final class MainPassTakeover {
         return STATS.takenOverSlots;
     }
 
+    /**
+     * 主 pass 自己那条颜色附件（target0）的宽（{@code GAP-049} 的数）；0 = 还没看过。
+     *
+     * <p>⚠️ 与 {@code gameRenderer.mainRenderTarget().width} <b>不保证同源</b> —— 真机实测连纹理都不是
+     * 同一张。这里给的是「主 pass 实际画进去的那张图的尺寸」，而池是按后者建的
+     * ⇒ 两者是否巧合相等，由 {@link GbufferSizeAnchor#checkPoolSize} 每次建池时核对。
+     */
+    public static int mainPassTargetWidth() {
+        return STATS.mainWidth;
+    }
+
+    /** 同上，高。 */
+    public static int mainPassTargetHeight() {
+        return STATS.mainHeight;
+    }
+
     private static RenderPassDescriptor attachmentReplaced(RenderPassDescriptor descriptor) {
         STATS.seen++;
         if (STATS.seen % REPORT_PERIOD == 0L) {
@@ -152,6 +175,12 @@ public final class MainPassTakeover {
             return descriptor;
         }
         STATS.labelHits++;
+        // 🔖 先把「主 pass 自己的 target0 尺寸」记下来（GAP-049 要的那个数）—— 记在**拒绝接管之前**：
+        //    尺寸不合也是一种关于两张主目标的信息，不能只在接管成功时才看得见。
+        if (STATS.mainWidth == 0) {
+            STATS.mainWidth = target0.getWidth(0);
+            STATS.mainHeight = target0.getHeight(0);
+        }
         // 判据③「那个附件就是主目标的颜色纹理」—— 真机证明这一腿**永不成立**，故只当交叉核对留着：
         // 视图壳不同源（createTextureView 造的）还能解释，连**纹理本体**都不是同一张
         // （实测 附件纹理=0x2b6af37d vs 主目标纹理=0x326872b3）⇒ 主 pass 画进去的那张图不是

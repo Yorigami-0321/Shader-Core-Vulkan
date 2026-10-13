@@ -923,7 +923,7 @@ TRANSLUCENT 后各一张），且被读的 view 必须与当前附件**不同源
 | **判据** | 🔖 **本行已按 129 轮的定案改过口径**（原判据要求 `视图同源=` 从 0 变成与 `label命中=` 相等 —— 那**永远等不到**，两条主目标已实测连纹理都不是同一张）。现行判据两条：① 接管的**尺寸/格式闸门**只读描述符自带的 `target0`（`slotsUsable` 已是这个写法），不一致 ⇒ 拒绝并计数，不静默错位；② 除 `MrtTerrainPass#ensureColortex` 之外，不再有代码按 `gameRenderer.mainRenderTarget()` 的**对象身份**做渲染正确性判断。`视图同源=` 保留为**交叉核对**（可见、不参与判定）。✅ ① 那条已在 ⑤-b 真机走到（`首条补槽管线：SOLID（1 条声明 → 8 槽）`）。 |
 | **影响面** | `bridge/MainPassTakeover.java`（判据已降级）、`bridge/MrtTerrainPass.java`、`bridge/MrtProbe.java`、`bridge/FrameApi.java`、`bridge/SkyIntoGbuffer.java`。 |
 | **开关 / 回退条件** | 无开关：这是口径问题，不是路径问题。`mixin.ownTerrainPass=false`（默认）时本条不影响画面。 |
-| **状态** | 🟡 **口径已定案并落地**（⑤-b 的闸门就是按这条写法实现的，真机已签）；🔴 **仍留一件未处置**：`MrtTerrainPass#ensureColortex` 的池尺寸 —— 排在 **⑤-d**（关双绘）之前，不是 ⑤-c 的前置。 |
+| **状态** | ✅ **已处置（2026-10-13，⑤-d 前置清掉）**：新增 `bridge/GbufferSizeAnchor.java` —— `MrtTerrainPass#ensureColortex` 每次建池核对「池尺寸 vs 主 pass 自己的 target0 尺寸」，三态计数（同尺寸 / 漂移 / 还没看过），首次同尺寸打一条「**巧合而不是约束**」、首次漂移 WARN 并点名 ⑤-d 不许开工。🔖 为什么是「核对 + 计数」而不是「改成以 target0 建池」：池必须早于任何 pass 建出来（管线注册在启动期，见 `GAP-045` 那条时序铁律），而那一刻 `MainPassTakeover` 还没看过任何描述符 ⇒ 那个数**不存在**；等 ⑤-d 把「主 pass 是唯一画布」定下来之后，锚点才能真正换过去。✅ **真机读数**：`[GAP-049] 两张主目标同尺寸（854x480）⇒ 池的锚点今天不出错，但这仍是巧合而不是约束…`（取证档 `ownTerrainPass=true` + `slots=8`，0 崩）。守卫：`GbufferSizeAnchorTest` 4 条（三态真值表 + 「核对必须在 `POOL.ensure` 之后」+「不许顺手 resize」+「通过也要有读数」）。 |
 
 ### GAP-050 · 🟡 **`test` 的运行时里没有 MC / FML / renderpearl** ⇒ 一个 `static final` 常量就能把整类（连同它的纯逻辑成员）变成「单测调不到」—— 第三次撞到同一形状（2026-10-12，R7 ⑤-b）
 
