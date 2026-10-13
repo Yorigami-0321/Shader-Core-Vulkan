@@ -26,13 +26,16 @@ public final class GbufferPassOrder {
         private static final int OWN = 1;
 
         long seq;
-        int last = -1;
+        long mainCount;
+        long ownCount;
+        long mainSeq;
+        long ownSeq;
         long mainFirst;
         long ownFirst;
         boolean reported;
     }
 
-    /** 自报节拍（对数）：一帧一对 ⇒ 600 对约一秒，与 ⑤-a 那条同量。 */
+    /** 自报节拍（<b>对</b>数）：一帧一对 ⇒ 600 对约一秒，与 ⑤-a 那条同量。 */
     private static final int REPORT_PERIOD = 600;
 
     private static final Stats S = new Stats();
@@ -50,20 +53,38 @@ public final class GbufferPassOrder {
         note(Stats.OWN);
     }
 
+    /**
+     * 记一次：<b>按「对」判先后</b>，不按相邻方向。
+     *
+     * <p>🔴 第一版在这里数的是「相邻两次记数的方向」（{@code 主→我方} 对 {@code 我方→主}），
+     * 真机读回来是<b>逐字各半</b> —— 而那<b>不是</b>「次序不稳定」，是判据自身的缺陷：
+     * 两个点各每帧一次 ⇒ 序列严格交替（主、我方、主、我方…），而交替序列里
+     * <b>两个方向必然各占一半</b>，无论谁先。⇒ 换成「凑齐一对时比这两次记数的先后」，
+     * 谁先才真的落到哪一格。
+     */
     private static void note(int who) {
         S.seq++;
-        if (S.last >= 0 && S.seq % REPORT_PERIOD == 0L && !S.reported) {
-            S.reported = true;
-            VkDisp.LOGGER.info("vkdisp: [GAP-053/序] {}", verdict(S.mainFirst, S.ownFirst));
-        }
         if (who == Stats.MAIN) {
-            if (S.last == Stats.OWN) {
-                S.ownFirst++;
-            }
-        } else if (S.last == Stats.MAIN) {
-            S.mainFirst++;
+            S.mainCount++;
+            S.mainSeq = S.seq;
+        } else {
+            S.ownCount++;
+            S.ownSeq = S.seq;
         }
-        S.last = who;
+        if (S.mainCount != S.ownCount) {
+            // 这一对还没凑齐 ⇒ 不下结论（凑齐的那一刻才比）
+            return;
+        }
+        if (S.mainSeq < S.ownSeq) {
+            S.mainFirst++;
+        } else {
+            S.ownFirst++;
+        }
+        if (!S.reported && S.mainFirst + S.ownFirst >= REPORT_PERIOD) {
+            S.reported = true;
+            VkDisp.LOGGER.info("vkdisp: [GAP-053/序] 成对={} ⇒ {}", S.mainFirst + S.ownFirst,
+                    verdict(S.mainFirst, S.ownFirst));
+        }
     }
 
     /**

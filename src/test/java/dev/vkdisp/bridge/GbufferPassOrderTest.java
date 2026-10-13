@@ -1,5 +1,6 @@
 package dev.vkdisp.bridge;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -48,6 +49,28 @@ class GbufferPassOrderTest {
         int opened = terrain.indexOf("ownPass = renderPass;");
         assertTrue(opened >= 0 && terrain.indexOf("GbufferPassOrder.noteOwnGbufferPass();", opened) > opened,
                 "我方那侧必须记在 pass **打开之后**（与主 pass 记的时刻同语义：createRenderPass 那一刻）");
+    }
+
+    @Test
+    @DisplayName("计数规则本身：严格交替的一对里，必须先出现的那一侧被记成「先」——第一版按相邻方向数，在交替序列上恒为各半（真机读出「未知」）")
+    void alternatingPairsCreditTheStarter() {
+        long main0 = GbufferPassOrder.mainFirstCount();
+        long own0 = GbufferPassOrder.ownFirstCount();
+        for (int pair = 0; pair < 4; pair++) {
+            GbufferPassOrder.noteMainPass();
+            GbufferPassOrder.noteOwnGbufferPass();
+        }
+        assertEquals(main0 + 4L, GbufferPassOrder.mainFirstCount(), "主 pass 每对都先 ⇒ 四对都记它");
+        assertEquals(own0, GbufferPassOrder.ownFirstCount(), "我方先一次都没发生 ⇒ 这一格不许动");
+
+        long main1 = GbufferPassOrder.mainFirstCount();
+        long own1 = GbufferPassOrder.ownFirstCount();
+        for (int pair = 0; pair < 4; pair++) {
+            GbufferPassOrder.noteOwnGbufferPass();
+            GbufferPassOrder.noteMainPass();
+        }
+        assertEquals(main1, GbufferPassOrder.mainFirstCount(), "反过来 ⇒ 主 pass 那一格不许动");
+        assertEquals(own1 + 4L, GbufferPassOrder.ownFirstCount(), "我方每对都先 ⇒ 四对都记它");
     }
 
     @Test
