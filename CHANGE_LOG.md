@@ -4,6 +4,19 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-13（一百四十七）— 🔬 `GAP-054` 探针读数：**没有任何人问过 `gbuffers_skybasic` 的产物**（于是上一轮那条 bisect 结论也要打问号）
+
+> **verdict = 归因再次改向**：上一轮写的「真凶在注册侧」在四个产物出口上**没有证据**；而「关 `mrt.skyPackShader` 平面就消失」那一格现在怀疑是**热重载副作用**。
+
+- **做法**：新建 `PackArtifactProbe`（每个「出口 × 程序」只自报一次，调用链用 `StackWalker` 现取、只在首次那一次付代价），接到 `VkDispVirtualPack` 的四个出口（`packContract` / `packFragmentShaderId` / `packAdapterShaderId` / `packBuiltinsLayout`）上。冷启动真机一趟 ⇒ 日志里**只有 `gbuffers_terrain` 四条**，链分别是 `TerrainPipelineApi#packTerrainForMrt:401`、`buildMrtPipeline:262/263`、`updateGbufferBuiltins:775 ← MrtTerrainPass#drawTerrain:382`。
+- **两条被打掉的说法**：① 「包天空产物被第三方读走」—— 这四个出口上没人问过天空程序；② 「`skyPackShader=false` ⇒ 平面消失」—— 这个键参与**生成指纹**（`VkDispVirtualPack:1031` + `VkDispConfigHotReload:329`），关它必然触发**整包重生成 + 资源重载** ⇒ 那一格可能读到的是重载，不是语义。
+- **一条新事实（对「默认档」这个词要收紧）**：调用链里出现 `MrtTerrainPass#drawTerrain:382` ⇒ 这份手写 `run/config/vkdisp-client.toml` 档里**我方 gbuffer pass 确实在开、在画地形**（`mrt.enabled=false` 只关诊断覆盖层）。⇒ 以后写「默认档」必须同时说清是**代码默认**还是**这份 toml**。
+- **下一刀（已写进登记表）**：先做**冷启动两臂**（`skyPackShader` 一真一假、中间不热重载）各取一帧；若两臂都有平面，则上一轮 bisect 结论作废、`GAP-054` 与包天空无关；若只有 `true` 臂有，再把探针往**生成侧**（`GeneratedSources.fragments/adapters` 与管线注册）挪一格。
+- **测试 1197 条 0 失败**（本轮只加探针，零判据/零行为改动）；客户端已停、25599 无监听、取证键未动（仍是代码默认值的写法）。
+
+
+---
+
 ## 2026-10-13（一百四十六）— 🔴 第一版 `GAP-054` 修法**被真机打脸**：守卫落地了，平面还在（但真凶位置因此换了一处）
 
 > **verdict = 未修**。这一条记的是「一次看起来合理的修复为什么没生效」，以及它把归因往前推了哪一步。

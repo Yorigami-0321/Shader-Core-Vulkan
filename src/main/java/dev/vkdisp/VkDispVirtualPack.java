@@ -337,6 +337,8 @@ public final class VkDispVirtualPack {
      * （不猜：拼错程序名的后果是「接了个不存在的东西」，本项目已为此立过红灯）。
      */
     public static dev.vkdisp.pipeline.model.PackTerrainProgram packContract(String program) {
+        // 🔬 GAP-054 探针：这条程序的产物被谁要走（每个「出口 × 程序」只报一次）。
+        PackArtifactProbe.noteFirstRequest("packContract", program);
         GbufferArtifacts entry = GBUFFER_PROGRAMS.get(program);
         if (entry == null) {
             VkDisp.LOGGER.error("vkdisp: [GAP-027] 请求了不在 gbuffer 程序表里的程序 '{}'（表={}）"
@@ -353,6 +355,8 @@ public final class VkDispVirtualPack {
 
     /** 管线的片元着色器 id（由程序名派生）；名字不在表里返回 {@code null} + ERROR（不猜）。 */
     public static Identifier packFragmentShaderId(String program) {
+        // 🔬 GAP-054 探针：这条程序的产物被谁要走（每个「出口 × 程序」只报一次）。
+        PackArtifactProbe.noteFirstRequest("packFragmentShaderId", program);
         GbufferArtifacts entry = GBUFFER_PROGRAMS.get(program);
         if (entry == null) {
             VkDisp.LOGGER.error("vkdisp: [GAP-027] packFragmentShaderId('{}') 不在程序表里 -> null", program);
@@ -363,6 +367,8 @@ public final class VkDispVirtualPack {
 
     /** 管线的顶点适配层着色器 id（由程序名派生，<b>逐条程序各一份</b>）。 */
     public static Identifier packAdapterShaderId(String program) {
+        // 🔬 GAP-054 探针：这条程序的产物被谁要走（每个「出口 × 程序」只报一次）。
+        PackArtifactProbe.noteFirstRequest("packAdapterShaderId", program);
         GbufferArtifacts entry = GBUFFER_PROGRAMS.get(program);
         if (entry == null) {
             VkDisp.LOGGER.error("vkdisp: [GAP-027] packAdapterShaderId('{}') 不在程序表里 -> null", program);
@@ -378,6 +384,8 @@ public final class VkDispVirtualPack {
      * 收编结果不外传 ⇒ 只能从终稿再解析一次。空布局 = 兜底/未接线 ⇒ 绑零填充缓冲。
      */
     public static BuiltinsBlockLayout packBuiltinsLayout(String program) {
+        // 🔬 GAP-054 探针：这条程序的产物被谁要走（每个「出口 × 程序」只报一次）。
+        PackArtifactProbe.noteFirstRequest("packBuiltinsLayout", program);
         GbufferArtifacts entry = GBUFFER_PROGRAMS.get(program);
         return entry == null ? BuiltinsBlockLayout.empty() : entry.builtinsLayout;
     }
