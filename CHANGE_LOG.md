@@ -4,6 +4,27 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-14（一百五十三）— 🟢 上一轮欠的三件全补上：半开档新文案拿到真机形状、`mrt.packTerrainShader` 那一格**测掉了**（成对关 ⇒ 平面照旧）、「枚举 == 源码」守卫从 SKIPPED 变成构建期真判
+
+> **verdict = `GAP-054` 的已排除清单里 `mrt.packTerrainShader` 这一格现在是测出来的，不是推出来的；`GAP-056` 从「每趟都会污染」降级为「只在文件不 spec-correct 的那一趟会重写」**。顺带被自己的类路径改动抓到 QD-14 的**第三个样本**（Switch 类少一态）。
+
+- ✅ **半开档那行的新文案拿到真机形状**（上一轮只有单测）：臂 `mrt.postChain=false`（单键、冷启动、进世界）⇒
+  `[GAP-036/半开档] 实测 mrt.terrain=true mrt.terrainToMain=false 而链没跑（门控按判定顺序：mrt.postChain=false ⇒ 链不跑）…`
+  —— `PostChainGate.readout()` 在**第一项就不成立处停笔**，六项里只出现被读过的这一项 ⇒ 它不可能再替 `mrt.packTerrainShader` 作证（那正是 `GAP-056` 误签的原点）。同趟 `[route] chain=false toMain=false`、半开档 WARN 1 条、`Close the existing render pass` **0 条**。
+- ✅ **补掉那一格：`mrt.packTerrainShader` 正式排除**（撤回之后欠的那一臂）。臂形改成**成对关**（`mrt.terrain=false` + `mrt.packTerrainShader=false`）—— 单关 `packTerrainShader` 而留 `terrain=true` 就是半开档 = 全黑，黑屏里既没平面也没可判画面（`GAP-055` 那一课）。三趟冷启动 A-B-A（基线 → 成对关 → 基线）、同机位 `tp Dev -44.6 104 -93.6 -30 2`（`get_player` 回读 `yaw=-30 pitch=2`，y 落 98）、每臂现钉 `time set 6000`，**打开看图**：基线两趟右下角那块被拉巨大的树叶/图集贴片逐字同形同位，成对关那一趟**它照样在**（背景从天空蓝变黑 = 链不跑采空，与本判据无关）⇒ 这一对都不是生产者。⚠️ 取景比台账低一点（y=98 非 104）⇒ 左半那堵图集墙没进框，判据只用进了框的那块。
+- ✅ **`[生效档]` 三档读数与文件逐字一致**（仪器第一次参与归因臂）：基线「63 键 / 非默认 4：`mrt.packTerrainShader, mrt.postChainMaxPasses, mrt.terrain, shaderPack`」→ 成对关「非默认 2：`mrt.postChainMaxPasses, shaderPack`」（`terrain`/`packTerrainShader` 关掉后落回代码默认 ⇒ 不再标 `≠`，这正是「默认 vs 手写档」该说清的东西）→ 回基线「非默认 4」。四趟 `is not correct. Correcting` 全 0、六条注入失败针全 0。
+- 🔻 **`GAP-056` 的口径再降一级**：本轮四趟起跑前后 md5 逐字相同（`9962b312…` / `97d34df4…` / `0f2aaa5c…` 各自稳定）⇒ **没有观察到任何回写**。机制还在（FML 载入期 `correct()+writeConfig()`），但触发条件是「文件里有缺键/孤儿键」，今天这份档是 spec-correct 的 ⇒ 不触发。⇒ 台账从「每趟都会污染」改成「**只在文件不 spec-correct 的那一趟会重写**」，纪律（每臂回读 `[生效档]` + 逐键值 diff + grep 那句 WARN）保留，成本一行日志。
+- 🔴 **`GAP-055` 的触发面比台账写的宽**（同批臂顺手拿到的）：`mrt.terrain=false` **且** `packTerrainShader=false`（链不跑、走旧三步链）那一臂 `Close the existing render pass` 实测 **13734 条**；而 `mrt.postChain=false` 那一臂（`terrain=true` ⇒ 我方 gbuffer pass 照建）**0 条**。⇒ 真条件不是「terrain 关而 packTerrainShader 开」这一对半开，而是「**我方 gbuffer pass 不建、而链/旧三步链的采样器解析照跑**」——两条路都会走到 `PackTextures.builtinNoiseView` 那次 pass 内写纹理。已写进 `GAP-055` 的对照行。
+- 🔧 **让「枚举 == 源码 `.define*`」那条守卫真跑（上一轮的降级项）**：`build.gradle` 把主源集类路径并给测试源集（`sourceSets.test.compileClasspath/runtimeClasspath += sourceSets.main.…`；`dependencies{}` 里加 Configuration 自 Gradle 8 起直接报错）。⇒ `VkDispEffectiveConfigTest` 五条全跑、0 跳过。
+- ⚫ **这次接线当场抓到一个假报警（QD-14 第三个样本）**：类能加载了、FML 配置却没加载 ⇒ `ConfigValue#get()` 抛 `IllegalStateException: Cannot get config value before config is loaded`，落进四个 Switch 类共有的 `catch (Throwable)` ⇒ 留下**假的** `reflectionFailure` 位，`ChainEnableGatingTest` 变红。原写法只有两态（类在/不在），缺第三态「**类在而配置没加载**」。修法 = 新增 `pack/SwitchConfigAccess.loaded(…)`（判 `VkDispConfig.SPEC.isLoaded()`，**不绑 FML 那句异常文案**）+ 四个 Switch 各一行回落；`QD-14` 那行补了样本记录。
+- **影响的文档**：`docs/13`（GAP-054 新增重测行 + 状态行改口、GAP-055 触发面更正、GAP-056 状态行降级）、`docs/19` §7-8 第 8 格（那一格标为已跑 + 臂形写死成对关）、`docs/QUALITY-DEBT.md` QD-14。代码：`build.gradle`、`pack/SwitchConfigAccess`（新）、四个 `pack/*Switch`。
+- **测试结果 1212 条 / 0 失败 / 1 跳过**（跳过的那条是既有的 `PackUniformBslTest`，与本轮无关）。
+- **现场**：取证档已逐字复原（`run/config/vkdisp-client.toml` md5 回到 `0f2aaa5c…` = 本轮起跑前那份）；三臂的 armed 档留在 `run/arms-20261014/`（gitignored）；残留客户端 **0**（X33 口径），25599 无 LISTENING。
+- **下一刀**：`GAP-054` 回到包侧 —— ① 保留包但一条派生程序都不注册（切「包的资源 vs 包的程序」，`FullscreenPipelineRegistrar` / `GeneratedSources.adapters` 侧那条生成侧自报**至今没补**）；② `[pack]` 逐键二分。`GAP-055` 的修法（把 `builtinNoiseView` 挪出 pass 体）可以并进来做，因为它现在有了「两条路都触发」这个更准的口径。
+- **是否已提交**：✅ 本轮结束即提交并推送（2026-10-11 用户口径）。
+
+---
+
 ## 2026-10-14（一百五十二）— 🟢 `GAP-054` 二分与 `GAP-056` 定位的公共前置落地：启动期 `[生效档]` 全量自报（真机 63 键）+ 半开档 WARN 只打真测值；🔴 撤回 `mrt.packTerrainShader`「已排除」那一格；🪡 六条注入失败标记补定义、换掉假绿针
 
 > **verdict = 仪器有了，读数还没有**：`mrt.packTerrainShader` 回到候选位（欠一臂冷启动），`GAP-056` 的「回写」从「有据的事实」降成「有机制、无当日证据」。代码侧只动两件事（一个新自报 + 一个门控单点），**默认档零变化**。
@@ -17,7 +38,7 @@
 - 🧹 **P7/P8/P9 三条零成本账**：`CHANGE_LOG` 归档说明不再指向已退库的 `evidence/h*.md`（`2af28fd` 退库、`git ls-files evidence/` = 0），改成「库内三处真源 + 判据图只剩 `build/*.png`、数字大多不可复算」；`VkDispVirtualPack:217` 的「`mrt.skyPackShader` 默认关」改成 **默认开**（`VkDispConfig:855` 是 `true`；顺带 `VkDispConfig:829` 那句 javadoc 与同块「为什么默认开」自相矛盾，一并改）—— 顺手把全仓配置注释的默认值口径扫了一遍，**只剩 `cloudsNoCull` 一处是我脚本的假阳性**；`07` §1.4.1 第 ① 行补进 10-13 落地的三条注入点签名（`CloudRenderer#render(RenderPass,RenderPipeline)V`、`WeatherEffectRenderer#render(WeatherRenderState,RenderPass,RenderPipeline)V`、`WorldBorderRenderer#render(WorldBorderRenderState,RenderPass,net.minecraft.world.phys.Vec3,double)V`，键同 `mixin.passAwarePipeline`）与两个新键 `mrt.terrainSingleDraw`/`mrt.takeoverDepthToGbuffer` 的消费点，并写明「全集以 `vkdisp.mixins.json`（18 个 client 类）为准，手写表不许当全集」。
 - **影响的文档**：`docs/13`（GAP-054 八臂行 + 臂 3 行 + GAP-056 五行）、`docs/19`（§7-7、§7-8 第 8 格、取证纪律 ③④）、`docs/07`（§1.4.1 ①③ + 新 §1.4.1bis + 勾选行）、`docs/08`（三处针）、`docs/01`（两处 grep）、本文件（顶部两条撤回注记 + 归档说明）。代码：`VkDispEffectiveConfig`、`bridge/PostChainGate`（新），`FrameApi`、`FullscreenPassHook`、`VkDispConfigHotReload`、`VkDispConfig`/`VkDispVirtualPack`（注释）。
 - **测试结果 1212 条 / 0 失败 / 2 跳过**：新增 `VkDispEffectiveConfigTest`（枚举前提 = 每个 `define*` 都挂在 `public static` 字段上；格式化真值表；挂在两个配置事件上；**台账里的针与代码标签逐字相同**）、`PostChainGateTest`（`describe` 真值表「只报读过的项」、`active()` 与 `readout()` 同序、自报名必须是真键、`FrameApi` 不许再自己抄六项、半开档文案不许点没读的键）、`MixinFailureNeedleTest`（六条标记有定义 = 六行；合成针覆盖九个子串且不含旧假绿针）。⚠️ 诚实降级：「运行时枚举 == 源码声明」那条在测试 JVM 里**跳过**（`NoClassDefFoundError: ModConfigSpec`，测试类路径没有游戏构件），它今天是在**真机**上对上的：源码 63 个 `define*` 调用 vs `[生效档]` 报的 **63 键**。
-- **真机（14:13:41 一趟 `runClient`，到主菜单即停）**：`[生效档] 档=启动首载 63 键 / 非默认 4：mrt.packTerrainShader, mrt.postChainMaxPasses, mrt.terrain, shaderPack`（逐段四行都在，`mixin`/`mrt`/`pack`/(根) 分组）；`is not correct. Correcting` **0 命中**；六条注入失败针 **0 命中**；起跑前后 `run/config/vkdisp-client.toml` md5 逐字相同（`0f2aaa5c…`），**停客户端后再读仍相同** ⇒ 这一趟没人改档。残留客户端 **0**（X33 口径：按 `-Dfml.modFolders=vkdisp` 匹配后计数）。⚠️ 两条未覆盖：① 半开档那行的**新文案本轮没真机**（要一臂 `mrt.postChain=false` 冷启动才走到，只有单测钉着）；② 本轮没进世界 ⇒ `[route]` 与 `PostChainGate.readout()` 的真机形状未取。取证档未动（起跑前已 `cp` 到 `/tmp/vkdisp-preflight/`，跑完核对 md5 一致，无残留改动）。
+- **真机（14:13:41 一趟 `runClient`，到主菜单即停）**：`[生效档] 档=启动首载 63 键 / 非默认 4：mrt.packTerrainShader, mrt.postChainMaxPasses, mrt.terrain, shaderPack`（逐段四行都在，`mixin`/`mrt`/`pack`/(根) 分组）；`is not correct. Correcting` **0 命中**；六条注入失败针 **0 命中**；起跑前后 `run/config/vkdisp-client.toml` md5 逐字相同（`0f2aaa5c…`），**停客户端后再读仍相同** ⇒ 这一趟没人改档。残留客户端 **0**（X33 口径：按 `-Dfml.modFolders=vkdisp` 匹配后计数）。⚠️ 两条未覆盖：① 半开档那行的**新文案本轮没真机**（要一臂 `mrt.postChain=false` 冷启动才走到，只有单测钉着）；② 本轮没进世界 ⇒ `[route]` 与 `PostChainGate.readout()` 的真机形状未取。**✅ 同日下一轮（一百五十三）两条都补上了**（臂 `mrt.postChain=false` 真机形状 + 成对关那一臂）。取证档未动（起跑前已 `cp` 到 `/tmp/vkdisp-preflight/`，跑完核对 md5 一致，无残留改动）。
 - **下一刀（顺序写死）**：① 单键 `mrt.packTerrainShader=false` 冷启动补那一格（起跑后先读 `[生效档]` + grep `is not correct`，停档后逐键值 diff）；② 顺路把半开档那行的新文案在一臂 `postChain=false` 里读出真机形状；③ 然后进包侧那一刀（保留包、一条派生程序都不注册）。
 - **是否已提交**：✅ 本轮结束即提交并推送（2026-10-11 用户口径：每轮开发结束都提交推送，不再等点头）。
 

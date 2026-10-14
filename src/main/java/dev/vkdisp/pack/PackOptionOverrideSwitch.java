@@ -76,6 +76,9 @@ public final class PackOptionOverrideSwitch {
             Class<?> config = Class.forName("dev.vkdisp.VkDispConfig");
             Object value = config.getField(FIELD_NAME).get(null);
             if (value instanceof net.neoforged.neoforge.common.ModConfigSpec.ConfigValue<?> configValue) {
+                if (!SwitchConfigAccess.loaded(config)) {
+                    return DEFAULT_SPEC; // 第三态：类在、配置没加载（单测 / 非游戏 JVM）⇒ 不是开关坏掉
+                }
                 Object read = configValue.get();
                 if (read instanceof String text) {
                     return text;

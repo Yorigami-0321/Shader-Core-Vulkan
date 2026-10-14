@@ -78,6 +78,9 @@ public final class PackChainGatingSwitch {
             Class<?> config = Class.forName("dev.vkdisp.VkDispConfig");
             Object value = config.getField(FIELD_NAME).get(null);
             if (value instanceof net.neoforged.neoforge.common.ModConfigSpec.ConfigValue<?> configValue) {
+                if (!SwitchConfigAccess.loaded(config)) {
+                    return DEFAULT_ENABLED; // 第三态：类在、配置没加载（单测 / 非游戏 JVM）⇒ 不是开关坏掉
+                }
                 return Boolean.TRUE.equals(configValue.get());
             }
             // 字段存在但类型不是布尔配置项 = 配置被改坏了 ⇒ 报错 + 按默认（开），不猜。

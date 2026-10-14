@@ -68,6 +68,9 @@ public final class PackPostVertexSwitch {
             Class<?> config = Class.forName("dev.vkdisp.VkDispConfig");
             Object value = config.getField(FIELD_NAME).get(null);
             if (value instanceof net.neoforged.neoforge.common.ModConfigSpec.ConfigValue<?> configValue) {
+                if (!SwitchConfigAccess.loaded(config)) {
+                    return DEFAULT_ENABLED; // 第三态：类在、配置没加载（单测 / 非游戏 JVM）⇒ 不是开关坏掉
+                }
                 return Boolean.TRUE.equals(configValue.get());
             }
             noteReflectionFailure("字段 " + FIELD_NAME + " 的类型不是布尔配置项（实际 "

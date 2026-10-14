@@ -330,6 +330,16 @@ dependencies {
     testImplementation files('libs/jcpp-1.4.14.jar', 'libs/slf4j-api-1.7.12.jar', 'libs/java-semver-0.8.0.jar')
 }
 
+// 🔴 2026-10-14：把主源集的类路径并给测试源集 —— 让测试 JVM 能加载 NeoForge / MC 构件。
+//    动机：`VkDispEffectiveConfigTest` 里「运行时枚举 == 源码 .define* 声明」那条守卫要真的去调
+//    `ModConfigSpec.ConfigValue.getPath()`，此前它一直 SKIPPED（NoClassDefFoundError: ModConfigSpec）
+//    ⇒ 「生效档自报漏了一个键」这一族没有构建期守卫，而那正是 `GAP-056` 误签一格「已排除」的解药。
+//    写法：走 source set 的类路径**并集**，不是 `dependencies{}` —— 那里加一个 Configuration 自 Gradle 8
+//    起直接报错（"Adding a Configuration as a dependency is no longer allowed"）。
+//    ⇒ 不新增任何仓库依赖，接的就是 `runClient` 用的同一份构件（离线可解）。
+sourceSets.test.compileClasspath += sourceSets.main.compileClasspath
+sourceSets.test.runtimeClasspath += sourceSets.main.runtimeClasspath
+
 // F4：启用 JUnit Platform；测试失败 = build 失败（并行线证据规范 §7.3 要求单测全绿）
 tasks.named('test', Test).configure {
     useJUnitPlatform()
