@@ -25,7 +25,8 @@
     `docs/13` GAP-054 下一刀的「约 2 分钟一臂」、GAP-046 的「不许报 R7 成本」→ 规模口径；
     `CHANGE_LOG` 顶部两条里的工时数字；`review/` 四份归档报告的成本列与 `**成本**：N 分钟` 行（归属注记 `docs/ 归 env-1`、`需与 D 线归属方协调` 保留）。
 - **保留什么**（用户明确划的边界）：`08` / `17` / `02` / `04` 里的**性能验收预算**（B3 ≤ 1 秒、B4 ≤ 2 秒、B6 1h 内存增量 ≤ 200MB、加载 ≤ 3 秒）、**实测时长**（冷路径 1861ms、`约 5 分钟 runClient = 64 959 条栈`、启动约 1 分钟）、以及**机制性时序事实**（日时钟每真实分钟走 ~0.1 天、`RegisterRenderPipelinesEvent` 早于包源约 4.5 秒）。这些不是「给阶段安排的时间」。
-- **为什么改**：写进文档的工时会在地会话里被当成承诺引用，而它从来没有依据 —— 排期是用户的职权。同时本轮顺手消掉两处自相矛盾（`04-SPEC` ⑥ 与 GAP-046 那句「不许报成本」互斥，且都随 10-13 的锁解除而失效）。
+  - 🔁 **第二遍复扫补四处**（第一遍的中文正则用了 `天\b`，中文之间不构成词边界 ⇒ 全放过）：`docs/13` GAP-034 那两行里引号内的「1 天可闭环」「1 天接线」（它们引用的正是本条删掉的那句 QD-11② 旧措辞，删完就成了悬空引用）、`CHANGE_LOG` 九十四里「登记成『1 小时可闭环』」改成「未经取证的『一步可闭环』」、`19` §7-8 表头那句「与成本」→「与臂数」（列名本条已改，别留不一致）。⇒ **复扫口径今后要写成 `\d+\s*天(?![气生数平象道窗])`**，不能用 `\b`。
+- **为什么改**：写进文档的工时会在后续会话里被当成承诺引用，而它从来没有依据 —— 排期是用户的职权。同时本轮顺手消掉两处自相矛盾（`04-SPEC` ⑥ 与 GAP-046 那句「不许报成本」互斥，且都随 10-13 的锁解除而失效）。
 - **影响的文档**：`docs/00-INDEX.md`、`docs/07-CONSTRAINTS.md`、`docs/15-ITERATION.md`、`docs/19-IMPROVEMENT-PATHS.md`、`docs/QUALITY-DEBT.md`、`docs/04-SPEC.md`、`docs/06-MIGRATION.md`、`docs/13-GAP-REGISTRY.md`、`CHANGE_LOG.md`、`review/`（4 份）。零代码改动。
 - **测试结果**：读文档的守卫全跑（`VulkanEvidenceDisciplineTest` / `CatchThrowableVisibilityTest` / `BridgeNullableContractTest` / `ComparisonSamplerGapTest` / `GapRegistryStatusFieldTest` / `GlslPipelineTest` / `OptionBindingTest` / `ClassLineRatchetTest`）——见本条末尾的回执。
 - **是否已提交**：✅ 本轮结束即提交并推送（2026-10-11 用户口径）。
@@ -1596,7 +1597,7 @@
      §0 新增 QD-09~14 ↔ `19` 各小节映射表。
 - **为什么这么改**：①「100% 自研」这条**伪约束**正在实际挡住最省力的正确解（Apache-2.0 的现成 token 级预处理器），
   且让反射开关等 workaround 有了不该有的借口；②QD-11② 的错判会把一个「几周量级的 pass 装配」
-  登记成「1 小时可闭环」，属本项目反复消灭的那类**会把下一轮引错的记录**。
+  登记成一个未经取证的「一步可闭环」，属本项目反复消灭的那类**会把下一轮引错的记录**。
 - **影响的文档**：`docs/19-IMPROVEMENT-PATHS.md`（新建）、`docs/00-INDEX.md`、`docs/16-READING.md`、
   `docs/07-CONSTRAINTS.md`、`docs/03-DIRECTION.md`、`docs/13-GAP-REGISTRY.md`、`docs/QUALITY-DEBT.md`、本文件。
 - **测试结果**：✅ 跑了 `./gradlew.bat test --offline` ⇒ **BUILD SUCCESSFUL**，`build/test-results/test` 共 **115 个套件 / 1109 条 / 0 失败 / 0 错误**。
