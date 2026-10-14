@@ -38,6 +38,7 @@ import dev.vkdisp.VkDispConfig;
 import dev.vkdisp.bridge.FrameApi;
 import dev.vkdisp.bridge.MrtTerrainPass;
 import dev.vkdisp.bridge.PipelineApi;
+import dev.vkdisp.bridge.PostChainGate;
 import dev.vkdisp.bridge.ShadowStubs;
 import dev.vkdisp.bridge.TargetReadback;
 import dev.vkdisp.bridge.TerrainDrawCapture;
@@ -217,11 +218,18 @@ public final class FullscreenPassHook {
                 //   ⇒ 这是本仓探针自己定义的 **NOT_ON_MAIN** 形状，且**零异常**（不是崩，是没人写）。
                 //   旧注释「地形被画两遍、主目标不受影响、屏幕画面不变」已被这组读数否证，
                 //   VkDispConfig 那条注释同步改掉了。本档**保留可用**（A/B 取证要它），但不许静默。
+                // 🔖 文案口径（2026-10-14，GAP-056 的教训）：旧文案写死「mrt.terrain=true 而
+                //   mrt.packTerrainShader=false」，可这一行**从来没读过** packTerrainShader —— 链不跑有六个
+                //   可能的因（见 PostChainGate），把其中一个当结论 ⇒ 一整臂的档被误判、一格「已排除」被误签。
+                //   现在只打本行真测过的量，「为什么没跑」交给门控自己按判定顺序自报。
                 if (MrtTerrainPass.enabled() && !chainActive && !MrtTerrainPass.toMain()) {
-                    VkDisp.LOGGER.warn("vkdisp: [GAP-036/半开档] mrt.terrain=true 而 mrt.packTerrainShader=false"
-                            + " ⇒ 地形只写进 colortex，链不跑就没有东西把它带回主目标，**本档画面预期为全黑**"
-                            + "（实测 main allZero + c0 有内容 = NOT_ON_MAIN）。"
-                            + "要看画面必须两条一起开；这一档只用来单独测「地形进不进多附件 pass」");
+                    VkDisp.LOGGER.warn("vkdisp: [GAP-036/半开档] 实测 mrt.terrain={} mrt.terrainToMain={} 而链没跑"
+                                    + "（门控按判定顺序：{}）"
+                                    + " ⇒ 地形只写进 colortex，没有东西把它带回主目标，**本档画面预期为全黑**"
+                                    + "（实测 main allZero + c0 有内容 = NOT_ON_MAIN）。"
+                                    + "要看画面必须 terrain 与链一起开；这一档只用来单独测「地形进不进多附件 pass」。"
+                                    + "单个键的生效值读 [生效档] 那一块 —— 本行只为上面这几个量作证",
+                            MrtTerrainPass.enabled(), MrtTerrainPass.toMain(), PostChainGate.readout());
                 }
             }
             // 🔴 h48 修正（这条 gate 曾经把两个**独立**的轴捆在一起）：条件里带 afterLevel()

@@ -1130,14 +1130,14 @@ public final class FrameApi {
                 && MrtTerrainPass.depthView() != null;
     }
 
-    /** 链是否应接管本帧（配置 + 地形包片元在场 + 非 toMain 诊断档）。 */
+    /**
+     * 链是否应接管本帧（配置 + 地形包片元在场 + 非 toMain 诊断档）。
+     *
+     * <p>🔖 判定式在 {@link PostChainGate#active()} —— 那六个合取项**只在那里写一遍**，
+     * 所以「为什么链没跑」的自报（{@link PostChainGate#readout()}）不可能与它漂移。
+     */
     public static boolean isPostChainActive() {
-        return dev.vkdisp.VkDispConfig.MRT_POST_CHAIN.get()
-                && dev.vkdisp.VkDispConfig.MRT_TERRAIN_ENABLED.get()
-                && dev.vkdisp.VkDispConfig.MRT_PACK_TERRAIN_SHADER.get()
-                && !MrtTerrainPass.toMain()
-                && dev.vkdisp.VkDispVirtualPack.terrainProgram() != null
-                && !dev.vkdisp.VkDispVirtualPack.postChain().passes().isEmpty();
+        return PostChainGate.active();
     }
 
     /**

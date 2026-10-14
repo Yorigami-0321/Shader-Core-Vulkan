@@ -4,15 +4,34 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-14（一百五十二）— 🟢 `GAP-054` 二分与 `GAP-056` 定位的公共前置落地：启动期 `[生效档]` 全量自报（真机 63 键）+ 半开档 WARN 只打真测值；🔴 撤回 `mrt.packTerrainShader`「已排除」那一格；🪡 六条注入失败标记补定义、换掉假绿针
+
+> **verdict = 仪器有了，读数还没有**：`mrt.packTerrainShader` 回到候选位（欠一臂冷启动），`GAP-056` 的「回写」从「有据的事实」降成「有机制、无当日证据」。代码侧只动两件事（一个新自报 + 一个门控单点），**默认档零变化**。
+
+- 🔴 **撤回 `mrt.packTerrainShader` 的「已排除」（`GAP-054` 八臂清单里那一格）**：原判据 = 臂 3 起跑即报 `[GAP-036/半开档] mrt.terrain=true 而 mrt.packTerrainShader=false`。但 `FullscreenPassHook:220` 那行的触发条件是 `MrtTerrainPass.enabled() && !chainActive && !MrtTerrainPass.toMain()` —— **它一个字段都不读 `packTerrainShader`**，句里那串键名是 `:221-225` 写死的字符串；而 `chainActive` 是 `FrameApi.isPostChainActive():1134-1141` 的**六个合取项**（`postChain` / `terrain` / `packTerrainShader` / `!toMain` / `terrainProgram!=null` / 链非空）⇒ 这行对「文件里那个键的值」零信息。反向读数更硬：臂 3 那一趟（`run/logs/2026-10-13-7.log.gz` 20:59:21）打了 `[GAP-003] MRT terrain pipelines will use pack fragment: program=world0/gbuffers_terrain`，这一支**只有该键为 `true` 才走**（`TerrainPipelineApi:306-319`）；真读该键的负分支 `pack terrain fragment disabled by config` 在 10-13 全天 35 份归档里 **0 命中** ⇒ **臂 3 本来就是干净的单键 `postChain=false` 臂**，而 `packTerrainShader` **至今一臂都没测过**。⇒ 改立「单键 `mrt.packTerrainShader=false` 冷启动重测」，已写进 `19` §7-8 第 8 格的第 ④ 刀。
+- 🆕 **启动期全量生效档自报（P2，新类 `VkDispEffectiveConfig`）**：挂在 `ModConfigEvent.Loading`（冷启动每臂一次）与 `Reloading`，把**每个键的实际生效值 + 是否等于代码默认**打出来 —— `[生效档] 档=<原因> N 键 / 非默认 M：…` 一行摘要 + 每段一行，非默认标 `≠`。枚举走 `VkDispConfig` 的 `public static ConfigValue` 字段 ⇒ **加键自动进表**，不是手写清单（手写清单会漂：`VkDispVirtualPack:217` 那条「默认关」已经白骗过一轮）。备选都否了：`SPEC.getValues()`  javap 核实是 **Builder 的默认值树**（生效值在 `loadedConfig` 里），`Class.forName` 那族是 QD-14。
+- 🔧 **半开档 WARN 只打它真测过的量（P3）+ 判定单点 `PostChainGate`**：那行现在打 `实测 mrt.terrain / mrt.terrainToMain` + `门控按判定顺序：<readout>`，并明写「本行只为这几个量作证，单键值读 `[生效档]`」。链门控的六个合取项从 `FrameApi` 搬进 `bridge/PostChainGate`（`active()` 逐字保持短路顺序、零分配；`readout()` 用同一条 `&&` 链，**第一项不成立就停笔** ⇒ 不会再说自己没读过的键），`FrameApi.isPostChainActive()` 只留一行委托。
+- 🔴 **`GAP-056` 的状态改了两次，最终版**：原判据撤回 ⇒ 但「文件会被改」这件事**有真机制**：FML 12.0.8 `ConfigTracker.loadConfig` 发现文件不是 spec-correct 时 `backUpConfig` + `spec.correct()` + **`writeConfig()`** —— 缺失键按**代码默认**补齐、孤儿键删除，整份重写（`mrt.packTerrainShader` 的代码默认正是 `false`）。本机 `run/config/vkdisp-client-{1..5}.toml.bak` 链上有正面样本：两档**值逐字相同而 md5 不同**（⇒ `md5` 不能当「改了哪个键」的证据）、`packOptionsScreen` 整行消失、`terrainSingleDraw` `true`→`false` 且行位移动；当日该 WARN 命中 **2/35** 趟（13:40、16:04）。原候选①（守卫内存强制）与②（热重载写值）**排除** —— 全仓 `MRT_PACK_TERRAIN_SHADER` 零处 `.set()`、`VkDispConfigHotReload` 唯一的 `.set(` 是个 `AtomicLong`；新登记候选③ `VanillaPackOptionsPage:159-160`（`SHADER_PACK.save()` 按内存值重写整份 toml；`src/main` 唯一一处 `.save()`），但 10-13 全天 `[M-14] shaderPack 已改成` **0 命中** ⇒ 当天不是它。
+- ⚫ **本轮我自己写错并改掉的一条**：上一版台账我写「FML 退出时不写文件 ⇒ 原候选① 两条腿都没了」。后半句对（`ConfigTracker.unloadConfig` 只做 `FileWatcher.removeWatch`），**据此把「回写」整体否掉是错的** —— 写文件的腿在**载入期**那条 `correct()` 路径上（就是上面那条）。已在 `docs/13` GAP-056「待分」行留了自我更正记录。另：本仓 `AGENT_CONTEXT.md` §10.32② 与 CHANGE_LOG 一百四十一 ② 早就记过这个形状（「SIGTERM 后配置被重写回旧值」「新键要等 FML 写进 toml」），是**没人把它接成候选**。
+- 🪡 **六条注入失败标记写出定义（P5，`07` 新增 §1.4.1bis）**：此前 `19` §7-7 与 CHANGE_LOG 引用的「六种标记」在仓里没有定义，而判据针 `Mixin apply failed` **sponge-mixin 从来没打过这句话**（真实措辞 `Mixin apply for mod <id> failed …`，格式串取自本机在用的 `sponge-mixin-0.17.4+mixin.0.8.7.jar` 常量池）⇒ 10-13 那次启动期 FATAL 按旧针读是「0 命中」。六条各给发言类 + 后果 + **本仓真样本**（`2026-10-13-24.log.gz` 的 `InvalidAccessorException`；`2026-10-12-19/20/3/6` 的 `Critical injection failure: @WrapOperation … could not find any targets matching`），并合成一条 ERE 换进 `07` ③、`08-TESTING` 三处、`01-DEV-LOOP` 两处。🔖 换针先验绿：新针在崩的那趟 = 1 命中、干净趟 = 0；旧针在 10-13 全天 **36 份里 0 命中**。重读结论：35 趟 0 命中 / 1 趟命中那次已修 FATAL ⇒ 「注入失败标记 = 0」现在才是有定义的读数。
+- 🧹 **P7/P8/P9 三条零成本账**：`CHANGE_LOG` 归档说明不再指向已退库的 `evidence/h*.md`（`2af28fd` 退库、`git ls-files evidence/` = 0），改成「库内三处真源 + 判据图只剩 `build/*.png`、数字大多不可复算」；`VkDispVirtualPack:217` 的「`mrt.skyPackShader` 默认关」改成 **默认开**（`VkDispConfig:855` 是 `true`；顺带 `VkDispConfig:829` 那句 javadoc 与同块「为什么默认开」自相矛盾，一并改）—— 顺手把全仓配置注释的默认值口径扫了一遍，**只剩 `cloudsNoCull` 一处是我脚本的假阳性**；`07` §1.4.1 第 ① 行补进 10-13 落地的三条注入点签名（`CloudRenderer#render(RenderPass,RenderPipeline)V`、`WeatherEffectRenderer#render(WeatherRenderState,RenderPass,RenderPipeline)V`、`WorldBorderRenderer#render(WorldBorderRenderState,RenderPass,net.minecraft.world.phys.Vec3,double)V`，键同 `mixin.passAwarePipeline`）与两个新键 `mrt.terrainSingleDraw`/`mrt.takeoverDepthToGbuffer` 的消费点，并写明「全集以 `vkdisp.mixins.json`（18 个 client 类）为准，手写表不许当全集」。
+- **影响的文档**：`docs/13`（GAP-054 八臂行 + 臂 3 行 + GAP-056 五行）、`docs/19`（§7-7、§7-8 第 8 格、取证纪律 ③④）、`docs/07`（§1.4.1 ①③ + 新 §1.4.1bis + 勾选行）、`docs/08`（三处针）、`docs/01`（两处 grep）、本文件（顶部两条撤回注记 + 归档说明）。代码：`VkDispEffectiveConfig`、`bridge/PostChainGate`（新），`FrameApi`、`FullscreenPassHook`、`VkDispConfigHotReload`、`VkDispConfig`/`VkDispVirtualPack`（注释）。
+- **测试结果 1212 条 / 0 失败 / 2 跳过**：新增 `VkDispEffectiveConfigTest`（枚举前提 = 每个 `define*` 都挂在 `public static` 字段上；格式化真值表；挂在两个配置事件上；**台账里的针与代码标签逐字相同**）、`PostChainGateTest`（`describe` 真值表「只报读过的项」、`active()` 与 `readout()` 同序、自报名必须是真键、`FrameApi` 不许再自己抄六项、半开档文案不许点没读的键）、`MixinFailureNeedleTest`（六条标记有定义 = 六行；合成针覆盖九个子串且不含旧假绿针）。⚠️ 诚实降级：「运行时枚举 == 源码声明」那条在测试 JVM 里**跳过**（`NoClassDefFoundError: ModConfigSpec`，测试类路径没有游戏构件），它今天是在**真机**上对上的：源码 63 个 `define*` 调用 vs `[生效档]` 报的 **63 键**。
+- **真机（14:13:41 一趟 `runClient`，到主菜单即停）**：`[生效档] 档=启动首载 63 键 / 非默认 4：mrt.packTerrainShader, mrt.postChainMaxPasses, mrt.terrain, shaderPack`（逐段四行都在，`mixin`/`mrt`/`pack`/(根) 分组）；`is not correct. Correcting` **0 命中**；六条注入失败针 **0 命中**；起跑前后 `run/config/vkdisp-client.toml` md5 逐字相同（`0f2aaa5c…`），**停客户端后再读仍相同** ⇒ 这一趟没人改档。残留客户端 **0**（X33 口径：按 `-Dfml.modFolders=vkdisp` 匹配后计数）。⚠️ 两条未覆盖：① 半开档那行的**新文案本轮没真机**（要一臂 `mrt.postChain=false` 冷启动才走到，只有单测钉着）；② 本轮没进世界 ⇒ `[route]` 与 `PostChainGate.readout()` 的真机形状未取。取证档未动（起跑前已 `cp` 到 `/tmp/vkdisp-preflight/`，跑完核对 md5 一致，无残留改动）。
+- **下一刀（顺序写死）**：① 单键 `mrt.packTerrainShader=false` 冷启动补那一格（起跑后先读 `[生效档]` + grep `is not correct`，停档后逐键值 diff）；② 顺路把半开档那行的新文案在一臂 `postChain=false` 里读出真机形状；③ 然后进包侧那一刀（保留包、一条派生程序都不注册）。
+- **是否已提交**：✅ 本轮结束即提交并推送（2026-10-11 用户口径：每轮开发结束都提交推送，不再等点头）。
+
+---
+
 ## 2026-10-13（一百五十一）— 🟢 `GAP-054` 冷启动三臂：地形与链**都排除**，只剩天空那一族；另立 `GAP-055`（半开档每帧抛异常）与 `GAP-056`（换臂被回写污染）
 
 > **verdict = 生产者候选从三条砍到一条**；本轮零代码改动，全是取证 + 两条新登记的账。
 
 - **臂 1（基线复现）**：`mrt.terrain=true` 全基线档、机位 `tp Dev -44.6 104 -93.6` + `yaw=-30 pitch=2`、每帧前 `time set 6000` ⇒ 平面在（左半图集墙 + 中景平坦浅绿面 + 右下角巨型树叶 sprite）。⚠️ 读数口径本轮**降级为目视 A-B-A**：`vision.screenshot {path}` 那条直连 `/rpc` 通道被本机权限层判为越权拦下 ⇒ 拿不到 PNG 文件，`硬边列=[361,362,363] / 左块 mean=79.2` 这类**数值**签名今天取不了。⇒ 凡是要数值的格（`GAP-053`、星点、`h08` A-B）**先要解决取图通道**，这条已写进 `19` §7-8 第 8 格。
 - **臂 2（单键 `mrt.terrain=false`，`mixin.wireTerrain` 保持 `true`）⇒ 地形那一笔排除**：整帧除 HUD 外近乎全黑，**平面照旧**。⇒ `GAP-030` 那一族「我方 gbuffer 地形被错矩阵画成巨型四边形」在冷启动单键这一档也被否掉（上一轮热重载那一格现在有干净版本）。
-- **臂 3（`mrt.postChain=false`，但被回写污染成两键）⇒ 链也排除**：画面全黑（半开档预期），**平面仍在右下角、逐字同形**。⇒ 三条候选砍到只剩**天空那一族**；下一臂 = 单键 `mrt.skyPass=false`（镜头钉地平线，别学上一轮朝天）。
+- **臂 3（`mrt.postChain=false`，但被回写污染成两键 ⇒ 2026-10-14 更正：**这一臂其实是干净的单键臂**，见 `GAP-056` 撤回行）⇒ 链也排除**：画面全黑（半开档预期），**平面仍在右下角、逐字同形**。⇒ 三条候选砍到只剩**天空那一族**；下一臂 = 单键 `mrt.skyPass=false`（镜头钉地平线，别学上一轮朝天）。
 - 🔴 **`GAP-055`（新账）**：`mrt.terrain=false` 那一臂**每帧抛** `IllegalStateException: Close the existing render pass before performing additional commands` —— 站点 `PackTextures.builtinNoiseView:189 ← PackTextures.view:151 ← FrameApi.lambda$chainResolver$0:1370 ← PackSamplerViews.resolve:90`，即**链解析采样器那一刻去写内置 `noisetex`，而那时有一个 render pass 开着**。计数 = `noisetex FAILED` 逐分钟 **4692 + 2613 = 7305 条，全部落在这一臂**（基线那一趟同文件零命中）。⇒ 「只关 `mrt.terrain` 而留 `packTerrainShader`」= **全黑 + 每帧异常**，与已知的另一侧半开档成对；这一对键不是可独立关的，而今天没有装配期检测拦半开。
-- 🔴 **`GAP-056`（新账，取证方法级）**：臂 2 跑完后 `mrt.packTerrainShader` **在文件里自己变成了 `false`**（臂 3 起跑即报 `[GAP-036/半开档] mrt.terrain=true 而 mrt.packTerrainShader=false`，而我一个字都没动它）⇒ **单键臂会跨趟变成两键臂，且日志不说「我改了配置」**。新纪律：**每臂起跑后先回读 `[route]` 与半开档那两行自报**，实际档 ≠ 写下的档 ⇒ 那一臂当场作废。
+- 🔴 **`GAP-056`（新账，取证方法级）**：臂 2 跑完后 `mrt.packTerrainShader` **在文件里自己变成了 `false`**（臂 3 起跑即报 `[GAP-036/半开档] mrt.terrain=true 而 mrt.packTerrainShader=false`，而我一个字都没动它）⇒ **单键臂会跨趟变成两键臂，且日志不说「我改了配置」**。新纪律：**每臂起跑后先回读 `[route]` 与半开档那两行自报**，实际档 ≠ 写下的档 ⇒ 那一臂当场作废。🔴 **2026-10-14 撤回这一条的证据**：那行 WARN 不读 `packTerrainShader`（`FullscreenPassHook:220` 的判据是 `terrain ∧ !chainActive ∧ !toMain`，句里键名是写死的字符串），而臂 3 那一趟真读该键的日志打的是「will use pack fragment」⇒ 那一档它是 `true`；回写这件事现在**未证成**，纪律保留但仪器换成启动期全量生效档自报 + 逐键值 diff。逐字见 `docs/13` GAP-056 表首行。
 - 🟡 **`GAP-039` 粉雪那一格 = 前置缺失，不是失败**：头与脚都在粉雪里（`fill` 125 格、`get_block` 两处回读 `powder_snow`）跨约 30 秒，`[GAP-038/雾]` 三行**恒 `fogType=NONE`**、画面无白化 ⇒ 原版那道 `fogType != POWDER_SNOW` 门控**根本没进入** ⇒ 这一格既没签成也没否证。仪器没坏（同一台在进水那一格翻成 `WATER`）。下一刀先读原版 `FogRenderer` 的粉雪分支（取点是脚还是眼）。世界已复原（同坐标 fill 回 air 125 格），同趟 `Mixin apply.*failed` = 0。
 - **臂 4（总开关 `enabled=false`，冷启动）⇒ 平面消失、画面是干净原版 ⇒ 「摘账」那一支关闭**：先核实这个键**真有消费点**（`FullscreenPassHook:129`、`SceneCaptureApi:82`、`VkDispPackScan:83`、`VkDispVirtualPack:852/1003`），起跑后三行兜底自报逐字确认（`built-in passthrough fallback` / `pack scan skipped` / `fullscreen pass skipped`）。同机位取图：天空与地形都正常、右下角树叶回到正常尺寸，那堵图集墙与平坦浅绿面**全部不存在**，且 `Close the existing render pass` **0 条**（反证 `GAP-055` 由半开档引入）。⇒ `GAP-054` 的账**留在本项目**，范围 = 我方内部、**只剩天空那一族**。💡 另一条省事结论：**原版对照不必拆 `run/mods/`**，`enabled=false` 就是干净兜底臂。另：这一臂跑完后配置文件 md5 逐字回到 `cf3db1ad…` ⇒ `GAP-056` 的回写**只在半开档那一趟发生**，不是每趟都写。
 - **臂 5（单键 `mrt.skyPass=false`，冷启动）⇒ 天空 pass 排除**：起跑先回读 `[route] = chain=true`（链在跑、画面可判、无半开档 WARN），取图 **天空整片变黑**（键确实每帧生效）而**三块巨型贴图面照旧**。
@@ -158,7 +177,7 @@
 
 - **为什么先做这一格**：`GAP-053` 的耦合行写清楚了 —— 接管只换颜色附件 ⇒ 主 pass 画的地形深度进的是**原版主深度**，而我方链的 `depthtex0/1/2` 取 `colortexDepth` 的快照 ⇒ **就算 ⑤-d 的代次问题解决了，深度仍然是空的**。所以深度所有权是 ⑤-e 的第一块砖，且可以**独立于代次归属**先落。
 - **形状**：新键 `mrt.takeoverDepthToGbuffer`（默认**关** ⇒ 默认档逐字不变），三态纯函数 `MainPassTakeover.depthDecision(请求换?, 视图存在?)` ⇒ `KEEP / SWAP_TO_GBUFFER / REFUSED_NO_VIEW`；换的时候**清屏语义沿用原描述符**（原版这里是 LOAD：主深度早在 clear pass 清过，而我方 pass 本帧已把 `colortexDepth` 清到 `0.0` 并画过地形）。要求换但池还没建出深度视图 ⇒ **退回不换 + 点名一次 + 计数**（X11 不许静默降级）。⑤-a 那行自报多两格 `深度换= 深度退回=`。
-- ✅ **真机 A-B（同机位、每帧现读 ⇒ 同一趟切臂）**：关 `full=96.68 sky=123.20 terrain=83.41`；开 `full=82.92 sky=93.14 terrain=77.81`；逐像素差 `mean=14.65`、`>10` 占 37.49%、`>40` 占 11.41%，差异集中在 **y 中位=94（天空带）**，视觉上开的那臂**太阳光晕消失、天空整体变暗**。`深度换=1098` 持续上涨、0 崩、`Mixin apply failed=0`（顺带把第 4 步那条「Mixin apply failed = 0」判据在全量 `latest.log` 上签掉：六种注入失败标记**全为 0**）。
+- ✅ **真机 A-B（同机位、每帧现读 ⇒ 同一趟切臂）**：关 `full=96.68 sky=123.20 terrain=83.41`；开 `full=82.92 sky=93.14 terrain=77.81`；逐像素差 `mean=14.65`、`>10` 占 37.49%、`>40` 占 11.41%，差异集中在 **y 中位=94（天空带）**，视觉上开的那臂**太阳光晕消失、天空整体变暗**。`深度换=1098` 持续上涨、0 崩、`Mixin apply failed=0`（顺带把第 4 步那条「Mixin apply failed = 0」判据在全量 `latest.log` 上签掉：六种注入失败标记**全为 0**）。🔴 **2026-10-14 更正**：那条针匹配不到任何真实措辞（sponge-mixin 打的是 `Mixin apply for mod <id> failed …`），且「六种标记」当时在仓里没有定义 ⇒ 该「0 命中」是假绿；定义见 `07-CONSTRAINTS.md` §1.4.1bis，合成针重读 10-13 全天 36 份日志 = 35 趟 0 命中 / 1 趟命中那次已修的 FATAL。
 - ⚫ **撞见 `GAP-054`**：两臂画面左上方都有**同一块**从左上斜切到画面中部的纯黑楔形 ⇒ **与本步无关**（开关两臂逐字相同）。三条候选一条没排，切开只要一步：默认档同机位看它在不在。**本轮只登记、不归因** —— 这是本轮最容易读错的一点，已写进该条的警告行。
 - ⚠️ **本轮另两条操作事实**：① 新键要**等 FML 把它写进 toml** 再改（`takeoverDepthToGbuffer` 确实被写进了 `[mrt]` 组，改那一行即同趟生效）；② 组合命令（改配置 + 截图 + 比对一次做完）被权限层拦下一次 ⇒ 拆成「只读探测 → 改一行 → 再测」三步走，反而更符合单变量纪律。
 - **默认档零变化**：新键默认关 + 只在 `ownTerrainPass=true` 的接管路径里才会被读；取证档已回退（`ownTerrainPass=false`、`takeoverDepthToGbuffer=false`、包选项行删除）。
@@ -2322,15 +2341,19 @@ chainFrame=284 开跑前 c0=1 c1=1 c2=0 c4=0 | 链尾 c0=0 c1=0 c2=0 c4=0
 | 阶段摘要 | 七十七 ~ 八十三 | 2026-10-09 |
 
 **第 七十六 轮及更早（2026-09-29 ~ 2026-10-08）**：不在本文件内。去两处取——
-`git show f126d1a:CHANGE_LOG.md`（压缩前的最后一份完整 97 条），以及 `evidence/h*.md`
-逐轮取证报告（原始读数、截图、双臂数字都在那里）。
+`git show f126d1a:CHANGE_LOG.md`（压缩前的最后一份完整 97 条）。⚠️ **`evidence/h*.md` 那一处已经取不到**：
+`evidence/` 于 2026-10-10 退库（提交 `2af28fd`；`.gitignore:136` `/evidence/`，`git ls-files evidence/` = 0 条），
+逐轮取证报告**只在当初那台机器的盘上**，第三方 clone 里没有这些文件（口径同 `docs/19` §5.1 / §7 那条「不要再写 `evidence/` 路径」）。
+⇒ 库内可复核的真源只剩三处：`docs/13-GAP-REGISTRY.md`（缺口状态与裁决）、本文件顶部条目、
+以及**跟着代码走的单测**（判据脚本与判据数字一律落 `src/test`，不再落 `evidence/`）。
 
 **为什么压缩**：97 条的日常取证日志对**当前开发主线**（着色器在 Vulkan 下的完整适配）
 是噪音 —— 每一轮的「当前状态」已由三处唯一真源承接：`docs/13-GAP-REGISTRY.md`（缺口状态与裁决）、
-本文件顶部条目（本轮做了什么 / 下一步）、`evidence/`（原始读数）。
+本文件顶部条目（本轮做了什么 / 下一步）、~~`evidence/`（原始读数）~~（2026-10-10 已退库 ⇒ 这一处换成**跟代码走的单测**与 `run/logs/` 原件）。
 
 **窗口规则**（2026-10-10 用户裁决：**阶段摘要 + 保留最近 10 条全文**）：最近约 10 轮留全文，
 更老的按 4~7 轮压成一张阶段摘要表。登记新一轮会让全文临时超出 10 条（本次同一天并了两轮 ⇒ 现在 12 条），下一次压缩把最旧那条并进摘要层。
 
 ⚠️ **摘要表的用途边界**：只承担「这一串轮次在追什么、结论翻了几次」的线索。
-**数字、判据、双臂对照一律回 `evidence/` 取**（`07-CONSTRAINTS` X37 禁止拿旧实测数字当现状）。
+**数字、判据、双臂对照回这三处取**：`docs/13-GAP-REGISTRY.md`（判据与裁决）、`src/test`（钉住数字与真值表的单测）、`run/logs/`（原始日志，gitignored、只在本机）——
+~~回 `evidence/` 取~~ 那条自 2026-10-10 退库后就是断链（见上一节）。⚠️ 顺带一条 2026-10-14 核查到的后果：**判据图现在只在 `build/*.png`**（同样 gitignored，`clean` 就没）⇒ 台账里的数字大多**不可复算**，要复核得按口径重跑一臂（`07-CONSTRAINTS` X37 禁止拿旧实测数字当现状）。

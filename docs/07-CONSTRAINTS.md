@@ -105,12 +105,42 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 
 | 步骤 | 动作 | 判据 |
 |---|---|---|
-| ① | 拉取新版 sources jar，`grep` 每个 mixin 目标方法签名是否仍存在 | `ChunkSectionLayer#pipeline(boolean)`、`ChunkSectionsToRender#renderLayers(7 参)`、`LevelRenderer#prepareChunkRenders*`。🔴 **2026-10-12 起这张表不再是全集**：`04-SPEC.md` §5.0 已增登记候选注入点 M-06…M-14，**哪一个开工了就必须当天把它的签名补进本行**（白名单废除后，本表是升版唯一的回归入口） |
+| ① | 拉取新版 sources jar，`grep` 每个 mixin 目标方法签名是否仍存在 | 🔴 **全集的两个真源**：类名清单 = `src/main/resources/vkdisp.mixins.json`（当前 **18** 个 client 类），目标签名 = `bridge/MixinTargets` 的常量。下面这张手写表**两次落后于代码**（2026-10-12 增登记 M-06…M-14 那次、2026-10-13 ⑤-c 那次），所以它只列「升版最容易变」的几条，其余一律按 `MixinTargets` 逐条 grep，**不许拿本表当全集**：`ChunkSectionLayer#pipeline(boolean)`、`ChunkSectionsToRender#renderLayers(7 参)`、`LevelRenderer#prepareChunkRenders*`。<br>✅ **2026-10-14 补 `f6c6d0f`（10-13 ⑤-c 第三~五族）漏登记的三处**（可关闭键同 M-15 = `mixin.passAwarePipeline`；默认档 `mixin.ownTerrainPass=false` ⇒ 三处逐字原样返回）：`CloudRenderer#render(RenderPass,RenderPipeline)V`（私有收敛点，经典 + OIT 两批云都走它）、`WeatherEffectRenderer#render(WeatherRenderState,RenderPass,RenderPipeline)V`、`WorldBorderRenderer#render(WorldBorderRenderState,RenderPass,`**`net.minecraft.world.phys.Vec3`**`,double)V`。⚠️ 最后那条第三个形参是原版自己的 `Vec3`（**不是** `org.joml.Vec3` —— joml 没有这个类）；写错时 `require = 1` 让它启动期 `could not find any targets matching 'render(…)'` 硬失败，见 `GAP-047` ⑤ 那条正面样本。<br>🔑 同轮新增、此前只在 `04`/`13`/CHANGE_LOG 的两个键也进本行（升版扫描时「键还在、消费点没了」同样算回归）：`mrt.terrainSingleDraw`（⑤-d，消费点 `bridge/TerrainSingleDraw:58`）与 `mrt.takeoverDepthToGbuffer`（⑤-e，消费点 `bridge/MainPassTakeover:353`），两者默认 `false`。 |
 | ② | 若签名变了：先改 `bridge/MixinTargets` 常量 + mixin 类 `@At`/`@Inject` 注解，**再**跑 `runClient` | 不许「先跑看崩不崩」 |
-| ③ | `runClient` 启动到主菜单，日志 grep `Mixin apply failed` | 0 命中 |
+| ③ | `runClient` 启动到主菜单，按 §1.4.1bis 的**六条标记**合成针 grep 日志 | 0 命中。⚠️ 旧口径写的 `Mixin apply failed` 是条**假绿针** —— sponge-mixin 从没打过这句话（逐字见 §1.4.1bis），2026-10-13 全天 36 份日志里它 **0 命中**，连那趟启动期 FATAL 都没被它读到 |
 | ④ | 进世界，确认每个注入点的 `vkdisp: [注入点名] hit` 日志至少出现 1 次 | T10 落地 |
 
 本清单与 `06-MIGRATION.md` R1–R9 回归同源，可并入升版流程。
+
+### 1.4.1bis 🔴 「注入失败」的六条标记（2026-10-14 定义）
+
+> **为什么现在才写**：`19` §7-7 与 CHANGE_LOG 一直在引用「六种注入失败标记全为 0」这句话，
+> 而**这六条在仓里从来没有定义过**；同时判据针写的是 `Mixin apply failed` —— sponge-mixin **没有**这句话，
+> 真实措辞是 `Mixin apply for mod vkdisp failed …`。⇒ 2026-10-13 那次启动期 FATAL 按旧针读出来是「0 命中」。
+> 格式串逐条取自本机在用的构件 `sponge-mixin-0.17.4+mixin.0.8.7.jar`（解包后从 class 常量池里读出来的，不是回忆）。
+
+| # | 针（ERE 片段） | 谁打的（jar 内格式串） | 后果 | 本仓真样本 |
+|---|---|---|---|---|
+| 1 | `Mixin apply for mod <id> failed` | `MixinProcessor$ErrorPhase`：`Mixin %s for mod %s failed %s: %s %s`（phase = `apply`） | 该 mixin 类没进目标类；`required = true` ⇒ **启动崩** | `run/logs/2026-10-13-24.log.gz` 17:58:37 FATAL：`vkdisp.mixins.json:LevelRendererMainPassCaptureMixin … InvalidAccessorException @Accessor method vkdisp$levelRenderState is not abstract`（`1c4fe08` 已修：那个方法现在是 `abstract`） |
+| 2 | `from phase \[.*\] in config \[.*\] FAILED` | 同类另一条：`Mixin [%s] from phase [%s] in config [%s] FAILED during %s` | 上面那条的详情行，同一事件 | 本仓未观测（与 #1 同源，出现即同判） |
+| 3 | `Critical injection failure:` | `InjectionInfo`（`failed injection check, %d succeeded of %d allowed`）、`TargetSelectors`（`could not find any targets matching %s in %s`）、`CallbackInjector`、`MixinTargetContext`（`Callback group %s in %s failed injection check`） | 注入点目标找不到 ⇒ 那一点不生效，通常升级为 #1 | `run/logs/2026-10-12-19/20/3/6.log.gz`：`@WrapOperation annotation on vkdisp$padForTakenOverMainPass could not find any targets matching 'render(…)'` —— 就是 `GAP-047` ⑤ 那条「描述符里 `Vec3` 写成 `org.joml` 」的正面样本 |
+| 4 | `Failed to load mixin .* will not be applied` | `MixinInfo` | 该 mixin 类**整条不生效**，但**不崩** | 本仓未观测 |
+| 5 | `requires mixin subsystem version` / `which are not available. The mixin config will not be applied` / `does not specify a package` / `unable to detect the current side` | `MixinConfig` 四条 | **整个 config 没应用** ⇒ 所有注入点都没生效而零异常 —— 六条里最危险的一条（画面看着就是全原版） | 本仓未观测 |
+| 6 | `Error initialising mixin ` / `Error encountered whilst initialising mixin config` / `MixinInitialisationError` / `MixinApplyError` / `MixinPrepareError` / `An unexpected critical error was encountered` | `MixinConfig` / `MixinProcessor` / `throwables.*` | 配置或初始化期就失败，通常直接崩 | 本仓未观测 |
+
+**现行针**（六条并成一条；`01-DEV-LOOP.md` 与 `08-TESTING.md` 都用这一条）：
+
+```bash
+grep -nE 'Mixin apply for mod |from phase \[|Critical injection failure|Failed to load mixin |will not be applied|MixinInitialisationError|An unexpected critical error was encountered|MixinApplyError|MixinPrepareError|requires mixin subsystem version|Error initialising mixin ' run/logs/latest.log
+```
+
+🔖 **换针必须先验绿**（本仓「文本针假绿」那条纪律：针消失 ⇒ `indexOf = -1` ⇒ 顺序断言白过）：
+上面这条在 `run/logs/2026-10-13-24.log.gz`（崩的那趟）= **1 命中**，在 `2026-10-13-9.log.gz`（干净趟）= **0 命中**；
+旧针 `Mixin apply failed` 在 10-13 全天 **36 份日志（35 归档 + `latest.log`）里 0 命中**（含那趟 FATAL）⇒ 它匹配不到任何东西，
+这就是它假绿一整轮的原因。
+✅ **重读结果（2026-10-14，同一批日志、换成六条针）**：36 份里**只有** `2026-10-13-24.log.gz` 命中 1 次，
+且那次就是已修的 FATAL 本身 ⇒ 其余 35 趟（含臂 7「`[mixin]` 整块 11 键全关」与臂 8）在**新针下**仍为 0 命中，
+那句「注入失败标记 = 0」现在才是有定义的读数。
 
 ### 1.4.2 `PipelineModifier`：官方旁路通道（2026-10-04 核实，优先于 mixin 考虑）
 
@@ -509,7 +539,7 @@ mod_group_id             = dev.vkdisp
 [ ] 🔴 所有参考项目都查过仓库的 `LICENSE` 文件（不是只看平台页面）（L12 §1.3）
 [ ] 🔴 没有把「无 LICENSE」当可用、没有把「GPL + 例外条款」当成本项目可用（X20 / X21）
 [ ] 🔴 每个 mixin 注入点已登记（类名/方法/签名/用途/可关闭键）在 §1.4 + `04-SPEC.md` §5.0，且能一键关闭（M1 / X28）
-[ ] 🔴 本轮新增的注入点签名已补进 §1.4.1 升版回归清单第 ① 行（白名单已废 ⇒ 该表是唯一入口）
+[ ] 🔴 本轮新增的注入点签名已补进 §1.4.1 升版回归清单第 ① 行（白名单已废 ⇒ 该表是唯一入口）。核对办法 = 比 `vkdisp.mixins.json` 的 client 类条数与清单点名的条数，差值必须能用「手写表只列容易变的」解释清楚 —— 2026-10-13 那轮就是三条落地、清单没动（10-14 才补）
 [ ] 🔴 新注入点是**逐个**开启的，不是一次性全开（X29）
 [ ] mixin 类只转发不写业务、目标类名全部引用 `MixinTargets` 常量（M1 编码约束 / X25）
 [ ] 性能相关改动附实测数据，且对照的是 `17-NATIVE.md` §2.2 的 B1–B7（T14）

@@ -11,7 +11,7 @@
 | 阶段 | 验收项 | 通过标准 | 证据 |
 |---|---|---|---|
 | **P0** 骨架 | 构建 | `gradlew build` 退出码 0，jar 含 `.class` | 命令输出 |
-| **P0** 骨架 | 可启动 | 启动到主菜单，无 `Mixin apply failed` | 游戏日志 |
+| **P0** 骨架 | 可启动 | 启动到主菜单，无 `Mixin apply failed`。🔴 **2026-10-14 更正：这一行的针是假的** —— sponge-mixin 没有这句话，要按 `07-CONSTRAINTS.md` §1.4.1bis 的**六条标记合成针**读（旧针在 10-13 全天 36 份日志里 0 命中，连那趟启动期 FATAL 都没读到） | 游戏日志 |
 | **P0** 骨架 | 后端判定 | 日志显示当前为 Vulkan 后端 | 日志 |
 | **P0** 骨架 | **首个可见产物** | 屏幕上出现自定义全屏 pass 画出的图案 | 截图 |
 | **P1** 管线 | 参数可见变化 | 改 uniform 数值，画面实时变化 | 录屏/连续截图 |
@@ -50,7 +50,8 @@ unzip -l "$JAR"
 - `gradlew build` 退出码 0
 - jar 内 `.class` 数量 > 0
 - jar 内**不含** `net/caffeinemc/`、`net/minecraft/`、`dev/vitrail/`、`com/mojang/`
-- `./gradlew runClient` 能进主菜单，日志无 `Mixin apply failed`
+- `./gradlew runClient` 能进主菜单，日志无「注入失败标记」= `07-CONSTRAINTS.md` §1.4.1bis 六条合成针 **0 命中**
+  （⚠️ 此前这行写的是 grep `Mixin apply failed`，那句话 sponge-mixin 从来不打 ⇒ 假绿针）
 
 **关键断言（不得靠肉眼猜）**
 
@@ -314,7 +315,7 @@ LOGGER.info("vkdisp: stage timing: scan={}ms parse={}ms preprocess={}ms translat
 [ ] gradlew build 退出码 0，jar 含 class
 [ ] jar 不含 net/caffeinemc、net/minecraft、dev/vitrail、com/mojang
 [ ] mixins.json 的 compatibilityLevel 是 JAVA_25，且 [[mixins]] 已取消注释
-[ ] 启动到主菜单，无 Mixin apply failed
+[ ] 启动到主菜单，无注入失败标记（针 = 07 §1.4.1bis 六条合成，不是 `Mixin apply failed`）
 [ ] 进入世界
 [ ] 无 pack：世界正常渲染
 [ ] 无 pack：帧时间相对原版 ≤ +2%（B1）

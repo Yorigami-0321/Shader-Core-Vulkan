@@ -214,7 +214,9 @@ public final class VkDispVirtualPack {
         table.put(dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM, new GbufferArtifacts(
                 dev.vkdisp.pack.PackTerrainSource.WATER_PROGRAM,
                 () -> VkDispConfig.MRT_PACK_WATER_SHADER.get()));
-        // GAP-027 天空线第二刀（默认关，闸门 = mrt.skyPackShader）。🔴 它的**顶点**不走 chunk
+        // GAP-027 天空线第二刀（**默认开** —— `VkDispConfig:855` 是 `.define("mrt.skyPackShader", true)`；
+        //   此处原文写「默认关」，2026-10-11 记为过期注释、2026-10-14 才改掉，它已经白骗过一轮 GAP-054 归因。
+        //   闸门 = mrt.skyPackShader）。🔴 它的**顶点**不走 chunk
         //   适配层而走 post 恒等 MVP（判定与理由见 PackTerrainSource.postVertexProgram），
         //   且它**不进** MrtPlan 的冻结集 —— 那条 pass 只有 1 个颜色目标，并进去会悄悄把地形
         //   pass 的附件数抬到 2，而附件数与派生管线不匹配是 setPipeline 抛 = 崩客户端。

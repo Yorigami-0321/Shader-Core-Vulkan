@@ -826,7 +826,7 @@ public final class VkDispConfig {
             .define("mrt.skyPass", true);
 
     /**
-     * GAP-027 天空线第二刀：gbuffer 里的天空改用<b>包的 {@code gbuffers_skybasic}</b>（默认<b>关</b>）。
+     * GAP-027 天空线第二刀：gbuffer 里的天空改用<b>包的 {@code gbuffers_skybasic}</b>（默认<b>开</b>，理由见下面「为什么默认开」）。
      *
      * <p>买到的是包算的天空（{@code GetSkyColor} 渐变 + {@code DrawStars} + {@code SunGlare} +
      * {@code nightVision}/{@code CLASSIC_EXPOSURE}），替掉的是上一条那一笔<b>原版平面底色</b>。

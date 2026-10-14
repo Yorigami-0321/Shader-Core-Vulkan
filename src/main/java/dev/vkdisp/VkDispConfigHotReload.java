@@ -164,6 +164,9 @@ public final class VkDispConfigHotReload {
             return;
         }
         last = snapshot();
+        // 🔖 GAP-056 的仪器：起跑后「实际生效档」必须能从日志里读出来，而且必须是**全部**键。
+        //   挂在 Loading 上 = 冷启动每臂一次（本仓归因纪律一律冷启动）。
+        VkDispEffectiveConfig.report("启动首载");
     }
 
     /**
@@ -180,6 +183,8 @@ public final class VkDispConfigHotReload {
             Snapshot current = snapshot();
             Snapshot previous = last;
             last = current; // 快照先前移：本事件的两个分支共用这一次读数
+            // 热重载换臂同样要打全量自报 —— 取证侧「这一臂实际生效的是什么档」只认这一块（GAP-056）。
+            VkDispEffectiveConfig.report("热重载");
             if (previous == null) {
                 // 没见过 Loading（理论不可达；防御）：按核心变化处理一次，不执行屏幕动作
                 // （启动边上自动开屏是惊吓，宁可少做）。

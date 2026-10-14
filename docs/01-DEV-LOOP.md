@@ -272,7 +272,10 @@ run/logs/debug.log           ← debug 级
 
 ```bash
 grep -n "vkdisp:" run/logs/latest.log | head -50
-grep -nE "ERROR|Exception|Mixin apply failed|validation error" run/logs/latest.log | head -50
+grep -nE "ERROR|Exception|validation error" run/logs/latest.log | head -50
+# 🔴 注入失败要按 07-CONSTRAINTS §1.4.1bis 的「六条标记」读。旧针 `Mixin apply failed` 是假绿：
+#    sponge-mixin 打的其实是 `Mixin apply for mod <id> failed …`，旧针在本仓 10-13 全天 36 份日志里 0 命中。
+grep -nE 'Mixin apply for mod |from phase \[|Critical injection failure|Failed to load mixin |will not be applied|MixinInitialisationError|An unexpected critical error was encountered|MixinApplyError|MixinPrepareError|requires mixin subsystem version|Error initialising mixin ' run/logs/latest.log
 ```
 
 ---
@@ -312,7 +315,9 @@ grep -nE "ERROR|Exception|Mixin apply failed|validation error" run/logs/latest.l
 
 ```
 第 1 步  先看日志原文
-         grep -nE "ERROR|Exception|Caused by|Mixin apply failed|validation" run/logs/latest.log
+         grep -nE "ERROR|Exception|Caused by|validation" run/logs/latest.log
+         grep -nE 'Mixin apply for mod |Critical injection failure|will not be applied|MixinApplyError' run/logs/latest.log
+         （注入失败的针按 07 §1.4.1bis 六条走；别再用 Mixin apply failed —— 那句话没人打过）
          → 有异常就顺着 Caused by 读到底，不要只看第一行
 
 第 2 步  看你自己的埋点在不在
