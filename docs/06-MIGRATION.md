@@ -164,8 +164,8 @@ JAVAP="/c/Program Files/Java/jdk-25.0.4.1/bin/javap.exe"
 | 版本 | 日期 | 改动文件 | 遇到的坑 | 耗时 |
 |---|---|---|---|---|
 | 26.3 | 2026-09-29 | —（基线） | 基线建立；工程已换成官方 MDK（NeoForge 26.3.0.23-beta） | — |
-| 26.3 | 2026-10-02 | `gradle.properties` + 7 份文档镜像 | **同 MC 线跟进**：NeoForge 23→41（beta），MC 仍为 26.3，故 §4 迁移流程的「符号缺失」步骤为空 —— 编译零错。`mods.toml` 的 `versionRange` 随模板 `${neo_version}` 自动抬到 `[26.3.0.41-beta,)`，**装包侧也需 ≥ .41** | 20min（首次为新版重反编译 + 重编译 7301 个 MC 源文件；缓存命中后 7s） |
-| 26.3 | 2026-10-03 | `gradle.properties` + `neoforge.mods.toml` + `build.gradle` + 2 份文档 | **上一行那个坑的修法**：模板里 `versionRange` 引用 `${neo_version}` 会把 beta 序号一起锁死。拆出 `neo_version_range=[26.3.0,)` 专管运行时声明，`neo_version` 只管编译期。**坑点**：`build.gradle` 的 `replaceProperties` 必须同步加键 —— 模板引用了未注入的属性，`expand` 会直接失败。这是 Gradle 模板方案的固有陷阱 | 15min（`generateModMetadata` 45s + 编译测试 19s） |
+| 26.3 | 2026-10-02 | `gradle.properties` + 7 份文档镜像 | **同 MC 线跟进**：NeoForge 23→41（beta），MC 仍为 26.3，故 §4 迁移流程的「符号缺失」步骤为空 —— 编译零错。`mods.toml` 的 `versionRange` 随模板 `${neo_version}` 自动抬到 `[26.3.0.41-beta,)`，**装包侧也需 ≥ .41** | 首次为新版重反编译 + 重编译 7301 个 MC 源文件（缓存命中则不必） |
+| 26.3 | 2026-10-03 | `gradle.properties` + `neoforge.mods.toml` + `build.gradle` + 2 份文档 | **上一行那个坑的修法**：模板里 `versionRange` 引用 `${neo_version}` 会把 beta 序号一起锁死。拆出 `neo_version_range=[26.3.0,)` 专管运行时声明，`neo_version` 只管编译期。**坑点**：`build.gradle` 的 `replaceProperties` 必须同步加键 —— 模板引用了未注入的属性，`expand` 会直接失败。这是 Gradle 模板方案的固有陷阱 | 实测 `generateModMetadata` 45s + 编译测试 19s |
 | 26.3 | 2026-10-06 | `gradle.properties`（`neo_version` 41→51）+ `build.gradle`（MDG 2.0.147→2.0.148）+ `04`/`05`/`13` | **同 MC 线内的 beta 序号跟进**，夹在 h48 功能提交里一并升（`cbb33a3`）。🔖 **两个遗留**：① 当时没回填本日志，也没同步 `00`/`06`/`07`/`AGENT_CONTEXT` 的版本镜像 ⇒ 2026-10-09 文档梳理时补齐；② 涉及原版签名的源码级核实仍以 `26.3.0.41-beta` 的 sources / patched jar 为据（`04` §5.0、`13` GAP-015），**在 .51 上尚未重核** —— 下次碰原版签名前先按 §4 重跑一遍核实 | —（未单独计时） |
 
 > 回填格式：一行一个版本，坑要写"现象 + 根因 + 修法"，便于下次查阅。

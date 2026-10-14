@@ -36,7 +36,11 @@
 ## 0. 怎么读这份文档
 
 每个弱点四段：**现状证据**（全部 `file:line` + 附录 A 可复算）→ **病根**（不是症状列表，是「为什么会反复出现」）
-→ **调研结论**（别人怎么做、哪些能用码哪些只能用思路）→ **阶梯**（每阶：改动面 / 判据 / 成本 / 动不动热路径）。
+→ **调研结论**（别人怎么做、哪些能用码哪些只能用思路）→ **阶梯**（每阶：改动面 / 判据 / 规模 / 动不动热路径）。
+
+🔴 **本文各阶梯表的「成本」列不填工时**（2026-10-14 起，`07-CONSTRAINTS.md` X56 / `15-ITERATION.md` A18）：
+只写**轮次、臂数、牵连面条数**（「单独一轮真机取证」「主 pass 内还剩 6 处」「≈58–62 条管线」），没有规模可写就填 `—`。
+排期归用户裁，文档只给**序**与**判据** —— 序见 §6 的依赖链与 §5A.4 的执行序。
 
 🔴 **三条贯穿全部弱点的判断，先看这三条**：
 
@@ -160,19 +164,19 @@ L0  输入与行图        PackLines + SourceLineMap（已有）——一切下�
 
 ### 2.6 阶梯
 
-| 阶 | 内容 | 落点（现状 file:line） | 判据（X46：可数的日志/断言） | 成本 | 动热路径？ |
+| 阶 | 内容 | 落点（现状 file:line） | 判据（X46：可数的日志/断言） | 规模 | 动热路径？ |
 |---|---|---|---|---|---|
-| **A0** | ✅ **已执行（2026-10-10）** —— 止血：把静默变可见，**零语义变化** | 实际落点：`DefineProcessor` ①指令行行尾 `\` → WARN（`warnAt` 走与 `errorAt` 同一条包内归因路）②**新增**「指令行位于注释内」→ WARN（复用 `translate/CommentState`，为其上调可见性到 public，**不造第二套扫描器**）；`IncludeProcessor` 注释内 `#include` → WARN；`IoLocationAdapter` 跨行/半截 in-out 按**行首括号深度**分流（0 ⇒ WARN，>0 ⇒ 函数参数折行仍安静） | 5 条负样本单测（`DefineProcessorTest` 2 / `IncludeProcessorTest` 1 / `IoLocationAdapterTest` 2）断言**「必须 WARN，不得静默」**，全绿且全套无回归 | 1 h（实测含文档登记） | ❌ 冷路径 |
+| **A0** | ✅ **已执行（2026-10-10）** —— 止血：把静默变可见，**零语义变化** | 实际落点：`DefineProcessor` ①指令行行尾 `\` → WARN（`warnAt` 走与 `errorAt` 同一条包内归因路）②**新增**「指令行位于注释内」→ WARN（复用 `translate/CommentState`，为其上调可见性到 public，**不造第二套扫描器**）；`IncludeProcessor` 注释内 `#include` → WARN；`IoLocationAdapter` 跨行/半截 in-out 按**行首括号深度**分流（0 ⇒ WARN，>0 ⇒ 函数参数折行仍安静） | 5 条负样本单测（`DefineProcessorTest` 2 / `IncludeProcessorTest` 1 / `IoLocationAdapterTest` 2）断言**「必须 WARN，不得静默」**，全绿且全套无回归 | — | ❌ 冷路径 |
 
 🔖 **A0 执行时对原判的三处修正**（下一阶按这些事实走，别按原判的措辞）：
 ① 「宏体内 `gl_` 名」的可见性**不落在 `LegacyBuiltinInjector`** —— 转译跑在预处理之后，宏体展开后已是代码文本
 （§2.1 该行本就标「可见」）；真正的静默根因是 `/* */` 内的 `#define` 被当真指令吃下，故 WARN 落在 `DefineProcessor`。
 ② `IncludeProcessor` 的注释内 `#include` **本阶照旧展开**（只 WARN）——「不展开」是语义变更，归 A2 由 jcpp 一次做对。
 ③ `IoLocationAdapter` 不能无条件 WARN：函数参数折行与真跨行声明走同一分支，原判没说怎么区分 ⇒ 用括号深度。
-| **A1** | 建 L1 单一 token 流；`translate/` 各阶段改用它；`GlslDeclarationExtractor` 的第二套扫描器并入 | 以 `CommentState.java:63-96` + `GlslTextScan.java:76-219` + `ExprEval` 词法为地基 | 新守卫 `GlslLexerSingleSourceTest`：扫 `glsl/**` 里新出现的「行首锚定正则声明」（X43 口径）并禁止增长；`GlslPipelineTest` 幂等断言必须继续绿 | 1.5 天 | ❌ 冷路径 |
-| **A2** | 建 L2 预处理语义：**jcpp 核心移植为实现**（`Lexer/JoinReader/Token/Macro/展开`，留 Apache-2.0 LICENSE/NOTICE + 声明改动；**2026-10-10 已获用户裁决允许**），**shaderc 预处理作差分 oracle**（✅ §7-2 已放行：只进测试/离线工具，原版自带 ⇒ 零分发成本，见 §2.3）；「照 ANGLE 分层全自研」降级为 jcpp 不可用时的备选 | 替 `DefineProcessor`(719) / `ConstEvaluator`(402) 的相应职责 | 先做**三路差分探针**（不承诺替换）：同一批包源跑 ①现自研 ②jcpp ③shaderc，比 **逐字节 diff** + **产物能否被 shaderc 正式编译**；重点验 `#version/#extension/#pragma` 透传、`\u0000`、函数宏、`#include` 相对路径、`\` 续行（含 `\` 后带尾随空格这种包实测写法）；再报 B3/B4 变化（**X32**：不许拿公开基准当选型结论；**X52**：两臂只差一个实现） | 探针 0.5 天；落地 2–3 天（续行/函数宏/注释语义已由 Apache-2.0 实现做完，省掉的正是自研最易出错那段） | ❌ 冷路径 |
-| **A3** | 发射 `#line` + 把 shaderc 原文映射回包行 + 「转译产物不可编译 = 本项目 ERROR」分类 | `ShaderCompileApi.java:121-123`、`VkDispPackScan.java:213-236`（两种日志形状之间加因果归属） | 一条故意写坏的转译产物 → 日志里必须出现**包内**文件与行号；`grep` 计数判据 | 1 天 | ❌ 冷路径 |
-| **A4** | 声明解析语法级：跨行声明 / `layout(...)` / 同行多语句 / 块作用域 | `GlslDeclaration.java:82-124`（`layout` 返回 null 的分支）、`UniformInjector.java:239-266`、`PostVertexLinker.java:542-580` | 每条各 1 个正样本 + 1 个负样本；X43「一行可有多声明」升为全层共享断言 | 2 天 | ❌ 冷路径 |
+| **A1** | 建 L1 单一 token 流；`translate/` 各阶段改用它；`GlslDeclarationExtractor` 的第二套扫描器并入 | 以 `CommentState.java:63-96` + `GlslTextScan.java:76-219` + `ExprEval` 词法为地基 | 新守卫 `GlslLexerSingleSourceTest`：扫 `glsl/**` 里新出现的「行首锚定正则声明」（X43 口径）并禁止增长；`GlslPipelineTest` 幂等断言必须继续绿 | — | ❌ 冷路径 |
+| **A2** | 建 L2 预处理语义：**jcpp 核心移植为实现**（`Lexer/JoinReader/Token/Macro/展开`，留 Apache-2.0 LICENSE/NOTICE + 声明改动；**2026-10-10 已获用户裁决允许**），**shaderc 预处理作差分 oracle**（✅ §7-2 已放行：只进测试/离线工具，原版自带 ⇒ 零分发成本，见 §2.3）；「照 ANGLE 分层全自研」降级为 jcpp 不可用时的备选 | 替 `DefineProcessor`(719) / `ConstEvaluator`(402) 的相应职责 | 先做**三路差分探针**（不承诺替换）：同一批包源跑 ①现自研 ②jcpp ③shaderc，比 **逐字节 diff** + **产物能否被 shaderc 正式编译**；重点验 `#version/#extension/#pragma` 透传、`\u0000`、函数宏、`#include` 相对路径、`\` 续行（含 `\` 后带尾随空格这种包实测写法）；再报 B3/B4 变化（**X32**：不许拿公开基准当选型结论；**X52**：两臂只差一个实现） | 先差分探针、再落地（续行/函数宏/注释语义已由 Apache-2.0 实现做完，省掉的正是自研最易出错那段） | ❌ 冷路径 |
+| **A3** | 发射 `#line` + 把 shaderc 原文映射回包行 + 「转译产物不可编译 = 本项目 ERROR」分类 | `ShaderCompileApi.java:121-123`、`VkDispPackScan.java:213-236`（两种日志形状之间加因果归属） | 一条故意写坏的转译产物 → 日志里必须出现**包内**文件与行号；`grep` 计数判据 | — | ❌ 冷路径 |
+| **A4** | 声明解析语法级：跨行声明 / `layout(...)` / 同行多语句 / 块作用域 | `GlslDeclaration.java:82-124`（`layout` 返回 null 的分支）、`UniformInjector.java:239-266`、`PostVertexLinker.java:542-580` | 每条各 1 个正样本 + 1 个负样本；X43「一行可有多声明」升为全层共享断言 | — | ❌ 冷路径 |
 
 🔖 **A1→A4 顺序不可换**：A2/A4 若先做，等于又造两套扫描器，病根 (a) 原样保留。
 
@@ -246,12 +250,12 @@ L0  输入与行图        PackLines + SourceLineMap（已有）——一切下�
 
 ### 3.5 阶梯
 
-| 阶 | 内容 | 成本 | 动热路径？ |
+| 阶 | 内容 | 规模 | 动热路径？ |
 |---|---|---|---|
-| **B0** | 三条棘轮 + `@TestOnly` 约定 + `reset/close` 契约测试（QD-03 首批点名 `FullscreenPassHook`/`OfUniformManager`/`ActivePackUniforms`） | 半天 | ❌ |
-| **B1** | `PackEpoch` + 缓存条目带代际 + 解引用校验；`takeSourceMemo` 造键/校键合一 | 1 天 | 🟡 取键在冷路径，解引用每帧一次 |
-| **B2** | 拆 `TargetReadback` → 诊断对象；`VkDispVirtualPack.VirtualPackResources` 外提 | 1 天 | ❌ 纯诊断 / 纯注册 |
-| **B3** | `FrameContext`/`PackSession`/`DeviceScopedPool` 三级所有权；`FrameApi` 按 §3.1 逐簇外提（`BuiltinsRingPool`/`MipPyramidPass`/`PostChainExecutor` 单独取证轮） | 3–4 天，分 2 轮 | 🔴 是 ⇒ 每阶各一轮取证（QD-04 先例） |
+| **B0** | 三条棘轮 + `@TestOnly` 约定 + `reset/close` 契约测试（QD-03 首批点名 `FullscreenPassHook`/`OfUniformManager`/`ActivePackUniforms`） | — | ❌ |
+| **B1** | `PackEpoch` + 缓存条目带代际 + 解引用校验；`takeSourceMemo` 造键/校键合一 | — | 🟡 取键在冷路径，解引用每帧一次 |
+| **B2** | 拆 `TargetReadback` → 诊断对象；`VkDispVirtualPack.VirtualPackResources` 外提 | — | ❌ 纯诊断 / 纯注册 |
+| **B3** | `FrameContext`/`PackSession`/`DeviceScopedPool` 三级所有权；`FrameApi` 按 §3.1 逐簇外提（`BuiltinsRingPool`/`MipPyramidPass`/`PostChainExecutor` 单独取证轮） | 分 2 轮 | 🔴 是 ⇒ 每阶各一轮取证（QD-04 先例） |
 
 ---
 
@@ -379,13 +383,13 @@ QD-11① 的实质是「原则没贯彻到 `PipelineApi`」，不是「缺一条
 
 ### 4.5 阶梯
 
-| 阶 | 内容 | 成本 | 动热路径？ |
+| 阶 | 内容 | 规模 | 动热路径？ |
 |---|---|---|---|
 | **C0** | ✅ **已执行（2026-10-10）** —— `javap -p SpvModule$Reflection` 表面核实 + `bridge/SpvReflectionProbe`（只做事实登记，不改行为；**暂无生产调用点**，调用点属 C1） | 表面核实结论与两条限制见 §4.2 的「✅ C0 已核实并落码」表 |
-| **C1** | ✅ **已执行（2026-10-10，见 `CHANGE_LOG` 一百零六）** —— 名单来源换成**由 OF 命名规则生成**的超集（`pipeline/model/PackSamplerSuperset`，旧 18 名全部落在其中并被逐条钉住）；包声明快照在生成期由 `SamplerDimensionPlan.fromFragmentSource` 装进 `AtomicReference`（兜底路径也重装 ⇒ 不留上一张包的）；视图路由改由**声明类型**决定（`bridge/PackSamplerViews`：3D / 中性材质 / 图集按类型，其余照抄后处理链那条已取证的路），`UNSUPPORTED` **不绑 + 每名点名**。🔴 **一条边界**：绑定组随 required 管线在**启动期**注册一次定死 ⇒ 布局不可能按包变，「派生」= 超集按规则生成 + 视图按类型 + 超集之外点名，这条限制登记为 **`GAP-035`** | 实测 ≈ 1 天（含两轮真机取证） | 🟡 绑定每帧，布局注册一次 |
-| **C2a** | 光空间侧的**纯数学**部分：真角度 + 包内 `shadowDistance/shadowIntervalSize/sunPathRotation` + ortho 拟合 + texel 对齐 + 每帧重建 —— **可单测**（输入角度/时间 → 断言矩阵），不动 GPU | 1 天 | ❌（不碰每帧 GPU 路径，只把 `lightSpaceList` 的懒缓存改成随角度失效） |
+| **C1** | ✅ **已执行（2026-10-10，见 `CHANGE_LOG` 一百零六）** —— 名单来源换成**由 OF 命名规则生成**的超集（`pipeline/model/PackSamplerSuperset`，旧 18 名全部落在其中并被逐条钉住）；包声明快照在生成期由 `SamplerDimensionPlan.fromFragmentSource` 装进 `AtomicReference`（兜底路径也重装 ⇒ 不留上一张包的）；视图路由改由**声明类型**决定（`bridge/PackSamplerViews`：3D / 中性材质 / 图集按类型，其余照抄后处理链那条已取证的路），`UNSUPPORTED` **不绑 + 每名点名**。🔴 **一条边界**：绑定组随 required 管线在**启动期**注册一次定死 ⇒ 布局不可能按包变，「派生」= 超集按规则生成 + 视图按类型 + 超集之外点名，这条限制登记为 **`GAP-035`** | 含两轮真机取证 | 🟡 绑定每帧，布局注册一次 |
+| **C2a** | 光空间侧的**纯数学**部分：真角度 + 包内 `shadowDistance/shadowIntervalSize/sunPathRotation` + ortho 拟合 + texel 对齐 + 每帧重建 —— **可单测**（输入角度/时间 → 断言矩阵），不动 GPU | — | ❌（不碰每帧 GPU 路径，只把 `lightSpaceList` 的懒缓存改成随角度失效） |
 | **C2b** | 🔴 **包 shadow pass 装配**：新建阴影目标（D32，尺寸取包 `shadowMapResolution`，**清 `0.0`** 按 X34）+ 用包自己的 `shadow.vsh/fsh` 把可见世界重画一遍 + `shadowtex*` 从桩换成真图（同族必修：`sampler2DShadow` 比较采样器 GAP-001/015、`shadowHardwareFiltering` 分离采样器） | **未估**（这是一个独立大项，量级 ≥ GAP-003 的地形装配） | 🔴 是 ⇒ 单独一轮取证 |
-| **C3** | ✅ **已执行（2026-10-10，见 `CHANGE_LOG` 一百零六）** —— `pack/PackConformanceReport` 覆盖 §4.1 **全部 10 张名单**（逐名 `HIT / PACK_ONLY / ENGINE_ONLY / ASSUMPTION`），在 `PackCompositeSource` 生成期与三源+链+纹理绑定表**同时**在手的那一点出报告；矩阵用法与「`PACK_ONLY>0` 不许标 ✅」的规矩写进 **`08-TESTING` §10.2**；验收断言 = `PackConformanceReportTest`（十项必须各有节）。🔖 报告只读各子系统真源、**不建第二份名单**，`private` 表体（UV 名 / 世界向量黑名单）只报「经哪个公开判定」不抄内容 | 实测 ≈ 半天 | ❌ 只读，不改行为（真机两轮画面无差，已复核） |
+| **C3** | ✅ **已执行（2026-10-10，见 `CHANGE_LOG` 一百零六）** —— `pack/PackConformanceReport` 覆盖 §4.1 **全部 10 张名单**（逐名 `HIT / PACK_ONLY / ENGINE_ONLY / ASSUMPTION`），在 `PackCompositeSource` 生成期与三源+链+纹理绑定表**同时**在手的那一点出报告；矩阵用法与「`PACK_ONLY>0` 不许标 ✅」的规矩写进 **`08-TESTING` §10.2**；验收断言 = `PackConformanceReportTest`（十项必须各有节）。🔖 报告只读各子系统真源、**不建第二份名单**，`private` 表体（UV 名 / 世界向量黑名单）只报「经哪个公开判定」不抄内容 | — | ❌ 只读，不改行为（真机两轮画面无差，已复核） |
 | **C4** | （可选，T12 登记 `platform/`）多帧级联 shadow | 待 C2b 稳定后评估 | 🔴 是 |
 
 **C1 先于 C2a、C2a 先于 C2b** 的理由：C1 与 C2a 都不需要真机取证（纯注册期/生成期逻辑 + 守卫单测 + 矩阵单测），
@@ -430,10 +434,10 @@ C2b 要动每帧路径，按 QD-04 的教训必须单独一轮；
 
 ### 5.4 阶梯
 
-| 阶 | 内容 | 成本 |
+| 阶 | 内容 | 规模 |
 |---|---|---|
-| **D0** | 注释规约进 `07-CONSTRAINTS` §3.5 + 修 `VkDispPackScan` 重复 import + 把 QD-03/QD-04 的数字改成「由测试计算」 | 25 min |
-| **D1** | 反射开关：核实动机 → 类型化改造或元测试守卫 | 1 h |
+| **D0** | 注释规约进 `07-CONSTRAINTS` §3.5 + 修 `VkDispPackScan` 重复 import + 把 QD-03/QD-04 的数字改成「由测试计算」 | — |
+| **D1** | 反射开关：核实动机 → 类型化改造或元测试守卫 | — |
 
 ---
 
@@ -497,22 +501,22 @@ C2b 要动每帧路径，按 QD-04 的教训必须单独一轮；
 🔴 **R 编号与 `04-SPEC` §5.0 各行里写的「候选（R…）」一一对应，是引用锚点；执行序不等于编号序**，
 执行序写在下面。排序原则：先做**零渲染语义变化**的删码，再做**换通道**，最后做**改原版 pass 语义**。
 
-| 阶 | 内容 | 对应注入点 / GAP | 改动面 | 判据 | 成本 | 动热路径？ |
+| 阶 | 内容 | 对应注入点 / GAP | 改动面 | 判据 | 规模 | 动热路径？ |
 |---|---|---|---|---|---|---|
-| **R0** | 注释与常量口径同步（M1 旧「装配层」措辞、`MixinTargets` 里「永久禁止注入 `RenderSystem`」那句、`FrameApi`/`PipelineApi` 头部「`FrameGraphSetupEvent` 插 pass 调研否决」的过期记载） | — | 只改注释 | 注释与 `07` §1.4 现行口径逐条对得上 | 0.5 h | ❌ |
-| **R1** | ✅ **已落地（2026-10-12 第 4 步，代码级）**：两支 `@WrapOperation` 已建、`inMrtPass`+`finally`+空转守卫+`MRT_GUARD_FALLBACK` 全删、M-01 退化成只按层名查表。🔴 判据**错配被拒**：2026-10-13 起可由单测跑（`routeOf` 真值表 + 反漂移针），形状针降为辅助；「注入失败标记 = 0」（针 = `07` §1.4.1bis 六条合成）已真机签掉 —— ⚠️ 当时用的是 `Mixin apply failed` 那条假绿针，10-14 换针重读 10-13 全天 36 份日志 = 35 趟 0 命中 / 1 趟命中那次已修 FATAL；仍**待真机**：`h08` 同量级 A/B。🔴 **改判（同日两次，以本次为准）：不做「M-01 → `PipelineModifier`」，改做 R1a = 新增 M-15** —— `@WrapOperation` 包住 `ChunkSectionsToRender:176 / :121` 的 `getCompiledPipeline(...)`，handler 读外层 `renderPass` 实参；**M-01 保留**但退化成「只按层名查表，不再判 `active()`」 | **M-15**、M-01（保留）、`GAP-040`、`GAP-043`、`GAP-045`（改判依据） | `TerrainPipelineApi`（去掉 `active()` 依赖）+ `MrtTerrainPass`（删 `inMrtPass:119` / `finally:532-539` / 空转守卫 `:320-322`）+ `TerrainPipelineApi:530`（删 `MRT_GUARD_FALLBACK`） | ① MRT 变体只在 `renderPass` 身份命中我方 pass 时才交出（故意错配一次必须**拒绝**）；② 单变量 A/B 对 `h08` 基线 **48.22 / 39.03%**；③ 注入失败标记 = 0（针见 `07` §1.4.1bis）；④ M-01 的代码里不再出现 `active()` | 1–2 天（**比原设想省**：不需要幂等收敛，也不需要动注册时机） | 🔴 每帧 2–6 次取管线 |
-| **R2** | ✅ **已落地（2026-10-12 第 3 步，代码级）**：M-06 的 HEAD 点已建、M-05 的类/两个注入点/旧键/`volatile Object`+instanceof 全部删除、pass 体第一行已补 `setShaderFog`。🔴 判据（进水那一帧雾端读数跟着变）**待真机**。**M-06 一点替两点** + 补 `setShaderFog` | M-06（替 M-05）、`GAP-038` | 新增 1 注入点；删 `TerrainDrawCapture` 的 `volatile Object` + `instanceof` | 原版那次 draw 与注入点里 `terrainFog` 的 buffer hash 一致；进水那一帧雾端读数**跟着变** | 1 天 | 🟡 每帧一次赋值 |
-| **R3** | ✅ **已落地（2026-10-12 第 2 步，代码级）**：`src/main/java` 里 `getDeclaredField/setAccessible` 已零命中、自建采样器 42 行已删、云那次压栈/还原已删、`apply` 里的现读配置已移到调用点。🔴 **判据仍未取证**：「各向异性两档锐度随用户设置变」与「同机位同帧读数与今天相同」都要真机 A/B 才能签 ⇒ 本条状态 = 代码完成、验证未结。**删反射族**：M-07 复用原版采样器 / M-08 / M-09 访问器 / M-10 云矩阵 `@Redirect` | M-07…M-10、`GAP-041`、`GAP-042` | 删两处反射块 + 42 行自建采样器 + 云的栈压还原 | 反射的 WARN 分支**物理删除**；各向异性两档锐度随用户设置变；云与今天同帧读数相同 | 1 天 | ❌（判据侧）/ 🟡（采样器） |
-| **R4** | **天空**：包天空搬进官方 `CustomSkyboxRenderer` 钩子 + M-11 视图 `@Redirect`（M-12 仅兜底） | M-11、M-12、`GAP-037`、`GAP-039` | 删 `GbufferTarget` **整类** + `SkyIntoGbuffer` 的第二个 `SkyRenderer` 实例 / 自抽 state / 手工互斥 | 岩浆里**没有**天空；天空深度**只被翻一次**；一百一十轮的星点判据**不回退** | 2 天 | 🟡 **代码已落地（2026-10-12 第 5 步）**：M-11 两条 `@Redirect`（键 `mixin.skyViews`）+ 包天空进官方 `CustomSkyboxRenderer`（`SkyIntoGbuffer.installHook()` 在装配期写字段，回 true 即互斥）；`GbufferTarget` 整类已删、第二个 `SkyRenderer` 与自抽 state/私有深度都删。**未签**：三条判据 + 「注入失败标记 = 0」（针见 `07` §1.4.1bis） + 自报行 `钩子被调#` 是否非零 |
-| **R5** | ✅ **已收口（2026-10-12）**：`@WrapOperation` 两个 addPass 调用点接住原版 sky/main 句柄、`PassOrder` 双向补出 requires 边、ORDER-MARK 两条反推日志已删、`mrt.terrainAfterLevel` 那条 A/B 车道连同 `drawAfterLevel()` / `paintGbufferAndTerrain()` 一起删除 | M-13 | 删 `MrtTerrainPass:205-215` 的猜测式装配 + ORDER-MARK 日志 + `mrt.terrainAfterLevel` A/B 车道 | `h48g` 那个「天空排在地形之后」的 0.0611 读数**不再可能复现** | 1 天 | ✅ 代码收口，⚠️ 判据 `c0@afterSky` 要真机 |
-| **R6** | ✅ **M-14 包选项进原版视频设置页（2026-10-12，两个提交）**：`@Inject VideoSettingsScreen#addOptions` TAIL + `VanillaPackOptionsPage` 只走原版 `OptionsList` 装配方法 | M-14 | 删 `PackPickerScreen` 整类 + `PackOptionsScreen`/`PackOptionsDrive`/`ScreenDriveCommand` + `packOptionsScreen` 驱动键 + `VkDispClient` 的 `IConfigScreenFactory` | 原版页内可滚动、可键盘操作、切包后选项仍在 | 1–2 天 | ✅ 代码收口，⚠️ 三条画面判据 + 「注入失败标记 = 0」（针见 `07` §1.4.1bis） 要真机；🔴 无头驱动臂退役（替身见 08-TESTING） |
-| **R7** | 🎯 **M-04 整主 pass 多附件**（**下一轮目标**，用户 2026-10-12 裁决） | M-04、`GAP-003` 的 M-04 未解除项 | `@WrapOperation` `LevelRenderer:456-463` + 主 pass 内每条管线派生 | 地形**只画一遍**（用 R3 的访问器判据，不再用反射）；`FrontendRenderPass:107-121` 零抛；实体/云/天气/描边**不回退** | ✅ **待核三项已结 ⇒ 成本可报**（原「未估」）：代码面只有三处（1 个注入点 + 1 处通用派生公式 + 1 处退路计数），**成本全在回归面** —— 主 pass 同帧路径含实体/方块实体/物品/文本/粒子/云/天气/边界/描边/OIT 交替，且 `N ≤ 8` 无余量（§5.0.6 ⑤ 第 2、3 条还要求「补槽同尺寸」与「深度必须就是 `D32_FLOAT`」两条装配期前提）⇒ **估 3–5 个工作日 + 一轮完整真机对照**，不是「一天」的活。✅ **⑤-a 已落地（2026-10-12 同日下一轮）**：注入点 = `MainPassAttachmentMixin`（包 `FrontendCommandEncoder` 6 参重载**内部**第 95 行那次调用，不是我原先写的外层 `createRenderPass(RenderPassDescriptor)`），判定 = `MainPassTakeover.matchesMainPass` 纯函数 + `slotsUsable` 尺寸闸门，开关 `mixin.ownTerrainPass` 默认**关**（开着必崩 = 本步的证据）。⛔ ⑤-b（通用派生公式）没接 ⇒ R7 整体仍是未开工。✅ **⑤-a 的判据已于同日真机签掉**：日志「主 pass 的颜色附件已换成我方 colortex 阵列：8 个（label='Main'）」+ 一秒后 `FrontendRenderPass#setPipeline:113` 抛「Render pass color attachment count must match pipeline color target state count.」（栈顶 `ChunkSectionsToRender$DrawIndirect.render:120` ← `executeSolid:532`）—— 与预测逐字一致；签它需要 ≥2 槽的包档（BSL `ADVANCED_MATERIALS` ⇒ `slots=8`），单槽档下按设计**拒绝接管并计数**。🔴 同时削掉一条判据腿：主 pass 的颜色视图与 `gameRenderer.mainRenderTarget()` **不是同一对象**（`GAP-049`，⑤-b 的前置口径）。✅ **⑤-b 已落地 + 真机已签（同日再下一轮）**：公式 = `bridge/MainPassPipelineDerivation`（target0 逐字原样 + 补槽 `RGBA8_UNORM`/`WRITE_NONE`/无混合 + 三条**纯整数**退路 ⇒ 交回原版并计数），挂点从 `PipelineModifier` **改成** M-15 那次 `getCompiledPipeline`（modifier 的 key 只能在启动期注册，而槽数 N 是运行期的数 —— 与 `GAP-045` 同一个根因），`PassAwarePipelines.select` 因此收成三支（我方 MRT pass / 被接管的主 pass / 都不是 ⇒ 原样返回）；证据 = `首条补槽管线：SOLID（1 条声明 → 8 槽）` + 那个 `setPipeline` 抛**按预测挪了位置**（`PreparedRenderType.draw:43` ← `executeClassicTransparency:721` = 经典透明那笔）⇒ **R7 现在停在 ⑤-c**，逐族放开的顺序由「真机在哪条调用点响」给出；此步起的已知代价 = **地形双绘**（⑤-d 才关），`GAP-049` 留的那件活（池尺寸锚在另一张主目标）排在 ⑤-d 之前。✅ **⑤-c 第一族已落地 + 真机已签（同日再下一轮）**：注入点 = `mixin/PreparedRenderTypePipelineMixin`（包 `PreparedRenderType#draw:43` 那次 `getCompiledPipeline`）—— 🔖 这一处是**全部 `RenderType` 的公共通路**（实体 / 粒子 / 方块层 / 水 / 玻璃 / 文本…），所以「逐族放开」的第一族一处就顶十几族；判据形状沿用 a/b 那条「崩点必须挪位置」：日志 `[M-04/⑤-c] PreparedRenderType 取管线 hits=1` 之后，那个 `setPipeline` 抛从 `executeClassicTransparency:721` **挪进了 `executeSolid`**（`QuadParticleFeatureRenderer.drawLayers:89` ← `FeatureRenderDispatcher$PreparedGroup.execute:394` ← `LevelRenderer.executeSolid:538`）⇒ 前者一族过了，下一族按真机指的位置做。⚠️ 代价与连带修复：这一处**每次 draw** 都会走 ⇒ 补槽跑在原版编译缓存之前会把「每条管线一次」变成「每次 draw 建一条新管线」，已加按对象身份的记忆层并登记 `GAP-051`；🔖 同时把取管线点**逐处数清 = 34 处**（原「30 处未复核」作废），主 pass 内还剩 8 处 + OIT 4 处，清单在 `04-SPEC` §5.0.7 末。✅ **⑤-c 第二族已落地 + 真机已签（同日再下一轮）**：`QuadParticleFeatureRendererPipelineMixin`（包 `drawLayers:89`，就是第一族签掉后真机指名的那处）⇒ 机制可复制，形状逐字相同；🔴 新撞出一条注入形状规则（目标方法是 `static` ⇒ handler 必须 `static`，否则**类加载期**失败且**与开关无关** = 默认档也起不来，`GAP-047` ④）；观测面改成**分站点计数** `onMainPassSiteHit(site)`（一趟真机同时给出每族各自活没活：`{PreparedRenderType#draw=215070, QuadParticle#drawLayers=8130}`）；🏁 **第一次出现「主 pass 被换成 8 附件之后不崩的一帧」**（`主 pass 接管=28288` 帧、0 ERROR、0 apply 失败、截图正常）—— ⚠️ 但这一帧没碰到云/天气/边界/立方图（天空无云就是证据），所以「没崩」只等于「已放开的族过了」，⑤-c 还剩 6 处 + OIT 4 处。✅ **⑤-c 第三~五族已落地（同日再下一轮，2026-10-13 记录）**：云 / 天气 / 边界三处各一个注入类（云与天气各自有**收敛点**：私有 `render(…, RenderPass, RenderPipeline)` 同时覆盖经典与 OIT 两条路径；边界没有 ⇒ 只注经典那条）。真机证据分三等写清：**天气已过**（`/weather rain` ⇒ `WeatherEffectRenderer#render=9637`、`派生=10 交回原版=0`、0 崩）；**云 / 边界=已放开未取证**（`renderClouds` 关着、镜头离边界远 ⇒ 那两句没执行，只有 apply 成功 + 不崩这一半）；🔖 同时把上一轮两处误分类改掉：`CubeMap:69` 与 `LevelRenderer:518` **自己开 pass**，不在主 pass 内 ⇒ **主 pass 内的非 OIT 取管线点已全部接上**，剩下的是 OIT 那 6 处（`CloudRenderer:215`、`WorldBorderRenderer:170`、`LevelRenderer:670/690/694/706`）。⚠️ 一条自己造的启动期崩记进 `GAP-047` ⑤：描述符里 `Vec3` 的包名写错（`org.joml` 应为 `net.minecraft.world.phys`）⇒ `require = 1` 让它**启动期点名硬失败**而不是静默不生效，纪律第一次以正面样本入台账 | 🔴 整帧 |
+| **R0** | 注释与常量口径同步（M1 旧「装配层」措辞、`MixinTargets` 里「永久禁止注入 `RenderSystem`」那句、`FrameApi`/`PipelineApi` 头部「`FrameGraphSetupEvent` 插 pass 调研否决」的过期记载） | — | 只改注释 | 注释与 `07` §1.4 现行口径逐条对得上 | — | ❌ |
+| **R1** | ✅ **已落地（2026-10-12 第 4 步，代码级）**：两支 `@WrapOperation` 已建、`inMrtPass`+`finally`+空转守卫+`MRT_GUARD_FALLBACK` 全删、M-01 退化成只按层名查表。🔴 判据**错配被拒**：2026-10-13 起可由单测跑（`routeOf` 真值表 + 反漂移针），形状针降为辅助；「注入失败标记 = 0」（针 = `07` §1.4.1bis 六条合成）已真机签掉 —— ⚠️ 当时用的是 `Mixin apply failed` 那条假绿针，10-14 换针重读 10-13 全天 36 份日志 = 35 趟 0 命中 / 1 趟命中那次已修 FATAL；仍**待真机**：`h08` 同量级 A/B。🔴 **改判（同日两次，以本次为准）：不做「M-01 → `PipelineModifier`」，改做 R1a = 新增 M-15** —— `@WrapOperation` 包住 `ChunkSectionsToRender:176 / :121` 的 `getCompiledPipeline(...)`，handler 读外层 `renderPass` 实参；**M-01 保留**但退化成「只按层名查表，不再判 `active()`」 | **M-15**、M-01（保留）、`GAP-040`、`GAP-043`、`GAP-045`（改判依据） | `TerrainPipelineApi`（去掉 `active()` 依赖）+ `MrtTerrainPass`（删 `inMrtPass:119` / `finally:532-539` / 空转守卫 `:320-322`）+ `TerrainPipelineApi:530`（删 `MRT_GUARD_FALLBACK`） | ① MRT 变体只在 `renderPass` 身份命中我方 pass 时才交出（故意错配一次必须**拒绝**）；② 单变量 A/B 对 `h08` 基线 **48.22 / 39.03%**；③ 注入失败标记 = 0（针见 `07` §1.4.1bis）；④ M-01 的代码里不再出现 `active()` | **比原设想省**：不需要幂等收敛，也不需要动注册时机 | 🔴 每帧 2–6 次取管线 |
+| **R2** | ✅ **已落地（2026-10-12 第 3 步，代码级）**：M-06 的 HEAD 点已建、M-05 的类/两个注入点/旧键/`volatile Object`+instanceof 全部删除、pass 体第一行已补 `setShaderFog`。🔴 判据（进水那一帧雾端读数跟着变）**待真机**。**M-06 一点替两点** + 补 `setShaderFog` | M-06（替 M-05）、`GAP-038` | 新增 1 注入点；删 `TerrainDrawCapture` 的 `volatile Object` + `instanceof` | 原版那次 draw 与注入点里 `terrainFog` 的 buffer hash 一致；进水那一帧雾端读数**跟着变** | — | 🟡 每帧一次赋值 |
+| **R3** | ✅ **已落地（2026-10-12 第 2 步，代码级）**：`src/main/java` 里 `getDeclaredField/setAccessible` 已零命中、自建采样器 42 行已删、云那次压栈/还原已删、`apply` 里的现读配置已移到调用点。🔴 **判据仍未取证**：「各向异性两档锐度随用户设置变」与「同机位同帧读数与今天相同」都要真机 A/B 才能签 ⇒ 本条状态 = 代码完成、验证未结。**删反射族**：M-07 复用原版采样器 / M-08 / M-09 访问器 / M-10 云矩阵 `@Redirect` | M-07…M-10、`GAP-041`、`GAP-042` | 删两处反射块 + 42 行自建采样器 + 云的栈压还原 | 反射的 WARN 分支**物理删除**；各向异性两档锐度随用户设置变；云与今天同帧读数相同 | — | ❌（判据侧）/ 🟡（采样器） |
+| **R4** | **天空**：包天空搬进官方 `CustomSkyboxRenderer` 钩子 + M-11 视图 `@Redirect`（M-12 仅兜底） | M-11、M-12、`GAP-037`、`GAP-039` | 删 `GbufferTarget` **整类** + `SkyIntoGbuffer` 的第二个 `SkyRenderer` 实例 / 自抽 state / 手工互斥 | 岩浆里**没有**天空；天空深度**只被翻一次**；一百一十轮的星点判据**不回退** | — | 🟡 **代码已落地（2026-10-12 第 5 步）**：M-11 两条 `@Redirect`（键 `mixin.skyViews`）+ 包天空进官方 `CustomSkyboxRenderer`（`SkyIntoGbuffer.installHook()` 在装配期写字段，回 true 即互斥）；`GbufferTarget` 整类已删、第二个 `SkyRenderer` 与自抽 state/私有深度都删。**未签**：三条判据 + 「注入失败标记 = 0」（针见 `07` §1.4.1bis） + 自报行 `钩子被调#` 是否非零 |
+| **R5** | ✅ **已收口（2026-10-12）**：`@WrapOperation` 两个 addPass 调用点接住原版 sky/main 句柄、`PassOrder` 双向补出 requires 边、ORDER-MARK 两条反推日志已删、`mrt.terrainAfterLevel` 那条 A/B 车道连同 `drawAfterLevel()` / `paintGbufferAndTerrain()` 一起删除 | M-13 | 删 `MrtTerrainPass:205-215` 的猜测式装配 + ORDER-MARK 日志 + `mrt.terrainAfterLevel` A/B 车道 | `h48g` 那个「天空排在地形之后」的 0.0611 读数**不再可能复现** | — | ✅ 代码收口，⚠️ 判据 `c0@afterSky` 要真机 |
+| **R6** | ✅ **M-14 包选项进原版视频设置页（2026-10-12，两个提交）**：`@Inject VideoSettingsScreen#addOptions` TAIL + `VanillaPackOptionsPage` 只走原版 `OptionsList` 装配方法 | M-14 | 删 `PackPickerScreen` 整类 + `PackOptionsScreen`/`PackOptionsDrive`/`ScreenDriveCommand` + `packOptionsScreen` 驱动键 + `VkDispClient` 的 `IConfigScreenFactory` | 原版页内可滚动、可键盘操作、切包后选项仍在 | — | ✅ 代码收口，⚠️ 三条画面判据 + 「注入失败标记 = 0」（针见 `07` §1.4.1bis） 要真机；🔴 无头驱动臂退役（替身见 08-TESTING） |
+| **R7** | 🎯 **M-04 整主 pass 多附件**（**下一轮目标**，用户 2026-10-12 裁决） | M-04、`GAP-003` 的 M-04 未解除项 | `@WrapOperation` `LevelRenderer:456-463` + 主 pass 内每条管线派生 | 地形**只画一遍**（用 R3 的访问器判据，不再用反射）；`FrontendRenderPass:107-121` 零抛；实体/云/天气/描边**不回退** | ✅ **待核三项已结**：代码面只有三处（1 个注入点 + 1 处通用派生公式 + 1 处退路计数），**成本全在回归面** —— 主 pass 同帧路径含实体/方块实体/物品/文本/粒子/云/天气/边界/描边/OIT 交替，且 `N ≤ 8` 无余量（§5.0.6 ⑤ 第 2、3 条还要求「补槽同尺寸」与「深度必须就是 `D32_FLOAT`」两条装配期前提）⇒ 需一轮完整真机对照。✅ **⑤-a 已落地（2026-10-12 同日下一轮）**：注入点 = `MainPassAttachmentMixin`（包 `FrontendCommandEncoder` 6 参重载**内部**第 95 行那次调用，不是我原先写的外层 `createRenderPass(RenderPassDescriptor)`），判定 = `MainPassTakeover.matchesMainPass` 纯函数 + `slotsUsable` 尺寸闸门，开关 `mixin.ownTerrainPass` 默认**关**（开着必崩 = 本步的证据）。⛔ ⑤-b（通用派生公式）没接 ⇒ R7 整体仍是未开工。✅ **⑤-a 的判据已于同日真机签掉**：日志「主 pass 的颜色附件已换成我方 colortex 阵列：8 个（label='Main'）」+ 一秒后 `FrontendRenderPass#setPipeline:113` 抛「Render pass color attachment count must match pipeline color target state count.」（栈顶 `ChunkSectionsToRender$DrawIndirect.render:120` ← `executeSolid:532`）—— 与预测逐字一致；签它需要 ≥2 槽的包档（BSL `ADVANCED_MATERIALS` ⇒ `slots=8`），单槽档下按设计**拒绝接管并计数**。🔴 同时削掉一条判据腿：主 pass 的颜色视图与 `gameRenderer.mainRenderTarget()` **不是同一对象**（`GAP-049`，⑤-b 的前置口径）。✅ **⑤-b 已落地 + 真机已签（同日再下一轮）**：公式 = `bridge/MainPassPipelineDerivation`（target0 逐字原样 + 补槽 `RGBA8_UNORM`/`WRITE_NONE`/无混合 + 三条**纯整数**退路 ⇒ 交回原版并计数），挂点从 `PipelineModifier` **改成** M-15 那次 `getCompiledPipeline`（modifier 的 key 只能在启动期注册，而槽数 N 是运行期的数 —— 与 `GAP-045` 同一个根因），`PassAwarePipelines.select` 因此收成三支（我方 MRT pass / 被接管的主 pass / 都不是 ⇒ 原样返回）；证据 = `首条补槽管线：SOLID（1 条声明 → 8 槽）` + 那个 `setPipeline` 抛**按预测挪了位置**（`PreparedRenderType.draw:43` ← `executeClassicTransparency:721` = 经典透明那笔）⇒ **R7 现在停在 ⑤-c**，逐族放开的顺序由「真机在哪条调用点响」给出；此步起的已知代价 = **地形双绘**（⑤-d 才关），`GAP-049` 留的那件活（池尺寸锚在另一张主目标）排在 ⑤-d 之前。✅ **⑤-c 第一族已落地 + 真机已签（同日再下一轮）**：注入点 = `mixin/PreparedRenderTypePipelineMixin`（包 `PreparedRenderType#draw:43` 那次 `getCompiledPipeline`）—— 🔖 这一处是**全部 `RenderType` 的公共通路**（实体 / 粒子 / 方块层 / 水 / 玻璃 / 文本…），所以「逐族放开」的第一族一处就顶十几族；判据形状沿用 a/b 那条「崩点必须挪位置」：日志 `[M-04/⑤-c] PreparedRenderType 取管线 hits=1` 之后，那个 `setPipeline` 抛从 `executeClassicTransparency:721` **挪进了 `executeSolid`**（`QuadParticleFeatureRenderer.drawLayers:89` ← `FeatureRenderDispatcher$PreparedGroup.execute:394` ← `LevelRenderer.executeSolid:538`）⇒ 前者一族过了，下一族按真机指的位置做。⚠️ 代价与连带修复：这一处**每次 draw** 都会走 ⇒ 补槽跑在原版编译缓存之前会把「每条管线一次」变成「每次 draw 建一条新管线」，已加按对象身份的记忆层并登记 `GAP-051`；🔖 同时把取管线点**逐处数清 = 34 处**（原「30 处未复核」作废），主 pass 内还剩 8 处 + OIT 4 处，清单在 `04-SPEC` §5.0.7 末。✅ **⑤-c 第二族已落地 + 真机已签（同日再下一轮）**：`QuadParticleFeatureRendererPipelineMixin`（包 `drawLayers:89`，就是第一族签掉后真机指名的那处）⇒ 机制可复制，形状逐字相同；🔴 新撞出一条注入形状规则（目标方法是 `static` ⇒ handler 必须 `static`，否则**类加载期**失败且**与开关无关** = 默认档也起不来，`GAP-047` ④）；观测面改成**分站点计数** `onMainPassSiteHit(site)`（一趟真机同时给出每族各自活没活：`{PreparedRenderType#draw=215070, QuadParticle#drawLayers=8130}`）；🏁 **第一次出现「主 pass 被换成 8 附件之后不崩的一帧」**（`主 pass 接管=28288` 帧、0 ERROR、0 apply 失败、截图正常）—— ⚠️ 但这一帧没碰到云/天气/边界/立方图（天空无云就是证据），所以「没崩」只等于「已放开的族过了」，⑤-c 还剩 6 处 + OIT 4 处。✅ **⑤-c 第三~五族已落地（同日再下一轮，2026-10-13 记录）**：云 / 天气 / 边界三处各一个注入类（云与天气各自有**收敛点**：私有 `render(…, RenderPass, RenderPipeline)` 同时覆盖经典与 OIT 两条路径；边界没有 ⇒ 只注经典那条）。真机证据分三等写清：**天气已过**（`/weather rain` ⇒ `WeatherEffectRenderer#render=9637`、`派生=10 交回原版=0`、0 崩）；**云 / 边界=已放开未取证**（`renderClouds` 关着、镜头离边界远 ⇒ 那两句没执行，只有 apply 成功 + 不崩这一半）；🔖 同时把上一轮两处误分类改掉：`CubeMap:69` 与 `LevelRenderer:518` **自己开 pass**，不在主 pass 内 ⇒ **主 pass 内的非 OIT 取管线点已全部接上**，剩下的是 OIT 那 6 处（`CloudRenderer:215`、`WorldBorderRenderer:170`、`LevelRenderer:670/690/694/706`）。⚠️ 一条自己造的启动期崩记进 `GAP-047` ⑤：描述符里 `Vec3` 的包名写错（`org.joml` 应为 `net.minecraft.world.phys`）⇒ `require = 1` 让它**启动期点名硬失败**而不是静默不生效，纪律第一次以正面样本入台账 | 🔴 整帧 |
 
 **R7 的第一步不是写注入**：先交**牵连面清单**（`executeSolid` / `executeClassicTransparency` / `executeOit` /
 `executeOutline` / `executeSeeThrough` / `executeAlwaysOnTop` 六支各用哪些管线、要派生成几条 N 附件版本），
 ✅ **清单已交付（同日第二轮，见 §7-6 / `04-SPEC` §5.0.6）** ⇒ 但 R7 仍**不许开工**，直到 §5.0.6 ⑤ 那三项待核结掉
 （尤其待核 1：非 OIT 的 `water_mask` 落在哪个 pass —— 它决定「一条管线要不要出两个变体」，从而决定 R7 的真实成本）。
-🔴 在此之前，「R7 的成本」一律写「未估」，不许引用本节任何数字。
+🔴 在此之前不许引用本节任何数字做判断。（工时口径整体废止 ⇒ 见 `07-CONSTRAINTS.md` X56）
 
 **执行序**：`R0 → R3 → R2 → R1 → R4 → R5 → R6 →（结三项待核）→ R7`（R3 最先是因为它**零渲染语义变化**、纯删码；R1 排在 R2 之后是因为 R2 先把「pass 身份从哪来」定了，R1 才好归因）。
 
@@ -528,7 +532,7 @@ C2b 要动每帧路径，按 QD-04 的教训必须单独一轮；
 ## 6. 跨弱点排序：为什么是这个顺序
 
 ```
-A0 (止血/可见性)  ──┐                     ← 零风险，1 h，立刻消除 X11 违例
+A0 (止血/可见性)  ──┐                     ← 零风险，立刻消除 X11 违例
 B0 (棘轮+reset契约) ┘                    ← 之后任何拆分都在「不许变差」的护栏内进行
    ↓
 C1 (sampler 派生) ── C0 (SpvModule 表面核实) ← 机制已在仓，纯接线；不动热路径
@@ -546,27 +550,27 @@ C2a (光空间数学，可单测、不碰 GPU) → C2b (包 shadow pass 装配) 
 
 按三支柱打分的取舍（🔴 高分 = 优先）：
 
-| 项 | 兼容收益 | 稳定收益 | 性能影响 | 成本 | 需真机取证 |
+| 项 | 兼容收益 | 稳定收益 | 性能影响 | 规模 | 需真机取证 |
 |---|---|---|---|---|---|
-| A0 | ★（防错展开） | ★★★（消静默） | 0 | 1 h | ❌ |
-| B0/B1 | ★ | ★★★（消 QD-08 族） | 0（取键冷路径） | 半天+1天 | ❌ |
-| C1 | ★★★（换包不漂） | ★★ | 微（注册期） | 2h+1d | ❌ |
-| A1/A3/A4 | ★★（少打补丁） | ★★★（可定位） | 冷路径，须报 B3/B4 | 4–5 天 | ❌ |
-| C2a | ★（为 C2b 备好正确矩阵） | ★★（消灭「常量当真相」） | 0（不碰 GPU） | 1 天 | ❌ |
+| A0 | ★（防错展开） | ★★★（消静默） | 0 | — | ❌ |
+| B0/B1 | ★ | ★★★（消 QD-08 族） | 0（取键冷路径） | — | ❌ |
+| C1 | ★★★（换包不漂） | ★★ | 微（注册期） | — | ❌ |
+| A1/A3/A4 | ★★（少打补丁） | ★★★（可定位） | 冷路径，须报 B3/B4 | — | ❌ |
+| C2a | ★（为 C2b 备好正确矩阵） | ★★（消灭「常量当真相」） | 0（不碰 GPU） | — | ❌ |
 | C2b | ★★★（阴影第一次真实） | ★★ | 每帧多一遍世界绘制 ⇒ **必测 B1/B2** | 未估 | 🔴 单独一轮 |
-| A2-shaderc 臂 | ★★ | ★★★（差分 oracle ⇒ 盲区变可见） | 冷路径，可只在测试/诊断里跑 | **探针 0.5 天**（原版已带该原生库 ⇒ 无分发成本） | ❌（oracle 只进单测/离线工具） |
+| A2-shaderc 臂 | ★★ | ★★★（差分 oracle ⇒ 盲区变可见） | 冷路径，可只在测试/诊断里跑 | 探针先行（原版已带该原生库 ⇒ 无分发成本） | ❌（oracle 只进单测/离线工具） |
 
 🔴 **2026-10-12 增补：§5A 那一族不进上面这条链。**
 它改的是「代码挂在哪儿」，与 A/B/C 三条链（改「代码怎么写」）**并列**，各自独立可排期。
 按同一张打分表量，§5A 的三格是：
 
-| 项 | 兼容收益 | 稳定收益 | 性能影响 | 成本 | 需真机取证 |
+| 项 | 兼容收益 | 稳定收益 | 性能影响 | 规模 | 需真机取证 |
 |---|---|---|---|---|---|
-| **R3**（删反射族 M-07…M-10） | ★（判据不会静默消失） | ★★★（升版硬失败替静默降级） | 0 | 1 天 | ❌ |
-| **R2**（M-06 一点替两点 + 补雾） | ★（雾口径与原版同源） | ★★★（消「残值当本帧值」那类静默错） | 0（每帧一次赋值） | 1 天 | 🟡 一帧判据即可 |
-| **R1**（R1a：新增 M-15，用 `renderPass` 实参定 pass 身份） | ★★（少一层「档不一致」风险） | ★★★（`GAP-040` 的假守卫被真判据替掉） | 🔴 热路径，须报 B1/B3 | 1–2 天 | 🔴 单变量 A/B 一轮 |
+| **R3**（删反射族 M-07…M-10） | ★（判据不会静默消失） | ★★★（升版硬失败替静默降级） | 0 | — | ❌ |
+| **R2**（M-06 一点替两点 + 补雾） | ★（雾口径与原版同源） | ★★★（消「残值当本帧值」那类静默错） | 0（每帧一次赋值） | — | 🟡 一帧判据即可 |
+| **R1**（R1a：新增 M-15，用 `renderPass` 实参定 pass 身份） | ★★（少一层「档不一致」风险） | ★★★（`GAP-040` 的假守卫被真判据替掉） | 🔴 热路径，须报 B1/B3 | — | 🔴 单变量 A/B 一轮 |
 | ~~R1b（M-01 → `PipelineModifier`）~~ | — | — | — | — | 🔴 **已作废**（`GAP-045`：缓存键无包代次、key 不能运行期增删） |
-| **R7**（M-04 整主 pass 多附件） | ★★★（gbuffer 第一次**就是**主目标 ⇒ 双绘与图外同步一族消失） | ★★（少一套手工同步，但改的是原版 pass 语义） | 少一遍地形绘制 —— ⚠️ 本机 llvmpipe **不可量化**（`00` 铁律 ①） | 3–5 天 + 完整回归（三项待核已结，见 §5A.4 的 R7 行） | 🔴 牵连整帧，需完整回归 |
+| **R7**（M-04 整主 pass 多附件） | ★★★（gbuffer 第一次**就是**主目标 ⇒ 双绘与图外同步一族消失） | ★★（少一套手工同步，但改的是原版 pass 语义） | 少一遍地形绘制 —— ⚠️ 本机 llvmpipe **不可量化**（`00` 铁律 ①） | 完整回归一轮（三项待核已结，见 §5A.4 的 R7 行） | 🔴 牵连整帧，需完整回归 |
 
 ---
 
@@ -624,7 +628,7 @@ shaderc **只当差分 oracle**。落地边界（写死，越界就回来重判�
   **阴影这一族目前不是「精度差」，是「整个不存在」**。
 - OF/Iris 格式**没有** loader 级 CSM/frustumSplit API，级联是包在**一张深度图内部**自己切区域的惯例
   ⇒ 所以「做 4 级级联」**既不是兼容必要条件**，反而可能误导（包以为拿到的是自己那张单图）。
-- 建议排序：**C2a（数学，1 天，零风险）→ C2b（装配，大项，单独一轮）→ 比较采样器（GAP-001/015，与 C2b 同轮必修）→ C4 级联（可选，`platform/` + T12 登记）**。
+- 建议排序：**C2a（数学，零风险）→ C2b（装配，大项，单独一轮）→ 比较采样器（GAP-001/015，与 C2b 同轮必修）→ C4 级联（可选，`platform/` + T12 登记）**。
   ✅ **已执行（2026-10-10）**：级联**暂不做**，改为登记真正的大项 —— 新立 **`GAP-034`「包的 `shadow` 程序从未被装配/渲染」**
   （此前该事实只在 GAP-003③/GAP-015 里各记了半个因）。
 - 需要你判：**(ii) C2b 是否排进下一轮真机取证**（量级不小，建议先做 C1/C3）。(i) 已按上述执行，无需再判。
@@ -679,7 +683,7 @@ C2a 不碰 GPU ⇒ 它的判据是**单测矩阵断言**，跑真机只会得到
 | 证伪依据 | 缓存是 `Map<ResourceKey<PipelineModifier>, Map<RenderPipeline, RenderPipeline>>`，`Reference2Reference`，**只有 get/put、没有任何失效入口**（`PipelineModifierStack:47-70`）；而 modifier key **只能在启动期注册**（`ClientHooks:796 / 797-800 / 825-826` 那个一次性窗口 + `RegisterPipelineModifiersEvent:28-32` 的 `putIfAbsent`）⇒ **包代次既进不了缓存的第二维，也进不了 key** |
 | 为什么致命 | 我方 MRT 地形管线的**身份**随包变（片元 = 包的 `gbuffers_terrain`，附件数 = 冻结契约 `MrtPlan.freezePackPrograms:169-197`）⇒ 切包后 modifier 继续返回**上一代**那条，等于把 `GAP-032`（切包后绑定组不同代 ⇒ `Missing uniform` 崩帧）的脏状态**由缓存永久记住**，比现状更难退 |
 | 顺带查出的既有债 | `GbufferPipelineSwaps:112` 就在 `apply` 里现读 `mrt.cloudsNoDepthWrite` ⇒ 首推那刻的值被永久冻结，今天靠**调用点闸门**（`CloudsIntoGbuffer:281/289`）掩盖 ⇒ 新登记 `GAP-044` |
-| 现行形态 **R1a** | 新增 **M-15**：`@WrapOperation` 包住 `ChunkSectionsToRender:176 / :121` 的 `getCompiledPipeline(...)`，handler 读外层 `renderPass` 实参 ⇒ pass 身份由**数据**给出。删的是 `inMrtPass` + `finally` 纪律 + 空转守卫（`GAP-040`）+ `MRT_GUARD_FALLBACK` —— **这三件原设想想删的东西照样删得掉，且不依赖 modifier**；M-01 保留但退化成「只按层名查表」。成本从 2–3 天降到 **1–2 天** |
+| 现行形态 **R1a** | 新增 **M-15**：`@WrapOperation` 包住 `ChunkSectionsToRender:176 / :121` 的 `getCompiledPipeline(...)`，handler 读外层 `renderPass` 实参 ⇒ pass 身份由**数据**给出。删的是 `inMrtPass` + `finally` 纪律 + 空转守卫（`GAP-040`）+ `MRT_GUARD_FALLBACK` —— **这三件原设想想删的东西照样删得掉，且不依赖 modifier**；M-01 保留但退化成「只按层名查表」。 |
 | 登记的落点 | `04-SPEC` §5.0 M-01 行（改判）、新增 M-15 行、`GAP-045`（本条结论）、`GAP-044`（既有云 modifier）；本文 §5A.3 表新增一行、§5A.4 的 R1 行改写、§6 打分表把 R1b 划掉 |
 
 **② M-04 牵连面清单：已交付在 `04-SPEC` §5.0.6**，四个要点：
@@ -728,16 +732,16 @@ C2a 不碰 GPU ⇒ 它的判据是**单测矩阵断言**，跑真机只会得到
 > 用途：下一轮不必翻 `CHANGE_LOG` 找「还欠什么」。代码侧（第 1~6 步的注入点与「必须物理消失」那一栏）
 > 已逐条核过（见 §7-7 与 `CHANGE_LOG` 一百五十），**剩下的全是判据**，除最后一行外都不欠代码。
 
-| # | 判据（阶梯原文口径） | 现状 | 最省的一刀 | 成本 |
+| # | 判据（阶梯原文口径） | 现状 | 最省的一刀 | 臂数 |
 |---|---|---|---|---|
 | 1 | 第 5 步 `GAP-039`「岩浆里没有天空」 | ✅ **已签**（`4b2ad93`：头浸岩浆 天空蓝 0.09% vs 空气 36.66%，可逆） | —— | 0 |
-| 2 | 第 5 步 `GAP-039` 另两格（粉雪 / `Skybox.NONE` 维度） | 🔴 **前置缺失**（2026-10-13：头+脚在粉雪里 30 秒，`[GAP-038/雾]` 恒 `fogType=NONE`、画面无白化 ⇒ 原版那道门控没进入 ⇒ 这一格**既没签成也没否证**；下一刀先读原版 `FogRenderer` 的粉雪分支，见 `GAP-039` 那行） | 粉雪：与岩浆那格**逐字同形**（`fill 5×4×5 minecraft:powder_snow replace minecraft:air` → 读天空蓝占比 → 换回）；`Skybox.NONE` 要换维度 ⇒ 撞上 `GAP-052`（OIT 的对外接口仍钉在主目标），**别在末地那一臂顺手判** | 粉雪 1 臂 ≈ 3 分钟；末地 1 臂但先等 `GAP-052` |
+| 2 | 第 5 步 `GAP-039` 另两格（粉雪 / `Skybox.NONE` 维度） | 🔴 **前置缺失**（2026-10-13：头+脚在粉雪里 30 秒，`[GAP-038/雾]` 恒 `fogType=NONE`、画面无白化 ⇒ 原版那道门控没进入 ⇒ 这一格**既没签成也没否证**；下一刀先读原版 `FogRenderer` 的粉雪分支，见 `GAP-039` 那行） | 粉雪：与岩浆那格**逐字同形**（`fill 5×4×5 minecraft:powder_snow replace minecraft:air` → 读天空蓝占比 → 换回）；`Skybox.NONE` 要换维度 ⇒ 撞上 `GAP-052`（OIT 的对外接口仍钉在主目标），**别在末地那一臂顺手判** | 粉雪 1 臂；末地 1 臂但先等 `GAP-052` |
 | 3 | 第 5 步 `GAP-037`「天空深度只被翻一次」 | 🟡 **仪器已落地 + 第一次读数 = 1 次**（`e687c6a`，`DepthFlipLedger`），⚠️ 但「1 次」的原因是第二个所有者被 `GAP-054` 的几何守卫拒掉了 ⇒ **没复发也没被证伪** | 等 `GAP-028` ③ 把包天空接回去之后**重读同一行**：读数必须仍是 1 次，变成 2 次即 `GAP-037` 复发 | 0（读日志） |
 | 4 | 第 5 步「一百一十轮的星点判据不得回退」 | 🔴 **已取证、判据为红**（夜里天空带排掉十字准星后**一个星点都没有**；`docs/13` `GAP-037` 关系行） | 收口条件 = `GAP-037` 的修法落地（深度单点化，M-04 ⑤-e 那一轮）；取证口径已定：`time set 18000` + `weather clear` + **当场 `time query day` 钉住日时钟** + `pitch≈13` 而非朝天 + **报数必须带 x/y 分位** | 1 臂 + 一次修法 |
-| 5 | 第 2 步「各向异性两档锐度随用户设置变」+「同机位同帧读数与今天相同」 | ⬜ 未签（后者的「今天」基线已随删码过去，**只能改成「与关掉复用键的那一臂相同」**） | 两臂**冷启动**（`mixin.reuseChunkSampler` 真/假），同一机位同一 `time set 6000`，取斜视地面的锐度带（梯度能量）比 | 2 臂 ≈ 6 分钟 |
-| 6 | 第 4 步「A/B 对 `h08` 基线 48.22 / 39.03% 同量级」 | ⬜ 未签（「注入失败标记 = 0」（`07` §1.4.1bis 六条针）与「错配被拒」两格已签：前者 10-13 真机、10-14 换针重读 10-13 全天 36 份日志 = 35 趟 0 命中 / 1 趟命中那次已修 FATAL（当时用的 `Mixin apply failed` 是假绿针）、后者 `PassAwarePipelineRouteTest` 真值表） | 需 `slots=8` 取证档（`run/config/vkdisp-pack-options.properties` 加 `BSL_v10.1.8.ADVANCED_MATERIALS=true`）+ **冷启动**（包选项别用热重载，`gaux1` 那条老坑） | 2 臂 ≈ 8 分钟 |
+| 5 | 第 2 步「各向异性两档锐度随用户设置变」+「同机位同帧读数与今天相同」 | ⬜ 未签（后者的「今天」基线已随删码过去，**只能改成「与关掉复用键的那一臂相同」**） | 两臂**冷启动**（`mixin.reuseChunkSampler` 真/假），同一机位同一 `time set 6000`，取斜视地面的锐度带（梯度能量）比 | 2 臂 |
+| 6 | 第 4 步「A/B 对 `h08` 基线 48.22 / 39.03% 同量级」 | ⬜ 未签（「注入失败标记 = 0」（`07` §1.4.1bis 六条针）与「错配被拒」两格已签：前者 10-13 真机、10-14 换针重读 10-13 全天 36 份日志 = 35 趟 0 命中 / 1 趟命中那次已修 FATAL（当时用的 `Mixin apply failed` 是假绿针）、后者 `PassAwarePipelineRouteTest` 真值表） | 需 `slots=8` 取证档（`run/config/vkdisp-pack-options.properties` 加 `BSL_v10.1.8.ADVANCED_MATERIALS=true`）+ **冷启动**（包选项别用热重载，`gaux1` 那条老坑） | 2 臂 |
 | 7 | 第 6 步 M-14「包选项进原版视频设置页」 | ⬜ 未签（注入点 `VideoSettingsPackOptionsMixin` + 键 `packOptionsInVanilla` 都在，旧 `PackPickerScreen` 已物理消失） | 一次真机：`control` 打开视频设置 → 截图 → 看条目在不在原版页里（`close_container` 能关暂停菜单那条经验可用） | 1 臂 |
-| 8 | `GAP-054` 那块切过半个屏幕的巨型贴图平面 | 🔴 **未修；已定性为**我方的**（臂 4：`enabled=false` ⇒ 画面干净原版、平面消失）；**八臂下来：`[mixin]` 整块 11 键全关 ⇒ 平面照旧；`shaderPack="none"` ⇒ 平面消失 ⇒ 生产者出在包的加载/生成侧，不在那 11 个注入点里**（`9be7d40` 冷启动 A/B 三趟逐字相同 ⇒ 与 `mrt.skyPackShader` 无关；`a0d16c1` 探针：四个产物出口里没人问过 `gbuffers_skybasic`）；🔴 **2026-10-14：已排除清单里 `mrt.packTerrainShader` 那一格撤回** —— 它唯一的依据是臂 3 那行 `[GAP-036/半开档]` WARN，而那行不读这个键（`FullscreenPassHook:220`），同趟真读该键的日志反而证明它当时是 `true` ⇒ **该键从未被任何一臂测过，回到候选位**（逐字见 `docs/13` GAP-054 的「八臂之后」行与 GAP-056 表首行）；✅ **10-14 已补测 ⇒ 这一对正式排除**：`mrt.terrain` + `mrt.packTerrainShader` **成对关**（单关会落进半开档 = 全黑，判不了）冷启动 A-B-A，基线两趟与成对关那一趟里，右下角那块巨型树叶/图集贴片**逐字同形同位** | **一律冷启动**，一次一臂：① `mixin.wireTerrain=false` + `mrt.terrain=false`（探针链里 `MrtTerrainPass#drawTerrain:382` 证明这份 toml 档我方在画地形 ⇒ 地形回到候选位。**⚠️ 2026-10-13 收尾跑过：两把一起关会落进「半开档 = 整屏全黑」（实测 `全片 mean=5.8`）⇒ 那一臂不可判，改成只关 `mrt.terrain=false` 单键**）② `mrt.postChain=false` ③ **原版对照**（`run/mods/` 只留 mcpfabric）—— ③ 若还在就直接摘账 | 3 臂 ≈ 10 分钟 🔴 **臂 2/3 已跑（2026-10-13，冷启动）**：单键 `mrt.terrain=false` ⇒ 平面照旧（**地形那一笔排除**，连带暴露 `GAP-055` 每帧异常）；`postChain=false` ⇒ 平面照旧（**链排除**；那臂被 `GAP-056` 的回写污染成两键，但「链关着还在」只依赖 postChain 那一半）。⇒ **只剩天空那一族**，**下一刀进包侧**：① 保留包但一条派生程序都不注册 ⇒ 切「包的资源 vs 包的程序」；② 先补 §7-8 早写着的那条生成侧自报（`FullscreenPipelineRegistrar` / `GeneratedSources.adapters`）；③ `[pack]` 逐键二分；④ ✅ **已跑（10-14）：那一格补完了** —— 臂形改成 `mrt.terrain` + `mrt.packTerrainShader` **成对关**（单关 = 半开档 = 全黑，不可判），三趟冷启动 A-B-A + 打开看图 ⇒ **平面照旧，这一对排除**；`[生效档]` 三档读数与文件逐字一致（非默认 4 → 2 → 4）、`is not correct` 0 命中、六条针 0 命中，起跑后先回读 `[生效档]` 全量自报块、停客户端后再做一次**逐键值 diff**（`GAP-056` 2026-10-14 换的新口径 —— `md5sum` 只当「变过没有」的哨兵，不当「改了哪个键」的证据）。💡 原版对照不必拆 `run/mods/`：`enabled=false` 就是干净兜底臂。⚠️ 数值签名今天取不了：直连 `/rpc` 的 `vision.screenshot {path}` 被本机权限层拦 ⇒ 要数值的格（`GAP-053`/星点/`h08` A-B）先解决**截图落盘通道**。 |
+| 8 | `GAP-054` 那块切过半个屏幕的巨型贴图平面 | 🔴 **未修；已定性为**我方的**（臂 4：`enabled=false` ⇒ 画面干净原版、平面消失）；**八臂下来：`[mixin]` 整块 11 键全关 ⇒ 平面照旧；`shaderPack="none"` ⇒ 平面消失 ⇒ 生产者出在包的加载/生成侧，不在那 11 个注入点里**（`9be7d40` 冷启动 A/B 三趟逐字相同 ⇒ 与 `mrt.skyPackShader` 无关；`a0d16c1` 探针：四个产物出口里没人问过 `gbuffers_skybasic`）；🔴 **2026-10-14：已排除清单里 `mrt.packTerrainShader` 那一格撤回** —— 它唯一的依据是臂 3 那行 `[GAP-036/半开档]` WARN，而那行不读这个键（`FullscreenPassHook:220`），同趟真读该键的日志反而证明它当时是 `true` ⇒ **该键从未被任何一臂测过，回到候选位**（逐字见 `docs/13` GAP-054 的「八臂之后」行与 GAP-056 表首行）；✅ **10-14 已补测 ⇒ 这一对正式排除**：`mrt.terrain` + `mrt.packTerrainShader` **成对关**（单关会落进半开档 = 全黑，判不了）冷启动 A-B-A，基线两趟与成对关那一趟里，右下角那块巨型树叶/图集贴片**逐字同形同位** | **一律冷启动**，一次一臂：① `mixin.wireTerrain=false` + `mrt.terrain=false`（探针链里 `MrtTerrainPass#drawTerrain:382` 证明这份 toml 档我方在画地形 ⇒ 地形回到候选位。**⚠️ 2026-10-13 收尾跑过：两把一起关会落进「半开档 = 整屏全黑」（实测 `全片 mean=5.8`）⇒ 那一臂不可判，改成只关 `mrt.terrain=false` 单键**）② `mrt.postChain=false` ③ **原版对照**（`run/mods/` 只留 mcpfabric）—— ③ 若还在就直接摘账 | 3 臂 🔴 **臂 2/3 已跑（2026-10-13，冷启动）**：单键 `mrt.terrain=false` ⇒ 平面照旧（**地形那一笔排除**，连带暴露 `GAP-055` 每帧异常）；`postChain=false` ⇒ 平面照旧（**链排除**；那臂被 `GAP-056` 的回写污染成两键，但「链关着还在」只依赖 postChain 那一半）。⇒ **只剩天空那一族**，**下一刀进包侧**：① 保留包但一条派生程序都不注册 ⇒ 切「包的资源 vs 包的程序」；② 先补 §7-8 早写着的那条生成侧自报（`FullscreenPipelineRegistrar` / `GeneratedSources.adapters`）；③ `[pack]` 逐键二分；④ ✅ **已跑（10-14）：那一格补完了** —— 臂形改成 `mrt.terrain` + `mrt.packTerrainShader` **成对关**（单关 = 半开档 = 全黑，不可判），三趟冷启动 A-B-A + 打开看图 ⇒ **平面照旧，这一对排除**；`[生效档]` 三档读数与文件逐字一致（非默认 4 → 2 → 4）、`is not correct` 0 命中、六条针 0 命中，起跑后先回读 `[生效档]` 全量自报块、停客户端后再做一次**逐键值 diff**（`GAP-056` 2026-10-14 换的新口径 —— `md5sum` 只当「变过没有」的哨兵，不当「改了哪个键」的证据）。💡 原版对照不必拆 `run/mods/`：`enabled=false` 就是干净兜底臂。⚠️ 数值签名今天取不了：直连 `/rpc` 的 `vision.screenshot {path}` 被本机权限层拦 ⇒ 要数值的格（`GAP-053`/星点/`h08` A-B）先解决**截图落盘通道**。 |
 | 9 | 闸门 M-04（R7）⑤-d 后半 + ⑤-e | ⬜ 未做（⑤-a~c 已落地并真机签；⑤-d 第一刀已落但 `GAP-053` 的**代次归属**未结；⑤-e 第一格「深度附件换成 gbuffer 深度」已落） | 先结 `GAP-053`（候选 (a) 单绘档整条不打开 / (b) 接管取「链要读的那一代」/ (c) 接管档退化成单代），再删死码（自绘路径 + `ColortexPool` 一侧 + M-01 退化件）并把池锚点换成主 pass 自己的 target0 | 代码 + 每步一臂取证 |
 
 🔖 **四条已经付过学费的取证纪律（① ② 本轮新写进记忆，别再用热重载下结论；③ ④ 是 2026-10-14 补的）**：
@@ -812,7 +816,7 @@ unzip -p ~/.gradle/caches/modules-2/files-2.1/org.lwjgl/lwjgl-shaderc/3.4.3/*/lw
 | `13-GAP-REGISTRY.md:32`（GAP-005） | 「glslang 可作预处理槽」不成立；许可描述过粗 | ✅ **已拆 005a/005b 并原地更正**（含 jcpp / shaderc 两条低成本臂与「先过 A1」的顺序约束） |
 | `13-GAP-REGISTRY.md`（新立） | 🔴 包的 `shadow` 程序从未被装配/渲染、无阴影目标贴图 —— 现只在 GAP-003③/GAP-015 记了半个因 | ✅ **已新增 `GAP-034`**（含 C2a/C2b 两级、比较采样器列为同轮必修、判据与 X38/X48 取证纪律）；本文 §4.3 的「原判错」更正与之对齐 |
 | `QUALITY-DEBT.md` QD-03 / QD-04 | 95 → **175**；「6 个渲染编排方法待拆」仍待办 | ✅ QD-03 已就地标注复算值与口径，并规定今后由棘轮计算；QD-04 的 21 不变；§0 新增 QD↔本文小节映射表 |
-| `QUALITY-DEBT.md` QD-11 | ② 「接方向即可」原判**不完整**（阴影图根本不存在）；① 原判**偏贵**（派生机制已在仓） | ✅ 已就地更正两级拆分 + 「1 天可闭环」估计作废，并指向 `GAP-034`；另记 `SamplerDimensionPlan:28-32` 早按 **X39** 否决过按名字硬编码 |
+| `QUALITY-DEBT.md` QD-11 | ② 「接方向即可」原判**不完整**（阴影图根本不存在）；① 原判**偏贵**（派生机制已在仓） | ✅ 已就地更正两级拆分，并指向 `GAP-034`；另记 `SamplerDimensionPlan:28-32` 早按 **X39** 否决过按名字硬编码 |
 | `QUALITY-DEBT.md` QD-14 | 旧方案给反射找的解耦理由若含「保持 100% 自研」，该前提已被撤销 | ✅ 已就地标注前提消失 + 指向本文 §5.3；🔖 原注释只提「`#ifndef` 求值链」，**未证反射是必须的** ⇒ 核实动机这步保留 |
 | `03-DIRECTION.md` §4 + `07-CONSTRAINTS.md` §〇 | 「MIT ⇒ 100% 自研」**不是 MIT 的要求**（用户 2026-10-10 裁决，§7-1） | ✅ 两处已改写为「只并入 MIT/Apache-2.0/BSD 族，保留 `LICENSE`/`NOTICE` 并声明改动」；`07` §1.3 判定表补 BSD 行、§七 自检清单新增一条署名核对项；**L5–L8（LGPL/GPL/ARR）与 P1/P2/P3 未动** |
 | `07-CONSTRAINTS.md` §五 依赖版本锁定 | 引入 `org.anarres:jcpp`（移植）或 `compileOnly org.lwjgl:lwjgl-shaderc` | ✅ **已登记锁法**（`07` 新增 **§5.1**：两个坐标各自的版本键 + 并码署名义务 + 「游戏自带坐标会漂」这条）。🔴 配套实测：**26.2 = 3.4.1 / 26.3 = 3.4.3** ⇒ 已写进 `06-MIGRATION` §3 **V6**（升 MC 必查）与 `05-VERSION` §2 的事实行。⚠️ **依赖本身仍未引入** —— §7-2 那句「测试/离线工具可否引用」还待判，本节只登记「放行后怎么锁」 |

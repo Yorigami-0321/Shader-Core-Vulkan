@@ -4,6 +4,34 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-14（一百五十四）— 🔴 文档口径变更：**工时 / 排期整体废止**（X56 / A18），全仓 .md 里已有的阶段工时数字就地删除，不留「已作废」痕迹
+
+> **verdict = 文档今后只给「序 / 判据 / 规模」三样，规模用轮次·臂数·牵连面条数表达，不许换算成小时/天/周**。
+> 用户指令：把所有文档里的时间安排删掉，并把这条写进规范。
+
+- **本次改了什么**：
+  - **新红线** `docs/07-CONSTRAINTS.md` **X56**（不自行给任何阶段/阶梯条目安排时间或工时）+ §七 自检清单一条；
+    `docs/15-ITERATION.md` **A18** + 第 2 步「先改文档」的特别要求一条 + 快速检查表一条；
+    `docs/00-INDEX.md` 真源对照表加一行（「文档里能不能写工时 / 排期」⇒ 不能）；
+    `docs/19-IMPROVEMENT-PATHS.md` §0 加口径段。
+  - **列名改口**：`19` 五张阶梯/打分表 + `QUALITY-DEBT` 登记表的 `成本` 列 → **`规模`**；`19` §7-8 台账最后一列 → **`臂数`**。
+  - **删工时**（77 处逐字替换 + 31 处表格单元/成本行正则清扫，命中数逐条断言）：
+    `19` §2.6/§3.5/§4.5/§5.4/§5A.4/§6 的「0.5 h / 1 天 / 1.5 天 / 2–3 天 / 4–5 天 / 3–5 个工作日 / 半天+1天 / 2h+1d」
+    ⇒ 纯工时的填 `—`，与工时捆在同一格里的**非时间信息保留**（「分 2 轮」「含两轮真机取证」「不需要幂等收敛，也不需要动注册时机」「完整回归一轮」「原版已带该原生库 ⇒ 无分发成本」）；
+    §7-8 台账的「N 臂 ≈ M 分钟」→ 只留 **N 臂**；
+    `QUALITY-DEBT` §3 的「成本 ≤ 30 min 的项可顺手闭环」→「一步即可闭环」，表头那句「30 分钟即可关闭的债跨六轮」→「一轮即可关闭」；
+    `docs/04-SPEC.md` §5.0.6 ⑥ 那句「三项已结 ⇒ **允许给 R7 报成本**」连同那句已失效的「不许报成本」锁一起改成**范围与序**口径；
+    `docs/06-MIGRATION.md` 迁移日志的耗时列：`20min（…）`/`15min（…）` 改成**实测构成**（`7301 个 MC 源文件`、`generateModMetadata 45s + 编译测试 19s`）；
+    `docs/13` GAP-054 下一刀的「约 2 分钟一臂」、GAP-046 的「不许报 R7 成本」→ 规模口径；
+    `CHANGE_LOG` 顶部两条里的工时数字；`review/` 四份归档报告的成本列与 `**成本**：N 分钟` 行（归属注记 `docs/ 归 env-1`、`需与 D 线归属方协调` 保留）。
+- **保留什么**（用户明确划的边界）：`08` / `17` / `02` / `04` 里的**性能验收预算**（B3 ≤ 1 秒、B4 ≤ 2 秒、B6 1h 内存增量 ≤ 200MB、加载 ≤ 3 秒）、**实测时长**（冷路径 1861ms、`约 5 分钟 runClient = 64 959 条栈`、启动约 1 分钟）、以及**机制性时序事实**（日时钟每真实分钟走 ~0.1 天、`RegisterRenderPipelinesEvent` 早于包源约 4.5 秒）。这些不是「给阶段安排的时间」。
+- **为什么改**：写进文档的工时会在地会话里被当成承诺引用，而它从来没有依据 —— 排期是用户的职权。同时本轮顺手消掉两处自相矛盾（`04-SPEC` ⑥ 与 GAP-046 那句「不许报成本」互斥，且都随 10-13 的锁解除而失效）。
+- **影响的文档**：`docs/00-INDEX.md`、`docs/07-CONSTRAINTS.md`、`docs/15-ITERATION.md`、`docs/19-IMPROVEMENT-PATHS.md`、`docs/QUALITY-DEBT.md`、`docs/04-SPEC.md`、`docs/06-MIGRATION.md`、`docs/13-GAP-REGISTRY.md`、`CHANGE_LOG.md`、`review/`（4 份）。零代码改动。
+- **测试结果**：读文档的守卫全跑（`VulkanEvidenceDisciplineTest` / `CatchThrowableVisibilityTest` / `BridgeNullableContractTest` / `ComparisonSamplerGapTest` / `GapRegistryStatusFieldTest` / `GlslPipelineTest` / `OptionBindingTest` / `ClassLineRatchetTest`）——见本条末尾的回执。
+- **是否已提交**：✅ 本轮结束即提交并推送（2026-10-11 用户口径）。
+
+---
+
 ## 2026-10-14（一百五十三）— 🟢 上一轮欠的三件全补上：半开档新文案拿到真机形状、`mrt.packTerrainShader` 那一格**测掉了**（成对关 ⇒ 平面照旧）、「枚举 == 源码」守卫从 SKIPPED 变成构建期真判
 
 > **verdict = `GAP-054` 的已排除清单里 `mrt.packTerrainShader` 这一格现在是测出来的，不是推出来的；`GAP-056` 从「每趟都会污染」降级为「只在文件不 spec-correct 的那一趟会重写」**。顺带被自己的类路径改动抓到 QD-14 的**第三个样本**（Switch 类少一态）。
@@ -101,7 +129,7 @@
 - **读数**：`skyPackShader=true` 两趟 ⇒ `硬边列=[361,362,363] 左块 mean=79.2 全片 mean=123.5`，**两趟逐字相同**（仪器可复现）；`skyPackShader=false` 一趟 ⇒ **完全同一组数**，日志里连一行天空自报都没有。⇒ 这个键**不影响**那块平面。
 - **为什么上一轮会读反**：这一族键参与**生成指纹**（`VkDispVirtualPack:1031` + `VkDispConfigHotReload:329`）⇒ 热重载换臂顺带触发**整包重生成 + 资源重载**。上一轮「关掉就没了 / 打开就回来」两次都跟着重载走，形状与「键有语义」一模一样。⇒ 同一趟里的 `skyViews`、`packTerrainShader`、云三键「都不动它」也一并**降级为未证**。
 - **本轮唯一站得住的新事实**（探针，上一提交）：四个产物出口里**没有任何人问过 `gbuffers_skybasic`**，而链里出现 `MrtTerrainPass#drawTerrain:382` ⇒ 这份手写 toml 档里我方 gbuffer pass **确实在开、在画地形** ⇒ 「地形那一笔」重新回到候选位。
-- **下一刀（口径已写死进登记表）**：键位实验一律冷启动，一次一臂（约 2 分钟）；先跑三臂定方向 —— ① `mixin.wireTerrain=false` + `mrt.terrain=false`；② `mrt.postChain=false`；③ **原版对照**（`run/mods/` 只留 mcpfabric）—— ③ 若平面还在就直接摘账，与本项目无关。
+- **下一刀（口径已写死进登记表）**：键位实验一律冷启动，一次一臂；先跑三臂定方向 —— ① `mixin.wireTerrain=false` + `mrt.terrain=false`；② `mrt.postChain=false`；③ **原版对照**（`run/mods/` 只留 mcpfabric）—— ③ 若平面还在就直接摘账，与本项目无关。
 - **收尾**：取证键已复原（`skyPackShader = true` = 代码默认），三趟客户端全部停干净（25599 无监听）。零代码改动，测试仍 **1197 条 0 失败**。
 
 
@@ -529,7 +557,7 @@
 - **未收口（如实）**：M-14 的三条画面判据 + `Mixin apply failed=0` 都没真机 —— 尤其
   `@Shadow` 能不能命中**继承来**的 `OptionsSubScreen#list` 是本轮唯一没被任何自动化手段验证的假设
   （命中不了是 apply 期硬失败，不是静默）。**阶梯往下就是闸门后的 R7（M-04 整主 pass）**：
-  三项待核已结（一百二十二）、成本已报（3–5 天 + 完整回归），开工第一步是那张牵连面清单的执行序，
+  三项待核已结（一百二十二）、回归面已报（完整回归一轮），开工第一步是那张牵连面清单的执行序，
   不是先写注入。
 
 ## 2026-10-12（一百二十三）— 🟡 R6 第 6 步后半（M-14 · 上半）：包选项进<b>原版视频设置页</b> —— 新增通路，自研屏幕这一提交先不删
@@ -889,7 +917,7 @@
 - **② R1 的现行形态 = R1a（新增 M-15）**：`@WrapOperation` 包住 `ChunkSectionsToRender` 第 **176 / 121** 行的
   `RenderSystem.getCompiledPipeline(...)`，handler 读外层 `renderPass` 实参 ⇒「在不在我方 pass」由**数据**给出。
   删的仍是原设想想删的三件（`inMrtPass` `MrtTerrainPass:119` + `finally` 纪律 `:532-539` + 空转守卫 `:320-322`
-  + `MRT_GUARD_FALLBACK` `TerrainPipelineApi:530`），**但不依赖 modifier、不动注册时机**，成本 2–3 天 → **1–2 天**。
+  + `MRT_GUARD_FALLBACK` `TerrainPipelineApi:530`），**但不依赖 modifier、不动注册时机**。
 - **③ 新登记 `GAP-044`（既有缺陷，源码级）**：`GbufferPipelineSwaps:112` 就**在 `apply` 里现读** `MRT_CLOUDS_NO_DEPTH_WRITE`
   ⇒ 第一次 push 那刻的开关值被缓存永久冻结；今天靠**调用点闸门**（`CloudsIntoGbuffer:281/289`）掩盖 —— 只要出现第二处
   push 同一 key 就会变成「改了配置不生效」的零报错症状，且会污染同进程内的翻档 A/B（`X52`）。修法 3 行：`apply` 禁现读配置。
@@ -1558,7 +1586,7 @@
      `ProgramStage.SHADOW` 零消费者 / `shadowtex0/1`+`shadowcolor0` 绑 `ShadowStubs` 1×1 桩 / 全仓无阴影目标贴图 /
      `vkdisp:pipeline/shadowed` 是我方三步演示链而非包的 shadow）。
      ⇒ 这同时**推翻了 QD-11② 的「接太阳方向即可」**：角度接上去也不会有像素变化。已把该族拆成
-     **C2a（光空间数学，可单测、不碰 GPU，1 天）**与 **C2b（pass 装配，独立大项）**，并写明
+     **C2a（光空间数学，可单测、不碰 GPU）**与 **C2b（pass 装配，独立大项）**，并写明
      **C2a 不得单独上真机**（会得到一个不可归因的空结果，X46/X49 形态）；级联（4 级）**暂不做** ——
      OF/Iris 格式**没有** loader 级 CSM/`frustumSplit` API，级联是包在一张深度图内部自切的惯例。
   5. `QUALITY-DEBT.md`：QD-03 的「95」→ **175**（口径 = 静态非 final 单行声明；分布 `bridge` 123 / `render` 20 / `pack` 10 / `glsl/translate` 7），

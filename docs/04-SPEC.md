@@ -645,9 +645,9 @@ FramePass pass = frame.addPass("main");
 | 2 | 默认 `renderArea` = **最后一个非 null 颜色附件**的 `getWidth(0)/getHeight(0)`；没有任何颜色附件时才退到深度附件。**不取 min、不求交、不校验** ⇒ 附件尺寸不一致时是**静默改尺寸**，不会报错（本机也没有 validation layer，X35） | `com/mojang/renderpearl/api/commands/RenderPassDescriptor.java:75,79-98`（同一算法在 `backend/vulkan/VulkanCommandEncoder.java:255-268` 再算一遍，那次算出的 `width/height` 传给 `VulkanRenderPass` 当视口/尺寸，`:337`）⇒ 两处口径一致，都是「最后一个非 null」 | 派生公式**必须**让补上去的每个槽与 target0 **同尺寸**（我方 `ColortexPool` 本来就按同一 `main.width/height` 建 ⇒ 成立）。任何「某槽用小尺寸」的想法都会把整个主 pass 的视口改掉，而症状是画面被裁/被拉伸，不是异常 |
 | 3 | 后端把**深度格式硬编码**：有深度写 `126`（= `VK_FORMAT_D32_SFLOAT`）、有模板写 `VK_FORMAT_D32_SFLOAT_S8_UINT`、无深度写 `0` —— **从不读附件的真实格式** | `com/mojang/renderpearl/backend/vulkan/VulkanRenderPipeline.java:294`（126，硬编码字面量）、`:318`（无深度 = 0）、`:330`（模板 = `VK_FORMAT_D32_SFLOAT_S8_UINT`） | 🔴 我方 gbuffer 深度**只能保持 `D32_FLOAT`**（今天 `MrtTerrainPass` / `SkyIntoGbuffer` 建 `TextureTarget` 时就是 `GpuFormat.D32_FLOAT`）⇒ 换深度格式属「不要动：后端分叉」那一格。连带修正 GAP-046：所谓「格式不合时交回原版路径并计数」的**可比对象不存在**（管线侧恒为 `D32_SFLOAT`）⇒ 那条判据要改成**装配期断言**「我方池深度格式 == `D32_FLOAT`」，不是运行时逐管线比对。GAP-022/037 的「深度口径单点化」因此只能在同一格式内做（谁清、谁翻），不能靠换格式解决 |
 
-**⑥ 对排期的影响**：三项已结 ⇒ **允许给 R7 报成本**（此前「待核 1 未结不许报」的那道锁解除）。M-04（R7）的**清单已交付** ⇒ 按用户裁决它仍是下一轮目标，但范围已从「改一个 pass 的附件」
+**⑥ 对范围的影响**：三项已结 ⇒ 此前那道「待核 1 未结不许对 R7 的规模下结论」的锁解除。M-04（R7）的**清单已交付** ⇒ 按用户裁决它仍是下一轮目标，但范围已从「改一个 pass 的附件」
 收敛为「① 只改 `:455-463` 那一个 GPU pass + ② 通用派生公式覆盖开放集合 + ③ 待核 1 决定要不要按 pass 分档」。
-🔴 待核 1 未结之前，**不许**给 R7 报成本。
+🔴 本节只给**范围与序**，不给工时（`07-CONSTRAINTS.md` X56）。
 
 #### 5.0.7 🎯 M-04（R7）的**执行序**（2026-10-12 交付；§5.0.6 那张清单的下一步，用户裁决要求的「先交清单再写注入」里的后半）
 
