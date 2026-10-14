@@ -666,22 +666,10 @@ public final class VkDispVirtualPack {
             // P4.2 切包（§6 四张截图法的驱动）："" = 自动扫描顺序 / "none" = 强制兜底 / 其它 = 精确包名。
             String selection = VkDispConfig.SHADER_PACK.get();
             if (!enabled) {
-                hasDeferredProgram = false;
-                hasFinalProgram = false;
-                compositeBuiltinsLayout = BuiltinsBlockLayout.empty();
-                deferredBuiltinsLayout = BuiltinsBlockLayout.empty();
-                finalBuiltinsLayout = BuiltinsBlockLayout.empty();
-                postChain = dev.vkdisp.pack.PackPostChain.Chain.EMPTY;
-                java.util.Arrays.fill(POST_BUILTINS_LAYOUTS, BuiltinsBlockLayout.empty());
-                dev.vkdisp.bridge.PackTextures.setDesired(null, null, java.util.Map.of());
-                // GAP-021：总开关关闭 ⇒ 包自写 uniform 一并复位（漏这一步 = 上一张包的
-                //   timeAngle 继续覆盖内建，画面「时间感没换」而日志全正常）。
-                dev.vkdisp.pack.uniform.ActivePackUniforms.install(dev.vkdisp.pack.uniform.PackUniformSet.EMPTY);
                 VkDisp.LOGGER.warn(
                         "vkdisp: composite source: mod disabled (vkdisp.enabled=false)"
                                 + " -> built-in passthrough fallback");
-                return new GeneratedSources(PackCompositeSource.FALLBACK_GLSL,
-                        PackCompositeSource.FALLBACK_GLSL, PackCompositeSource.FALLBACK_GLSL);
+                return fallbackSources(false, false);
             }
             Path inventory = inventoryDir();
             VkDisp.LOGGER.info(
@@ -763,6 +751,12 @@ public final class VkDispVirtualPack {
             // GAP-021：包自写的 uniform 表达式随本次激活一起安装（同一份冷路径产物，
             //   渲染侧每帧在 OfUniformManager.gather 末尾求值；兜底路径走下面的 EMPTY）。
             dev.vkdisp.pack.uniform.ActivePackUniforms.install(result.packUniforms());
+            // 🔴 GAP-054 包侧二分总闸（见 PackDerivedProgramGate）：关 ⇒ 资源腿已落完、程序一条不注册。
+            if (!dev.vkdisp.PackDerivedProgramGate.allowed()) {
+                dev.vkdisp.PackDerivedProgramGate.reportBlocked(result.packName(), result.textureBindings().size(),
+                        result.packUniforms().size());
+                return fallbackSources(true, true);
+            }
             // GAP-003：包地形片元契约（**独立**一条链，失败绝不影响上面三源）。
             // 之所以不并进 PackCompositeSource.generate：那是一条「必有源」的 required 管线链，
             // 它的兜底语义是 passthrough；而地形片的正确兜底是「不接线、用原版 core/terrain」。
@@ -792,21 +786,32 @@ public final class VkDispVirtualPack {
                     result.source(), result.deferredSource(), result.finalSource(), fragments,
                     adapters, postSources, GeneratedSources.postVerticesFrom(result.chain()));
         } catch (Throwable t) {
-            hasDeferredProgram = false;
-            hasFinalProgram = false;
-            resetGbufferPrograms();
-            compositeBuiltinsLayout = BuiltinsBlockLayout.empty();
-            deferredBuiltinsLayout = BuiltinsBlockLayout.empty();
-            finalBuiltinsLayout = BuiltinsBlockLayout.empty();
-            postChain = dev.vkdisp.pack.PackPostChain.Chain.EMPTY;
-            java.util.Arrays.fill(POST_BUILTINS_LAYOUTS, BuiltinsBlockLayout.empty());
-            dev.vkdisp.bridge.PackTextures.setDesired(null, null, java.util.Map.of());
-            dev.vkdisp.pack.uniform.ActivePackUniforms.install(dev.vkdisp.pack.uniform.PackUniformSet.EMPTY);
             VkDisp.LOGGER.error("vkdisp: composite source generation FAILED (原文如下)"
                     + " -> built-in passthrough fallback", t);
-            return new GeneratedSources(PackCompositeSource.FALLBACK_GLSL,
-                    PackCompositeSource.FALLBACK_GLSL, PackCompositeSource.FALLBACK_GLSL);
+            return fallbackSources(false, true);
         }
+    }
+
+    /** 🔴 「回落内置 passthrough」的<b>唯一处置</b>（那九个赋值此前在两支里各抄一遍，漏一步就是 QD-02
+     *  那一族：画面回到 passthrough 而上一张包的状态还在、日志全正常）。
+     *  {@code keepPackResources=true} ⇒ 只清程序侧，包的纹理绑定与包自写 uniform 保持（GAP-054 那一刀）；
+     *  {@code resetGbuffers=false} ⇒ 不动逐程序 gbuffer 产物（{@code enabled=false} 那支今天就没动它）。 */
+    private static GeneratedSources fallbackSources(boolean keepPackResources, boolean resetGbuffers) {
+        hasDeferredProgram = false;
+        hasFinalProgram = false;
+        compositeBuiltinsLayout = BuiltinsBlockLayout.empty();
+        deferredBuiltinsLayout = BuiltinsBlockLayout.empty();
+        finalBuiltinsLayout = BuiltinsBlockLayout.empty();
+        postChain = dev.vkdisp.pack.PackPostChain.Chain.EMPTY;
+        java.util.Arrays.fill(POST_BUILTINS_LAYOUTS, BuiltinsBlockLayout.empty());
+        if (resetGbuffers) { resetGbufferPrograms(); }
+        if (!keepPackResources) {
+            // GAP-021：一并复位包自写 uniform（漏了 = 上一张包的 timeAngle 继续覆盖内建）。
+            dev.vkdisp.bridge.PackTextures.setDesired(null, null, java.util.Map.of());
+            dev.vkdisp.pack.uniform.ActivePackUniforms.install(dev.vkdisp.pack.uniform.PackUniformSet.EMPTY);
+        }
+        return new GeneratedSources(PackCompositeSource.FALLBACK_GLSL,
+                PackCompositeSource.FALLBACK_GLSL, PackCompositeSource.FALLBACK_GLSL);
     }
 
     /**
@@ -855,6 +860,11 @@ public final class VkDispVirtualPack {
             // 总开关关掉时不提前编译（默认路径零额外冷路径开销，支柱③ B3/B4）。
             // 🔖 仍然要把每条程序的 memoKey 落下来：否则「关了总开关 → 开回来」这一步
             //   会因为键位仍是旧值而错误地命中上一轮的 memo。
+            clearGbufferMemosWhenKeyChanges(key);
+            return;
+        }
+        if (!dev.vkdisp.PackDerivedProgramGate.allowed()) {
+            // 🔴 GAP-054 总闸：注册期同样一条都不提前编译，否则「零注册」只成立一半（memo 里还在）。
             clearGbufferMemosWhenKeyChanges(key);
             return;
         }
@@ -1039,6 +1049,8 @@ public final class VkDispVirtualPack {
                 // GAP-027 天空线：`mrt.skyPackShader` 同样在本窗口内被读（天空那条的生成闸门）
                 //   ⇒ 必须进键（QD-08 同一族，由 GenerationTimeSwitchInventoryTest 兜）。
                 + "|" + VkDispConfig.MRT_SKY_PACK_SHADER.get()
+                // GAP-054 包侧二分总闸：同样在生成期/注册期被读一次 ⇒ 必须进键（QD-08 那一族）。
+                + "|" + VkDispConfig.PACK_DERIVED_PROGRAMS.get()
                 + "|" + dev.vkdisp.pack.PackOptionOverrideSwitch.spec();
     }
 

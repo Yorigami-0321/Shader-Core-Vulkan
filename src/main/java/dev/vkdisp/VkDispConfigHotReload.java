@@ -86,7 +86,7 @@ public final class VkDispConfigHotReload {
     private record Snapshot(boolean enabled, boolean debugLog, String packProfile,
             String shaderPack, boolean capabilityGate,
             boolean chainEnableGating, String optionOverrides, boolean packWater,
-            boolean skyPackShader) {}
+            boolean skyPackShader, boolean derivedPrograms) {}
 
     /** 最近一次快照；null = 还没见 Loading（防御位，实际由首载 Loading 填充）。 */
     private static volatile Snapshot last;
@@ -331,6 +331,8 @@ public final class VkDispConfigHotReload {
                 VkDispConfig.MRT_PACK_WATER_SHADER.get(),
                 // GAP-027 天空线：`mrt.skyPackShader` 同样是「只在生成期/注册期被读一次」的闸门
                 //   ⇒ 不进边沿判定就是个死开关（QD-08「写了但没生效」那一族，与 packWater 同例）。
-                VkDispConfig.MRT_SKY_PACK_SHADER.get());
+                VkDispConfig.MRT_SKY_PACK_SHADER.get(),
+                // GAP-054 包侧二分总闸：同上，只在生成期/注册期被读一次。
+                VkDispConfig.PACK_DERIVED_PROGRAMS.get());
     }
 }

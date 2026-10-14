@@ -37,6 +37,7 @@ import dev.vkdisp.VkDisp;
 import dev.vkdisp.VkDispConfig;
 import dev.vkdisp.bridge.FrameApi;
 import dev.vkdisp.bridge.MrtTerrainPass;
+import dev.vkdisp.bridge.PackTextures;
 import dev.vkdisp.bridge.PipelineApi;
 import dev.vkdisp.bridge.PostChainGate;
 import dev.vkdisp.bridge.ShadowStubs;
@@ -196,6 +197,13 @@ public final class FullscreenPassHook {
             //   而 ShadowStubs#depthView 刻意不懒建（懒建 = pass 内新建 encoder ⇒ 抛）。
             //   幂等；默认档（mrt.terrain=false）下 MrtTerrainPass 不跑，这里就是唯一的建桩点。
             ShadowStubs.init();
+            // 🔴 GAP-055：自定义纹理（含内置 noisetex 兜底）与阴影桩同一条纪律 —— **本帧任何 pass
+            //   打开之前**上传完。此前 `PackTextures.ensureReady()` 只有三个调用点（drawPostChain /
+            //   MrtTerrainPass / SkyPackGbuffer），而**默认档**（`mrt.terrain=false` 且链不跑 ⇒ 本行
+            //   下面自报的「旧三步链」）三条都不走 ⇒ 链解析采样器时在 pass 体内懒建内置噪声
+            //   ⇒ 每帧 `Close the existing render pass before performing additional commands`
+            //   （2026-10-14 真机：代码默认档一趟 106 998 条）。幂等（按绑定表指纹）。
+            PackTextures.ensureReady();
             // 🔖 取样判定在**帧首**做（地形后的取点与逐 pass 追踪都读同一个判定），
             //   否则一条曲线里会混着不同帧的数字（h48 实测过这个形状）。
             dev.vkdisp.bridge.TargetReadback.beginFrame();

@@ -147,8 +147,14 @@ public final class PackTextures {
             }
         }
         if (NoiseSamplerSource.NOISE_SAMPLER.equals(samplerName)) {
-            // 兜底：内置噪声（缺席原因已在 ensureReady 一次性点名，这里不再吭声）。
-            return builtinNoiseView();
+            // 🔴 GAP-055：**这里只读、不建**。本方法被链解析采样器的那一刻调用，而那一刻有
+            //   render pass 开着 ⇒ 懒建走 `writeToTexture` 必抛
+            //   `Close the existing render pass before performing additional commands`，且因为抛在
+            //   赋值之前，`builtinNoise` 永远留空 ⇒ 每帧重抛（2026-10-14 真机：代码默认档一趟
+            //   106 998 条）。唯一的建点在 {@link #ensureReady()}（帧首、开 pass 之前），
+            //   接线纪律由 `PackTextureWarmupWiringTest` 钉住。真没预热到 ⇒ 交回显式占位
+            //   （缺席可见），不许为了「看起来有图」在 pass 内建纹理。
+            return builtinNoise == null ? null : builtinNoise.getColorTextureView();
         }
         return null;
     }

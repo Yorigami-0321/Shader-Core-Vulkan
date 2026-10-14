@@ -4,6 +4,26 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-14（一百五十六）— 🟢 P0 四格里三格落地：**截图落盘通道打通**、**`GAP-055` 根因拿到并修掉（默认档每帧抛 106 998 → 0）**、**`GAP-054` 包侧第一刀跑出读数**；🔴 顺带把这条账的**签名**纠正了一处（右下角那块是屏幕锚定的，不是那堵图集墙）
+
+> **verdict = 「用户装上 jar 看到什么」第一次有答案：黑屏 + 那块屏幕锚定的贴片，且每帧抛异常；而异常与黑屏是两件事**（异常已修，画面没变亮 ⇒ 黑是路线造成的，不是异常造成的）。
+
+- **本次改了什么**
+  - **P0.1 截图落盘通道**（零产品代码）：实测 `vision.screenshot` **不认 `path`**、只回 base64 ⇒ 落盘自己做。新增本机取证工具 `tools/vkdisp-shot/grab.py`（走 `/rpc`，token 从配置文件读、抓前现钉机位与时间）与 `tools/vkdisp-shot/Shots.java`（`capture` / `read` 两模式，判据口径逐字移植 `evidence/tools/read_shot.py`，零依赖 —— 本机两个 python 都没装 numpy/PIL）。⇒ 从此 `硬边列 / 左块 mean / 全片 mean / DIFF` 这类**数值**签名可签。写进 `01-DEV-LOOP.md` **§1.4**（新节）。
+  - **P0.4 代码默认档定性（一臂冷启动，不注入任何手写 toml）**：`[生效档] 63 键 / 非默认 0`、`shaderPack=""`（AUTO）自动选中 BSL、`[route] chain=false toMain=false ⇒ 旧三步链`。画面（vkdisp 侧，854×480，同机位现钉 `time set 6000`）`mean=3.26 / 6.20`、`nonblack 7.74% / 7.99%`、`SKYBLUE 0.07%` ⇒ **整屏近乎全黑，只剩 HUD + 右下角那块贴片**。快照 `run/config/vkdisp-client-7.toml.bak`。
+  - **P0.3 `GAP-055` 根因 + 修法**：根因不是「半开档」，是**默认档没人预热** —— `PackTextures.ensureReady()` 的三个调用点（`drawPostChain` / `MrtTerrainPass` / `SkyPackGbuffer`）在默认档一条都不走，而旧三步链照样在 pass 体内懒建内置噪声 ⇒ 每帧抛、且抛在赋值之前 ⇒ 下一帧重来（一趟 **106 998 条**）。修法与 `GAP-036` 的 `ShadowStubs` 那一修**同形状**：① `FullscreenPassHook#onAfterLevel` 帧首加 `PackTextures.ensureReady()`；② `PackTextures.view()` 改成**只读不建**（把 pass 内懒建这条路结构上封掉，不是加一条日志）。新守卫 `bridge/PackTextureWarmupWiringTest`（两条源码断言）。复测：该异常 **0 条**、`noisetex FAILED` **0 条**、全日志 `Exception:` **0 命中**，并带出 `[GAP-009] custom texture loaded: sampler='noise' 512x512` —— **默认档此前一次都没加载过包声明的噪声图**。
+  - **P0.2 `GAP-054` 包侧第一刀**：补齐 `19` §7-8 第 8 格挂着的那条**生成侧自报**（新类 `dev/vkdisp/PackDerivedProgramGate`，一行 `[GAP-054/生成侧]` 声明「资源腿留 / 程序腿全空」）+ 新键 **`pack.derivedPrograms`**（默认开；关 ⇒ 包的资源照常、我方一条派生程序都不生成/注册，注册期 `ensureTerrainProgram()` 同闸早退）。该键进生成期记忆键与热重载边沿判定。读数（臂 F）：**那块贴片照旧在** ⇒ 生产者**不在我方生成的派生程序里**。
+  - 🔴 **签名纠正（本轮最贵的一条）**：同臂把镜头从 `pitch=2` 抬到 `-60` ⇒ 地形整片滑走、**右下角那块纹丝不动** ⇒ 它是**屏幕锚定**的，与台账里「tp 北移 130 格就没了」那堵**世界**图集墙**是两个元素**；再用臂 G（`enabled=false` 纯原版对照，同机位）否掉「它是手持方块」。**连带**：上午那一格（`packTerrainShader` 成对关 ⇒「平面照旧」）用的正是右下角那块 ⇒ 它证的是屏幕锚定那块，不是图集墙 ⇒ 那一格要按左半那堵墙框进取景重签一次。
+  - 🔧 **下一刀写死（比原计划③便宜）**：`enabled=true` + `shaderPack="none"` 冷启动 —— 把「包在不在」与「我方全屏 pass 在不在」第一次切开（臂 8 当年两件事一起换了，所以它的判别力没被单独证过）。在 ⇒ 账落到「全屏 pass 之后那一笔屏幕锚定 draw」（候选 `hand` 族 / 被改了投影的第一人称）；不在 ⇒ 走包的资源侧与 `[pack]` 逐键二分。
+- **为什么改**：按 `docs/20-RELEASE-PLAN.md` 的 P0 序推进（用户指令「按这个文档继续推进」）。P0 出口 = 0.2 有归因、0.3 计数归零、0.4 有一张默认档画面 —— 0.3/0.4 本轮关闭，0.2 拿到一次归因（排除一整侧）并纠正了签名。
+- **影响的文档**：`docs/13`（`GAP-036` 加两行默认档定性与「同形状的下一条」；`GAP-054` 加仪器 / 臂 F 读数 / 签名纠正 / 下一刀四行并改状态；`GAP-055` 加根因与修法两行并改状态）；`docs/01-DEV-LOOP.md` 新 §1.4；`docs/19` §7-8 第 8 格。代码：`VkDispConfig`（新键）、`VkDispVirtualPack`（总闸 + `fallbackSources` 收成一处）、`VkDispConfigHotReload`（快照 +1 项）、`PackTextures`、`render/FullscreenPassHook`、新类 `PackDerivedProgramGate`；测试新增 `PackTextureWarmupWiringTest`。
+- **棘轮的两处真实代价（不是放宽基线）**：`ClassLineRatchetTest` 一开始变红（`VkDispConfig` 1073>1047、`VkDispVirtualPack` 1596>1573）⇒ 按它自己的指示**把新内容落到独立类**（`PackDerivedProgramGate`）+ 把「回落 passthrough」那九个赋值从两处副本收成一处 ⇒ 现在 1046 / 1573，**上限未动**。`pack.postVertexProgram` 那条 javadoc 与 `PackPostVertexSwitch` 类注释逐字重复，改成指针（一条真源）。
+- **测试结果**：`./gradlew test` → **BUILD SUCCESSFUL，1214 项 0 失败（1 跳过）**。真机四臂：D（默认档，修前）/ E（默认档，修后）/ F（默认档 + 总闸关）/ G（`enabled=false` 原版对照），一律冷启动、同机位、现钉 `time set 6000`；每臂起跑后回读 `[生效档]` 全量块 + grep `is not correct. Correcting`（臂 E 命中 1 次 = FML 补进新键那一行，逐键 diff 值没变 ⇒ `GAP-056` 的机制今天正面观察到一次）。取证档 `run/config/vkdisp-client.toml` 跑完按 md5 逐字还原（`0f2aaa5c…`），残留客户端 0（X33 口径）。
+- **是否已提交**：✅ 本轮结束即提交并推送。
+- ⚠️ **两条未覆盖**：① `GAP-055` 判据 ②③（全基线档不回退、半开档不许静默）本轮没跑取证档臂 ⇒ 未签；② `GAP-054` 的「左半那堵图集墙」在本轮三臂里**根本没进框**（默认档黑屏 + 取景偏低）⇒ 墙与总闸的关系仍未测，别把臂 F 读成「墙排除了」。
+
+---
+
 ## 2026-10-14（一百五十五）— 📋 新建 `docs/20-RELEASE-PLAN.md`：把「到第一个可用发行版之间的序」单独成文
 
 > **verdict = 发行序从此有一张表，P0…P5 六段、每格只给 序 / 判据 / 规模 / 前置 / 出处；状态真源仍在 `13` + `QUALITY-DEBT`，本文不另立第二真源。**

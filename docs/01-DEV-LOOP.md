@@ -170,6 +170,29 @@ Rec.709 luma，取自 `evidence/tools/flicker_ratio.py` 的 h22 校准结果）�
 ⚠️ `terrainToMain=true` 档下附件 0 已被换成主目标视图 ⇒ `colortex0` **不是附件**，
 该档的对照槽由代码自动改选，只有一个附件时**明确不产出两源对照结论**。
 
+### 1.4 🔖 截图**落盘**通道（`20` P0.1，2026-10-14 打通）—— 要数值的判据从今天起可签
+
+`mcp__minecraft__screenshot` 只把 PNG 交给模型看（**目视 A-B-A 够用，数值不够用**），而直连 `/rpc` 的
+`vision.screenshot` **不认 `path` 参数**（实测：只回 `{format,width,height,bytes,base64}`，不落文件）。
+⇒ 落盘这一步自己做，两个工具都在 `tools/`（gitignored，本机取证脚本）：
+
+```bash
+# ① 抓一帧落到仓外目录（可选：抓之前现钉机位与时间，省掉「MCP 设一次、外部再抓一次」的帧漂移）
+python tools/vkdisp-shot/grab.py /d/tmp/vkdisp-shot/armX-01.png --time 6000 --tp "Dev -44.6 98 -93.6 -30 2"
+# ② 读数值（口径逐字移植自 evidence/tools/read_shot.py：FULL / HARD-EDGE / LEFTBLOK / SKYBLUE / STAR / SHARP）
+java tools/vkdisp-shot/Shots.java read /d/tmp/vkdisp-shot/armX-01.png /d/tmp/vkdisp-shot/armX-02.png   # 两张之间自动给 DIFF
+```
+
+| 事实 | 口径 |
+|---|---|
+| 为什么是 Java 不是 python | 本机两个 python（`C:\Program Files\Python314`、WSL `python3`）**都没装 numpy/PIL** ⇒ `evidence/tools/read_shot.py` 跑不起来。`Shots.java` 零依赖（`java <file>.java` 单文件直跑），百分位按 numpy 的线性插值口径实现 ⇒ 与历史数字可比 |
+| token | 从 `run/config/mcpfabric.config.json` 读，**不落命令行**（`VKDISP-接入手册.md` §6 那条） |
+| 图出自哪一侧 | 每条读数必须写明「vkdisp 客户端」还是「参考面」（记忆里那条纪律）；文件名带臂名 |
+| 桌面截屏那条路**不要用** | `tools/vkdisp-shot/WinShot.java` 那套 Robot 桌面捕获会被别的窗口挡住（实测抓到过浏览器），且窗口坐标受 DPI 影响 |
+
+⚠️ 同臂两张图**不必逐字相同**：默认档实测 `mean 3.26 / 6.20` 两个形状（`mean|d|=2.95`、`>40` 占 4.02%），
+与 `GAP-020` 那条周期-3 黑帧同形 ⇒ **亮度类判据单张不许签**，至少两张同臂重复 + 报出 `DIFF`。
+
 ---
 
 ## 2. 每次改动的执行顺序
