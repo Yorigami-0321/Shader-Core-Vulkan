@@ -249,6 +249,10 @@ public final class FullscreenPassHook {
             //   （LevelRenderer:286）<b>早于</b>本事件（AfterLevel 由 GameRenderer 在 render 返回后 post）
             //   ⇒ 到这一刻 colortex 已经写好，链直接消费它，不需要任何「先补画一次」的调用。
             if (chainActive) {
+                // 🔴 1.1（GAP-053 ⑤-d）：单绘档下这一帧的翻代欠在主 pass 那一笔上 ⇒
+                //   必须在**链开跑之前**交出去，否则链读到的还是上一帧那一代（= 画面没有地形）。
+                //   挂在调用方而不是 FrameApi#drawPostChain 里：FrameApi 正顶着 ClassLine 棘轮上限。
+                dev.vkdisp.bridge.TerrainSingleDraw.flipIfOwed();
                 if (FrameApi.isPostChainReady()) {
                     FrameApi.drawPostChain(PASS_LABEL);
                 } else if (!chainReadyWaitLogged) {

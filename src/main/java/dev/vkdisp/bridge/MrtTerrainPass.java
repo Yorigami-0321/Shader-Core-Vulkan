@@ -549,13 +549,12 @@ public final class MrtTerrainPass {
         //   而原版允许 3 个 submit 在飞（VulkanCommandEncoder:222-223）：不轮换 = 下一帧的 CPU
         //   写入覆写 GPU 还在读的 uniform 槽（FrameApi 每条环都 rotate，本类此前一条都没有）。
         TerrainPipelineApi.rotateAfterDraw();
-        java.util.List<Integer> terrainWritten = new ArrayList<>();
-        for (int slot = 0; slot < actualSlots; slot++) {
-            if (!(toMain() && slot == 0)) {
-                terrainWritten.add(slot);
-            }
+        // 🔴 1.1（GAP-053 ⑤-d）：翻代归「谁画了 gbuffer」——单绘档下我方不翻，欠账由链首交
+        if (TerrainSingleDraw.skippingThisFrame()) {
+            TerrainSingleDraw.noteFlipOwed(actualSlots, toMain());
+        } else {
+            flipWrittenSlots();
         }
-        POOL.advanceWritten(terrainWritten);
         // 🔖 `probeAfterTerrain()` 已在**地形 pass 刚关、云之前**取过（h49p）：
         //   翻代前读 writeGen 与翻代后读 readGen 是同一张图 ⇒ 数值口径不变。
 
@@ -825,6 +824,22 @@ public final class MrtTerrainPass {
     public static void advanceWrittenSlots(java.util.Collection<Integer> written) {
         POOL.advanceWritten(written);
     }
+
+    /**
+     * 「谁画完 gbuffer 谁翻代」里<b>槽集合的唯一构造点</b>（{@code toMain} 档的槽 0 打的是主目标
+     * ⇒ 不参与）。1.1 之后有两个调用方：我方 pass 的常规路径，和 {@code TerrainSingleDraw}
+     * 代表主 pass 交的那一次 —— 两边必须同一份构造，否则又是一处「自己再算一遍」。
+     */
+    static void flipWrittenSlots() {
+        java.util.List<Integer> written = new ArrayList<>();
+        for (int slot = 0; slot < actualSlots; slot++) {
+            if (!(toMain() && slot == 0)) {
+                written.add(slot);
+            }
+        }
+        POOL.advanceWritten(written);
+    }
+
 
     /** gbuffer 深度的**纹理本体**（GAP-023 的 blit 源；视图给不了拷贝的源参数）。 */
     @Nullable

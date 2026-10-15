@@ -4,6 +4,25 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-15（一百六十二）— 🟡 `20` P1 的 1.1：**代码半落地（翻代归「谁画了 gbuffer」）+ 接管被拒的根因拿到**，画面半被一条设计规则挡住 ⇒ 下一臂必须换 slots=8 档
+
+> **verdict = 候选 (a) 已经写进代码并被三条守卫钉住，但它今天**一次都没被走到** —— 因为接管根本没发生：`slotsUsable` 要求 ≥2 条颜色附件，而 BSL 默认选项下地形管线注册的是 `colorTargets=1`。**
+
+- **本次改了什么**（代码，四处 + 一台仪器）：
+  - `MrtTerrainPass.drawTerrain`：那次 `POOL.advanceWritten` **整块挪进 `else`** —— 单绘档下我方两组 draw 都被跳过，我方什么都没写却照旧翻代，正是 `GAP-053` 定序读数（我方 pass 先开、主 pass 在后 ⇒ 主 pass 取到「链这一帧不会读的那一代」）的机制。
+  - `TerrainSingleDraw`：欠账与点名搬进本类（`noteFlipOwed` / `flipIfOwed` / `Flip` 持有者）—— 「地形由谁画」本来就是本类的全部业务，而 `MrtTerrainPass` 顶着 `ClassLineRatchetTest` 的 1069 上限（实测撞红过一次，按棘轮的指示落到独立类，**没有放宽基线**）。
+  - 槽集合收成**唯一构造点** `MrtTerrainPass.flipWrittenSlots()`（常规路径与交账路径共用，不各算一遍）。
+  - `FullscreenPassHook`：链开跑**之前** `TerrainSingleDraw.flipIfOwed()`（挂在调用方是因为 `FrameApi` 正顶着它自己的上限 1675）。
+  - 🔬 **新仪器**：`MainPassTakeover.refuseOnce` —— 此前接管被拒只有 `return null` + 一个叫「尺寸不合拒绝」的计数，**视图缺失**与**尺寸不同**两种因共用一个名字，分不开就修不动。现在首拒点名：`槽数 N（要求 ≥2）或尺寸不同：池写代=WxH 主 pass target0=WxH`。
+  - 守卫 `MrtTerrainPassWiringTest` +3：翻代必须在 `else` 里 / 跳过那一支必须记欠账 / 交账必须早于 `drawPostChain` 且只有一处 / `skippingThisFrame()` 与 `drawnByMainPass()` 条件同源。
+- **真机两臂（一律冷启动、同机位）**：臂 O、臂 P = 取证档 + `ownTerrainPass=true` + `terrainSingleDraw=true` + `takeoverDepthToGbuffer=true`（`[生效档] 64 键 / 非默认 8`）。读数：`label命中=2355`、**`主 pass 接管=0`**、新仪器打的是 **`槽数 1（要求 ≥2）`**，而**尺寸两边相等**（854x480 —— 1.2 之后按构造相等，这条腿已经不再产生假拒）。⇒ `[GAP-053/1.1]` 那一行**没打**，`TerrainSingleDraw` 走的是「开关开着但没接管 ⇒ 照今天双绘」的保护分支（它按设计挡住了「谁都不画地形」的自伤档）⇒ **代码半只在单测层成立，画面判据今天不可签**。
+- 🔧 **下一臂写死**：要真走通 1.1 必须让地形管线有 ≥2 条输出 ⇒ 换 `19` §7-8 第 6 格那份 **slots=8 取证档**（`run/config/vkdisp-pack-options.properties` 加 `BSL_v10.1.8.ADVANCED_MATERIALS=true` + `mrt.attachments=8`），先断言 `colorTargets>1` 与 `主 pass 接管>0` 再看画面。⚠️ 另有一条待查：这一臂 `mrt.pixelProbe=true` **一行探针都没打** —— 接管档下探针取点的有效性要单独核（`PixelProbeWiringTest` 的「必须在地形 MRT pass 之后」那条约束在单绘档语义变了）。
+- **影响的文档**：`docs/13`（`GAP-053` 加代码半 / 画面半被挡 / 下一臂三行）、`docs/20`（1.1 行改成「代码半已落、下一臂换档」，前置 1.2 标 ✅）。
+- **测试结果**：`./gradlew test` → **BUILD SUCCESSFUL，1221 项 0 失败**（本轮 +3 条守卫）。中途两次红灯都是守卫正常工作：`ClassLineRatchetTest`（`MrtTerrainPass` 1070>1069 ⇒ 把状态与点名挪进独立类）、以及我自己那两条接线断言跟不上重构（改成断言 `flipWrittenSlots()` / `flipIfOwed()` 之后跟上）。
+- **是否已提交**：✅ 本轮结束即提交并推送。取证档跑完按 md5 还原 `0f2aaa5c…`，残留客户端 0。
+
+---
+
 ## 2026-10-15（一百六十一）— ✅ `20` P1 的 1.2 落地：gbuffer 池的锚点改成**主 pass 自己的 target0**，并把这条观察挪到接管开关**之前**（臂 M 证明挂在后面等于白做）
 
 > **verdict = 1.2 立住了（两条 `[GAP-049/1.2]` 真机自报 + 四条守卫），1.1 的前置 cleared；但臂 N 的画面级「无回归」对比作废 —— Steam 覆盖层把桌面捕获和桥那一路一起污染了。**

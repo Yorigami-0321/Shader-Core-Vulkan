@@ -385,4 +385,60 @@ class MrtTerrainPassWiringTest {
             throw new AssertionError("读不到 bridge 源码: " + file, e);
         }
     }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // 1.1（GAP-053 ⑤-d）：这一帧的翻代归「谁画了 gbuffer」
+    // ────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("🔴 1.1 单绘档下我方 pass 不许翻代：翻代必须整个挪进 else 分支")
+    void flipIsSkippedWhenMainPassDrewTerrain() throws Exception {
+        String src = java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/java/dev/vkdisp/bridge/MrtTerrainPass.java"));
+        int at = src.indexOf("if (TerrainSingleDraw.skippingThisFrame()) {");
+        assertTrue(at > 0, "GAP-053/1.1：找不到「谁画 gbuffer 谁翻代」那个分支");
+        int flip = src.indexOf("flipWrittenSlots();", at);
+        int elseAt = src.indexOf("} else {", at);
+        assertTrue(elseAt > at && flip > elseAt,
+                "常规翻代必须在 else 分支里 —— 放在分支外就等于没改（单绘档仍会翻掉主 pass 那一代）");
+        int handoff = src.indexOf("TerrainSingleDraw.noteFlipOwed(", at);
+        assertTrue(handoff > at && handoff < elseAt,
+                "跳过翻代的那一支必须记欠账，否则没人翻 ⇒ 链读到上一帧");
+        assertEquals(1, countText(src, "flipWrittenSlots();"),
+                "槽集合的调用点只许两处以内（常规 + 交账），且都走同一个构造点");
+    }
+
+    @Test
+    @DisplayName("🔴 1.1 交账必须发生在链开跑之前，且只有一个交账点")
+    void handoffHappensBeforeTheChainReads() throws Exception {
+        String hook = java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/java/dev/vkdisp/render/FullscreenPassHook.java"));
+        int give = hook.indexOf("TerrainSingleDraw.flipIfOwed();");
+        int chain = hook.indexOf("FrameApi.drawPostChain(");
+        assertTrue(give > 0 && chain > give,
+                "翻代必须在 drawPostChain <b>之前</b>交出 —— 链的第一个读者就是拿 cur 的那个人");
+        assertEquals(1, countText(hook, "flipIfOwed();"),
+                "交账点只许一处；两处就会把一帧翻两次（= 又回到链读空那一代）");
+    }
+
+    @Test
+    @DisplayName("🔴 1.1 判定不许长出第三个副本：skippingThisFrame 与 drawnByMainPass 条件逐字相同")
+    void skipPredicateHasOneSource() throws Exception {
+        String src = java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/java/dev/vkdisp/bridge/TerrainSingleDraw.java"));
+        assertTrue(src.contains("return VkDispConfig.MRT_TERRAIN_SINGLE_DRAW.get() && MainPassTakeover.takeoverHappened();"),
+                "无计数版本必须复用同两条条件（开关 ∧ 真接管）");
+        assertTrue(src.contains("if (!VkDispConfig.MRT_TERRAIN_SINGLE_DRAW.get())")
+                        && src.contains("if (!MainPassTakeover.takeoverHappened())"),
+                "计数版本仍是那两条门 —— 两条路径的条件不许各写一套");
+    }
+
+    private static int countText(String haystack, String needle) {
+        int n = 0;
+        for (int i = haystack.indexOf(needle); i >= 0; i = haystack.indexOf(needle, i + needle.length())) {
+            n++;
+        }
+        return n;
+    }
+
 }

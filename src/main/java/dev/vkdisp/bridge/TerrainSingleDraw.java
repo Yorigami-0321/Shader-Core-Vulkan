@@ -43,6 +43,14 @@ public final class TerrainSingleDraw {
 
     private static final Stats STATS = new Stats();
 
+    /** 1.1 的翻代欠账（装在静态持有者里，不动 QD-03 那条静态字段棘轮）。 */
+    private static final class Flip {
+        private boolean owed;
+        private boolean reported;
+    }
+
+    private static final Flip FLIP = new Flip();
+
     private TerrainSingleDraw() {
     }
 
@@ -54,6 +62,51 @@ public final class TerrainSingleDraw {
      * 只有前者成立时<b>不跳过</b>（照今天画），并 WARN 一次说明「这一档等于谁都不画地形」——
      * 那是配错档，不是优化。
      */
+    /**
+     * 同一条判定的<b>无计数</b>版本 —— 给「翻代归谁」那一处用（{@code MrtTerrainPass} 的
+     * {@code POOL.advanceWritten} 之前）。
+     *
+     * <p>🔖 为什么再来一个方法而不是复用 {@link #drawnByMainPass()}：后者每调一次就
+     * {@code skippedGroups++} 并可能打一次自报，而它今天被两个 draw 点各调一次。
+     * 翻代那一处再调第三次 = <b>读数变成三比二</b>，而台账里「跳过几组」是要按组数的
+     * （口径同 {@code 07} §九「计数不参与判定」那族）。条件本身逐字相同，不另立判据。
+     */
+    public static boolean skippingThisFrame() {
+        return VkDispConfig.MRT_TERRAIN_SINGLE_DRAW.get() && MainPassTakeover.takeoverHappened();
+    }
+
+    /**
+     * 1.1（GAP-053 ⑤-d）：单绘档下这一帧的<b>翻代欠在主 pass 那一笔上</b> —— 记在这里，
+     * 由链首（第一个读者）{@link #flipIfOwed()} 交出去。
+     *
+     * <p>为什么归本类管：「地形由谁画」这个判定就是本类的全部业务，翻代归属是它的直接推论；
+     * 而 {@code MrtTerrainPass} 顶着 {@code ClassLineRatchetTest} 的巨类上限。
+     */
+    public static void noteFlipOwed(int slots, boolean toMain) {
+        FLIP.owed = true;
+        if (!FLIP.reported) {
+            FLIP.reported = true;
+            VkDisp.LOGGER.info("vkdisp: [GAP-053/1.1] 本帧我方两组 draw 都被跳过 ⇒ <b>翻代交出去</b>："
+                            + "不在这里翻 POOL，由链首调 flipIfOwed() 翻。槽数={} toMain={}"
+                            + " —— 判据：单绘档画面里必须有地形（GAP-053 那条红灯），"
+                            + "且 [GAP-037/翻] 的天空深度读数仍是 1 次", slots, toMain);
+        }
+    }
+
+    /**
+     * 链开跑前交账：把欠主 pass 的那一次翻代做掉。
+     *
+     * @return true = 这一帧确实欠、且刚刚交出；false = 没有欠账（双绘档或已经交过）
+     */
+    public static boolean flipIfOwed() {
+        if (!FLIP.owed) {
+            return false;
+        }
+        FLIP.owed = false;
+        MrtTerrainPass.flipWrittenSlots();
+        return true;
+    }
+
     public static boolean drawnByMainPass() {
         if (!VkDispConfig.MRT_TERRAIN_SINGLE_DRAW.get()) {
             return false;

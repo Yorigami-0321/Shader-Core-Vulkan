@@ -105,6 +105,9 @@ public final class MainPassTakeover {
         private long depthRefused;
         private boolean warnedNoDepthView;
         private boolean reportedViewMismatch;
+        /** 1.1 的仪器：接管被拒的累计次数 + 只点名一次。 */
+        private long refused;
+        private boolean reportedRefuse;
         private boolean reportedFirstHit;
         private boolean warnedNoMatch;
     }
@@ -450,13 +453,39 @@ public final class MainPassTakeover {
         GpuTextureView[] views = new GpuTextureView[slots];
         for (int slot = 0; slot < slots; slot++) {
             GpuTextureView view = MrtTerrainPass.poolWriteView(slot);
-            if (view == null
-                    || !slotsUsable(slots, view.getWidth(0), view.getHeight(0), targetWidth, targetHeight)) {
+            if (view == null) {
+                refuseOnce("池槽 " + slot + " 的**待写视图**还不存在（actualSlots=" + slots
+                        + " 池大小=" + MrtTerrainPass.poolSize() + "）");
+                return null;
+            }
+            if (!slotsUsable(slots, view.getWidth(0), view.getHeight(0), targetWidth, targetHeight)) {
+                refuseOnce("槽数 " + slots + "（要求 ≥2）或尺寸不同：池写代="
+                        + view.getWidth(0) + "x" + view.getHeight(0)
+                        + " 主 pass target0=" + targetWidth + "x" + targetHeight
+                        + "（池的锚点读数见 [GAP-049/1.2] 那一行）");
                 return null;
             }
             views[slot] = view;
         }
         return views;
+    }
+
+    /**
+     * 1.1 的仪器：接管被拒时**必须说清是哪一条腿**拒的。
+     *
+     * <p>此前这里只有一句 {@code return null}，而调用侧的计数叫「尺寸不合拒绝」—— 真机读到
+     * {@code 尺寸不合拒绝=2025 / 主 pass 接管=0} 时，<b>视图缺失</b>与<b>尺寸不同</b>两种因
+     * 共用一个名字，分不开就修不动（口径同 {@code 07} §九「降级点要写原因」）。只点名一次。
+     */
+    private static void refuseOnce(String reason) {
+        STATS.refused++;
+        if (STATS.reportedRefuse) {
+            return;
+        }
+        STATS.reportedRefuse = true;
+        VkDisp.LOGGER.warn("vkdisp: [M-04/⑤-d] 主 pass 已判定（label 命中）但接管被拒：{}"
+                + " ⇒ ⑤-d 单绘档在这一帧退回双绘（画面仍是今天的形状），累计拒绝 {} 次",
+                reason, STATS.refused);
     }
 
     /** 🔴 红灯：开关开着、看了够多次建 pass，却一次都没接上 ⇒ 判据不再匹配（先怀疑 label 改名）。 */
