@@ -47,6 +47,8 @@ public final class TerrainSingleDraw {
     private static final class Flip {
         private boolean owed;
         private boolean reported;
+        private long paid;
+        private boolean reportedPaid;
     }
 
     private static final Flip FLIP = new Flip();
@@ -103,6 +105,14 @@ public final class TerrainSingleDraw {
             return false;
         }
         FLIP.owed = false;
+        FLIP.paid++;
+        if (!FLIP.reportedPaid) {
+            FLIP.reportedPaid = true;
+            VkDisp.LOGGER.info("vkdisp: [GAP-053/1.1] 链首<b>已交账</b>（第一次）⇒ 这一帧的翻代确实发生在 drawPostChain 之前，"
+                    + "累计交出 {} 次；下一次读到的 [GAP-020/gen] 奇偶应当跟着翻。"
+                    + "若画面仍无地形，问题在交账<b>之后</b>（链读哪一代 / 清屏语义 / ⑤-b 派生管线），"
+                    + "不在「有没有翻」这一环", FLIP.paid);
+        }
         MrtTerrainPass.flipWrittenSlots();
         return true;
     }
