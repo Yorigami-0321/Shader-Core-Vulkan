@@ -190,6 +190,16 @@ java tools/vkdisp-shot/Shots.java read /d/tmp/vkdisp-shot/armX-01.png /d/tmp/vkd
 | 图出自哪一侧 | 每条读数必须写明「vkdisp 客户端」还是「参考面」（记忆里那条纪律）；文件名带臂名 |
 | 桌面截屏那条路**不要用** | `tools/vkdisp-shot/WinShot.java` 那套 Robot 桌面捕获会被别的窗口挡住（实测抓到过浏览器），且窗口坐标受 DPI 影响 |
 
+⚠️ **两条实测到的通道失效模式（10-15 撞出来的，都会造成假读数）**：
+① **桥那一路会回吐旧帧** —— 取证档 `chain=true` 那一臂里，改相机、改 `time set` 之后 `vision.screenshot` 回的是**同一张**
+   （`armJ2-y98` vs `armJ2-wall-a` 逐字节相同、`DIFF mean|d|=0.00`）。⇒ 判据帧必须**同时**用桌面捕获那一路复核：
+   `java tools/vkdisp-shot/Shots.java capture <目录> <标签> <clientX> <clientY> <w> <h>`
+   （`clientX/Y/w/h` 用 `ClientToScreen` + `GetClientRect` 取，别用 `GetWindowRect`——那含标题栏）。
+② **窗口不在前台时桥不回新帧** —— 只有 `GetForegroundWindow()==<MC hwnd>` 时 `time set` 的差异才出现在图里；
+   被别的窗口盖住时桥返回的是上一张呈现帧，而**日志与渲染循环照跑**（`M-15 hits` 一直涨）⇒ 看起来一切正常。
+⇒ 硬要求：取判据帧前把游戏窗口置前台并**当场回读坐标**（`grab.py` 现在每次抓完自己打一行 `取景回读`），
+   并且**每臂至少两帧**、两帧之间动一次相机或时间，逐字节相同就当**通道失效**处理，不许当「画面静止」。
+
 ⚠️ 同臂两张图**不必逐字相同**：默认档实测 `mean 3.26 / 6.20` 两个形状（`mean|d|=2.95`、`>40` 占 4.02%），
 与 `GAP-020` 那条周期-3 黑帧同形 ⇒ **亮度类判据单张不许签**，至少两张同臂重复 + 报出 `DIFF`。
 
