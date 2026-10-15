@@ -4,6 +4,24 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-15（一百六十一）— ✅ `20` P1 的 1.2 落地：gbuffer 池的锚点改成**主 pass 自己的 target0**，并把这条观察挪到接管开关**之前**（臂 M 证明挂在后面等于白做）
+
+> **verdict = 1.2 立住了（两条 `[GAP-049/1.2]` 真机自报 + 四条守卫），1.1 的前置 cleared；但臂 N 的画面级「无回归」对比作废 —— Steam 覆盖层把桌面捕获和桥那一路一起污染了。**
+
+- **本次改了什么**（代码，四处）：
+  - `bridge/GbufferSizeAnchor`：新增 `choose(回落宽, 回落高, 主pass宽, 主pass高)` 纯决策 + `Anchor` 记录 + `reportAnchor`（换锚点点名；两尺寸不同时另打一条 WARN），计数进既有的 `Stats` 持有者（不动 QD-03 静态棘轮）。
+  - `bridge/MrtTerrainPass#ensureColortex`：`POOL.ensure` / `colortexDepth` 新建与 resize 全部改按 `anchor.width()/height()`；核对仍挂在建池**之后**；`gameRenderer.mainRenderTarget()` 只剩「首帧之前」的回落身份。
+  - `bridge/MainPassTakeover`：**新 `recordMainPassTargetSize(descriptor)`，调用点在 `if (!MIXIN_OWN_TERRAIN_PASS.get()) return` 之前**，身份腿复用 `matchesMainPass`（单附件 + label），不看开关也不看 OIT；原来那段 `STATS.mainWidth = …` 从 `attachmentReplaced` 里删掉（`QD-04` 的 60 行棘轮因此仍绿）。
+  - `src/test/.../GbufferSizeAnchorTest`：四条新测试（`choose` 三态：已知 / 未知 / 只认到一维保守回落；接线守卫：`ensureColortex` 必须走 `choose`、深度与池同尺寸、resize 一起换、不许退回 `main.width`）+ 把既有的「核对在建池之后」守卫扩成**顺序守卫**：观察必须在 `ownTerrainPass` 开关与 `refusedSize++` 之前。
+- **为什么先做这个**：臂 M（改动前那一臂）实测 `[GAP-049/1.2]` **一行都不打**、`label命中=0`、`mainWidth` 全程 0 —— 因为整段观察挂在接管开关后面，而**取证档与代码默认档都是双绘档**（开关关着）。⇒ 不先把观察抬出来，1.2 就是空转，1.1 的 (b)/(c) 两条候选也没有数可用。
+- **真机读数（臂 N，取证档、`chain=true`）**：`[GAP-049/1.2] 记下主 pass 自己的 target0 尺寸 = 854x480（label='Main'，ownTerrainPass=false）` + `[GAP-049/1.2] gbuffer 池的锚点 = 主 pass 自己的 target0（854x480；另一张主目标 854x480 只作首帧前的回落）⇒ 池与画布按构造同尺寸`；`Close the existing render pass` **0 条**、六条针 **0 命中**、`is not correct` 1 次（FML 补 `derivedPrograms`，逐键 diff 值没变）。两张同尺寸 ⇒ **这一改动按构造零行为变化**，正是它的判据。
+- 🔴 **画面级「无回归」这一臂作废（写住，别引用）**：为了「窗口在前台才回新帧」那条纪律去 `SetForegroundWindow`，唤起了 **Steam 游戏内覆盖层**（桌面捕获直接拍到「游戏时间 53 分钟 / 成就 1/48」那一屏），而覆盖层在单人里**暂停集成服务器** ⇒ 桌面捕获拍的是覆盖层、桥那一路回的是黑屏 + HUD（`mean=11.76` vs 臂 J2 的 `mean=201`，`mean|d|=189.52`）——两边都不是游戏画面。⇒ 三条新口径：① 链路线判据帧**优先 `mrt.pixelProbe`**（进程内 GPU 回读，数字直接进日志，不受窗口与覆盖层影响）；② 不许靠 `SetForegroundWindow` 抬窗口（Steam 在跑就会唤出覆盖层）；③ 任何「两臂画面差」下结论前，先证明两帧都**来自游戏**。
+- **影响的文档**：`docs/13`（`GAP-049` 加 1.2 落地行 + 臂 N 作废行）、`docs/20`（1.2 行标 ✅、1.1 的前置 cleared）。
+- **测试结果**：`./gradlew test` → **BUILD SUCCESSFUL，1218 项 0 失败**（本轮 +4 条）。中途 `MethodLengthRatchetTest` 与那条顺序守卫各红过一次 —— 都是守卫正常工作（我把注释塞进了 60 行方法里、又把记录点搬到了文件后段），改法是把理由挪进新方法 javadoc、把守卫改成断言**调用点**顺序，没有放宽任何基线。
+- **是否已提交**：✅ 本轮结束即提交并推送（上一条 `190db70` 因 `github.com:443` 连不上留在本地，一并推）。
+
+---
+
 ## 2026-10-15（一百六十）— 🔬 `GAP-058` bisect 做完了：**不是 `bb9d4ba` 的回归** —— 旧二进制在取证档链路线上同样是坏帧（坏法不同）；归因改指 `GAP-053` 的代次归属，`GAP-054` 的「墙」很可能就是这个坏帧的一种读法
 
 > **verdict = 「谁把链路线的画面弄坏了」这个问题问错了 —— 两个二进制都坏，只是坏法不同；所以 P0 的 0.2 出口顺延到 P1 的 1.1（`GAP-053` ⑤-d/⑤-e）收口之后再回看，本条不再单独立一轮修。**

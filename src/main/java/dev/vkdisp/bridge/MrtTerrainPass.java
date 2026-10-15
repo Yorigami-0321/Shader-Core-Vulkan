@@ -748,20 +748,27 @@ public final class MrtTerrainPass {
                 Math.min(dev.vkdisp.VkDispVirtualPack.postChain().maxSlot() + 1, 16));
         pool = Math.max(pool, actualSlots);
         boolean first = POOL.size() == 0;
-        POOL.ensure(pool, main.width, main.height, RenderSystem.getDevice());
-        // 🔴 GAP-049：这里的 {@code main} 是 {@code gameRenderer.mainRenderTarget()}，而主 pass 实际画进去的
-        //   是<b>另一张</b>图（真机实测连纹理都不同源）⇒ 每次建池核对一次两者尺寸：
-        //   同尺寸 = 点名一次「这是巧合不是约束」，漂移 = ⑤-d（关双绘）不许开工的红灯。
-        GbufferSizeAnchor.checkPoolSize(main.width, main.height);
+        // 🔴 1.2（GAP-049 那一格的正解）：池的尺寸**以主 pass 自己的 target0 为准**，
+        //   {@code gameRenderer.mainRenderTarget()} 只作「首帧之前还没看过任何描述符」那一刻的回落
+        //   （时序铁律见 GAP-045；原类注释里那句「现在不行」说的就是这个窗口期）。
+        //   两者今天实测同尺寸 ⇒ 正常路径上零行为变化；换锚点会点名（[GAP-049/1.2]）。
+        GbufferSizeAnchor.Anchor anchor = GbufferSizeAnchor.choose(main.width, main.height,
+                MainPassTakeover.mainPassTargetWidth(), MainPassTakeover.mainPassTargetHeight());
+        POOL.ensure(pool, anchor.width(), anchor.height(), RenderSystem.getDevice());
+        GbufferSizeAnchor.reportAnchor(anchor, main.width, main.height);
+        // 🔴 GAP-049：每次建池仍核对一次 —— 1.2 之后这条核对从「巧合相等」变成「按构造相等」的哨兵，
+        //   漂移 = ⑤-d（关双绘）不许开工的红灯。
+        GbufferSizeAnchor.checkPoolSize(anchor.width(), anchor.height());
         if (colortexDepth == null) {
-            colortexDepth = new TextureTarget("vkdisp gbuffer depth", main.width, main.height,
+            colortexDepth = new TextureTarget("vkdisp gbuffer depth", anchor.width(), anchor.height(),
                     null, GpuFormat.D32_FLOAT);
             VkDisp.LOGGER.info("vkdisp: [GAP-003/A] gbuffer terrain targets ready: {}x{} slots={} pool={}"
                             + " poolDepth=D32_FLOAT mipLevels={} (GAP-017 pool with real mip chain)",
-                    main.width, main.height, actualSlots, pool, POOL.levels(0));
-        } else if (colortexDepth.width != main.width || colortexDepth.height != main.height) {
-            colortexDepth.resize(main.width, main.height);
-            VkDisp.LOGGER.info("vkdisp: [GAP-003/A] colortex resized to {}x{}", main.width, main.height);
+                    anchor.width(), anchor.height(), actualSlots, pool, POOL.levels(0));
+        } else if (colortexDepth.width != anchor.width() || colortexDepth.height != anchor.height()) {
+            colortexDepth.resize(anchor.width(), anchor.height());
+            VkDisp.LOGGER.info("vkdisp: [GAP-003/A] colortex resized to {}x{}",
+                    anchor.width(), anchor.height());
         }
         if (!first && POOL.size() != pool) {
             VkDisp.LOGGER.info("vkdisp: [chain] colortex pool grown to {} slots", pool);

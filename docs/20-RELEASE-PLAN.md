@@ -32,7 +32,7 @@
 | 序 | 内容 | 判据 | 规模 | 前置 | 出处 |
 |---|---|---|---|---|---|
 | 1.1 | `GAP-053` ⑤-d 代次归属 —— 候选 (a) 单绘档整条不打开 / (b) 接管取「链要读的那一代」 / (c) 接管退化成单代，**与 ⑤-e 并成一步** | 单绘档画面里**必须有地形**（现判据为红）；`GAP-037` 的天空深度翻次读数仍 = 1 | 每候选一臂 | 1.2 | `13` GAP-053 状态行 |
-| 1.2 | `ColortexPool` 锚点从 `gameRenderer.mainRenderTarget()` 换成主 pass 自己的 target0（`GAP-049` 留的活） | `ensureColortex` 不再引用另一张主目标 | 牵连 `MrtTerrainPass` 一处 | 排在 1.1 之前先立住 | `13` GAP-049；`04-SPEC` §5.0.6 ⑤ 第 2 条 |
+| 1.2 ✅ **已落地并真机验证（10-15 臂 N）** | `ColortexPool` 锚点从 `gameRenderer.mainRenderTarget()` 换成主 pass 自己的 target0（`GAP-049` 留的活）—— 两处：观察挪到 `ownTerrainPass` 开关**之前**（`recordMainPassTargetSize`），建池与 gbuffer 深度按 `GbufferSizeAnchor.choose` | `ensureColortex` 不再引用另一张主目标 ✅（两条 `[GAP-049/1.2]` 自报 + 四条守卫）；今天两张同尺寸 ⇒ 按构造零行为变化 | 牵连 `MrtTerrainPass` + `MainPassTakeover` 各一处 | ✅ 立住了 ⇒ 1.1 可以开工 | `13` GAP-049；`04-SPEC` §5.0.6 ⑤ 第 2 条 |
 | 1.3 | ⑤-c 剩余：**OIT 那 6 处**（`CloudRenderer:215`、`WorldBorderRenderer:170`、`LevelRenderer:670/690/694/706`）；顺手补签「云 / 边界已放开未取证」两格 | 崩点按预测挪位置 + 分站点计数每族各自活；`setPipeline` 零抛 | 每族一臂 | 0.1 | `19` §5A.4 R7 行；`04-SPEC` §5.0.7 末 |
 | 1.4 | ⑤-d 后半删死码：自绘路径 + `ColortexPool` 一侧 + M-01 退化件 | 「地形只画一遍」；且「M-04 全关 ⇒ 逐字节等于今天」那条对照臂成立 | 一轮完整回归（R7 是唯一「关掉也回不去」的一条） | 1.1、1.3 | `19` §5A.5 第 3 条 |
 | 1.5 | `GAP-020` 周期-3 黑帧、`GAP-017` bloom 全白；`GAP-011` 闪烁**挂起**（当前 HEAD 不复现 = 无可观测现象，不许继续猜） | 黑帧率判据受 **X55** 约束：两臂每帧工作量逐字相同，或换真 ICD 机器 | 本机不可判 | 硬件（⇒ P5.2） | `13` GAP-011 / 017 / 020 状态行 |

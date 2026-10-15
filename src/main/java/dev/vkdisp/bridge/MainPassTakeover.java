@@ -179,6 +179,8 @@ public final class MainPassTakeover {
                     STATS.refusedOit, STATS.depthSwapped, STATS.depthRefused,
                     VkDispConfig.MIXIN_OWN_TERRAIN_PASS.get());
         }
+        // 🔴 1.2：主 pass 的 target0 尺寸要记在接管开关<b>之前</b>（为什么，见 recordMainPassTargetSize）
+        recordMainPassTargetSize(descriptor);
         if (!VkDispConfig.MIXIN_OWN_TERRAIN_PASS.get()) {
             return descriptor;
         }
@@ -192,12 +194,7 @@ public final class MainPassTakeover {
             return descriptor;
         }
         STATS.labelHits++;
-        // 🔖 先把「主 pass 自己的 target0 尺寸」记下来（GAP-049 要的那个数）—— 记在**拒绝接管之前**：
-        //    尺寸不合也是一种关于两张主目标的信息，不能只在接管成功时才看得见。
-        if (STATS.mainWidth == 0) {
-            STATS.mainWidth = target0.getWidth(0);
-            STATS.mainHeight = target0.getHeight(0);
-        }
+        // 🔖 尺寸在上面的 recordMainPassTargetSize 里已经记下（记在接管开关之前，理由见那里）。
         // 判据③「那个附件就是主目标的颜色纹理」—— 真机证明这一腿**永不成立**，故只当交叉核对留着：
         // 视图壳不同源（createTextureView 造的）还能解释，连**纹理本体**都不是同一张
         // （实测 附件纹理=0x2b6af37d vs 主目标纹理=0x326872b3）⇒ 主 pass 画进去的那张图不是
@@ -230,6 +227,33 @@ public final class MainPassTakeover {
                     ours.length, labelOf(descriptor), target0.getWidth(0), target0.getHeight(0));
         }
         return withOurColorAttachments(descriptor, ours);
+    }
+
+    /**
+     * 1.2（{@code GAP-049} 的锚点数据源）：只把「主 pass 自己的 target0 尺寸」记下来，<b>不改任何决策</b>。
+     *
+     * <p>身份腿与接管判定同一条（{@link #matchesMainPass}：单附件 + 主 label），但<b>不看</b>
+     * {@code ownTerrainPass} 开关、<b>不看</b> OIT —— 那两条门只在「要不要接管」那一步用。
+     * 记过之后每帧一次整数比较即早退。
+     */
+    private static void recordMainPassTargetSize(RenderPassDescriptor descriptor) {
+        if (STATS.mainWidth > 0) {
+            return;
+        }
+        String label = labelOf(descriptor);
+        if (!matchesMainPass(descriptor.colorAttachments().size(), label)) {
+            return;
+        }
+        GpuTextureView target0 = onlyColorView(descriptor);
+        if (target0 == null) {
+            return;
+        }
+        STATS.mainWidth = target0.getWidth(0);
+        STATS.mainHeight = target0.getHeight(0);
+        VkDisp.LOGGER.info("vkdisp: [GAP-049/1.2] 记下主 pass 自己的 target0 尺寸 = {}x{}（label='{}'，"
+                        + "ownTerrainPass={}）⇒ 观察在接管开关<b>之前</b>，双绘档也拿得到这个数，"
+                        + "gbuffer 池的锚点从这一刻起按它建",
+                STATS.mainWidth, STATS.mainHeight, label, VkDispConfig.MIXIN_OWN_TERRAIN_PASS.get());
     }
 
     /**

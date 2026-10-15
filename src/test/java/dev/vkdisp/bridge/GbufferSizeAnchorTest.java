@@ -15,6 +15,7 @@ package dev.vkdisp.bridge;
  * 5. 性能基线：❄️ 单测。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -63,17 +64,28 @@ class GbufferSizeAnchorTest {
     @DisplayName("核对挂在建池那一步之后，且只在主 pass 看过之后才可能判同/判漂")
     void checkRunsAtPoolBuildTime() {
         String mrt = readOrSkip(MRT);
-        int ensure = mrt.indexOf("POOL.ensure(pool, main.width, main.height");
-        int check = mrt.indexOf("GbufferSizeAnchor.checkPoolSize(main.width, main.height)");
-        assertTrue(ensure > 0 && check > ensure && check - ensure < 700,
+        // 🔖 1.2（GAP-049 那一格）之后，建池与核对用的都是 anchor.width()/height()
+        //    —— 主 pass 的 target0 已知时按它建，未知时按另一张主目标回落。
+        int ensure = mrt.indexOf("POOL.ensure(pool, anchor.width(), anchor.height()");
+        int check = mrt.indexOf("GbufferSizeAnchor.checkPoolSize(anchor.width(), anchor.height())");
+        assertTrue(ensure > 0 && check > ensure && check - ensure < 900,
                 "🔴 核对必须在 POOL.ensure <b>之后</b> —— 之前池还是旧尺寸，比出来的是假漂移");
 
         String takeover = readOrSkip(TAKEOVER);
-        int record = takeover.indexOf("STATS.mainWidth = target0.getWidth(0)");
+        // 🔖 1.2 之后记录点搬进 recordMainPassTargetSize，且调用点必须在**两道门之前**：
+        //    ① ownTerrainPass 开关（否则双绘档拿不到这个数）② refusedSize++（尺寸不合也是信息）
+        int record = takeover.indexOf("recordMainPassTargetSize(descriptor);");
+        int gate = takeover.indexOf("if (!VkDispConfig.MIXIN_OWN_TERRAIN_PASS.get())");
         int refuse = takeover.indexOf("STATS.refusedSize++");
-        assertTrue(record > 0 && refuse > 0 && record < refuse,
-                "尺寸要在「拒绝接管」<b>之前</b>就记下：尺寸不合本身就是 GAP-049 要看的信息，"
+        assertTrue(record > 0 && gate > 0 && refuse > 0, "三个锚点必须都在：" + record + "/" + gate + "/" + refuse);
+        assertTrue(record < gate,
+                "🔴 1.2：观察必须挂在 ownTerrainPass 开关<b>之前</b> —— 挂在后面，双绘档（取证档与"
+                        + "代码默认档都是）就永远看不见主 pass 的 target0 尺寸，池的锚点白换");
+        assertTrue(record < refuse,
+                "尺寸要在「拒绝接管」之前就记下：尺寸不合本身就是 GAP-049 要看的信息，"
                         + "不能只在接管成功时看得见");
+        assertTrue(takeover.contains("private static void recordMainPassTargetSize"),
+                "记录本体必须单独成方法（attachmentReplaced 压在 QD-04 的 60 行棘轮以内）");
     }
 
     @Test
@@ -99,4 +111,58 @@ class GbufferSizeAnchorTest {
         assertEquals(-1, anchor.indexOf("LOGGER.info(\"vkdisp: [GAP-049] ok"),
                 "不许把通过写成无信息的 ok 行");
     }
+    // ────────────────────────────────────────────────────────────────────────────
+    // 1.2（GAP-049 那一格的正解）：建池尺寸的锚点
+    // ────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("🔴 1.2 看到主 pass 的 target0 ⇒ 池按它建，另一张主目标只作回落")
+    void choosePrefersMainPassTarget() {
+        GbufferSizeAnchor.Anchor a = GbufferSizeAnchor.choose(854, 480, 1280, 720);
+        assertEquals(1280, a.width(), "主 pass 的 target0 已知 ⇒ 宽必须跟它");
+        assertEquals(720, a.height(), "主 pass 的 target0 已知 ⇒ 高必须跟它");
+        assertTrue(a.fromMainPass(), "锚点来源要能被日志与单测区分（回落 vs 主 pass）");
+    }
+
+    @Test
+    @DisplayName("🔴 1.2 还没看过 target0（首帧之前）⇒ 回落，且不许回落成 0 尺寸")
+    void chooseFallsBackBeforeFirstDescriptor() {
+        GbufferSizeAnchor.Anchor a = GbufferSizeAnchor.choose(854, 480, 0, 0);
+        assertEquals(854, a.width());
+        assertEquals(480, a.height());
+        assertFalse(a.fromMainPass(), "这一刻只能按另一张主目标建 —— 这正是 GAP-045 那条时序铁律的形状");
+    }
+
+    @Test
+    @DisplayName("🔴 1.2 target0 只认到一维 ⇒ 保守走回落（不许拿混合尺寸建池）")
+    void chooseRejectsHalfKnownTarget0() {
+        assertFalse(GbufferSizeAnchor.choose(854, 480, 1280, 0).fromMainPass(),
+                "宽有值而高没值 ⇒ 这张数不可信，整对一起弃用");
+        assertFalse(GbufferSizeAnchor.choose(854, 480, 0, 720).fromMainPass(), "同上一条，反向");
+        assertEquals(854, GbufferSizeAnchor.choose(854, 480, 1280, 0).width(), "回落尺寸原样");
+    }
+
+    @Test
+    @DisplayName("🔴 接线：ensureColortex 必须按锚点建池与建深度，不许再直接读另一张主目标的尺寸")
+    void mrtPassAnchorsOnTheChosenSize() throws Exception {
+        String src = java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/java/dev/vkdisp/bridge/MrtTerrainPass.java"));
+        int at = src.indexOf("private static void ensureColortex(RenderTarget main)");
+        assertTrue(at > 0, "找不到 ensureColortex，本断言的窗口失效");
+        int end = src.indexOf("prepareGbufferViews", at);
+        assertTrue(end > at, "找不到方法体的结束标记，窗口失效");
+        String body = src.substring(at, end);
+        assertTrue(body.contains("GbufferSizeAnchor.choose("), "建池尺寸必须走 choose（1.2 的唯一决策点）");
+        assertTrue(body.contains("POOL.ensure(pool, anchor.width(), anchor.height()"),
+                "POOL.ensure 必须按锚点尺寸建");
+        assertTrue(body.contains("new TextureTarget(\"vkdisp gbuffer depth\", anchor.width(), anchor.height()"),
+                "gbuffer 深度目标必须与池同尺寸（否则又是一处自己再算一遍）");
+        assertTrue(body.contains("colortexDepth.resize(anchor.width(), anchor.height()"),
+                "换锚点时深度目标必须一起 resize");
+        assertFalse(body.contains("POOL.ensure(pool, main.width, main.height"),
+                "GAP-049/1.2：不许退回按 gameRenderer.mainRenderTarget() 的尺寸建池");
+        assertFalse(body.contains("checkPoolSize(main.width, main.height)"),
+                "核对的也必须是真正建池用的那个尺寸，否则核对的是没用的数");
+    }
+
 }

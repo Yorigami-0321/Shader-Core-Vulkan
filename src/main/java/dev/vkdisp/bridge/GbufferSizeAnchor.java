@@ -37,8 +37,11 @@ public final class GbufferSizeAnchor {
         private long agree;
         private long drift;
         private long unknown;
+        private long anchored;
+        private long fallback;
         private boolean reportedAgree;
         private boolean reportedDrift;
+        private boolean reportedAnchored;
     }
 
     private static final Stats STATS = new Stats();
@@ -102,6 +105,69 @@ public final class GbufferSizeAnchor {
     /** 同尺寸核对通过次数（诊断/单测读数）。 */
     public static long agreeCount() {
         return STATS.agree;
+    }
+
+    /** 🔴 1.2 之后：池按**主 pass 自己的 target0** 建的次数（单测与真机都读这个）。 */
+    public static long anchoredToMainPassCount() {
+        return STATS.anchored;
+    }
+
+    /** 1.2 之前那条回落路径（还没看过主 pass 的 target0 ⇒ 只能按另一张主目标建）还剩多少次。 */
+    public static long fallbackAnchorCount() {
+        return STATS.fallback;
+    }
+
+    /**
+     * 🔴 <b>1.2（`GAP-049` 那一格的正解）：建池到底按谁的尺寸 —— 纯决策，无 GPU、无原版类型。</b>
+     *
+     * <p><b>为什么原来只能按另一张主目标建</b>：池在首帧之前就要存在（管线注册早于任何 pass，
+     * {@code GAP-045} 那条时序铁律），而那一刻 {@code MainPassTakeover} 还没看过任何描述符
+     * ⇒ 主 pass 的 target0 尺寸<b>不存在</b>。原类注释里那句「① 直接把池改成按主 pass 的 target0 建 ——
+     * 现在不行」说的就是这个窗口期。
+     *
+     * <p><b>本方法把「现在不行」变成「先按回落尺寸建，看到 target0 之后换过去」</b>：
+     * 两者今天实测同尺寸 ⇒ 这一改动在正常路径上<b>零行为变化</b>（判据就是这条），
+     * 而它把「巧合相等」变成「按构造相等」——⑤-d 关掉双绘之后主 pass 那张就是唯一画布。
+     *
+     * @param fallbackWidth  回落尺寸（= {@code gameRenderer.mainRenderTarget().width}）
+     * @param mainPassWidth  主 pass 自己那条颜色附件的宽，{@code <= 0} = 还没看过
+     * @return 建池该用的尺寸 + 它是从哪来的
+     */
+    public static Anchor choose(int fallbackWidth, int fallbackHeight,
+            int mainPassWidth, int mainPassHeight) {
+        if (mainPassWidth > 0 && mainPassHeight > 0) {
+            return new Anchor(mainPassWidth, mainPassHeight, true);
+        }
+        return new Anchor(fallbackWidth, fallbackHeight, false);
+    }
+
+    /** {@link #choose} 的结果。 */
+    public record Anchor(int width, int height, boolean fromMainPass) {}
+
+    /**
+     * 锚点自报（{@code MrtTerrainPass#ensureColortex} 在建池那一刻调）。
+     *
+     * <p>🔖 换锚点那一刻必须点名：它意味着池被<b>重建</b>（含 mip 链与 gbuffer 深度），
+     * 而链/管线手里的视图都是从这里取的 —— 不点名就又是一次「尺寸变了而日志全正常」。
+     */
+    public static void reportAnchor(Anchor anchor, int fallbackWidth, int fallbackHeight) {
+        if (anchor.fromMainPass()) {
+            STATS.anchored++;
+            if (!STATS.reportedAnchored) {
+                STATS.reportedAnchored = true;
+                VkDisp.LOGGER.info("vkdisp: [GAP-049/1.2] gbuffer 池的锚点 = 主 pass 自己的 target0"
+                                + "（{}x{}；另一张主目标 {}x{} 只作首帧前的回落）⇒ 池与画布按构造同尺寸",
+                        anchor.width(), anchor.height(), fallbackWidth, fallbackHeight);
+            }
+        } else {
+            STATS.fallback++;
+        }
+        if (anchor.fromMainPass() && (anchor.width() != fallbackWidth || anchor.height() != fallbackHeight)) {
+            VkDisp.LOGGER.warn("vkdisp: [GAP-049/1.2] 两张主目标尺寸<b>不同</b>：主 pass target0={}x{}"
+                            + " 而 gameRenderer.mainRenderTarget()={}x{} ⇒ 池按前者建（后者只是回落），"
+                            + "这一臂的画面判据必须注明换过锚点",
+                    anchor.width(), anchor.height(), fallbackWidth, fallbackHeight);
+        }
     }
 
     /** 尺寸漂移被看到的次数（&gt; 0 就是 ⑤-d 的红灯）。 */
