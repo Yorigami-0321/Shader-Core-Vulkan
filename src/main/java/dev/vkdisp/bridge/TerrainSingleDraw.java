@@ -100,6 +100,16 @@ public final class TerrainSingleDraw {
      *
      * @return true = 这一帧确实欠、且刚刚交出；false = 没有欠账（双绘档或已经交过）
      */
+    /** 链首实际交出翻代的次数（1.1 的仪器：只在第一次点名的话，「累计 1 次」是恒真读数、证不了每帧都交）。 */
+    public static long paidCount() {
+        return FLIP.paid;
+    }
+
+    /** 本帧是否欠着一次翻代（还没被链首消费）。诊断/单测用。 */
+    public static boolean flipOwed() {
+        return FLIP.owed;
+    }
+
     public static boolean flipIfOwed() {
         if (!FLIP.owed) {
             return false;
@@ -108,10 +118,13 @@ public final class TerrainSingleDraw {
         FLIP.paid++;
         if (!FLIP.reportedPaid) {
             FLIP.reportedPaid = true;
-            VkDisp.LOGGER.info("vkdisp: [GAP-053/1.1] 链首<b>已交账</b>（第一次）⇒ 这一帧的翻代确实发生在 drawPostChain 之前，"
-                    + "累计交出 {} 次；下一次读到的 [GAP-020/gen] 奇偶应当跟着翻。"
-                    + "若画面仍无地形，问题在交账<b>之后</b>（链读哪一代 / 清屏语义 / ⑤-b 派生管线），"
-                    + "不在「有没有翻」这一环", FLIP.paid);
+            VkDisp.LOGGER.info("vkdisp: [GAP-053/1.1] 链首<b>已交账</b>（第一次）⇒ 这一帧的翻代确实发生在 drawPostChain 之前。"
+                    + "判据与 [GAP-020/gen] 的奇偶对照着读：每帧都交 ⇒ 奇偶必须逐帧翻");
+        } else if (FLIP.paid % 300L == 0L) {
+            // 🔴 交账次数必须**周期可见**：只在第一次点名的话，日志里那句「累计 1 次」是恒真读数，
+            //   证不了「每帧都交」—— 而臂 R 的 [GAP-020/gen]（开跑前=链尾=0、跨帧不翻）恰恰怀疑的就是这条。
+            VkDisp.LOGGER.info("vkdisp: [GAP-053/1.1] 链首累计已交账 {} 次（建 pass 观察同趟可见）"
+                    + " ⇒ 与 [GAP-020/gen] 的奇偶对照：次数不随帧涨 = 交账没每帧走到", FLIP.paid);
         }
         MrtTerrainPass.flipWrittenSlots();
         return true;
