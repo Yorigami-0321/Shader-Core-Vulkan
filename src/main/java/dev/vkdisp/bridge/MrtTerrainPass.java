@@ -904,7 +904,7 @@ public final class MrtTerrainPass {
      * ⇒ 它是 A/B 位，不是「更安全的默认」。
      */
     @Nullable
-    private static GpuSampler atlasSampler() {
+    static GpuSampler atlasSampler() {
         if (!VkDispConfig.MIXIN_REUSE_CHUNK_SAMPLER.get()) {
             return RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         }

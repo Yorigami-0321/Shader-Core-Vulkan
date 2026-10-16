@@ -136,13 +136,23 @@ public final class SkyGeometryPack {
         }
     }
 
-    /** 换管线之后绑块（穹顶/星点/晨昏不采贴图 ⇒ 只绑 VkDispBuiltins，无 sampler）。 */
-    public static void apply(RenderPass pass, SkyGeometrySite site,
-            net.minecraft.client.renderer.MappableRingBuffer ring) {
-        pass.setUniform(PackTerrainProgram.BUILTINS_BLOCK, ring.currentBuffer());
+    /**
+     * 换管线之后补绑：走 {@link TerrainPipelineApi#bindPackGbufferUniforms}（与地形/水<b>同一条</b>维度感知绑定）。
+     * 🔴 必须绑<b>包自带的 sampler</b>：BSL 的 {@code gbuffers_skybasic.fsh:42} 声明了 {@code noisetex}，
+     *   派生管线的 {@code packBindGroupLayout} 已按契约把它计入绑定组 ⇒ 不绑就是 {@code validateDraw} 抛
+     *   「missing uniform noisetex」= 一翻闸就崩帧（本轮读包源码揪出的真实缺陷，之前误以为天空不采样）。
+     *   绑定组里的 {@code SAMPLER0}（原版图集槽）确实不留（穹顶不采 celestials 图集），但<b>包的自由 sampler 照绑</b>。
+     */
+    public static void apply(RenderPass pass, SkyGeometrySite site) {
+        TerrainPipelineApi.bindPackGbufferUniforms(pass,
+                MrtTerrainPass.atlasSampler(),
+                MrtTerrainPass.blockAtlas(),
+                MrtTerrainPass.depthView(),
+                MrtTerrainPass.poolWriteView(0),
+                site.program);
         if (REPORTED_TAKEOVER.compareAndSet(false, true)) {
             VkDisp.LOGGER.info("vkdisp: [GAP-027/sky-geometry] 天空站点 {} 改由包的 {} 画"
-                            + "（原版仍驱动几何/拓扑；我方只换管线 + 绑块 + renderStage={}）",
+                            + "（原版仍驱动几何/拓扑；我方只换管线 + 绑块与包 sampler + renderStage={}）",
                     site, site.program, site.stageMacro);
         }
     }

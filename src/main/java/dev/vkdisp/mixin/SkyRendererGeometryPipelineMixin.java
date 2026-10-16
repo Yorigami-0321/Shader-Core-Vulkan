@@ -50,7 +50,7 @@ public abstract class SkyRendererGeometryPipelineMixin {
             return;
         }
         original.call(pack);
-        SkyGeometryPack.apply(self, site, ring);
+        SkyGeometryPack.apply(self, site);
     }
 
     /** 星点那笔（原版 {@code SkyRenderer:274} 那次 {@code setPipeline}）换用包的 {@code gbuffers_skybasic}。 */
@@ -72,7 +72,7 @@ public abstract class SkyRendererGeometryPipelineMixin {
             return;
         }
         original.call(pack);
-        SkyGeometryPack.apply(self, site, ring);
+        SkyGeometryPack.apply(self, site);
     }
 
     /** 晨昏那笔（原版 {@code SkyRenderer:298} 那次 {@code setPipeline}）换用包的 {@code gbuffers_skybasic}。 */
@@ -94,6 +94,6 @@ public abstract class SkyRendererGeometryPipelineMixin {
             return;
         }
         original.call(pack);
-        SkyGeometryPack.apply(self, site, ring);
+        SkyGeometryPack.apply(self, site);
     }
 }

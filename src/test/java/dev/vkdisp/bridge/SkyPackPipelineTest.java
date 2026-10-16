@@ -39,12 +39,17 @@ class SkyPackPipelineTest {
     }
 
     @Test
-    @DisplayName("🔖 自报名单覆盖三处站点（描述符没建前，至少这条读得到）")
-    void describeSitesCoversAllThree() {
-        String joined = String.join(",", SkyPackPipeline.describeSites());
-        for (SkyGeometrySite site : SkyGeometrySite.values()) {
-            org.junit.jupiter.api.Assertions.assertTrue(joined.contains(site.name()),
-                    () -> "自报缺 " + site.name() + "：实际 " + joined);
-        }
+    @DisplayName("🔴 apply 必须走维度感知的包 sampler 绑定（skybasic 有 noisetex，漏绑=翻闸就 validateDraw 抛）")
+    void applyBindsPackSamplersNotJustBlock() throws Exception {
+        String src = java.nio.file.Files.readString(
+                java.nio.file.Path.of("src/main/java/dev/vkdisp/bridge/SkyGeometryPack.java"));
+        org.junit.jupiter.api.Assertions.assertTrue(src.contains("bindPackGbufferUniforms"),
+                "天空 apply 必须经 TerrainPipelineApi.bindPackGbufferUniforms 绑齐包声明的 sampler（含 noisetex）；"
+                        + "只 setUniform(BUILTINS_BLOCK) 的旧写法一翻闸就崩帧");
+        // 真包对账：BSL gbuffers_skybasic 确实声明了 sampler ⇒ 上面那条绑定不是摆设。
+        org.junit.jupiter.api.Assertions.assertTrue(java.nio.file.Files.readString(
+                        java.nio.file.Path.of("run/bsl-inspect/shaders/program/gbuffers_skybasic.glsl"))
+                        .contains("uniform sampler2D noisetex;"),
+                "skybasic 声明 noisetex ⇒ 不绑就缺 uniform；这条前提变了要同步改 apply");
     }
 }

@@ -36,8 +36,10 @@ public final class SkyPackPipeline {
     }
 
     /**
-     * 这条管线<b>不需要</b> {@code SAMPLER0}：穹顶/星点/晨昏的 {@code skybasic} 片元不采任何贴图
-     * （日月那条才采 celestials 图集，见 {@link SkyCelestialPack}）。留着它反而是多余绑定组。
+     * 这条派生管线<b>不留原版 {@code SAMPLER0}</b>（那是日月采 celestials 图集才需要的引擎槽，穹顶/星点/晨昏不碰）。
+     * 🔴 但这<b>不等于</b>「天空片元不采样」—— BSL 的 {@code gbuffers_skybasic.fsh:42} 声明了 {@code noisetex}，
+     *   它进的是<b>包自己的 {@code packBindGroupLayout}</b>，由 {@link SkyGeometryPack#apply} 经
+     *   {@link TerrainPipelineApi#bindPackGbufferUniforms} 绑定（不绑 = validateDraw 抛）。别把这两件事混为一谈。
      */
     public static boolean requiresSampler0(SkyGeometrySite site) {
         return false;

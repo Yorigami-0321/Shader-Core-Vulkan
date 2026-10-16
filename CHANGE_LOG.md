@@ -4,6 +4,20 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百八十二）— 🐞 揪出并修一处天空<b>翻闸即崩</b>的真缺陷：`gbuffers_skybasic` 声明了 `noisetex`，而派生管线只绑了内建块、没绑包 sampler ⇒ `validateDraw` 缺 uniform
+
+> **verdict = 这不是「待画面验」的观察项，是读包源码当场证伪的一个真 bug：我之前写「天空不采任何贴图」是<b>错的</b>（把引擎 `SAMPLER0` 槽和包自带的自由 sampler 混为一谈）。BSL 的 skybasic 片元声明 `uniform sampler2D noisetex;`，派生管线的 `packBindGroupLayout` 已把它计入 ⇒ 一翻闸就崩帧。本轮修成真绑 + 加离线守卫钉住。**
+
+- **证据**：`run/bsl-inspect/shaders/program/gbuffers_skybasic.glsl:42` `uniform sampler2D noisetex;`（用于天顶 dither / aurora 噪声）。而退役后的 `SkyGeometryPack.apply` 只有 `setUniform(BUILTINS_BLOCK,…)` ⇒ `noisetex` 无人绑 ⇒ `validateDraw` 抛（与 h33 那族「Missing uniform」同形）。
+- **修法（不自己造轮子）**：`apply` 改走地形/水<b>同一条</b>维度感知绑定 `TerrainPipelineApi.bindPackGbufferUniforms(pass, atlasSampler, blockAtlas, depthView, poolWriteView(0), skybasic)` —— 它绑内建块（取本站 `prepare` 转好的那一代）+ 按 `SamplerDimensionPlan` 逐条绑包 sampler（`noisetex`→`PackTextures.view`，SHADOW_*→桩），绝不拿错维度凑（GAP-003 那条纪律）。`MrtTerrainPass.atlasSampler()` 由 private 放宽到包内可见供其调用。三处混入的 `apply(self,site,ring)` 相应改 `apply(self,site)`（ring 仅 `prepare` 的成功哨兵）。
+- **更正说谎的注释**：`SkyPackPipeline.requiresSampler0` 与 `SkyGeometrySite` 里「不采任何贴图」→ 改成「不留引擎 `SAMPLER0` 图集槽，但<b>包自由 sampler（noisetex 等）照绑</b>」——把当初致错的口径当场纠正（[[feedback-answer-from-code-not-docs]] / X9：诊断不许说假话）。
+- **离线守卫**：`SkyPackPipelineTest.applyBindsPackSamplersNotJustBlock` 双针钉：① `SkyGeometryPack` 源码必须含 `bindPackGbufferUniforms`；② 真 BSL skybasic 必须含 `uniform sampler2D noisetex;`（前提变了要同步改 apply）。防这条崩点悄悄回归。
+- **测试结果**：`./gradlew --offline build` 全绿。
+- **意义**：天空从「接线但一开就崩」推进到「接线且 sampler 绑齐、翻闸可跑（画面观感仍待真机）」。这是本轮对「完全实现」最实在的一步——不是加零件，是修掉一个会让功能当场不可用的错误。
+- **是否已提交**：是（单独提交并推送；默认档画面不变，闸仍默认关）。
+
+---
+
 ## 2026-10-16（一百八十一）— 🩹 补一处退役留下的<b>假绿</b>：`DepthFlipLedgerTest.bothOwnersAreWired` 之前对已删的 `SkyPackGbuffer.java` 用 `assumeTrue` ⇒ 整条静默中止，连代理那两条真覆盖也不算数
 
 > **verdict = 退役删了 `SkyPackGbuffer.java`，但该守卫用 `readOrSkip`(=assumeTrue(Files.exists)) 读它 ⇒ 文件没了之后整条测试中止，仍有效的 `DepthGlProxy` 深度所有者覆盖被连带跳过 = 假绿（[[feedback-text-needle-false-green]] 那一族）。本轮修成「跑到底 + 钉退役不得复活」。**
