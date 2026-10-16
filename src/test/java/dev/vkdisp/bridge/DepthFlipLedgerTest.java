@@ -38,20 +38,19 @@ class DepthFlipLedgerTest {
     }
 
     @Test
-    @DisplayName("🔴 两个所有者都必须真的被记上：漏一个，这条仪器就永远读「1 次 ✓」")
+    @DisplayName("🔴 深度翻转的所有者：代理那趟仍在；全屏接管第二所有者已退役且不得复活")
     void bothOwnersAreWired() {
         String proxy = readOrSkip(PROXY);
         assertTrue(proxy.contains("DepthFlipLedger.beginFrame();"),
                 "帧首不结算 ⇒ 计数只涨不报，判据读不到（记在翻转 pass 自己头上：它每帧恰好一次）");
         assertTrue(proxy.contains("DepthFlipLedger.note(\"DepthGlProxy.renderFlipPass(全屏 1−z)\")"),
                 "代理那趟全屏翻转是所有者之一");
-        String sky = readOrSkip(SKY);
-        assertTrue(sky.contains("DepthFlipLedger.note(\"SkyPackGbuffer 顶点常量 Position.z=1.0\")"),
-                "🔴 另一个所有者是**顶点常量** —— 漏了它，开代理那一臂会假报「只翻一次 ✓」");
-        int draw = sky.indexOf("pass.draw(3, 1, 0, 0);");
-        int note = sky.indexOf("DepthFlipLedger.note(", draw - sky.indexOf("pass.draw(3, 1, 0, 0);"));
-        assertTrue(draw > 0, "全屏三角那一笔 draw 要在（找不到针会假绿）");
-        assertTrue(note > 0 && note < draw, "记点必须就在 draw **之前**（同一次动作，不是别处）");
+        // 🔴 2026-10-16 退役（CHANGE_LOG 一百七十九）：过去「第二个所有者」= SkyPackGbuffer 那条全屏三角把
+        //   顶点 Position.z 写死 1.0（GAP-037 的「翻两次」形状）。穹顶改走几何适配层（真实 MVP，无 z 常量）
+        //   ⇒ 该顶点常量所有者随全屏接管一起退役。留一条「不得复活」的硬针，替掉原先对已删文件的静默 skip
+        //   （那会让本测在 SkyPackGbuffer 消失后整条 assumeTrue 中止，连代理那两条真覆盖也跟着不算数 = 假绿）。
+        assertFalse(Files.exists(SKY),
+                "天空几何路线不再有「全屏三角 + Position.z=1.0 顶点常量」这一深度所有者；若复活就是 GAP-037「翻两次」回来");
     }
 
     @Test

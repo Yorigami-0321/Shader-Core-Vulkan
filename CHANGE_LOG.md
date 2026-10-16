@@ -4,6 +4,18 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百八十一）— 🩹 补一处退役留下的<b>假绿</b>：`DepthFlipLedgerTest.bothOwnersAreWired` 之前对已删的 `SkyPackGbuffer.java` 用 `assumeTrue` ⇒ 整条静默中止，连代理那两条真覆盖也不算数
+
+> **verdict = 退役删了 `SkyPackGbuffer.java`，但该守卫用 `readOrSkip`(=assumeTrue(Files.exists)) 读它 ⇒ 文件没了之后整条测试中止，仍有效的 `DepthGlProxy` 深度所有者覆盖被连带跳过 = 假绿（[[feedback-text-needle-false-green]] 那一族）。本轮修成「跑到底 + 钉退役不得复活」。**
+
+- **现象**：`bothOwnersAreWired` 先 `readOrSkip(PROXY)`（存在，往下），再 `readOrSkip(SKY)`（SkyPackGbuffer 已删）⇒ `assumeTrue(false)` 在 line 48 中止整条测，代理断言虽执行但测试记为 skipped、不算过。build 里那句「2 skipped」之一就是它。
+- **修法**：第二个深度所有者（全屏三角把 `Position.z` 写死 1.0）本就随全屏接管退役（穹顶走几何适配层真实 MVP，无 z 常量）。删掉对已删文件的读+针，改成 ① 保留代理那两条真覆盖（现在<b>真的会跑并过</b>）② 加 `assertFalse(Files.exists(SkyPackGbuffer.java))` 钉「第二所有者不得复活」（复活即 GAP-037「翻两次」回来）。display 同步改文案。
+- **另一条查过没事**：`PackTextureWarmupWiringTest` 里那句「SkyPackGbuffer 那三个调用点」只是断言<b>消息文案</b>，它读的是 `FullscreenPassHook.java`（还在），没有静默 skip ⇒ 不动（避免无谓 churn）。
+- **测试结果**：`DepthFlipLedgerTest` 三条全 PASSED（不再 skipped）；`./gradlew --offline build` 全绿。
+- **是否已提交**：是（单独提交并推送）。
+
+---
+
 ## 2026-10-16（一百八十）— 🛠 天空新代码的<b>reload 陈旧</b>隐患修：`SkyGeometryPack.compiled(site)` 现按<b>契约身份</b>记缓存键（对齐 `SkyCelestialPack`）
 
 > **verdict = 接线/退役那几刀写完，自检发现一处「换包/热重载后会拿上一份包的管线画新天空」的真实缺陷并补上。离线编译+守卫全绿；运行期失效（要 GPU）留画面轮验。**
