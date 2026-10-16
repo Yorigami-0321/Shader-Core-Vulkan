@@ -4,6 +4,24 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百六十六）— 🔴 云这一格**换方向**（源码级核实后撤回我自己上一轮写的「下一刀」）：26.3 的云没有顶点流也没有 uv ⇒ 不喂 `gbuffers_clouds`，包算云走 deferred 的体积云
+
+> **verdict = 「把包的 gbuffers_clouds 接进云几何」这个计划是错的，错在前提而不是执行：26.3 里云几何根本不是顶点流。本轮把它从「下一刀」改成「待裁决」，并把代码里两处会误导下一个人的文案改掉。**
+
+- **核实到的事实**（行号即证据，源取自 `~/.gradle/caches/neoformruntime/artifacts/minecraft_26.3_client.jar` 与 mergeWithSources 源，解到 `build/vanilla-src/`）：
+  - `net/minecraft/client/renderer/CloudRenderer.java:217-235` —— `render(...)` 逐字 `renderPass.setVertexBuffer(0, null)` + `drawIndexed(6 * quadCount, 1, 0, 0, 0)`，并 `setUniform("CloudInfo", ubo)` / `setUniform("CloudFaces", utb)`。⇒ **没有顶点缓冲**，云的六个面全在着色器里由索引 + UBO 现算。
+  - `assets/minecraft/shaders/core/clouds.vsh` —— `packedX/packedY/packedZ` 位取顶点 + `texelFetch(CloudFaces, …)` 解出 `cellX/cellZ/direction/flags`，`pos = faceVertex * CellSize + vec3(cellX,0,cellZ) * CellSize + CloudOffset`，颜色取 `faceColors[direction] * CloudColor`。**没有输出 uv**（这条着色器压根不采纹理）。
+  - `assets/minecraft/shaders/core/clouds.fsh` —— 只有 `vertexColor` × 雾 ⇒ 26.3 的云**连 fragment 都不采样云纹理**（旧版那张 `clouds.png` 只在加载期被折成 cell 位图，`CloudRenderer.java:67-86`）。
+  - 而 BSL `shaders/program/gbuffers_clouds.glsl` 仍是旧约定：`:175 texCoord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy`、`:155 varying vec3 normal`、`:69 texture2D(texture, texCoord)`。⇒ 要喂它，我方必须**新造一套 cell→uv 语义**并复刻 CloudFaces 解码 —— 那是本仓反复拒绝的「功能名先出现、语义后补」形状（且本轮按裁决不做真机验证，风险不对等）。
+- **裁决与后果**（用户点选）：**不喂 `gbuffers_clouds`**。包算云改走它自己的**体积云**（`deferred1` 里的 `clouds.glsl`）⇒ 牵连的三格写进账：链正确性（`GAP-058`，整屏天空蓝那一腿）、`cloudHeight` 一族供值（`GAP-029`）、以及 `IS_IRIS` 那条「一次翻多支」的待判（包里 `clouds.glsl:329` / `shadows.glsl:308` 两支消费者都坐在 `#ifdef IS_IRIS` 里）。
+- **本次改了什么**（代码，两处文案，零行为）：`bridge/CloudsIntoGbuffer` 类注释第 2 条①（原文写着「本轮不做，那是下一刀」）与 `reportOnce` 那行自报（原文写着「⇒ 换成包的 gbuffers_clouds 是下一刀」）—— 自报不许比代码更自信，留着下一轮就有人照它开工。
+- **影响的文档**：`docs/13`（GAP-027「现状」行里那句「`gbuffers_clouds` 没有包的程序」按事实改写 + 记裁决与三条牵连）。
+- **测试结果**：`./gradlew build` → **BUILD SUCCESSFUL**（无守卫变红：本轮只动注释与一条日志文案）。
+- 🔴 **未解决**：① 水 = 缺口在**网格化补顶点属性**（`at_tangent → normal/tangent/binormal`、`mc_Entity → mat`），GAP-007/043，排下一轮；② `gbuffers_skytextured`（日月盘/贴图）仍未接；③ 真机画面判据按裁决**整批顺延**到三件功能做完之后 ⇒ 天空那一格今天只有**离线**证据；④ `git push` 本轮**没推上去**（`github.com:443` 从 Windows 与 WSL 都不通，而 `api.github.com` 回 200 ⇒ 路由层拦，不是凭据；上一条 commit `cbc1edf` 与本轮这条都只在本地）。
+- **是否已提交**：🟡 本地已提交；推送被网络挡住，待网络恢复补推。
+
+---
+
 ## 2026-10-16（一百六十五）— 🟢 天空这一格换的是**机制**不是常量：`PostVertexLinker` 长出 clip 中性化，包顶点的 `ftransform()` 不再把我方的 NDC 全屏三角透视成半屏巨型三角形（GAP-054 那一半）
 
 > **verdict = 按本轮裁决（云/水/天空三件功能先做完，再统一真机测试）：天空的「接管」今天从代码侧成立并被真包离线证明钉住；画面判据**本轮不签**，红着记在下面的「未解决」里。**

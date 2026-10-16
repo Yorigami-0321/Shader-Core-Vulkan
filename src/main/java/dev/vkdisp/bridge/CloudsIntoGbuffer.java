@@ -17,7 +17,17 @@ package dev.vkdisp.bridge;
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）。
  * 1. 官方/主实现：原版自己就是「开一个 pass、把 RenderPass 交给 CloudRenderer」。
  * 2. 备选：① 走 {@code RenderSystem.pushPipelineModifier} 换成包的 {@code gbuffers_clouds} ——
- *    <b>本轮不做</b>（那是下一刀，且它需要为云单独生成顶点适配层与绑定组）；
+ *    🔴 <b>2026-10-16 源码级核实后撤回这条计划</b>（原写「下一刀」）：26.3 的云<b>没有顶点流也没有 uv</b> ——
+ *    {@code CloudRenderer#render}（{@code CloudRenderer.java:217-235}）逐字
+ *    {@code setVertexBuffer(0, null)} + {@code drawIndexed(6*quadCount…)}，几何全部由
+ *    {@code core/clouds.vsh} 从 {@code CloudFaces}（{@code isamplerBuffer}）+ {@code CloudInfo} UBO
+ *    现算（{@code vertex(packed >> index)} 那套），而 {@code core/clouds.fsh} <b>不采任何纹理</b>
+ *    （只有 {@code vertexColor} + 雾）。而 BSL 的 {@code gbuffers_clouds} 仍按旧约定写
+ *    （{@code program/gbuffers_clouds.glsl:69 texture2D(texture, texCoord)}、
+ *    {@code :175 texCoord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy}、{@code :155 normal}）
+ *    ⇒ 喂它必须由我方<b>新造一套 cell→uv 语义</b>并复刻 CloudFaces 解码，那是「功能名先出现、语义后补」
+ *    那一族（本仓明确拒绝的形状）。⇒ 包算云走<b>它自己的体积云</b>（{@code deferred1} 里的
+ *    {@code clouds.glsl}，判据面 = 链正确性 + {@code cloudHeight} 等供值 + {@code IS_IRIS} 那条待判裁决）。
  *    ② 借旧天空那一格的 {@code GbufferTarget} 薄壳（该类已随 R4 删除，天空改走官方钩子 + 视图
  *    {@code @Redirect}）—— 对云本来也<b>不可行</b>：
  *    {@code CloudRenderer#render} 直接收 {@code RenderPass}，不给 {@code RenderTarget}，
@@ -262,7 +272,8 @@ public final class CloudsIntoGbuffer {
         reportedOnce = true;
         VkDisp.LOGGER.info("vkdisp: [GAP-027/clouds] 云搬进 gbuffer: status={} cloudColorAlpha={}"
                         + " cloudHeight={} cloudRange={} gameTime={} —— 着色器仍是原版"
-                        + " CLOUDS/FLAT_CLOUDS ⇒ 换成包的 gbuffers_clouds 是下一刀",
+                        + " CLOUDS/FLAT_CLOUDS（26.3 的云没有顶点流也没有 uv ⇒ 包的 gbuffers_clouds"
+                        + " 无从喂起，包算云走 deferred 的体积云，逐字理由见本类注释第 2 条①）",
                 status, cloudColor >>> 24, levelState.cloudHeight, optionsState.cloudRange,
                 levelState.gameTime);
     }
