@@ -164,17 +164,53 @@ public final class SkyPackGbuffer {
     }
 
     /**
-     * 本帧是否<b>具备</b>由包天空接管的条件（开关 + 契约）。
+     * 包天空接管<b>还缺不缺日月</b>（GAP-027 天空线 10-16 实测出来的那一格，<b>纯函数</b>）。
      *
-     * <p>🔴 三个条件缺一不可：{@code mrt.skyPackShader} 开着、{@code mrt.skyPass} 也开着
-     * （本类接管的是<b>那一笔</b>，天空进不进 gbuffer 的总闸仍是它）、且该程序真的接线
-     * （契约在、输出恰好单槽 0）。不满足时<b>退回原版重放</b>并点名原因 —— 不静默换绑（T11）。
+     * <p>🔴 <b>为什么必须有这道闸</b>：官方钩子那条 {@code renderSky} 回 {@code true} 时，原版
+     * {@code SkyRenderer.render} <b>整笔</b>不跑 —— 那一笔里除了穹顶还有<b>日月盘</b>
+     * （{@code SkyRenderer:222,229} 的 {@code renderSun/renderMoon}）。而 BSL 的
+     * {@code gbuffers_skybasic} <b>不画日月</b>：日月在 {@code SHADER_SUN_MOON} 那一支里，
+     * 而该选项在 {@code lib/settings.glsl:165} 是<b>注释掉的</b>（默认关），BSL 的日月在
+     * {@code gbuffers_skytextured} 那条程序里 —— 而那条程序<b>我方还没接</b>。
+     * ⇒ 若此刻就接管，画面会<b>没有太阳和月亮</b>：一个「包算的天空」把光源整个吃掉的形状。
+     *
+     * <p>🔖 这不是保守，是<b>语义配对</b>：接管者必须交出与原版同一层内容的<b>全集</b>才能替代它。
+     * 等 {@code gbuffers_skytextured} 接上（日月几何 + 按笔的 ModelViewMat，见 GAP-028 的 10-16 那行），
+     * 本谓词由那条程序的接线状态来回答，天空接管才重新生效。
+     *
+     * @param skyTexturedWired 包 {@code gbuffers_skytextured} 是否已接线（今天恒 false ⇒ 不接管）
+     * @return true = 可以接管整笔原版天空（含日月）；false = 交回原版，穹顶由原版画
      */
+    static boolean maySuppressVanillaSky(boolean skyTexturedWired) {
+        return skyTexturedWired;
+    }
+
+    /** 本帧是否<b>具备</b>由包天空接管的条件（开关 + 契约 + <b>日月那半也在</b>）。 */
     public static boolean enabled() {
         if (!VkDispConfig.MRT_SKY_PACK_SHADER.get() || !VkDispConfig.MRT_SKY_PASS.get()) {
             return false;
         }
+        // 🔴 日月那半缺席时<b>不接管</b>（接管会连日月一起吞 —— 见 maySuppressVanillaSky 的注释）。
+        //   包 skytextured 未接线 ⇒ skyTexturedWired 今天恒 false；这里不读配置、不猜。
+        if (!maySuppressVanillaSky(skyTexturedWired())) {
+            reportOnce("mrt.skyPackShader=true 但<b>暂不接管</b>：包的 gbuffers_skybasic 不画日月"
+                    + "（BSL 的日月在 gbuffers_skytextured，而那条未接线），而接管会让原版 SkyRenderer"
+                    + " 整笔不跑（含 renderSun/renderMoon）⇒ 接管 = 画面没有太阳月亮。"
+                    + " 本帧交回原版天空重放（M-11 仍把它的输出引进 colortex0）。"
+                    + " 解除条件 = gbuffers_skytextured 接上（GAP-027 天空线第二格）");
+            return false;
+        }
         return contractProblem() == null;
+    }
+
+    /**
+     * 包的 {@code gbuffers_skytextured} 是否已接线 —— <b>今天是「没有」</b>，且这里不猜。
+     *
+     * <p>🔖 为什么写成方法而不是内联 {@code false}：接上那条程序时<b>只有这一处</b>要改，
+     * 而它改完，上面那道闸与所有自报会一起跟着变（不留「决定了但没落地」的第二份口径）。
+     */
+    private static boolean skyTexturedWired() {
+        return false;
     }
 
     /** 契约可用性判定；返回 {@code null} = 可用，否则返回<b>不可用的原因</b>（自报用）。 */

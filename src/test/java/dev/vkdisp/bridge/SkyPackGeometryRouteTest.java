@@ -132,6 +132,24 @@ class SkyPackGeometryRouteTest {
         }
     }
 
+    @Test
+    @DisplayName("🔴 日月那半没接线时<b>不许接管</b>：接管会让原版 SkyRenderer 整笔不跑 = 画面没有太阳月亮")
+    void takeoverRequiresTheCelestialHalf() {
+        assertFalse(SkyPackGbuffer.maySuppressVanillaSky(false),
+                "BSL 的 gbuffers_skybasic 不画日月（日月在 SHADER_SUN_MOON 那一支，而 settings.glsl:165 "
+                        + "把它注释掉了），日月在 gbuffers_skytextured —— 那条没接线时接管就是<b>吞掉光源**");
+        assertTrue(SkyPackGbuffer.maySuppressVanillaSky(true),
+                "接上 skytextured 之后接管必须能恢复（不许把这道闸写成永久拒绝）");
+
+        String source = code();
+        assertTrue(source.contains("if (!maySuppressVanillaSky(skyTexturedWired()))"),
+                "这道闸必须真的长在 enabled() 里，而不是只在注释里说");
+        assertTrue(source.indexOf("maySuppressVanillaSky(skyTexturedWired())")
+                        < source.indexOf("return contractProblem() == null;"),
+                "日月那半必须<b>先于</b>契约判定：契约过了而日月缺席，症状是「天空是包算的但没有太阳」");
+        assertTrue(source.contains("return false;"), "判否必须真的回 false（交回原版重放），不是「画半张」");
+    }
+
     private static int occurrences(String text, String needle) {
         int count = 0;
         for (int at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + needle.length())) {

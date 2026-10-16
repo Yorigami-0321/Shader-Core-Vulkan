@@ -4,6 +4,19 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百六十九）— 🔴 自己抓到自己上一轮的接管会**吞掉太阳月亮** ⇒ 补一道闸：日月那半没接线就不接管
+
+> **verdict = 天空今天回到「原版穹顶 + 原版日月」，包天空的机制（clip 中性化 + 实测判据位）留在仓库里等 `gbuffers_skytextured`；这不是回退功能，是拒绝交付一个「包算的天空但没有光源」的半成品。**
+
+- **怎么发现的**（不是猜，是三处逐字读出来的）：① `SkyIntoGbuffer.renderSky` 回 `true` 时原版 `SkyRenderer.render` <b>整笔</b>不跑，而那一笔里除穹顶外还有 `renderSun`/`renderMoon`（`SkyRenderer:222,229`）；② BSL 的 `gbuffers_skybasic` 里日月坐在 `#ifdef SHADER_SUN_MOON` 那一支，而 `lib/settings.glsl:165` 是 `//#define SHADER_SUN_MOON`（<b>默认注释掉</b>）；③ BSL 真正的日月在 `gbuffers_skytextured` —— 那条<b>我方一行都没接</b>。⇒ 上一轮的接管在默认档下会让画面<b>没有太阳和月亮</b>，而且不报错。
+- **本次改了什么**（代码，一处 + 一条守卫）：`SkyPackGbuffer.enabled()` 里加 `maySuppressVanillaSky(skyTexturedWired())`（纯函数 + 单一改点：接上 skytextured 时只改 `skyTexturedWired()` 那一处，闸门与自报跟着变），判否时打一次点名 WARN 并<b>交回原版重放</b>（M-11 仍把原版天空引进 colortex0）；顺序刻意<b>先于</b>契约判定 —— 契约过了而日月缺席，症状正是「天空是包算的但没有光源」。
+- **影响的文档**：`docs/13`（GAP-027「现状」行加这道闸与三处出处；不改本行前半段那条已证明的机制）。
+- **测试结果**：`./gradlew build` → **BUILD SUCCESSFUL**（+1 条守卫：`SkyPackGeometryRouteTest#takeoverRequiresTheCelestialHalf`，钉「假⇒不许接管」「真⇒必须能恢复接管」「闸门真的在 enabled() 里且先于契约」）。
+- 🔴 **未解决 / 下一步**：① 天空第二半 = 接 `gbuffers_skytextured`（阻塞点与两条候选路线已记在 GAP-028 的 10-16 行：日月几何与图集是 `SkyRenderer` 的 private final，姿态走 DynamicTransforms 的 ModelViewMat ⇒ 要么 accessor 注入点、要么按 `buildSunQuad` 数学自建 `POSITION_TEX`；外加按笔 ModelViewMat 覆盖）；② 水 2/2（`mat`/`recolor` 需扩 chunk 顶点格式）；③ 云的前置是链正确性（`GAP-058`，需真机）；④ 本轮序里真机画面判据仍未取。
+- **是否已提交**：✅ 本轮结束即提交并推送。
+
+---
+
 ## 2026-10-16（一百六十八）— 🟢 GAP-028 ②：`renderStage` 的**逐 draw 供值**接上了（天空那笔进 SKY），并把日月那两笔的**真实阻塞点**核实到行
 
 > **verdict = 「块里有这个成员、但没人填」这一族从今天起有了通道；天空第二半（日月盘）缺的不再是供值，而是几何与按笔矩阵覆盖 —— 这两件事本轮分开记，不混成「天空已支持」。**
