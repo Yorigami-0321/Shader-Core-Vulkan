@@ -85,26 +85,41 @@ public final class PackTerrainSource {
      * @param diagnostics 本次选取的全部诊断（不可变）
      */
     /**
-     * @param linkedFragment 走「post 顶点路线」时被 {@code PostVertexLinker} 改写过的片元终稿；
-     *                       {@code null} = 本条走普通 chunk 路线（用 {@code program.fragmentSource()}）
+     * @param linkedFragment 被<b>改写后</b>的片元终稿；{@code null} = 本条没有改写这回事（用
+     *                       {@code program.fragmentSource()} 原样落资源）。两条路都会走到这里：
+     *                       ① 「post 顶点路线」由 {@code PostVertexLinker} 统一两阶段的内建块；
+     *                       ② 「导数接管」（GAP-007）由 {@code DerivativeTbn} 换掉那三条基向量的读点。
+     *                       🔖 <b>改写与契约必须同批产出</b>：解析契约用未改写的终稿（那才是包的声明），
+     *                       落进资源的必须是改写后的那一份 —— 两侧顺序若不一致，就是
+     *                       「上传按旧布局写、驱动按新布局读」那一族静默错值（GAP-022 同族）。
      * @param vertexSource   与 {@link #linkedFragment} <b>同批</b>产出的顶点终稿（全屏恒等 MVP）；
      *                       {@code null} = 本条的顶点走 {@code PackVertexAdapterGenerator} 那一族
+     * @param tbnPlan        {@code DerivativeTbn} 的判定（{@code null} = 本条没算过）；
+     *                       chunk 路线要靠它给适配层补出那两条辅助 varying —— <b>两侧的 location
+     *                       必须是同一次判定算出来的</b>，各算一遍就会漂移
      */
     public record Result(PackTerrainProgram program, String packName, String profile,
-            List<TranslateDiagnostic> diagnostics, String linkedFragment, String vertexSource) {
+            List<TranslateDiagnostic> diagnostics, String linkedFragment, String vertexSource,
+            dev.vkdisp.glsl.translate.DerivativeTbn.Plan tbnPlan) {
 
         public Result {
             profile = profile == null ? "" : profile;
             diagnostics = diagnostics == null ? List.of() : List.copyOf(diagnostics);
         }
 
-        /** 普通（chunk 路线）结果：没有 post 顶点对。 */
+        /** 没有改写、没有顶点对、没有导数接管的结果。 */
         Result(PackTerrainProgram program, String packName, String profile,
                 List<TranslateDiagnostic> diagnostics) {
-            this(program, packName, profile, diagnostics, null, null);
+            this(program, packName, profile, diagnostics, null, null, null);
         }
 
-        /** 本条是否走「post 顶点路线」（顶点 = 包自己的 .vsh + 恒等 MVP，不是 chunk 适配层）。 */
+        /** post 顶点路线结果（天空那一条）：TBN 与它无关（片元不声明那三条基向量）。 */
+        Result(PackTerrainProgram program, String packName, String profile,
+                List<TranslateDiagnostic> diagnostics, String linkedFragment, String vertexSource) {
+            this(program, packName, profile, diagnostics, linkedFragment, vertexSource, null);
+        }
+
+        /** 本条是否走「post 顶点路线」（顶点 = 包自己的 .vsh + clip 中性化，不是 chunk 适配层）。 */
         public boolean postVertexRoute() {
             return vertexSource != null && linkedFragment != null;
         }
@@ -237,7 +252,28 @@ public final class PackTerrainSource {
                 return linkPostVertexRoute(programName, qualified, compiled, program,
                         pack.name(), profile, diagnostics);
             }
-            return new Result(program, pack.name(), profile, diagnostics);
+            // 🔴 GAP-007 导数接管（chunk 路线）：契约解析必须已经<b>做完</b>（它读的是未改写的那一份），
+            //   改写后的那一份才落进资源 —— 顺序反过来就是拿旧契约去接新接口（GAP-022 半翻那一族）。
+            //   🔖 判定与改写必须<b>同一次调用</b>产出：适配层要按同一个 plan 补出那两条辅助 varying，
+            //   两侧各算一遍 location 就会漂移（X42 在生成期那一半的形态）。
+            dev.vkdisp.glsl.translate.DerivativeTbn.Plan tbnPlan = dev.vkdisp.glsl.translate.DerivativeTbn
+                    .plan(program.inputs(), DerivativeTbnSwitch.enabled());
+            dev.vkdisp.glsl.translate.DerivativeTbn.Result tbn = dev.vkdisp.glsl.translate.DerivativeTbn
+                    .apply(qualified, program.fragmentSource(), tbnPlan);
+            diagnostics.addAll(tbn.diagnostics());
+            // 🔴 与能力门控/覆盖那两个开关同一条纪律（h33 实测）：反射失败会让本开关<b>静默</b>取默认关，
+            //   而「写了 mrt.derivativeTbn=true 但片元源一行没改」在日志里完全看不出来 ⇒ 必须点名。
+            String tbnSwitchFailure = DerivativeTbnSwitch.reflectionFailure();
+            if (tbnSwitchFailure != null) {
+                diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.ERROR,
+                        "vkdisp: 导数接管 [DERIVATIVE_TBN_SWITCH_UNREADABLE] 读取失败：" + tbnSwitchFailure
+                                + " ⇒ " + DerivativeTbnSwitch.CONFIG_KEY + " 将**恒为 "
+                                + DerivativeTbnSwitch.DEFAULT_ENABLED + "（默认关）**，即该开关写了也不生效。"
+                                + "这是真错误不是正常状态。",
+                        pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
+            }
+            return new Result(program, pack.name(), profile, diagnostics,
+                    tbn.applied() ? tbn.text() : null, null, tbnPlan);
         }
 
         diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.WARN,

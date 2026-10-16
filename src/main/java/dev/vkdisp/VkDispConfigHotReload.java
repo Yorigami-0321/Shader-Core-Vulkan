@@ -86,7 +86,7 @@ public final class VkDispConfigHotReload {
     private record Snapshot(boolean enabled, boolean debugLog, String packProfile,
             String shaderPack, boolean capabilityGate,
             boolean chainEnableGating, String optionOverrides, boolean packWater,
-            boolean skyPackShader, boolean derivedPrograms) {}
+            boolean skyPackShader, boolean derivedPrograms, boolean derivativeTbn) {}
 
     /** 最近一次快照；null = 还没见 Loading（防御位，实际由首载 Loading 填充）。 */
     private static volatile Snapshot last;
@@ -333,6 +333,9 @@ public final class VkDispConfigHotReload {
                 //   ⇒ 不进边沿判定就是个死开关（QD-08「写了但没生效」那一族，与 packWater 同例）。
                 VkDispConfig.MRT_SKY_PACK_SHADER.get(),
                 // GAP-054 包侧二分总闸：同上，只在生成期/注册期被读一次。
-                VkDispConfig.PACK_DERIVED_PROGRAMS.get());
+                VkDispConfig.PACK_DERIVED_PROGRAMS.get(),
+                // GAP-007 导数接管：同样只在生成期被读一次（它决定片元源文本改不改）⇒ 不进边沿判定
+                //   就是「写了配置、日志照打、源文本没变」那一族死开关（QD-08 第五例同形）。
+                VkDispConfig.MRT_DERIVATIVE_TBN.get());
     }
 }

@@ -4,6 +4,27 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百六十七）— 🟢 水这一格换的是**第三条路**：包片元的 normal/tangent/binormal 由屏幕空间导数现算（不动 chunk 网格），真 BSL 包上端到端跑通
+
+> **verdict = 水的 TBN 从今天起有真值（离线端到端证明 + 10 条守卫），键默认关 ⇒ 今天画面逐字不变；`mat`/`recolor` 那两条仍然只能来自网格化，本条不关闭。**
+
+- **本次改了什么**（代码，六处 + 一个新类 + 一个新键）：
+  - `glsl/translate/DerivativeTbn`（**新类**，判定 + 片元改写）：三条 `in` 声明**改名**（`normal → vkdispInterpNormal`，**保住 location** ⇒ 与适配层 out 的连接关系逐字不变），包的读点经 `#define normal vkdispTbnNormal()` 指到我方函数；面法线 = `normalize(cross(dFdx(viewPos), dFdy(viewPos)))` 再翻到朝相机一侧，切线/副切线取 uv 偏导（derivative mapping），行列式退化时退到与法线垂直的任一单位向量。**chunk 面全是轴对齐平面 ⇒ 这个面法线是精确值，不是近似。**
+  - `pack/DerivativeTbnSwitch`（**新类**，读取侧）：反射桥接 + 「类在、配置没加载」第三态回落默认值 —— 与 `PackPostVertexSwitch`/`PackCapabilityGateSwitch` 同族，反射失败必须打成 ERROR（h33 那一族的第六次预防）。
+  - `VkDispConfig`：新键 `mrt.derivativeTbn`（默认 **false**）。
+  - `PackTerrainSource`：chunk 路线在**契约解析之后**做改写，判定与改写**同一次调用**产出，一起装进 `Result`（新增 `tbnPlan` 分量 + `linkedFragment` 语义扩到「改写后的那一份优先落资源」）。
+  - `PackVertexAdapterGenerator` / `GbufferVertexSources.chunkAdapter`：按同一个 plan 补出两条辅助 varying 的 `out` 与赋值（取适配层**已经算过**的 `vkdispAdapterViewPos` 与 `UV0` ⇒ 渲染期零新增计算）。
+  - `VkDispVirtualPack`：片元取「改写后的那一份」优先、顶点侧吃同一个 plan；键进 `currentTerrainMemoKey`；`VkDispConfigHotReload` 快照同步进键（QD-08 那一族）。
+  - 🔧 顺带按棘轮指示搬出 `GbufferAlbedoLod0`（GAP-016 那段产品级止血，逐字同语义：三个前提、「只改一行」的命中数自报、`finally` 还原）——`ClassLineRatchetTest` 两次变红（`VkDispConfig` 1073>1047、`VkDispVirtualPack` 1577>1573）都是**靠搬类和压重复注释**解的，**没有放宽任何基线**。
+- 🔴 **两条本轮真踩的前提错**（都写进守卫，不当已修讲）：① 首版想把「main 里声明同名局部变量」当实现 —— 实测 BSL 水在**文件作用域函数**里读 `normal`（`world0_gbuffers_water-FRAGMENT.glsl:323 GetWaterNormal`、第 331 行 `dot(normalize(normal), normalize(viewPos))`）⇒ 局部遮蔽管不到，那是「改了但只改一半」最难查的形状；② 首版直引 `VkDispConfig.MRT_DERIVATIVE_TBN.get()` ⇒ 单测当场抛 `Cannot get config value before config is loaded`（`dev.vkdisp.pack` 不该把 FML 配置体系拖进测试类路径）。③ 另一条守卫被我自己的假设写错：BSL 默认档**地形**其实声明了 `normal`（location 4）而**没有** `tangent/binormal` ⇒ 已按实测改成「只接真声明的那一条」。
+- **三处预处理器罩不住的形态必须自己挡**（本层的 fail-closed 面）：参数表里声明同名变量的顶层函数（GLSL 无嵌套函数 ⇒ 深度进出即屏蔽单位）整段 `#undef`/`#define` 包住；成员访问 `data.normal`；别的同名声明 / struct 字段 ⇒ 任一命中就**整条不做** + ERROR 点名，退回今天的常量供值。
+- **影响的文档**：`docs/13`（GAP-007 加「第三条路落地（代码半，默认关）」一行，含机制、三处形态闸门、离线判据与**本条不关闭**的理由）。
+- **测试结果**：`./gradlew build` → **BUILD SUCCESSFUL，1237 项 0 失败**（+10 条守卫：`DerivativeTbnTest`；其中两条是**真 BSL 包端到端** —— 走 `PackTerrainSource.generate(…, gbuffers_water)` 断言落进资源的那一份，一条断言「闸门关着 ⇒ `linkedFragment` 为空、源文本一行不动」）。
+- 🔴 **未解决**：① `mat`/`recolor`（方块 id）仍按常量供 —— 只能来自网格化（方案 A：扩 chunk 顶点格式，牵连所有吃这块缓冲的管线声明 + 已烘焙 section 重建），本条不据此关闭；② LabPBR 的 `normals`/`specular` 纹理数组缺（GAP-009）；③ **真机画面判据未取**（按本轮序，云/水/天空做完后统一取证）；④ 云那格的裁决不变（不喂 `gbuffers_clouds`，走 deferred 体积云 ⇒ 链正确性 GAP-058 + `cloudHeight` 供值 + `IS_IRIS` 待判）；⑤ 天空仍缺 `gbuffers_skytextured`（日月盘/贴图）。
+- **是否已提交**：✅ 本轮结束即提交并推送。
+
+---
+
 ## 2026-10-16（一百六十六）— 🔴 云这一格**换方向**（源码级核实后撤回我自己上一轮写的「下一刀」）：26.3 的云没有顶点流也没有 uv ⇒ 不喂 `gbuffers_clouds`，包算云走 deferred 的体积云
 
 > **verdict = 「把包的 gbuffers_clouds 接进云几何」这个计划是错的，错在前提而不是执行：26.3 里云几何根本不是顶点流。本轮把它从「下一刀」改成「待裁决」，并把代码里两处会误导下一个人的文案改掉。**

@@ -77,6 +77,17 @@ public final class GbufferVertexSources {
      * @param contract  该程序<b>片元</b>的冻结契约（顶点必须逐位置逐名字喂上它要的 varying）
      */
     public static String chunkAdapter(String program, PackTerrainProgram contract) {
+        return chunkAdapter(program, contract, null);
+    }
+
+    /**
+     * chunk 几何那一族的顶点适配层（带 GAP-007 的导数接管辅助 varying）。
+     *
+     * <p>🔴 {@code tbnPlan} 必须是<b>片元那一次改写用的同一个 plan</b>：两侧合成 varying 的 location
+     * 由它算，各算一遍就是「片元读 14 而顶点写 15」这种静默错值（X42）。
+     */
+    public static String chunkAdapter(String program, PackTerrainProgram contract,
+            dev.vkdisp.glsl.translate.DerivativeTbn.Plan tbnPlan) {
         boolean terrainProgram = PackTerrainSource.TERRAIN_PROGRAM.equals(program);
         boolean fullLight = terrainProgram && dev.vkdisp.VkDispConfig.MRT_TERRAIN_FULL_LIGHT_PROBE.get();
         boolean parallaxSkip = terrainProgram
@@ -89,8 +100,8 @@ public final class GbufferVertexSources {
                     + "（那些是地形单变量实验的判据，静默加到别条程序会让两臂不可比）", program);
         }
         try {
-            PackVertexAdapterGenerator.Result adapter =
-                    PackVertexAdapterGenerator.generate(contract.inputs(), fullLight, parallaxSkip, colorProbe);
+            PackVertexAdapterGenerator.Result adapter = PackVertexAdapterGenerator.generate(
+                    contract.inputs(), fullLight, parallaxSkip, colorProbe, tbnPlan);
             for (TranslateDiagnostic diagnostic : adapter.diagnostics()) {
                 log(diagnostic);
             }

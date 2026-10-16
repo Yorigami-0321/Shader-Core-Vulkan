@@ -282,31 +282,21 @@ public final class VkDispConfig {
     /**
      * 🔴 <b>GAP-027：把包自己的 {@code gbuffers_water} 接进 MRT gbuffer pass</b> —— 默认<b>关闭</b>。
      *
-     * <p><b>它做什么</b>：与 {@link #MRT_PACK_TERRAIN_SHADER} 同一条链（选包 → 能力门控 →
-     * 选项覆盖 → 编译 → DRAWBUFFERS 兑现），只是程序名换成 {@code gbuffers_water}；
-     * 接上之后 {@code TRANSLUCENT} 层改用<b>水的</b>片元 + <b>水的</b>顶点适配层 +
-     * <b>水的</b>绑定组布局（实测 BSL v10.1.8 默认档：2 个输出、8 个自由 sampler、14 条 varying，
-     * 而地形是 1 个输出、5 个 sampler、9 条 varying ⇒ 三样都<b>不能</b>套地形的清单，X39）。
-     * 我方 gbuffer pass 因此在同一个 render pass 内、OPAQUE 组之后<b>再画一次 TRANSLUCENT 组</b>
-     * （见 {@code bridge.MrtTerrainPass}；<b>没有</b>新建 FramePass，顺序由 pass 体内的调用序决定）。
+     * <p>与 {@link #MRT_PACK_TERRAIN_SHADER} 同一条链（选包 → 能力门控 → 选项覆盖 → 编译 →
+     * DRAWBUFFERS 兑现），只把程序名换成 {@code gbuffers_water}；接上后 {@code TRANSLUCENT} 层改用
+     * 水的片元 + <b>水的</b>顶点适配层 + <b>水的</b>绑定组布局（实测 BSL 默认档：2 输出 / 8 sampler /
+     * 14 varying，而地形是 1 / 5 / 9 ⇒ 三样都不能套地形的清单，X39），并在同一 pass 内 OPAQUE 之后
+     * 再画一次 TRANSLUCENT 组（{@code bridge.MrtTerrainPass#drawWaterSegment}，没有新建 FramePass）。
      *
-     * <p><b>为什么默认关</b>：① 它改变用户可见画面（水进 gbuffer ⇒ 后处理链看到的水深/法线变了）；
-     * ② 附件数会从「按地形契约定」变成<b>按两条程序的最大值定</b>
-     * （{@code MrtPlan.freezePackPrograms}），而附件数与管线颜色目标数不匹配会
-     * 让 {@code FrontendRenderPass#setPipeline} 直接抛 ⇒ 崩客户端；
-     * ③ 按支柱①/②的裁决，任何「换包语义 + 动附件形状」的接线都要由用户显式开启
-     * （与 {@code mrt.packTerrainShader}、{@code pack.capabilityGate} 同一口径）。
+     * <p>🔖 <b>为什么默认关</b>：它换包语义、又把附件数从「按地形契约定」改成「按两条程序的最大值定」
+     * （{@code MrtPlan.freezePackPrograms}），而不匹配是 {@code setPipeline} 直接抛；按支柱①/②的裁决，
+     * 这类接线要用户显式开启（与 {@code mrt.packTerrainShader}、{@code pack.capabilityGate} 同一口径）。
+     * 🔖 <b>关掉时行为逐字节相同</b>：只接地形一条，pass 只画 OPAQUE 组。包里没有水程序时不接线 +
+     * 一行 {@code not wired because absent}（不静默，X9/X11/T11）。
      *
-     * <p>🔖 <b>关掉时行为与今天逐字节相同</b>：只接地形一条，冻结契约只按地形的输出数算，
-     * pass 只画 OPAQUE 组。
-     *
-     * <p><b>包里没有 {@code gbuffers_water} 怎么办</b>：不接线 + <b>一行自报</b>
-     * （{@code [GAP-027] gbuffers_water not wired because absent …}），
-     * 地形那条不受影响、不抛、不静默（X9 / X11 / T11）。
-     *
-     * <p>🔴 <b>生效时机 = 生成期读一次</b> ⇒ 它<b>必须</b>同时进
-     * {@code VkDispVirtualPack#currentTerrainMemoKey} 与 {@code VkDispConfigHotReload} 的核心快照
-     * （QD-08 那一族已由 {@code GenerationTimeSwitchInventoryTest} 当场变红兜住）。
+     * <p>🔴 <b>生效时机 = 生成期读一次</b> ⇒ 必须同时进 {@code currentTerrainMemoKey} 与
+     * {@code VkDispConfigHotReload} 的核心快照（{@code GenerationTimeSwitchInventoryTest} 兜，QD-08）。
+     * <p>📎 逐臂真机读数与「画面侧判据仍未拿到」那一格：{@code docs/13} 的 GAP-027（h49 / h50n 两行）。
      */
     public static final ModConfigSpec.BooleanValue MRT_PACK_WATER_SHADER = BUILDER
             .comment("GAP-027：把包的 gbuffers_water 接进 MRT gbuffer pass（TRANSLUCENT 层改用"
@@ -314,6 +304,17 @@ public final class VkDispConfig {
                     + "需配合 mrt.terrain=true；默认关 = 水沿用原画法、附件数只按地形契约定。"
                     + "包里没有 gbuffers_water 时会打一行 not wired because absent 并只影响水。")
             .define("mrt.packWater", false);
+
+    /**
+     * 🔴 <b>GAP-007 的替代供值路：包片元里的 {@code normal}/{@code tangent}/{@code binormal}
+     * 由屏幕空间导数现算</b> —— 默认<b>关</b>（关 = 逐字等于今天那三条常量供值）。判据、形态闸门与
+     * 「为什么不走 vertex-format patch」逐字写在 {@code glsl/translate/DerivativeTbn} 与
+     * {@code pack/DerivativeTbnSwitch} 的头部。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_DERIVATIVE_TBN = BUILDER
+            .comment("GAP-007：包片元的 normal/tangent/binormal 由屏幕空间导数现算（默认关 = 逐字等于今天的常量供值；"
+                    + "只在该程序片元真声明这三条时生效，预处理器罩不住的形态整条不做）。理由见 DerivativeTbn/DerivativeTbnSwitch 头部。")
+            .define("mrt.derivativeTbn", false);
 
     /**
      * GAP-003/A：包地形片元的 {@code shadowtex0}/{@code shadowtex1}/{@code shadowcolor0}

@@ -1046,11 +1046,11 @@ public final class VkDispVirtualPack {
                 //   会按新值走（QD-08 第五例）。副作用（有意的、保守的）：改水开关时地形那条
                 //   也会重算一次 —— 过度失效是安全的，不足才是要命的那一类。
                 + "|" + VkDispConfig.MRT_PACK_WATER_SHADER.get()
-                // GAP-027 天空线：`mrt.skyPackShader` 同样在本窗口内被读（天空那条的生成闸门）
-                //   ⇒ 必须进键（QD-08 同一族，由 GenerationTimeSwitchInventoryTest 兜）。
+                // GAP-027 天空线：`mrt.skyPackShader` 同样在生成期被读一次 ⇒ 必须进键（QD-08 同一族）。
                 + "|" + VkDispConfig.MRT_SKY_PACK_SHADER.get()
-                // GAP-054 包侧二分总闸：同样在生成期/注册期被读一次 ⇒ 必须进键（QD-08 那一族）。
+                // GAP-054 包侧二分总闸、GAP-007 导数接管：同样在生成期/注册期被读一次 ⇒ 必须进键（QD-08 那一族）。
                 + "|" + VkDispConfig.PACK_DERIVED_PROGRAMS.get()
+                + "|" + VkDispConfig.MRT_DERIVATIVE_TBN.get()
                 + "|" + dev.vkdisp.pack.PackOptionOverrideSwitch.spec();
     }
 
@@ -1174,10 +1174,14 @@ public final class VkDispVirtualPack {
         //   🔖 块布局必须从**终稿**解析：解析改写前那份 = 「上传按旧布局写、驱动按新布局读」，
         //   与 GAP-022 的半翻同族（静默错值，不是崩）。
         boolean postVertex = terrain.postVertexRoute();
-        String fragment = postVertex ? terrain.linkedFragment() : program.fragmentSource();
+        // 🔖 「改写后的那一份优先」对两条路都成立：post 顶点路线是 linker 统一过内建块的那份，
+        //   chunk 路线是 GAP-007 导数接管改写后的那份（没改写时 linkedFragment 就是 null）。
+        String fragment = terrain.linkedFragment() != null
+                ? terrain.linkedFragment() : program.fragmentSource();
         entry.adapterMemo = postVertex
                 ? terrain.vertexSource()
-                : dev.vkdisp.pack.GbufferVertexSources.chunkAdapter(entry.program, program);
+                : dev.vkdisp.pack.GbufferVertexSources.chunkAdapter(entry.program, program,
+                        terrain.tbnPlan());
         entry.builtinsLayout = BuiltinsBlockLayout.parse(fragment);
         logLayout(entry.program, entry.builtinsLayout);
         // 🔖🔖 采样因子探针在此生效（**不**接进 OfGlslTranslator，理由见该类 KEEP_OUT）：
@@ -1192,32 +1196,11 @@ public final class VkDispVirtualPack {
             logDiagnostic(diagnostic);
         }
         fragment = sampleFactor.text();
-        // 🔴 GAP-016 **产品级修复**（由 h46 G 臂实测坐实，探针档转正）：
-        //   本引擎里包地形片元对图集的隐式导数 LOD 会选到坏 mip ⇒ texture() 恒 0。
-        //   ⇒ 把**albedo 乘法链那一行**的两参采样钉到显式 mip0（锚点与 h45 探针同一条线；
-        //     其余采样行不在此段范围 —— 视差/材质细节若仍受坏 mip 影响，归 GAP-016 修根）。
-        //   守卫：非诊断窗口里本段**必须只动一行**（h45 的 124 处教训 —— 自报命中行）。
-        //   🔖 GAP-027：本段的锚点是**地形**那条的 albedo 行（h45/h46 的判据都取自那里），
-        //      水是否需要同一段由 GAP-016 自己在程序的臂里判，不在此顺手套用（X39）。
-        if (terrainProgram && !VkDispConfig.MRT_TERRAIN_LOD_ZERO.get()
-                && VkDispConfig.MRT_TERRAIN_ATLAS_LOD0.get()
-                && dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.forceLodZeroEnabled() == false) {
-            dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceLodZero(true);
-            try {
-                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.Result productLod =
-                        dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.apply(
-                                dev.vkdisp.glsl.translate.ShaderStage.FRAGMENT, fragment);
-                if (productLod.patchedLodZero() != 1) {
-                    VkDisp.LOGGER.error("vkdisp: [GAP-016] 产品级 LOD0 段命中 {} 处（预期 1）"
-                                    + " —— 只改一行是 h45 立的铁律，请人工核对：{}",
-                            productLod.patchedLodZero(),
-                            dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.lastLodHitLines());
-                }
-                fragment = productLod.text();
-            } finally {
-                dev.vkdisp.glsl.translate.SampleFactorProbeAdapter.setForceLodZero(false);
-            }
-        }
+        // 🔴 GAP-016 的产品级止血段（h46 G 臂实测坐实 ⇒ 探针档转正）：本引擎里包地形片元对图集的隐式导数
+        //   LOD 会选到坏 mip ⇒ texture() 恒 0 ⇒「只改 albedo 那一行」钉到显式 mip0。
+        //   逐字语义（三个前提、「只改一行」的铁律与命中数自报、finally 还原）住在
+        //   {@link GbufferAlbedoLod0}（QD-10：本类的上限是实测值，新增/搬迁内容落到独立类）。
+        fragment = GbufferAlbedoLod0.apply(program.qualifiedName(), terrainProgram, fragment);
         VkDisp.LOGGER.info(
                 "vkdisp: [GAP-027] pack gbuffer fragment ready: program={} outputs={} declaredSlots={}"
                         + " samplers={} varyings={} bytes={} sampleFactorProbe[sample={} multiplier={}"

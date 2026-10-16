@@ -86,6 +86,22 @@ public final class PackVertexAdapterGenerator {
      */
     public static Result generate(List<PackTerrainProgram.Input> inputs, boolean fullLightProbe,
             boolean parallaxSkipProbe, boolean colorProbe) {
+        return generate(inputs, fullLightProbe, parallaxSkipProbe, colorProbe, null);
+    }
+
+    /**
+     * 生成适配层顶点着色器（带 GAP-007 的<b>导数接管辅助 varying</b>）。
+     *
+     * <p>🔴 这两条辅助 varying <b>必须</b>与片元改写用<b>同一次</b> {@code DerivativeTbn.plan} 的结果：
+     * 片元那侧按 plan 的 location 声明 {@code in}，这侧按同一份声明 {@code out} —— 各算一遍
+     * 就是「同一个 varying 在两侧被不同地处理」（GAP-022 / X42 那一族，症状是通道静默错值）。
+     *
+     * @param tbnPlan {@code DerivativeTbn} 的判定；{@code null} 或 {@code applies=false} ⇒ 一行都不加
+     */
+    public static Result generate(List<PackTerrainProgram.Input> inputs, boolean fullLightProbe,
+            boolean parallaxSkipProbe, boolean colorProbe,
+            dev.vkdisp.glsl.translate.DerivativeTbn.Plan tbnPlan) {
+        boolean tbn = tbnPlan != null && tbnPlan.applies();
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         Set<String> constants = new LinkedHashSet<>();
         Set<String> partial = new LinkedHashSet<>();
@@ -124,7 +140,11 @@ public final class PackVertexAdapterGenerator {
             body.append("    ").append(assignment).append(';')
                     .append(String.valueOf((char) 10));
         }
-        String glsl = header() + decls + MAIN_HEAD + body + "}" + String.valueOf((char) 10);
+        String glsl = header() + decls
+                + (tbn ? dev.vkdisp.glsl.translate.DerivativeTbn.vertexDeclarations(tbnPlan) : "")
+                + MAIN_HEAD
+                + (tbn ? dev.vkdisp.glsl.translate.DerivativeTbn.vertexAssignments(tbnPlan) : "")
+                + body + "}" + String.valueOf((char) 10);
         // U0001f50d X45：诊断开关必须自报状态。
         //   否则「开关没生效」与「结论不成立」无法区分 ⇒ 实验结论不可信（h11 笈的被该榁则挡住了）。
         diagnostics.add(TranslateDiagnostic.info(
@@ -133,6 +153,9 @@ public final class PackVertexAdapterGenerator {
                         + (constants.isEmpty() ? "无" : String.join(", ", constants))
                         + "；部分真值供值 " + partial.size() + " 条："
                         + (partial.isEmpty() ? "无" : String.join(", ", partial)) + "）"
+                        + (tbn ? " **导数接管辅助 varying=" + tbnPlan.viewPositionLocation()
+                                + "/" + tbnPlan.uvLocation() + "（GAP-007）**"
+                                : " 导数接管辅助 varying=无")
                         + (fullLightProbe ? " **lmCoord=满光照诊断开关=已开启**"
                                   : " lmCoord=满光照诊断开关=关")
                         + (parallaxSkipProbe ? " **dist=视差跳过诊断开关=已开启**"
