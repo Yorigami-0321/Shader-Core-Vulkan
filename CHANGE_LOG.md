@@ -4,6 +4,20 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百七十四）— 🧩 落穹顶路线的**第二块离线零件**：把三处天空站点的决策冻成一张表（站点 → 程序 / 顶点形状 / 拓扑 / 混合 / renderStage）
+
+> **verdict = 继续只做「离线能判」的零件：一百七十三落的是顶点适配层，本条落的是三处 `@WrapOperation` 共用的事实表。两块都还没接进渲染路径，默认档画面零变化。退役全屏接管 + 真接线仍归统一取证轮（一百七十二的顺序约束未动）。**
+
+- **为什么是这块**：穹顶/星点/晨昏那三处换管线要同时回答「喂哪条程序、用哪种 `DefaultVertexFormat`、哪种拓扑、哪种混合、`renderStage` 交哪个宏名」——这些**全是离线可判的原版事实**（读 `RenderPipelines.java:1037-1083` + `SkyRenderer.java:163/266/284` 与 BSL 的 `renderStage` 用法即可逐字钉住），把它们冻成一处 `enum` 比散写进三个混入方法体更安全（同源，QD-02）。真正的风险（渲染期换管线会不会崩帧/画错）留给画面那一轮。
+- **改了什么**：新增 `bridge/SkyGeometrySite.java`（`enum {SKY_DISC, STARS, SUNRISE_SUNSET}`，各带 `program=gbuffers_skybasic` / `stageMacro ∈ {SKY,STARS,SUNSET}` / `vertexFormat` / `topology` / `blend`，`blend=null` 表示穹顶用 `ColorTargetState.DEFAULT`）。`renderStageValue()` 从唯一真源 `RenderStages` 取号，解不出返回 `-1`（消费方据此判不接管）。
+- **依据**（都到行）：`RenderPipelines.SKY:1037-1046` = POSITION+TRIANGLE_FAN+DEFAULT；`STARS:1072-1082` = POSITION+QUADS+OVERLAY；`SUNRISE_SUNSET:1060-1070` = POSITION_COLOR+TRIANGLE_FAN+TRANSLUCENT。三处同喂 skybasic 的依据是 BSL `gbuffers_skybasic.glsl:169,179` 用 `renderStage == MC_RENDER_STAGE_STARS / _MOON` 归零 `alpha` 抑制原版叠加。`DefaultVertexFormat.POSITION/POSITION_COLOR` 的实际类型是 `com.mojang.renderpearl.api.vertex.VertexFormat`（本轮编译纠正：不是 `blaze3d.vertex.VertexFormat`，也没有 `BlendFunction.DEFAULT`）。
+- **影响的文档**：`docs/13` GAP-027 天空行已在上一条登记「顶点零件已落、待接线」，本条续上「决策表已落」。
+- **测试结果**：`./gradlew --offline build` 全绿。新增 `bridge/SkyGeometrySiteTest`（4 断言：三处同程序 / 逐站形状·拓扑·混合与原版逐字一致 / 穹顶 `blend=null`+`colorTargetState()==DEFAULT` / 三个 renderStage 宏都能解出且互不相同）。
+- **⛔ 仍未完成（如实）**：这张表**还没有任何渲染路径调用**。下一步（统一取证轮）= 用 `SkyGeometrySite` 在 `SkyRenderer` 三处私有方法各注一个 `@WrapOperation`（`setPipeline` 那一次调用）换派生管线 + `RenderStageSupply.enter(site.stageMacro)` 供值 + 绑 skybasic 的块；与「退役 `SkyPackGbuffer`/`GbufferVertexRoute` + skybasic 顶点源摘出 `postVertexProgram`」同一次落地。
+- **是否已提交**：是（单独提交并推送；本块是纯数据零件，不改默认档画面）。
+
+---
+
 ## 2026-10-16（一百七十三）— 🧩 落穹顶路线的**顶点侧独立零件**：把日月适配层生成器泛化成天空生成器（加 `POSITION` 形状 + `alpha` 中性供值），只零件、不接线
 
 > **verdict = 本轮只补「穹顶/星点换管线」必需的那块可离线验证的顶点生成逻辑，**不**动 `f59cc5c`（一百七十二）钉下的那条顺序约束**：退役全屏接管 + 改 skybasic 顶点源 + 三处 mixin 换管线必须同一次落地，且其正确性只有画面能判 ⇒ 仍归统一取证那一轮。本轮那块零件尚未被任何渲染路径调用，默认档画面零变化。
