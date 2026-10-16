@@ -4,6 +4,18 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百八十）— 🛠 天空新代码的<b>reload 陈旧</b>隐患修：`SkyGeometryPack.compiled(site)` 现按<b>契约身份</b>记缓存键（对齐 `SkyCelestialPack`）
+
+> **verdict = 接线/退役那几刀写完，自检发现一处「换包/热重载后会拿上一份包的管线画新天空」的真实缺陷并补上。离线编译+守卫全绿；运行期失效（要 GPU）留画面轮验。**
+
+- **缺陷**：`compiled(site)` 之前只看 `COMPILED.get(site)` 非空就复用 ⇒ 资源重载产生<b>新契约对象</b>后仍返回旧 `CompiledRenderPipeline`（其 shader 变体/位置锚在旧终稿上）⇒ 重载后静默画错，正是本仓反复付学费的「两侧不同源」（GAP-054）那一族。
+- **修法**：加 `COMPILED_KEY`（逐站），键 = `contract.qualifiedName() + "|" + identityHashCode(contract)`；命中要求<b>键也相等</b>，否则重建。`SkyPackPipeline.locationSuffix` 本就按契约身份哈希换 location ⇒ 重建天然换新号、不撞车。逐字对齐 `SkyCelestialPack#compiled` 的 `COMPILED_KEY` 口径。
+- **测试结果**：`./gradlew --offline build` 全绿（缓存失效本身需 GPU，无法离线断言；此处只保证编译 + 既有守卫不破，运行期在画面轮一并验）。
+- **天空现状不变**：仍「代码完成、默认关、待画面」——这一条只是把代码侧的正确性补实，让「翻闸即验」不至于先撞 reload 陈旧。
+- **是否已提交**：是（单独提交；默认档画面不变）。
+
+---
+
 ## 2026-10-16（一百七十九）— 🧹 退役全屏接管那一路（完成天空的路线迁移）：删 `SkyPackGbuffer`/`GbufferVertexRoute` + 死 post 路线，天空自此<b>只有一条几何路</b>
 
 > **verdict = 一百七十二钉的顺序约束（换管线必与退役同批）至此<b>闭合</b>：换管线（穹顶/星点/晨昏 + 日月，默认关）已在，本轮把被取代的全屏接管<b>整条撤下</b> ⇒ 天空只剩「原版驱动几何 + `SkyGeometryPack` 换管线」一条路。全程离线可证（build 绿 + MixinWiring），不改默认档画面（那条路本已恒关、惰性）。**

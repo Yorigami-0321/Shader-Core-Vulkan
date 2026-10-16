@@ -40,6 +40,9 @@ public final class SkyGeometryPack {
     private static final Map<SkyGeometrySite, @Nullable CompiledRenderPipeline> COMPILED =
             new EnumMap<>(SkyGeometrySite.class);
 
+    /** 与 {@link #COMPILED} 同键的<b>契约身份</b>：换包/热重载 ⇒ 身份变 ⇒ 必须重建，不许复用上一份管线（对齐 {@link SkyCelestialPack} 的 COMPILED_KEY 口径）。 */
+    private static final Map<SkyGeometrySite, String> COMPILED_KEY = new EnumMap<>(SkyGeometrySite.class);
+
     private static final AtomicInteger SITE_HITS = new AtomicInteger();
     private static final AtomicBoolean REPORTED_TAKEOVER = new AtomicBoolean(false);
     private static final AtomicBoolean REPORTED_REFUSAL = new AtomicBoolean(false);
@@ -75,14 +78,17 @@ public final class SkyGeometryPack {
 
     /** 本站的派生管线（懒编译 + 缓存）；{@code null} = 本帧不换（交回原版）。 */
     public static @Nullable CompiledRenderPipeline compiled(SkyGeometrySite site) {
-        CompiledRenderPipeline cached = COMPILED.get(site);
-        if (cached != null) {
-            return cached;
-        }
         PackTerrainProgram contract = VkDispVirtualPack.packContract(site.program);
         if (contract == null) {
             refuseOnce(site, "包没有可用的 " + site.program + " 契约");
             return null;
+        }
+        // 🔴 缓存键 = 契约身份（换包/热重载 ⇒ 新对象 ⇒ 键变 ⇒ 重建）。只看「有没有缓存」会拿上一份包
+        //   的管线画新包（reload 后静默错，GAP-054「两侧同源」那一族）。与 SkyCelestialPack#compiled 同口径。
+        String key = contract.qualifiedName() + "|" + System.identityHashCode(contract);
+        CompiledRenderPipeline cached = COMPILED.get(site);
+        if (cached != null && key.equals(COMPILED_KEY.get(site))) {
+            return cached;
         }
         try {
             RenderPipeline descriptor = SkyPackPipeline.descriptor(site);
@@ -93,6 +99,7 @@ public final class SkyGeometryPack {
             CompiledRenderPipeline compiled = RenderSystem.getCompiledPipeline(descriptor);
             if (compiled != null) {
                 COMPILED.put(site, compiled);
+                COMPILED_KEY.put(site, key);
             }
             return compiled;
         } catch (Throwable t) {
