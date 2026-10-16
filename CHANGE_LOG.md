@@ -4,6 +4,21 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百七十）— 🟡 日月这半先把「供不供得出」证死：`CelestialVertexAdapterGenerator` + 真 BSL `gbuffers_skytextured` 逐条对账通过
+
+> **verdict = 契约层没有障碍（含「片元只写槽 0」这条决定附件数的关键事实），剩下的全是 draw 点接线；本行明确标「还没接」，不许读成日月已支持。**
+
+- **本次改了什么**（新代码两处，均为离线件）：`glsl/translate/CelestialVertexAdapterGenerator`（按包契约给原版 `POSITION_TEX` 顶点流生成日月适配层）+ `CelestialVertexAdapterGeneratorTest` 4 条。
+- **量到的三件事**：① 真 BSL `gbuffers_skytextured` 的契约**每条 in 都能被逐名字逐 location 逐类型满足**（不需要改包、不需要发明通道）；② 该片元 `DRAWBUFFERS:0` ⇒ 派生管线**必须单附件**（多一个就 `setPipeline` 抛 = 崩帧那一族）；③ `color` 只能中性 `vec4(1.0)`，因为 `POSITION_TEX` **没有 Color 元素**（格式事实），并把它记进「常量供值」名单 + 生成器自报。
+- **设计上的两条排除**（都写在生成器头部，避免下一轮重走）：不复用 `PackVertexAdapterGenerator`（那条是 chunk 家族：`ChunkPosition`/`CameraBlockPos`/`UV2` 日月一个都没有）、不自开 pass 画日月（拿不到原版留在 `DynamicTransforms` 里的天体姿态 ⇒ 只能复制数学）。
+- **写环可行性已核实**：`VulkanGpuBuffer.map` = `vmaMapMemory` 直写主机指针（`:107,145-146`），不发 encoder ⇒ h10 那条「pass 内不能动 encoder」不适用于写环；但日与月是**同程序两次 draw**，两次写环之间必须 `rotate()`（`MappableRingBuffer` 三代就是为这个），否则 CPU 跑到 GPU 前面，两次 draw 读到同一份。
+- **影响的文档**：`docs/13`（GAP-028 表里加一行「日月这半：先证供值、再接 draw 点」，含下一步与两个坑）。
+- **测试结果**：`./gradlew build` → **BUILD SUCCESSFUL**（+4 条守卫，其中一条是真包对账）。
+- 🔴 **未解决**：① 日月 draw 点接线（`SkyRenderer.drawCelestialBody` 的 `setPipeline` 换派生管线 + 之后补绑）未做 ⇒ `SkyPackGbuffer.skyTexturedWired()` 仍回 false、天空接管仍被闸住；② 穹顶/星点换成包 `gbuffers_skybasic` 的管线替换是**另一格**（要一并处理那张全屏三角与 clip 中性化的退役，别混）；③ 水 2/2（`mat`/`recolor`）与云（链正确性 `GAP-058`）不变。
+- **是否已提交**：✅ 本轮结束即提交并推送。
+
+---
+
 ## 2026-10-16（一百六十九）— 🔴 自己抓到自己上一轮的接管会**吞掉太阳月亮** ⇒ 补一道闸：日月那半没接线就不接管
 
 > **verdict = 天空今天回到「原版穹顶 + 原版日月」，包天空的机制（clip 中性化 + 实测判据位）留在仓库里等 `gbuffers_skytextured`；这不是回退功能，是拒绝交付一个「包算的天空但没有光源」的半成品。**
