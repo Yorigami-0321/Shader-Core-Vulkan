@@ -4,6 +4,19 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百七十五）— 🧩 穹顶路线第三块离线零件：`SkyPackPipeline`（三处站点共用的派生管线**描述符工厂**，照 `SkyCelestialPack` 同形、去掉 `SAMPLER0`）
+
+> **verdict = 继续只落「离线能证 + 非破坏」的零件。本轮只**新增**两个文件（工厂 + 守卫），不删、不改任何既有渲染路径与配置键 ⇒ 默认档画面零变化、与并发会话在天空线上的改动**不冲突**。`descriptor()` 里不碰 GPU（编译留给混入侧既有兜底），守卫只验形状层。**
+
+- **本轮新事实（读代码核实，不是猜）**：三处派生管线是<b>同一形</b>——都 `GLOBALS_SNIPPET + PROJECTION + DYNAMIC_TRANSFORMS + 我方块布局 + skybasic 的 adapter/fragment id`，<b>只差 `vertexFormat/topology/blend`</b>（一百七十四已冻进 `SkyGeometrySite`），且<b>都不需要 `SAMPLER0`</b>（穹顶/星点/晨昏片元不采贴图；只有日月采 celestials 图集）。所以工厂 = `SkyCelestialPack.compiled()` 去掉 SAMPLER0 + 逐站形状读 `SkyGeometrySite`，`withLocation` 传 `Identifier`（不是 String）。
+- **改了什么**：① 新增 `bridge/SkyPackPipeline.java`：`requiresSampler0(site)=false`、`program(site)=site.program`、`descriptor(site)`（契约缺→`null`=本帧不换、交回原版，与「绝不半接」同纪律）、location 后缀带站点名+契约身份哈希（换包自动换号、不撞车）。② 新增 `bridge/SkyPackPipelineTest.java`（3 条纯元数据守卫：三处都不留 SAMPLER0 / 都建在同一条 skybasic / 自报名单覆盖三站）。
+- **影响的文档**：`docs/13` 天空行（一百七十三/一百七十二那条已记「零件已落、待接线」）；本条把「管线工厂」也纳入已落零件集。
+- **测试结果**：`./gradlew --offline build` 全绿。
+- **⛔ 仍未完成（如实，且这块之后剩下的就是纯耦合那一步）**：`descriptor()` **还没有调用方**。穹顶要真画，仍要那一次原子改动（见 memory `project-sky-dome-atomic-wiring`）：把 `SKY_PROGRAM` 摘出 `postVertexProgram`、`chunkAdapter` 走 `POSITION` 天空适配层、`builtinsFamily` 让 skybasic 显式走 CHAIN、退役 `SkyPackGbuffer`/`GbufferVertexRoute`、加 `mixin.skyGeometryPack` 键（顶 `VkDispConfig` 行棘轮 cap）、三处 `@WrapOperation` 调 `SkyPackPipeline.descriptor` + `RenderStageSupply.enter` 换管线，并改写被牵连的 6 个守卫测试。**这一步与退役耦合、且对错只有画面能判 ⇒ 留到统一取证轮整批做，不在共享工作区里落半成品。**
+- **是否已提交**：是（单独提交；本块纯新增，不改默认档画面、不碰并发会话文件）。
+
+---
+
 ## 2026-10-16（一百七十四）— 🧩 落穹顶路线的**第二块离线零件**：把三处天空站点的决策冻成一张表（站点 → 程序 / 顶点形状 / 拓扑 / 混合 / renderStage）
 
 > **verdict = 继续只做「离线能判」的零件：一百七十三落的是顶点适配层，本条落的是三处 `@WrapOperation` 共用的事实表。两块都还没接进渲染路径，默认档画面零变化。退役全屏接管 + 真接线仍归统一取证轮（一百七十二的顺序约束未动）。**
