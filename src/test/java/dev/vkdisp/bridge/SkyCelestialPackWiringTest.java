@@ -74,11 +74,19 @@ class SkyCelestialPackWiringTest {
     @DisplayName("🔖 关档必须原样交回；且备料失败时不许换管线（换了绑不上 = validateDraw 抛 = 崩帧）")
     void refusesBeforeSwappingPipeline() throws Exception {
         String mixin = read(MIXIN);
+        // 🔴 接收者必须在形参表最前：setPipeline 是**实例方法**，@WrapOperation 的形参序写反
+        //    ⇒ MixinExtras 在 APPLY 期判 invalid signature ⇒ SkyRenderer 类转换失败 = 客户端崩
+        //    （2026-10-16 真机第一次跑就撞在这上面，与闸门开不开无关）。同仓已跑通的形状
+        //    = MainPassTakeoverTest 那条 `original.call(encoder, replaced)`。
+        assertTrue(mixin.contains("RenderPass self, CompiledRenderPipeline requested,"),
+                "形参序必须「接收者在前」；写反不是运行期才炸 —— 类转换期就崩客户端");
+        assertTrue(mixin.contains("original.call(self, "),
+                "实例方法的 original.call 必须把接收者一起交回去，只交实参 = 少一个形参");
         int prepare = mixin.indexOf("SkyCelestialPack.prepare(which)");
-        int swap = mixin.indexOf("original.call(pack)");
+        int swap = mixin.indexOf("original.call(self, pack)");
         assertTrue(prepare > 0 && swap > prepare,
                 "必须先备料成功、再换管线；顺序倒了就是「换了着色器却没绑 uniform」那一族崩帧");
-        assertTrue(mixin.contains("original.call(requested);"),
+        assertTrue(mixin.contains("original.call(self, requested);"),
                 "不接管的路径必须把原版管线原样交回（不吞、不半接）");
         // 🔖 行为侧只能测「label 白名单」这一半：Sun/Moon 那两支会去读 FML 配置，
         //    单测里没有加载中的配置（Cannot get config value before config is loaded）⇒ 不在这里调。

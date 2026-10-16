@@ -4,6 +4,27 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百八十三）— 🔴 真机四臂第一次真跑：先揪出一条<b>任何配置都起不来</b>的崩（mixin 形参序），修完跑到世界里之后，天空两路 + 水 TBN 各撞一个具名接线缺陷
+
+> **verdict = 「天空/水代码完成、只差翻闸看图」这个口径被真机否证。** 离线 `build` 对 `@WrapOperation` 的签名**完全无感**（APPLY 期才校验），所以这两支天空 mixin 自 15:53 落地起就让**任何进世界的档**在 `LevelRenderer#addSkyPass` 类转换期崩客户端 —— 与闸门开不开无关（臂 A 两闸全关照崩）。修完之后四臂的读数在下面：三条功能路径各有一个具名缺陷，全部安全拒接、退回原版，没崩帧。
+
+- **崩因（唯一改动，已修）**：`SkyRendererCelestialPipelineMixin` / `SkyRendererGeometryPipelineMixin` 四条 handler 把形参序写成 `(CompiledRenderPipeline requested, RenderPass self, Operation)`。`RenderPass#setPipeline` 是**实例方法** ⇒ MixinExtras 期望 `(接收者, 实参..., Operation)`。崩溃报告原文：`has an invalid signature. Found unexpected argument type CompiledRenderPipeline at index 0, expected RenderPass`（`run/crash-reports/crash-2026-10-16_21.08.33-client.txt`，栈顶 `LevelRenderer.addSkyPass:377`）。
+- **判据不是靠猜**：同仓已跑通的两条实例方法 `@WrapOperation` 就是这个形状 —— `FrameGraphPassOrderMixin`（`original.call(builder, name)`）与 `MainPassTakeoverTest:86` 钉的 `original.call(encoder, replaced)`。修法 = 四条形参表把 `self` 提到最前 + `original.call(self, …)` 带上接收者。
+- **臂 A（基线，两闸全关 + 只开回读探针）**：客户端活到世界里；`[生效档] 67 键 / 非默认 6` 回读确认档真生效；同代次读数 `c0@afterSky#13 SKY_BAND mean_luma=76.61` vs `c0@afterTerrain#13 SKY_BAND=63.46 / TERRAIN_BAND=166.87`（天空先写、地形盖回一部分 = 顺序对）。
+- **臂 B（单翻 `mrt.skyPackTexturedShader=true`）**：`validateDraw=0`、`Game crashed=0`（安全拒接生效），但两路各报一次 `不接管`：
+  ① 穹顶/星点/晨昏 —— `Failed to find or load pipeline vkdisp:pipeline/gbuffer_sky_geometry_sky_disc_*`，两个因并存：`ShaderCompileException: Unable to find shader defined uniform (VkDispTerrainParams)`（派生描述符声明了内建块，转译后的 skybasic 片元里**没有**这一块）+ `FileNotFoundException: vkdisp_pack:shaders/skybasic_pack_adapter.vsh`（适配层顶点源没进虚拟包）。
+  ② 日月 —— `Failed to find or load pipeline vkdisp:pipeline/gbuffer_sky_celestial_*`，因 = `Couldn't find source for VERTEX shader (vkdisp_pack:skytextured_pack_adapter)`（同一个「适配器 .vsh 没登记」的形状）。
+  ⇒ **上一轮那条「不采任何贴图所以简单」的推断方向是对的，但接线本身没跑通**；`SkyGeometryPack`/`SkyCelestialPack` 的 `refuseOnce` 是唯一让这轮没变成崩帧的东西。
+- **臂 C（`packWater=true` + `derivativeTbn=true`）/ 臂 C2（只把 `derivativeTbn` 关回 false）**：水这条**比天空远**——接线自报全绿（`[GAP-027] gbuffer programs wired: [gbuffers_terrain(1 out), gbuffers_water(2 out)] -> attachments=2`、`MRT TRANSLUCENT pipelines will use pack fragment: program=world0/gbuffers_water`），且 C2 里两条水 MRT 派生管线**建成、零 `validateDraw`**。但 C 里 `[GAP-007/derivativeTbn] world0/gbuffers_water: 导数接管已落地` 之后紧跟 4 条 `Couldn't compile pipeline (vkdisp:pipeline/terrain_translucent[_multidraw]_water_mrt)`：`Couldn't parse GLSL: vkdisp_pack:gbuffers_water:1726: syntax error, unexpected LEFT_PAREN, expecting RIGHT_PAREN`。C2 单变量关掉 TBN ⇒ 这 4 条**归零**、其余自报逐字不变。
+  ⇒ **一百七十六那一刀「水的 TBN 从今天起有真值」生成的 GLSL 语法非法，在真驱动上从来没编出来过**（离线守卫不跑 GLSL parser，所以没拦住）。
+- **环境噪声（不归因本轮）**：臂上 454~513 条 `/ERROR` 绝大多数是 `run/shaderpacks/` 里那两个 Complementary 包的 `pack program compile FAILED`（既有已知，与三闸无关）；另有 1 条 `fullscreen pass failed`（`IndexOutOfBoundsException: Index 0 out of bounds for length 0`，紧跟 `postChainMaxPasses 生效：只跑 0/9 级`，每次启动一条 = 取零档那条已知路径，本轮不追）。
+- **离线守卫（跟着代码一起改，防复活）**：新增 `SkyGeometryPackWiringTest`（计数针：形参表 `RenderPass self, CompiledRenderPipeline requested,` ×3、`original.call(self, requested);` ×6、`original.call(self, pack);` ×3、旧形状 `original.call(requested);`/`original.call(pack);` **必须 0**、`apply(self, site)` ×3）；`SkyCelestialPackWiringTest` 那两条针改到新字面量并补「接收者在前」一条。
+- **测试结果**：`./gradlew --offline build` 全绿；真机四臂（A/B/C/C2，每臂冷启动、单键差、`[生效档]` 回读确认）跑通并留 `/tmp/arm{A2,B,C,C2}.log`。取证档已还原（`vkdisp-client.toml` md5 回到 `0f2aaa5c…` = 6 号底档）。
+- **现状改口**：天空 = **接线不通**（两路各有一个待修的生成期缺陷）；水 = **管线建成、TBN 那一刀待修**；云 = 本轮未翻（`cloudsPass` 仍关，`postChainMaxPasses=0` 下包算云不参与）。三条都不要再按「代码完成、待看图」汇报。
+- **是否已提交**：是（单独提交并推送；默认档画面不变，三闸仍默认关）。
+
+---
+
 ## 2026-10-16（一百八十二）— 🐞 揪出并修一处天空<b>翻闸即崩</b>的真缺陷：`gbuffers_skybasic` 声明了 `noisetex`，而派生管线只绑了内建块、没绑包 sampler ⇒ `validateDraw` 缺 uniform
 
 > **verdict = 这不是「待画面验」的观察项，是读包源码当场证伪的一个真 bug：我之前写「天空不采任何贴图」是<b>错的</b>（把引擎 `SAMPLER0` 槽和包自带的自由 sampler 混为一谈）。BSL 的 skybasic 片元声明 `uniform sampler2D noisetex;`，派生管线的 `packBindGroupLayout` 已把它计入 ⇒ 一翻闸就崩帧。本轮修成真绑 + 加离线守卫钉住。**

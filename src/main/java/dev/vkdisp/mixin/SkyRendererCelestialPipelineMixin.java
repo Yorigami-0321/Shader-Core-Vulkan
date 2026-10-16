@@ -11,7 +11,7 @@ package dev.vkdisp.mixin;
  *    而本格必须在换管线之后补绑我方 uniform 块 ⇒ 只能注这一次调用。
  * 2. 备选：modifier 通道 / 自开 pass —— 都否决，逐字理由见 {@code bridge/SkyCelestialPack} 类注释第 2 条。
  * 3. 我们的差异点：本体只做三件事 —— 判「该不该换」（含<b>按 label 排除末地闪烁</b>）、
- *    先备料（失败就原样交回，绝不半接）、{@code original.call(派生管线)} 之后交给 bridge 补绑。
+ *    先备料（失败就原样交回，绝不半接）、{@code original.call(self, 派生管线)} 之后交给 bridge 补绑。
  *    判定与绑定全在 bridge，本类不含业务（M1 编码约束 ③）。
  * 4. 许可证核对：本项目 MIT；零第三方代码复制。
  * 5. 性能基线：每帧两次（日、月各一次），零分配路径外一律在 bridge 里缓存。
@@ -32,19 +32,20 @@ import org.spongepowered.asm.mixin.injection.At;
 public abstract class SkyRendererCelestialPipelineMixin {
 
     /**
+     * @param self      被调的那个 {@code RenderPass}（补绑要用它；实例方法的<b>接收者必须在最前</b>，
+     *                  写反 ⇒ MixinExtras APPLY 期判 invalid signature ⇒ 类转换失败 = 客户端崩）
      * @param requested 原版即将绑上去的管线（{@code RenderPipelines.CELESTIAL}）
-     * @param self      被调的那个 {@code RenderPass}（补绑要用它，故注在这一次调用上）
      * @param original  被包住的那次调用本身 —— 判定不成立时必须照常调用，不吞
      * @param label     宿主方法第 1 个形参：{@code "Sun"} / {@code "Moon"} / {@code "End flash"}
      */
     @WrapOperation(method = {MixinTargets.SKY_RENDERER_DRAW_CELESTIAL_BODY},
             at = @At(value = "INVOKE", target = MixinTargets.RENDER_PASS_SET_PIPELINE),
             require = 1, expect = 1)
-    private void vkdisp$drawCelestialsWithPackShader(CompiledRenderPipeline requested, RenderPass self,
+    private void vkdisp$drawCelestialsWithPackShader(RenderPass self, CompiledRenderPipeline requested,
             Operation<Void> original, @Local(argsOnly = true) Supplier<String> label) {
         String which = SkyCelestialPack.onCelestialSite(label.get()); // M1 ③：首行埋点转发
         if (!SkyCelestialPack.enabledFor(which)) {
-            original.call(requested);
+            original.call(self, requested);
             return;
         }
         CompiledRenderPipeline pack = SkyCelestialPack.compiled();
@@ -52,10 +53,10 @@ public abstract class SkyRendererCelestialPipelineMixin {
         if (pending == null) {
             // 🔴 备料没成就原样交回：换了管线却绑不上 uniform 是 validateDraw 抛，
             //    而这跑在帧图 pass 体内、无人接 ⇒ 客户端直接死（GAP-036 ④ 那条教训的形状）。
-            original.call(requested);
+            original.call(self, requested);
             return;
         }
-        original.call(pack);
+        original.call(self, pack);
         SkyCelestialPack.apply(self, pending);
     }
 }
