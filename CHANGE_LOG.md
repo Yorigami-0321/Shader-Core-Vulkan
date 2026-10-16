@@ -4,6 +4,20 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百七十二）— 🔴 排到穹顶/星点那三处时撞到一条结构约束：**换管线必须先退役全屏接管那一路**，两者不能先后摆
+
+> **verdict = 本轮不落代码，只把顺序钉死：`gbuffers_skybasic` 在虚拟包里只有一个适配层资源位，而「全屏那一路」与「原版驱动那三处」要的是两种不同的顶点源 —— 谁后写谁覆盖谁，同时画又是双层天空。**
+
+- **三条叠出约束的事实**（都到行）：① 每条 gbuffer 程序的顶点源资源路径由程序名派生（`GbufferArtifacts.adapterPath`）⇒ **一个名字一个文件**；② 全屏那一路的顶点源是 `PackTerrainSource.postVertexProgram` 配出来的 post 恒等对，而原版驱动那三处要的是几何适配层，且**格式各不相同**：`SKY`/`STARS` = `POSITION`、`SUNRISE_SUNSET` = `POSITION_COLOR`、`CELESTIAL` = `POSITION_TEX`（逐字 `RenderPipelines.java:1037-1083`）；③ 两条并存 = 同帧画两层天空（GAP-027 的「双云」那一族）。
+- **由此定下的顺序**（下一格一次做完，不许拆成两个半格）：把 `skybasic` 的顶点源改成几何适配层的**同一次改动**里，撤下 `SkyPackGbuffer` 那条全屏 draw 与 `postVertexProgram` 对 skybasic 的登记；退役范围一并列出（含 `GbufferVertexRoute` 判据、`SkyPackGeometryRouteTest` 按新形态重写）。🔖 `PostVertexLinker` 的 clip 中性化**代码可以留** —— 它对任何 post 程序都是「形态不认就不动」的保守变换，且守卫 `ndcNativeClipIsLeftAlone` 钉住了对链是恒等；但别再留一个只有历史意义的**入口**。
+- **不受影响的那半**：日月（M-16）今天就能跑 —— `gbuffers_skytextured` 的资源位本来就空着，`POSITION_TEX` 适配层已与它对账通过（键 `mrt.skyPackTexturedShader` 默认关，真机判据未签）。
+- **影响的文档**：`docs/13`（GAP-027 天空线新增这条顺序约束行）。
+- **测试结果**：`./gradlew build` 无源码改动（本轮纯登记）；工作树只余另一条会话线的 `docs/20`。
+- 🔴 **未解决**：① 天空 = 穹顶/星点/日落三处换管线（受本条顺序约束）；② 水 = `mat`/`recolor` 需扩 chunk 顶点格式；③ 云 = 链正确性 `GAP-058`（需真机）；④ 全部真机画面判据按本轮序未取。
+- **是否已提交**：✅ 本轮结束即提交并推送。
+
+---
+
 ## 2026-10-16（一百七十一）— 🟢 日月这条接线落地（M-16）：原版继续驱动 draw，我方只换管线 + 补绑包的 `gbuffers_skytextured`
 
 > **verdict = 天空第二半的**代码**齐了（新键默认关 ⇒ 画面逐字不变）；判据按本轮序留给统一取证那一轮，不在这里签。**
