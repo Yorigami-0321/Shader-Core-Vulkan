@@ -373,6 +373,13 @@ public final class MixinTargets {
             "com/mojang/renderpearl/api/commands/RenderPass.setPipeline"
                     + "(Lcom/mojang/renderpearl/api/pipeline/CompiledRenderPipeline;)V";
 
+    /**
+     * {@code SkyRenderer#renderSkyDisc(RenderPass, Vector3fc)}（私有，{@code SkyRenderer.java:163}）——
+     * 穹顶那笔，第 167 行 {@code setPipeline(getCompiledPipeline(RenderPipelines.SKY))}。GAP-027 穹顶换管线注入点。
+     */
+    public static final String SKY_RENDERER_SKY_DISC =
+            "renderSkyDisc(Lcom/mojang/renderpearl/api/commands/RenderPass;Lorg/joml/Vector3fc;)V";
+
     public static final String SKY_RENDERER_RENDER =
             "render(Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;"
                     + "Lnet/minecraft/client/renderer/state/level/SkyRenderState;)V";

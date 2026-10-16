@@ -4,6 +4,18 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百七十七）— 🌍 穹顶**第一站接线落地**（gated off）：`renderSkyDisc` 那笔换用包的 `gbuffers_skybasic`
+
+> **verdict = 穹顶（SKY_DISC）这一笔现在真的会走包程序 —— 但闸门默认关，一笔都不换 ⇒ 默认档画面不变。re-route（一百七十六）让这一刻「打开即用」成为可能，本轮把渲染线程那半边接上。**
+
+- **怎么做到不动 `VkDispConfig`**：`VkDispConfig.java` 顶在行棘轮 cap（1047，只许降）⇒ 加新键要先压注释、代价大且易红。本轮<b>复用既有两道闸</b>：feature 门 `mrt.skyPackTexturedShader`（天空包着线总闸，<b>默认 false</b> ⇒ 穹顶默认不换）+ 注入点 kill switch `mixin.skyCelestialPack`（默认开，满足守卫「每个注入点都能一键关闭、配置项默认开」）。零 `VkDispConfig` 改动。
+- **改了什么**：① 新增 `bridge/SkyGeometryPack.java`（照 `SkyCelestialPack` 同形：`onSite` 首行埋点 / `enabledFor` 双闸 / `compiled(site)` 走 `SkyPackPipeline.descriptor` + `RenderSystem.getCompiledPipeline`、每站一份缓存 / `prepare` 换块代 + `RenderStageSupply.enter(site.stageMacro)` + 写 builtins / `apply` 只绑 `VkDispBuiltins`（穹顶无 sampler）；**先备料成功再 `original.call`，失败原样交回**）。② 新增 `mixin/SkyRendererGeometryPipelineMixin.java`：`@WrapOperation` 注 `SkyRenderer#renderSkyDisc` 那次 `setPipeline`（`require=1/expect=1`）。③ `MixinTargets.SKY_RENDERER_SKY_DISC` 描述符（逐字 `SkyRenderer.java:163` 的 `(RenderPass, Vector3fc)`）。④ 注册进 `vkdisp.mixins.json`。
+- **测试结果**：`./gradlew --offline build` 全绿，含 `MixinWiringTest` 全套（首行埋点 / 一键关 / 目标类名只引常量 / 登记齐全）<b>逐条通过</b>——即本混入的注入点合规。踩了一处编译错（`@Nullable` 不能前缀全限定返回类型）⇒ 改 import `MappableRingBuffer`。
+- **⛔ 仍未完成（如实）**：① 本轮只接了<b>穹顶一站</b>；`STARS`/`SUNRISE_SUNSET` 两站用同一 `SkyGeometryPack`+`SkyGeometrySite` 但<b>还没挂混入</b> ⇒ 开着闸时星点/晨昏仍是原版（画面会混，但不错不崩）。② 全屏接管那套 `SkyPackGbuffer`/`GbufferVertexRoute` 已随 re-route <b>彻底惰性</b>（`SkyIntoGbuffer.renderSky` 里那条恒 false），但<b>尚未删除</b>（清理并入「退役那一刀」）。③ 对错仍是<b>画面判据</b>：换管线会不会崩帧 / 天空色对不对，只有真机看图能定 ⇒ 归统一取证轮（届时翻 `mrt.skyPackTexturedShader=true` + 补 STARS/SUNRISE 两混入 + 删退役残留）。
+- **是否已提交**：是（单独提交并推送；默认档画面不变、注入点合规）。
+
+---
+
 ## 2026-10-16（一百七十六）— 🔀 穹顶换管线的**枢纽一步**：把 `gbuffers_skybasic` 的顶点源从 post 中性 clip 改回真实 MVP 几何适配层（退役全屏接管的资源位）
 
 > **verdict = 这一步把天空的顶点源位从「全屏那一路」交还给「几何那一路」。它本身不改默认档画面（此刻还没有任何管线消费 skybasic 的几何顶点），但它<font>不是</font>半成品：re-route 后 skybasic 走的是与地形/日月同源的 `chunkAdapter` 路径，喂齐契约就接、喂不齐整条不接。剩下的只是那三处 `@WrapOperation` 去 `SkyPackPipeline.descriptor` 取管线并换上去。**
