@@ -245,7 +245,14 @@ public final class SkyPackGbuffer {
         //   本方法幂等（指纹相同即早退）。
         PackTextures.ensureReady();
         VolumeStubs.init();
-        TerrainPipelineApi.updateGbufferBuiltins(PackTerrainSource.SKY_PROGRAM);
+        // 🔴 GAP-028 ②：这一笔的几何就是「天空那一层」⇒ renderStage 供 MC_RENDER_STAGE_SKY。
+        //   作用域<b>只包住这次 builtins 写环</b>（值是在 updateGbufferBuiltins 里被读进块的），
+        //   且用 try-with-resources 而不是裸 setter：漏还原会让同帧后面的地形/水读到 SKY，
+        //   那正是本仓 M-10（云那次压栈/还原）留下的同族事故形状。
+        try (dev.vkdisp.render.RenderStageSupply.Scope skyStage
+                = dev.vkdisp.render.RenderStageSupply.enter("SKY")) {
+            TerrainPipelineApi.updateGbufferBuiltins(PackTerrainSource.SKY_PROGRAM);
+        }
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "vkdisp gbuffer pack sky",
                 color, Optional.of(new Vector4f(0.0F, 0.0F, 0.0F, 1.0F)),

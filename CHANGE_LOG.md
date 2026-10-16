@@ -4,6 +4,23 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百六十八）— 🟢 GAP-028 ②：`renderStage` 的**逐 draw 供值**接上了（天空那笔进 SKY），并把日月那两笔的**真实阻塞点**核实到行
+
+> **verdict = 「块里有这个成员、但没人填」这一族从今天起有了通道；天空第二半（日月盘）缺的不再是供值，而是几何与按笔矩阵覆盖 —— 这两件事本轮分开记，不混成「天空已支持」。**
+
+- **本次改了什么**（代码，四处）：
+  - `render/RenderStageSupply`（**新类**）：当前 draw 的阶段持有者 + `AutoCloseable` 的 `Scope`。三条刻意的形状：① 编号**只有单一真源**（`RenderStages.valueOf(MC_RENDER_STAGE_+名字)`，不在第二处重算，QD-02）；② **作用域而不是裸 setter**（天空那笔嵌在别人的 pass 里；漏还原会让同帧后面的地形/水读到 SKY —— M-10 云那次压栈/还原的同族事故）；③ 认不出的名字 ⇒ **按 NONE 供 + 计数 + 点名**，不沿用上一层。
+  - `render/OfUniformManager`：`values.put("renderStage", RenderStageSupply.current())`；并把 `[GAP-028]` 自报里那句「② 逐 draw 供值**仍未接**」改掉，改成打**本帧实际供的值 + enters/unknown 读数**（自报不许比代码更悲观）。
+  - `bridge/SkyPackGbuffer`：写环之前 `enter("SKY")`（守卫钉「必须早于 `updateGbufferBuiltins`」—— 环里存的就是那一刻的读数）。
+- **为什么现在做它**：这是天空第二半（`gbuffers_skytextured`）与日月/自定义天空那几支的**硬前置** —— BSL 逐字写 `renderStage == MC_RENDER_STAGE_SUN`（`program/gbuffers_skytextured.glsl:89,92,101,107`），恒 0 的后果是**编译得过但分支恒假**（画面少东西、日志全绿那一族）。
+- 🔬 **顺带把日月那两笔核实到行**（`SkyRenderer.java`，源取自 mergeWithSources jar，解到 `build/vanilla-src/`）：`celestialsAtlas/sunBuffer/moonBuffer/starBuffer` 全是 `private final` 无 accessor（`:65-74`）；`renderSun/renderMoon`（`:218-229`）是**两次独立 draw**、同一张 `RenderPipelines.CELESTIAL`；姿态写进 **DynamicTransforms 的 ModelViewMat**（`applyCelestialBodyTransform` `:242-250`），不是 `gbufferModelView`；几何格式 `POSITION_TEX`（**没有 Color 元素** ⇒ 包的 `color = gl_Color` 只能按中性 1 供并点名理由）；贴图 `celestialsAtlas.getTextureView()` 绑 `Sampler0`。✅ **零注入点的那半成立**：`getCompiledPipeline` 首条语句就过 `PIPELINE_MODIFIERS.apply` ⇒ 与云那格同一官方通道。🔴 还差两件：按笔的 **ModelViewMat 覆盖**（挂载点与本轮 renderStage 同一个）+ 日月几何（accessor 注入点，或按 `buildSunQuad/buildMoonPhases` 的数学自建 `POSITION_TEX` 缓冲）。
+- **影响的文档**：`docs/13`（GAP-028 的「本条不关：逐 draw 供值仍未做」一行改写为已接 + 保留未做的那半；新增一行「10-16 源码级核实：日月缺的不是着色器而是几何可达性」；状态行同步）。
+- **测试结果**：`./gradlew build` → **BUILD SUCCESSFUL，1242 项 0 失败**（+5 条守卫：`RenderStageSupplyTest` —— 含「供值与宏展开必须同数」「日月/自定义天空三个号互不相同且都不等于 NONE」「嵌套作用域必须回到外层」「错名字不得被计成一次真进入」「自报口径不许比代码更悲观」）。中途一次红是我自己那条计数断言写错（把外层 SKY 那次进入算进了「错名字不该计数」的账），按语义改成量差值。
+- 🔴 **未解决**：① `gbuffers_skytextured` 仍未接线（上面那两件事）；② 数值口径仍是我方 ABI（Iris 未核实到源码）；③ 云那格的前置是链正确性（GAP-058）；④ 水的 `mat`/`recolor` 仍需扩 chunk 顶点格式；⑤ 真机画面判据按本轮序未取。
+- **是否已提交**：✅ 本轮结束即提交并推送。
+
+---
+
 ## 2026-10-16（一百六十七）— 🟢 水这一格换的是**第三条路**：包片元的 normal/tangent/binormal 由屏幕空间导数现算（不动 chunk 网格），真 BSL 包上端到端跑通
 
 > **verdict = 水的 TBN 从今天起有真值（离线端到端证明 + 10 条守卫），键默认关 ⇒ 今天画面逐字不变；`mat`/`recolor` 那两条仍然只能来自网格化，本条不关闭。**

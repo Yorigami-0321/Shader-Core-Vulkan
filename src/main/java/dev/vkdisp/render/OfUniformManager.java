@@ -212,6 +212,7 @@ public final class OfUniformManager {
         //   修法 = 用「每帧恰好推进一次的捕获计数」当令牌去重（GAP-019 已实测 1:1）。
         int frameNo = FRAME_CLOCK.advance(frameToken());
         values.put("frameCounter", frameNo);
+        values.put("renderStage", RenderStageSupply.current()); // GAP-028 ②：逐 draw 的阶段（NONE=0 ⇒ 包所有「是某阶段」分支判假）
         // 🔴 GAP-022 / MC_VERSION 两条自报（两种状态各打一条、每进程一次）。
         //   收进一个 helper 而不摊在 gather() 里：gather() 本来就在 QD-04 棘轮的 60 行边上，
         //   摊开写会把方法推过线，而**降基线只能靠提取、不能靠放宽棘轮**。
@@ -626,11 +627,20 @@ public final class OfUniformManager {
                             + " ⇒ 包按 `renderStage == MC_RENDER_STAGE_STARS` 这类比较写的分支**编译得过了**"
                             + "（修前真机逐字：gbuffers_skybasic.vsh:243: error:"
                             + " 'MC_RENDER_STAGE_STARS' : undeclared identifier，world0/world1 各一条）。"
-                            + "⚠️ 两件事没做，不许把本行读成「天空阶段已支持」："
-                            + "① 编号是**我方 ABI**，Iris 的数值口径未核实；"
-                            + "② `renderStage` 这个 uniform 的**逐 draw 供值**仍未接"
-                            + "（缺值 ⇒ 块里恒 0 ⇒ 包所有「是某阶段」的分支都判否），见登记表 GAP-028 ③",
-                    dev.vkdisp.glsl.preprocess.RenderStages.describe());
+                            + " 本帧的逐 draw 供值: renderStage={}（② 已接：{} 次进入阶段，不认识的名字 {} 个{}）",
+                    dev.vkdisp.glsl.preprocess.RenderStages.describe(),
+                    RenderStageSupply.current(),
+                    RenderStageSupply.enters(),
+                    RenderStageSupply.unknownNameReads(),
+                    RenderStageSupply.lastUnknownName() == null ? "" : "，最后一个=" + RenderStageSupply.lastUnknownName());
+            // ⚠️ 仍要说清的那一件事：编号是**我方 ABI**（Iris 数值口径未核实到源码，X9）；
+            //   恒 0 的后果不再由「没接」产生，而是由「这一笔确实不属于任何阶段」产生 ⇒ 两者要分开读。
+            if (RenderStageSupply.unknownNameReads() > 0) {
+                dev.vkdisp.VkDisp.LOGGER.error("vkdisp: [GAP-028] 有 {} 次按名字取阶段取不到"
+                                + "（最后一个='{}'）⇒ 那几笔按 NONE=0 供，包的对应分支判假。"
+                                + " 这不是正常状态：调用方写了 RenderStages.STAGES 里没有的名字。",
+                        RenderStageSupply.unknownNameReads(), RenderStageSupply.lastUnknownName());
+            }
         }
         if (!MC_VERSION_REPORTED.compareAndSet(false, true)) {
             return;
