@@ -123,6 +123,19 @@ class PackTerrainSourceTest {
         assertFalse(vertex.contains("gbufferProjection *") && vertex.contains("gbufferModelView *"),
                 "post 恒等模式下不许出现 gbuffer MVP 链 —— 出现即说明 ftransform() 按 chunk 族展开了"
                         + "（那一档的判据是程序族，不是名字前缀）");
+
+        // 🔴 GAP-054 的那一半现在由 **PostVertexLinker 的 clip 中性化**落地，而判据是从这份终稿上**量**出来的。
+        //   这一条断言的是「真包 + 真生成期 ⇒ 天空的几何闸门会放行」；它红 = 真机上天空继续退回原版重放
+        //   （= 用户看到的「天空不是包算的」），所以断言里必须带出实际的 clip 行，不能只说「不对」。
+        assertTrue(GbufferVertexRoute.passesPositionThrough(PackTerrainSource.SKY_PROGRAM),
+                "clipPassthrough 判据位必须被这次生成记成 true。实际 clip 行："
+                        + vertex.lines().filter(l -> l.contains("gl_Position")).toList());
+        assertTrue(vertex.lines().anyMatch(l -> l.strip().equals("gl_Position = vec4(Position, 1.0);")),
+                "真包 ftransform() 的那一行应当被整行换成位置属性；实际："
+                        + vertex.lines().filter(l -> l.contains("gl_Position")).toList());
+        // 🔖 中性化只动 clip：太阳方向仍是 gbufferModelView 乘出来的（sunVisibility=dot(sunVec,upVec)）
+        assertTrue(vertex.contains("gbufferModelView"),
+                "clip 之外的相机数学必须留着，否则 sunVec/upVec 退化成零向量（天空有色但昼夜/日月全错）");
     }
 
     @Test

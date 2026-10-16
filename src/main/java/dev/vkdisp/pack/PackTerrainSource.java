@@ -280,6 +280,7 @@ public final class PackTerrainSource {
             String packName, String profile, List<TranslateDiagnostic> diagnostics) {
         String vertexSource = selectVertexSource(compiled, qualifiedName);
         if (vertexSource == null) {
+            GbufferVertexRoute.note(programName, null);
             diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.WARN,
                     "vkdisp: [GAP-027] " + programName + " 走 post 顶点路线，但包没有成功编译的"
                             + "顶点终稿（限定名 " + qualifiedName + "）⇒ <b>整条不接线</b>"
@@ -295,12 +296,21 @@ public final class PackTerrainSource {
                 PostVertexLinker.link(qualifiedName, vertexSource, program.fragmentSource(), inputs);
         diagnostics.addAll(linked.diagnostics());
         if (!linked.packVertexSupplied() || linked.vertexSource() == null) {
+            GbufferVertexRoute.note(programName, null);
             diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.WARN,
                     "vkdisp: [GAP-027] " + programName + " 的 post 顶点配对未完成"
                             + "（PostVertexLinker 判否）⇒ 整条不接线，天空保持原版重放档",
                     packName, TranslateDiagnostic.UNKNOWN_LINE));
             return new Result(null, null, profile, diagnostics);
         }
+        // 🔴 GAP-054 的几何路线判据：对**将要交进包资源的那份终稿**量一次，记在这里。
+        //    为什么写点必须与契约产出点同一条路：契约（{@code packContract}）非空 ⇔ 本方法走到过这一行
+        //    ⇒ 渲染期读到的判据不可能比契约旧（X42「两侧同源」在生成期那一半的形态）。
+        boolean clipPassthrough = GbufferVertexRoute.note(programName, linked.vertexSource());
+        diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.INFO,
+                "vkdisp: [GAP-054] " + programName + " 的顶点终稿 clipPassthrough=" + clipPassthrough
+                        + "（=「喂 NDC 全屏三角」这条几何路线的前提；量自终稿文本，不是本层的决定）",
+                packName, TranslateDiagnostic.UNKNOWN_LINE));
         diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.INFO,
                 "vkdisp: [GAP-027] " + programName + " 走 post 顶点路线: program=" + qualifiedName
                         + " varyings=" + program.inputs().size()

@@ -4,6 +4,23 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百六十五）— 🟢 天空这一格换的是**机制**不是常量：`PostVertexLinker` 长出 clip 中性化，包顶点的 `ftransform()` 不再把我方的 NDC 全屏三角透视成半屏巨型三角形（GAP-054 那一半）
+
+> **verdict = 按本轮裁决（云/水/天空三件功能先做完，再统一真机测试）：天空的「接管」今天从代码侧成立并被真包离线证明钉住；画面判据**本轮不签**，红着记在下面的「未解决」里。**
+
+- **本次改了什么**（代码，四处）：
+  - `glsl/translate/PostVertexLinker`：新增 **④ clip 中性化**（`neutralizeClip` + 公开谓词 `emitsPositionPassthrough`）。post 顶点路线里凡是 `gl_Position = <P> * <V> * vec4(Position, 1.0)` 形态的**整行单语句**赋值，换成位置属性本身（vec3 ⇒ `vec4(Position, 1.0)`，vec4 ⇒ `Position`）。三条保守：① 跨行赋值不认（认了就是把包的源改坏，同 `IO` 那条纪律）；② 右值里没有相机矩阵 ⇒ 完全不碰（链那一大族本来就是 NDC-native）；③ 源里没有 `Position`/`vaPosition` ⇒ **不猜**，原样交出去 + ERROR。作用域**只有 clip 那一行** —— BSL 天空顶点的 `sunVec = normalize((gbufferModelView * vec4(...)))` 与 `upVec = normalize(gbufferModelView[1].xyz)` 逐字保留（那两个 varying 决定 `sunVisibility`/`moonVisibility`，砍了就变成「天空有色、昼夜全错」那一族静默错值）。
+  - `pack/GbufferVertexRoute`（**新类**）：程序名 → 实测位的持有者（`static final ConcurrentHashMap`，QD-03 口径）。查不到 = **false**（fail-closed：没量过 ≠ 量过且成立）。
+  - `pack/PackTerrainSource#linkPostVertexRoute`：在**生成期**对将要交进包资源的那份终稿量一次并记下；两条「整条不接线」的早退路径同样记 false。写点与契约产出点同一条路 ⇒ 渲染期读到的判据不可能比契约旧（X42 的同源约束在生成期那一半的形态）。
+  - `bridge/SkyPackGbuffer`：几何闸门从两块 `private static final boolean` 改成现读 `GbufferVertexRoute`。**为什么这件事算修**：上一版的判据是常量，于是「让包天空接管」的最小改动 = 把常量改成 true —— 而那**什么都不证明**；现在改常量改不出 true，只能靠终稿文本真的变成 passthrough。
+- **为什么**：`GAP-054` 追了两天的那块切过半个屏幕的巨型三角形/图集墙，机制侧有一条已经写死在源码里的事实：包的 `gbuffers_skybasic` 顶点终稿逐字是 `gl_Position = (gbufferProjection * gbufferModelView * vec4(Position, 1.0))`（`build/dump-head/world0_gbuffers_skybasic-VERTEX.glsl:240`），而我方喂的是 NDC 大三角、`OfUniformManager.putCameraMatrices` 交的是**真相机**矩阵（`Family.CHAIN` 只翻深度口径）。⇒ 「全屏三角替穹顶」在数学上成立（片元从 `gl_FragCoord` 反解方向），在几何上**缺这一步中性化**。当时的止血是拒绝接管（天空退回原版重放 = 用户看到的「天空不是包算的」）。
+- **影响的文档**：`docs/13`（GAP-027「现状」行加 10-16 更正；GAP-054 加「几何路线那一半已收口」一行，状态行不动 —— 真机生产者仍未定，不据此收口）。
+- **测试结果**：`./gradlew build` → **BUILD SUCCESSFUL，1227 项 0 失败**（+9 条守卫：链接器 5 条 / 几何路线 3 条 / 真包离线证明并进 `PackTerrainSourceTest` 那条天空线）。中途一次红灯是 `ClassLineRatchetTest`（`VkDispVirtualPack` 1618 > 上限 1573）⇒ 按棘轮的指示把判据位落到独立类 `GbufferVertexRoute`，**没有放宽基线**。
+- 🔴 **未解决（如实登记，不当已修）**：① **本轮不取真机画面判据** —— 按裁决，天空/水/云三件做完后统一取证；`SkyPackGbuffer` 的 `[GAP-027/sky]` 接管自报与 `clipPassthrough=true` 目前只有**离线**证据。② `gbuffers_skytextured`（日月盘 / 天空贴图）**一条都没接**。③ 包的云（`gbuffers_clouds`）与水（`gbuffers_water`）仍在各自那一半：云没有包的程序、水挂在三个默认关的键上 ⇒ 排本轮后两格。④ `GAP-054` 那块平面的**生产者**仍未定（本条只关掉一条机制）；`GAP-058` 的整屏天空蓝仍在链的合成/上屏那一腿，与本格**不同因**。
+- **是否已提交**：✅ 本轮结束即提交并推送。
+
+---
+
 ## 2026-10-15（一百六十四）— 🔴 臂 R 抓到我自己给的读数是**恒真的**：「累计交出 1 次」只在第一次打，永远等于 1 ⇒ 换成每 300 次报一行；同趟 `[GAP-020/gen]` 跨帧奇偶不翻 ⇒ 交账很可能不是每帧走到
 
 > **verdict = 1.1 现在有两个待证环节，而且第一个是我自己造的：读数证不了「每帧交账」这件事，等于没测；改成周期计数之后，下一臂才谈得上定责。**

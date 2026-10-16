@@ -32,6 +32,12 @@ package dev.vkdisp.bridge;
  *    （{@code :148-181} 只有 {@code ftransform()} + 三条 {@code out}）⇒ 它与后处理链<b>同形</b>，
  *    所以顶点走 {@code PostVertexLinker}（包自己的 .vsh + 恒等 MVP）。
  *    证明 = {@code PackTerrainSourceTest#skybasicUsesPostVertexRouteAndNeedsOnlyOneAttachment}。
+ *    🔴 <b>但「同形」不等于「那一行自动是恒等」</b>：{@code ftransform()} 展开后是
+ *    {@code gbufferProjection * gbufferModelView * vec4(Position, 1.0)}，而本前端给这一族交的是<b>真相机</b>
+ *    矩阵 ⇒ 直接把 NDC 三角喂进去 = 半屏巨型三角形（GAP-054 真机实测）。今天这件事由
+ *    {@code PostVertexLinker} 的 <b>clip 中性化</b>那一步做掉（只换 clip 那一行，
+ *    {@code sunVec}/{@code upVec} 照用真 {@code gbufferModelView}），而本类<b>实测终稿</b>、
+ *    不信那个决定 —— 见 {@link #vertexStagePassesPositionThrough()}。
  *
  * <p>4. 许可证核对：本项目 MIT；零第三方代码并入。
  *
@@ -95,13 +101,23 @@ public final class SkyPackGbuffer {
     private static final Stats STATS = new Stats();
 
     /**
-     * 包顶点终稿把 {@code Position} <b>原样</b>交出去（= 我方可以直接喂 NDC 坐标）？
+     * 交进包资源的<b>那份顶点终稿</b>是否把 {@code Position} 原样交出去。
      *
-     * <p>🔴 实测<b>不是</b>：转译终稿逐字 {@code gl_Position = gbufferProjection * gbufferModelView
-     * * vec4(Position, 1.0);}（{@code build/dump-head1/world0_gbuffers_skybasic-VERTEX.glsl:240}，
-     * 另一批 {@code dump-comp/…:1454} 同句）。
+     * <p>✅ 这条现在成立了，但不是把常量改成 true 改出来的：{@code PostVertexLinker} 的 clip 中性化
+     * 那一步在配对时把包顶点的 {@code gl_Position = gbufferProjection * gbufferModelView
+     * * vec4(Position, 1.0)}（实测 {@code build/dump-head/world0_gbuffers_skybasic-VERTEX.glsl:240}）
+     * <b>整行</b>换成 {@code vec4(Position, 1.0)} —— 只动 clip，{@code sunVec}/{@code upVec} 照用真
+     * {@code gbufferModelView}（那两个 varying 决定 {@code sunVisibility}/{@code moonVisibility}，
+     * 中性化若顺手把整条程序的矩阵都砍了，太阳方向就没了）。
+     *
+     * <p>🔖 本方法读的是<b>落进包资源的那份文本</b>的量出结果（生成期量一次，见
+     * {@code PackTerrainSource#linkPostVertexRoute} 与 {@code GbufferVertexRoute}）⇒ 中性化没发生
+     * （包里 clip 写成跨行、或没有 Position 属性）时这里就是 false，几何闸门照旧拒绝，
+     * 天空退回原版重放。
      */
-    private static final boolean VERTEX_STAGE_PASSES_POSITION_THROUGH = false;
+    private static boolean vertexStagePassesPositionThrough() {
+        return dev.vkdisp.pack.GbufferVertexRoute.passesPositionThrough(PackTerrainSource.SKY_PROGRAM);
+    }
 
     /**
      * 这一族的 {@code gbufferModelView}/{@code gbufferProjection} 是<b>恒等</b>？
@@ -165,14 +181,17 @@ public final class SkyPackGbuffer {
     private static @Nullable String contractProblem() {
         // 🔴 GAP-054：几何路线先要对，才轮到契约。这一条排在最前，因为它拒的是「画出来一半屏幕」
         //    这种<b>不报错的错</b>（无 validation layer ⇒ 错几何照样提交），而契约那两条会响亮地抛。
-        if (!ndcTriangleRouteValid(VERTEX_STAGE_PASSES_POSITION_THROUGH, CAMERA_MATRICES_ARE_IDENTITY)) {
+        boolean passthrough = vertexStagePassesPositionThrough();
+        if (!ndcTriangleRouteValid(passthrough, CAMERA_MATRICES_ARE_IDENTITY)) {
             STATS.refusedGeometry++;
-            return "本前端的包天空<b>顶点终稿不是恒等 MVP</b>：转译后的 gbuffers_skybasic 顶点阶段逐字"
-                    + " gl_Position = gbufferProjection * gbufferModelView * vec4(Position, 1.0)"
-                    + "（实测 build/dump-head1/world0_gbuffers_skybasic-VERTEX.glsl:240），"
-                    + "而我方喂的是一张 NDC 全屏大三角 ⇒ 它会被当成视空间几何过一遍透视，"
-                    + "在屏幕上留下一个切过半个画面的巨型三角形（GAP-054 真机实测）。"
-                    + " 修法在 GAP-028 ③：按 draw 供 renderStage 并把包天空改喂<b>原版天空几何</b>。";
+            return "包天空的<b>顶点终稿</b>里 clip 写入没有把 Position 原样交出（实测 passthrough=" + passthrough
+                    + "），而本前端这一族供的是<b>真·相机</b>矩阵（Camera_MATRICES_ARE_IDENTITY="
+                    + CAMERA_MATRICES_ARE_IDENTITY + "）⇒ 我方喂的 NDC 全屏大三角会被当成视空间几何"
+                    + "过一遍透视，在屏幕上留下一个切过半个画面的巨型三角形（GAP-054 真机实测）。"
+                    + " 中性化没发生的两种形状：① 包里那条 clip 赋值写成<b>跨行</b>形态"
+                    + "（本前端只认整行单语句，改了会把源改坏）；② 包顶点没有 Position/vaPosition 属性"
+                    + "（那就没有「屏幕坐标从哪来」的答案，不猜）。"
+                    + " 另一条修法在 GAP-028 ③：按 draw 供 renderStage 并把包天空改喂<b>原版天空几何</b>。";
         }
         PackTerrainProgram program = VkDispVirtualPack.packContract(PackTerrainSource.SKY_PROGRAM);
         if (program == null) {
@@ -214,7 +233,8 @@ public final class SkyPackGbuffer {
         if (TOOK_OVER.compareAndSet(false, true)) {
             VkDisp.LOGGER.info("vkdisp: [GAP-027/sky] 天空改由<b>包的 gbuffers_skybasic</b> 画"
                     + "（一次全屏 draw，屏幕空间片元）；原版 SkyRenderer 那一笔本帧<b>不跑</b>。"
-                    + " 退回原版档 = mrt.skyPackShader=false");
+                    + " 几何路线前提实测: clipPassthrough={} draws={}",
+                    vertexStagePassesPositionThrough(), DRAWS.get());
         }
         // 🔖 逐程序 builtins 环必须在**开 pass 之前**写：写环要 map 缓冲（要新 encoder），
         //   而 render pass 打开期间建新 encoder 会被 RenderPearl 拒（SkyIntoGbuffer 同一条 h10 规则）。

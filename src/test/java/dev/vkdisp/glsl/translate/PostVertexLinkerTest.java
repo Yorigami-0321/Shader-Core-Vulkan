@@ -227,4 +227,140 @@ class PostVertexLinkerTest {
         assertEquals(List.of("sunVec"), adapter.worldVectorZeros(),
                 () -> "实际零值名单: " + adapter.zeroSupplied());
     }
+
+    // ────────────────────────────────────────────────────────────────────────────────
+    // ④ clip 中性化（GAP-054：喂 NDC 全屏三角时，clip 里不许留相机矩阵）
+    // ────────────────────────────────────────────────────────────────────────────────
+
+    /** BSL {@code gbuffers_skybasic} 顶点终稿的<b>实测</b>形态（dump 逐字，含那条 sunVec/upVec）。 */
+    private static String bslSkybasicShape() {
+        return """
+                #version 330
+                layout(location = 1) in vec3 Position;
+                layout(location = 0) in vec4 Color;
+                layout(std140) uniform VkDispBuiltins {
+                mat4 gbufferModelView;
+                mat4 gbufferProjection;
+                vec3 sunPosition;
+                mat4 gbufferModelViewInverse;
+                };
+                layout(location = 0) out float alpha;
+                layout(location = 1) out vec3 sunVec;
+                layout(location = 2) out vec3 upVec;
+
+                void main() {
+                    float ang = fract(timeAngle - 0.25);
+                    sunVec = normalize((gbufferModelView * vec4(vec3(-sin(ang), cos(ang)) * 2000.0, 1.0)).xyz);
+                    upVec = normalize(gbufferModelView[1].xyz);
+                    gl_Position = (gbufferProjection * gbufferModelView * vec4(Position, 1.0));
+                    alpha = 1.0;
+                }
+                """;
+    }
+
+    @Test
+    @DisplayName("🔴 真包实测形态：clip 那一行被中性化成 Position 原样出去，而 sunVec/upVec 一个字不动")
+    void skyClipWriteIsNeutralizedButCameraMathStays() {
+        String source = bslSkybasicShape();
+        assertFalse(PostVertexLinker.emitsPositionPassthrough(source),
+                "喂进去之前必须判 false —— 这一行乘的是真相机矩阵，NDC 三角会被透视成半屏巨型三角形");
+
+        PostVertexLinker.Result r = PostVertexLinker.link("world0/gbuffers_skybasic", source,
+                fragment(), List.of(in(0, "float", "alpha"), in(1, "vec3", "sunVec"),
+                        in(2, "vec3", "upVec")));
+
+        assertTrue(r.packVertexSupplied(), () -> "该槽不该回落：\n" + r.diagnostics());
+        assertTrue(r.vertexSource().contains("gl_Position = vec4(Position, 1.0);"),
+                () -> "clip 必须整行换成位置属性；实际:\n" + r.vertexSource());
+        assertFalse(r.vertexSource().contains("gbufferProjection * gbufferModelView * vec4(Position"),
+                "换完不许留旧句式（留着就是「决定了但没落地」）");
+        // 🔴 中性化的作用域<b>只有 clip 那一行</b>：太阳方向是 gbufferModelView 乘出来的，砍了就没了
+        assertTrue(count(r.vertexSource(),
+                "sunVec = normalize((gbufferModelView * vec4(vec3(-sin(ang), cos(ang)) * 2000.0, 1.0)).xyz);") == 1,
+                "sunVec 的相机数学必须原样保留（B 档：天空接管但太阳/月亮方向全错，画面有内容而每个通道都错）");
+        assertTrue(r.vertexSource().contains("upVec = normalize(gbufferModelView[1].xyz);"),
+                "upVec 同理");
+        assertTrue(PostVertexLinker.emitsPositionPassthrough(r.vertexSource()),
+                "终稿谓词必须对**换完之后那份**回 true（SkyPackGbuffer 的几何闸门读的就是它）");
+        assertTrue(r.diagnostics().stream().anyMatch(d -> d.severity()
+                        == TranslateDiagnostic.Severity.WARN && d.message().contains("中性化")),
+                "改写必须点名（X11）：这是一次「包写的数学被我方改了」的动作，静默改源是本仓反复付学费的形态");
+    }
+
+    @Test
+    @DisplayName("🔖 NDC-native 的包顶点（链那一大族）本层不碰、也不报中性化")
+    void ndcNativeClipIsLeftAlone() {
+        String source = vertex("layout(location = 0) out vec2 texCoord;\n");
+        PostVertexLinker.Result r = PostVertexLinker.link("world0/composite", source, fragment(),
+                List.of(in(0, "vec2", "texCoord")));
+        assertTrue(r.packVertexSupplied());
+        assertEquals(1, count(r.vertexSource(), "gl_Position = vec4(Position, 1.0);"),
+                "本来就原样出去的，不许被再写一遍（多一处 = 有人又兜了一层）");
+        assertTrue(r.diagnostics().stream().noneMatch(d -> d.message().contains("中性化")),
+                () -> "不该有中性化诊断；实际: " + r.diagnostics());
+        assertTrue(PostVertexLinker.emitsPositionPassthrough(r.vertexSource()));
+    }
+
+    @Test
+    @DisplayName("🔴 源里没有位置属性时<b>不猜</b>屏幕坐标从哪来：原样交出去 + ERROR，谓词回 false")
+    void clipWriteWithoutPositionAttributeIsNotGuessed() {
+        String source = """
+                #version 330
+                layout(location = 3) in vec3 vertexFromSomewhere;
+                layout(std140) uniform VkDispBuiltins {
+                mat4 gbufferProjection;
+                };
+                layout(location = 0) out vec2 texCoord;
+
+                void main() {
+                    gl_Position = gbufferProjection * vec4(vertexFromSomewhere, 1.0);
+                    texCoord = vec2(0.0);
+                }
+                """;
+        PostVertexLinker.Result r = PostVertexLinker.link("world0/composite9", source, fragment(),
+                List.of(in(0, "vec2", "texCoord")));
+        assertTrue(r.vertexSource().contains("gbufferProjection * vec4(vertexFromSomewhere, 1.0)"),
+                () -> "没有 Position/vaPosition 可依据时不许造一个；实际:\n" + r.vertexSource());
+        assertTrue(r.diagnostics().stream().anyMatch(d -> d.severity()
+                        == TranslateDiagnostic.Severity.ERROR && d.message().contains("不猜")),
+                () -> "不猜这件事必须打成 ERROR；实际: " + r.diagnostics());
+        assertFalse(PostVertexLinker.emitsPositionPassthrough(r.vertexSource()),
+                "谓词回 false ⇒ 调用方的几何闸门拒喂全屏三角 = 退回原版重放，而不是画半张");
+    }
+
+    @Test
+    @DisplayName("🔖 跨行的 clip 赋值整条不认（认了就是把源改坏），谓词因此回 false")
+    void multiLineClipAssignmentIsNotTouched() {
+        String source = """
+                #version 330
+                layout(location = 1) in vec3 Position;
+                layout(std140) uniform VkDispBuiltins {
+                mat4 gbufferProjection;
+                };
+                layout(location = 0) out vec2 texCoord;
+
+                void main() {
+                    gl_Position = gbufferProjection
+                            * vec4(Position, 1.0);
+                    texCoord = vec2(0.0);
+                }
+                """;
+        PostVertexLinker.Result r = PostVertexLinker.link("world0/composite7", source, fragment(),
+                List.of(in(0, "vec2", "texCoord")));
+        assertTrue(r.vertexSource().contains("gl_Position = gbufferProjection"),
+                "只认整行单语句（同 IO 那条纪律）：跨行改写会把包的源改坏");
+        assertFalse(PostVertexLinker.emitsPositionPassthrough(r.vertexSource()),
+                "认不出形态时判据必须回 false，而不是「大概没问题」");
+    }
+
+    @Test
+    @DisplayName("🔖 谓词的空输入与「根本没写 clip」都必须回 false（false = 安全方向）")
+    void passthroughPredicateFailsClosed() {
+        assertFalse(PostVertexLinker.emitsPositionPassthrough(null));
+        assertFalse(PostVertexLinker.emitsPositionPassthrough(""));
+        assertFalse(PostVertexLinker.emitsPositionPassthrough("void main() { }\n"),
+                "没写 gl_Position 的源不能被判成「原样出去了」");
+        assertFalse(PostVertexLinker.emitsPositionPassthrough(
+                "gl_Position = vec4(0.0);\n"), "右值不引用位置属性 = 屏幕坐标没有来源");
+    }
 }

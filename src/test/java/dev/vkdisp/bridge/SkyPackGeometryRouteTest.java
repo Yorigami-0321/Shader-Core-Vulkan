@@ -44,22 +44,29 @@ class SkyPackGeometryRouteTest {
     }
 
     @Test
-    @DisplayName("🔖 今天这两个事实必须是 false（守卫不许是空转），且判定必须排在契约检查<b>之前</b>")
-    void guardIsNotVacuousAndRunsFirst() {
+    @DisplayName("🔖 前提必须<b>实测终稿</b>（不是一块可以改真的常量），且判定必须排在契约检查<b>之前</b>")
+    void guardIsMeasuredFromArtifactAndRunsFirst() {
         String source = code();
-        // 🔖 位置针之前先 contains 断言：needle 消失会让 indexOf 回 -1，而 -1 < 任何下标 = 假绿
+        // 🔴 这块守卫管的是「别把判据写成常量」。上一版这里是两个 `= false` 的 final 布尔，
+        //    于是「让它接管」的最小改动 = 把常量改成 true —— 而那**什么都不证明**。
+        //    现在判据是对交进包资源的那份顶点终稿跑谓词，改不出来。
+        assertFalse(source.contains("VERTEX_STAGE_PASSES_POSITION_THROUGH ="),
+                "几何路线的前提不许再是编译期常量：常量只转述「有人决定了什么」，不转述「源里真长什么样」");
         assertTrue(source.contains(
-                        "private static final boolean VERTEX_STAGE_PASSES_POSITION_THROUGH = false;"),
-                "实测事实：包的 skybasic 顶点终稿逐字乘 gbufferProjection * gbufferModelView"
-                        + "（build/dump-head1/world0_gbuffers_skybasic-VERTEX.glsl:240）⇒ 改成 true 要连证据一起改");
+                        "GbufferVertexRoute.passesPositionThrough(PackTerrainSource.SKY_PROGRAM)"),
+                "判据必须读终稿量出来的那一位（GbufferVertexRoute 生成期量一次，渲染期只查表）");
+        assertTrue(source.contains("boolean passthrough = vertexStagePassesPositionThrough();"),
+                "contractProblem() 必须现读那次测量，不许缓存一份「接管时一定成立」的乐观值");
         assertTrue(source.contains(
                         "private static final boolean CAMERA_MATRICES_ARE_IDENTITY = false;"),
-                "实测事实：OfUniformManager.putCameraMatrices:377-378 交的是真相机矩阵，"
-                        + "Family.CHAIN 只翻深度口径 ⇒ 不是恒等");
+                "实测事实：OfUniformManager.putCameraMatrices 交的是真相机矩阵，"
+                        + "Family.CHAIN 只翻深度口径 ⇒ 这一条仍是 false（成立的是 clip 那一半）");
 
+        // 🔖 位置针之前先 contains 断言：needle 消失会让 indexOf 回 -1，而 -1 < 任何下标 = 假绿
+        assertTrue(source.contains("if (!ndcTriangleRouteValid(passthrough, CAMERA_MATRICES_ARE_IDENTITY))"),
+                "几何闸门必须吃**现读的** passthrough（吃常量的话，判据就退回到「有人决定了什么」）");
         int problem = source.indexOf("private static @Nullable String contractProblem()");
-        int valid = source.indexOf("if (!ndcTriangleRouteValid(VERTEX_STAGE_PASSES_POSITION_THROUGH, "
-                + "CAMERA_MATRICES_ARE_IDENTITY))");
+        int valid = source.indexOf("if (!ndcTriangleRouteValid(passthrough, CAMERA_MATRICES_ARE_IDENTITY))");
         int contract = source.indexOf("PackTerrainProgram program = VkDispVirtualPack.packContract",
                 problem);
         assertTrue(problem > 0 && valid > problem, "判定必须真的长在 contractProblem() 里（否则是死代码）");
@@ -93,6 +100,36 @@ class SkyPackGeometryRouteTest {
                 "Position 的 z 写死 1.0（远平面）+ w=1 ⇒ 恒等下 NDC z=1；改这里要连 GAP-037 的深度判据一起看");
         assertEquals(1, occurrences(source, "pass.draw(3, 1, 0, 0);"),
                 "全屏三角只有<b>一处</b> draw（多一处就是有人又兜了一层）");
+    }
+
+    @Test
+    @DisplayName("🔴 判据位必须 fail-closed：没量过 / 量出不是 passthrough ⇒ 拒喂全屏三角")
+    void routeFlagFailsClosed() {
+        dev.vkdisp.pack.GbufferVertexRoute.resetForTests();
+        try {
+            assertFalse(dev.vkdisp.pack.GbufferVertexRoute
+                            .passesPositionThrough(dev.vkdisp.pack.PackTerrainSource.SKY_PROGRAM),
+                    "查不到就是 false（没量过 ≠ 量过且成立）");
+            assertFalse(dev.vkdisp.pack.GbufferVertexRoute
+                    .note(dev.vkdisp.pack.PackTerrainSource.SKY_PROGRAM, null), "没有顶点源 ⇒ false");
+            assertFalse(dev.vkdisp.pack.GbufferVertexRoute
+                    .passesPositionThrough(dev.vkdisp.pack.PackTerrainSource.SKY_PROGRAM),
+                    "note(null) 之后读数必须跟着撤 ⇒ 残留 true 就是拿上一轮的判据画这一轮的几何");
+            assertTrue(dev.vkdisp.pack.GbufferVertexRoute.note(
+                            dev.vkdisp.pack.PackTerrainSource.SKY_PROGRAM,
+                            "void main() {\n    gl_Position = vec4(Position, 1.0);\n}\n"),
+                    "真 passthrough 形态必须记成 true（否则天空永远退回原版，本类就成了死码）");
+            assertTrue(dev.vkdisp.pack.GbufferVertexRoute
+                    .passesPositionThrough(dev.vkdisp.pack.PackTerrainSource.SKY_PROGRAM));
+            assertFalse(dev.vkdisp.pack.GbufferVertexRoute.note(
+                            dev.vkdisp.pack.PackTerrainSource.SKY_PROGRAM,
+                            "void main() {\n    gl_Position = gbufferProjection * vec4(Position, 1.0);\n}\n"),
+                    "换包/重生成量出旧句式 ⇒ 记 false 并撤掉那一位");
+            assertFalse(dev.vkdisp.pack.GbufferVertexRoute
+                    .passesPositionThrough(dev.vkdisp.pack.PackTerrainSource.SKY_PROGRAM));
+        } finally {
+            dev.vkdisp.pack.GbufferVertexRoute.resetForTests();
+        }
     }
 
     private static int occurrences(String text, String needle) {

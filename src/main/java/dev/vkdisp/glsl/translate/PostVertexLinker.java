@@ -48,7 +48,9 @@ import java.util.regex.Pattern;
  *    的<b>我方口径</b>公式、其余零值 + ERROR 点名）；没被片元消费的 VS 输出<b>搬到空闲 location</b>
  *    （不删：赋值右侧可能依赖别处算出的中间量）；③ <b>VkDispBuiltins 块统一</b>：顶点的块整体换成
  *    片元的块文本，只有顶点声明的成员<b>追加</b>到块尾并同步进片元源 ⇒ 两阶段成员集与 std140 偏移
- *    逐字节一致；④ 行数只增不减（追加成员 / 合成声明与赋值），诊断行号 = 本级输入行号。
+ *    逐字节一致；④ <b>clip 中性化</b>：喂给这一族的几何是 NDC 全屏三角，所以 {@code gl_Position} 的右值里
+ *    不许留相机矩阵（留着就是把三角当世界几何透视一遍 = 半屏巨型三角形，GAP-054 真机实测），
+ *    整行换成位置属性本身；⑤ 行数只增不减（追加成员 / 合成声明与赋值），诊断行号 = 本级输入行号。
  * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（每次资源重载、每槽一次，纯字符串处理）；不缓存、不预优化
@@ -215,6 +217,9 @@ public final class PostVertexLinker {
 
         List<String> degraded = new ArrayList<>();
         vertex = normalizeAttributes(programName, vertex, diagnostics, degraded);
+        // ④ clip 中性化必须在 alignVaryings <b>之前</b>：那一步会往 main 开头插赋值、往声明区插行，
+        //    行号一变，本步诊断报的「包自己第几行写的 ftransform」就指错了地方。
+        vertex = neutralizeClip(programName, vertex, diagnostics);
 
         List<String> synthesized = new ArrayList<>();
         vertex = alignVaryings(programName, vertex,
@@ -594,6 +599,159 @@ public final class PostVertexLinker {
     private static final Pattern IO_STATEMENT = Pattern.compile(
             "layout\\s*\\([^)]*\\)\\s*(?:(?:flat|smooth|noperspective|centroid|patch|sample|invariant|precise)"
                     + "\\s+)*(?:in|out)\\s+[A-Za-z_]\\w*\\s+[A-Za-z_]\\w*\\s*(?:\\[[^\\]]*\\])?\\s*;");
+
+    // ────────────────────────────────────────────────────────────────────────────────
+    // ④ clip 中性化：post 顶点路线喂的是 <b>NDC 全屏三角</b>，所以相机矩阵必须从 gl_Position 里出去
+    // ────────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * 需要被中性化的<b>相机矩阵名</b>（终稿里 {@code ftransform()} 已展开成这几个 uniform）。
+     *
+     * <p>🔴 判据取「名字出现在 clip 右值里」而不是「整条程序用没用相机矩阵」：包的 {@code gbuffers_skybasic}
+     * 顶点<b>同时</b>要用真 {@code gbufferModelView} 算 {@code sunVec}/{@code upVec}
+     * （{@code program/gbuffers_skybasic.glsl} 的 VSH 段逐字），那只该动 clip 那一行 ——
+     * 整条程序「有相机矩阵就不许中性化」会把天空的日照方向一起砍掉。
+     */
+    private static final Set<String> CAMERA_MATRIX_NAMES = Set.of(
+            "gbufferProjection", "gbufferModelView", "gbufferProjectionInverse", "gbufferModelViewInverse");
+
+    /** {@code gl_Position} 的<b>整行单语句</b>写入形态（跨行赋值不认，见 {@link #neutralizeClip}）。 */
+    private static final Pattern CLIP_WRITE = Pattern.compile("^\\s*gl_Position\\s*=\\s*(.+);\\s*$");
+
+    /**
+     * 承载 NDC 坐标的属性名（按优先级）。
+     *
+     * <p>🔖 我方喂给这一族的顶点缓冲里，位置元素就叫这些名（{@code PipelineApi.POST_VERTEX_FORMAT}
+     * 与 {@link #SERVABLE_ATTRIBUTES} 同一口径）；中性化后的 {@code gl_Position} 必须<b>只</b>由它构成，
+     * 否则「屏幕坐标从哪来」这个问题就没有答案了。
+     */
+    private static final List<String> POSITION_ATTRIBUTES = List.of("Position", "vaPosition");
+
+    /**
+     * 终稿的 clip 写入是否是「Position <b>原样</b>出去」（= 可以喂 NDC 全屏三角）。
+     *
+     * <p>🔖 这是对<b>交给驱动的那份文本</b>的谓词，不是对某个决定的转述：调用方（{@code SkyPackGbuffer}
+     * 的几何路线闸门）读它，就只需要为「终稿里那一行长什么样」负责，不必再信第二个地方的口径。
+     *
+     * @return true = 每一行 clip 写入都不碰相机矩阵、且引用了位置属性；没有 clip 写入 = false
+     */
+    public static boolean emitsPositionPassthrough(String vertexSource) {
+        if (vertexSource == null || vertexSource.isBlank()) {
+            return false;
+        }
+        boolean any = false;
+        for (String line : split(vertexSource)) {
+            Matcher matcher = CLIP_WRITE.matcher(codeView(line));
+            if (!matcher.matches()) {
+                continue;
+            }
+            String right = matcher.group(1);
+            if (mentionsCameraMatrix(right) || !mentionsPosition(right)) {
+                return false;
+            }
+            any = true;
+        }
+        return any;
+    }
+
+    /**
+     * 把 clip 写入里的相机矩阵<b>摘掉</b>：{@code gl_Position = P * V * vec4(Position, 1.0)}
+     * 整行换成 {@code gl_Position = vec4(Position, 1.0)}（{@code Position} 已是 vec4 时换成它本身）。
+     *
+     * <p>🔴 <b>为什么必须换</b>（GAP-054 的判据本体）：这一族喂的几何是一张 NDC 大三角
+     * {@code (-1,-1),(3,-1),(-1,3)}，而本前端的 {@code gbufferProjection}/{@code gbufferModelView}
+     * 交的是<b>真·相机</b>矩阵（{@code OfUniformManager.putCameraMatrices} —— {@code Family.CHAIN}
+     * 只翻深度口径，不翻成恒等）。不换 ⇒ 那张三角被当成「视空间 z=1 的世界几何」过一遍透视
+     * ⇒ 屏幕上留下一个切过半个画面的巨型三角形，且<b>不报错</b>（本机无 validation layer）。
+     *
+     * <p>🔖 <b>为什么这样换在数学上是等价的</b>：屏幕空间片元的天空不读穹顶几何，它从
+     * {@code gl_FragCoord} + {@code gbufferProjectionInverse} 反解方向（{@code gbuffers_skybasic.glsl}
+     * 的 FSH 段），穹顶与全屏三角对同一像素算出同一方向 ⇒ 顶点侧只需要「覆盖整屏 + 远平面深度」，
+     * 不需要透视。片元那两份矩阵<b>一个字都不动</b>（它们砸的是方向，不是覆盖）。
+     *
+     * <p>三条刻意的保守：① 只认<b>整行单语句</b>赋值（跨行形态不改，改了会把源改坏；同 {@link #IO}
+     * 那条纪律）；② 右值里必须<b>真出现</b>相机矩阵，否则原样交出去（NDC-native 的包顶点本层不该碰）；
+     * ③ 源里没有位置属性声明 ⇒ <b>不猜</b>，整行不动 + ERROR 点名，由调用方的几何闸门把这条路线拒掉
+     * （拒 = 退回原版重放，不是画半张）。
+     */
+    private static String neutralizeClip(String programName, String vertexSource,
+            List<TranslateDiagnostic> diagnostics) {
+        List<String> lines = split(vertexSource);
+        String position = positionAttributeType(lines);
+        for (int index = 0; index < lines.size(); index++) {
+            Matcher matcher = CLIP_WRITE.matcher(codeView(lines.get(index)));
+            if (!matcher.matches()) {
+                continue;
+            }
+            String right = matcher.group(1);
+            if (!mentionsCameraMatrix(right)) {
+                continue;
+            }
+            if (position == null) {
+                diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.ERROR,
+                        "vkdisp: [GAP-054] post 程序 '" + programName + "' 的 clip 写入乘了相机矩阵，"
+                                + "但源里没有 " + POSITION_ATTRIBUTES + " 之一 ⇒ 本层<b>不猜</b>屏幕坐标从哪来"
+                                + "（X9），该行原样交出去；调用方的几何闸门会因此拒喂 NDC 全屏三角",
+                        programName, index));
+                continue;
+            }
+            lines.set(index, tabOf(lines.get(index)) + "gl_Position = " + position + ";");
+            diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.WARN,
+                    "vkdisp: [GAP-054] post 程序 '" + programName + "' 的 clip 写入已中性化: '" + right.strip()
+                            + "' -> gl_Position = " + position + "（喂的是 NDC 全屏三角，相机矩阵留在 clip 里"
+                            + "就会把这张三角当世界几何透视一遍 = 半屏巨型三角形）。"
+                            + " 该程序其余部分照用真相机矩阵（sunVec/upVec 那一族不受影响）",
+                    programName, index));
+        }
+        return String.join("\n", lines);
+    }
+
+    /** 右值里是否出现任一相机矩阵名（词边界匹配，避免 {@code gbufferModelViewFoo} 误命中）。 */
+    private static boolean mentionsCameraMatrix(String expression) {
+        for (String name : CAMERA_MATRIX_NAMES) {
+            if (expression.matches(".*\\b" + name + "\\b.*")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 右值里是否出现位置属性名（passthrough 的必要条件：屏幕坐标得有来源）。 */
+    private static boolean mentionsPosition(String expression) {
+        for (String name : POSITION_ATTRIBUTES) {
+            if (expression.matches(".*\\b" + name + "\\b.*")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 中性化后该写什么右值：按<b>声明的类型</b>给合法形态（vec3 ⇒ {@code vec4(Position, 1.0)}，
+     * vec4 ⇒ {@code Position}）。没有位置属性声明 ⇒ {@code null}（调用方不猜）。
+     */
+    private static String positionAttributeType(List<String> lines) {
+        for (Io io : collectIo(String.join("\n", lines), "in")) {
+            if (!POSITION_ATTRIBUTES.contains(io.name())) {
+                continue;
+            }
+            return switch (io.type()) {
+                case "vec3" -> "vec4(" + io.name() + ", 1.0)";
+                case "vec4" -> io.name();
+                default -> null;
+            };
+        }
+        return null;
+    }
+
+    /** 保留原行的缩进（本层改行不该顺手重排包的源码版式）。 */
+    private static String tabOf(String line) {
+        int index = 0;
+        while (index < line.length() && (line.charAt(index) == ' ' || line.charAt(index) == '\t')) {
+            index++;
+        }
+        return line.substring(0, index);
+    }
 
     /** 最小未占用号（0 起；与 {@link IoLocationAdapter} 同口径）。 */
     private static int nextFree(Set<Integer> claimed) {
