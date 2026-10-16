@@ -210,7 +210,9 @@ public final class SkyPackGbuffer {
      * 而它改完，上面那道闸与所有自报会一起跟着变（不留「决定了但没落地」的第二份口径）。
      */
     private static boolean skyTexturedWired() {
-        return false;
+        // 日月这条路的就绪判定只有一个真源（契约 + 两个开关 + 派生管线编译落地）；
+        // 在这里复制一份「看起来一样」的条件就是第二份口径，迟早漂。
+        return SkyCelestialPack.wired();
     }
 
     /** 契约可用性判定；返回 {@code null} = 可用，否则返回<b>不可用的原因</b>（自报用）。 */

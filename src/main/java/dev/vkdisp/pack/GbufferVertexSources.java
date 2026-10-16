@@ -88,6 +88,11 @@ public final class GbufferVertexSources {
      */
     public static String chunkAdapter(String program, PackTerrainProgram contract,
             dev.vkdisp.glsl.translate.DerivativeTbn.Plan tbnPlan) {
+        if (PackTerrainSource.SKYTEXTURED_PROGRAM.equals(program)) {
+            // 🔴 日月<b>不能</b>吃 chunk 适配层：那条要 ChunkPosition/UV2 这类日月几何根本没有的属性
+            //    （欠供在加载期就是 ShaderCompileException ⇒ 启动砸掉）。走专用的 POSITION_TEX 生成器。
+            return celestialAdapter(contract);
+        }
         boolean terrainProgram = PackTerrainSource.TERRAIN_PROGRAM.equals(program);
         boolean fullLight = terrainProgram && dev.vkdisp.VkDispConfig.MRT_TERRAIN_FULL_LIGHT_PROBE.get();
         boolean parallaxSkip = terrainProgram
@@ -109,6 +114,32 @@ public final class GbufferVertexSources {
         } catch (Throwable t) {
             VkDisp.LOGGER.error("vkdisp: [GAP-003] 顶点适配层生成 FAILED（原文如下）"
                     + " -> 本条 gbuffer 程序不接线（沿用原版 core/terrain）: program=" + program, t);
+            return null;
+        }
+    }
+
+    /**
+     * 日月那条程序的顶点源（原版 {@code POSITION_TEX} 顶点流 + 包契约 → 生成的适配层）。
+     *
+     * &lt;p&gt;🔴 失败 ⇒ {@code null} = 本条不接线（与 chunk 适配层同一条纪律）：日月片元的 uv 决定
+     * 采图集哪一块，顶点少一条通道就是「半接线」，而半接线的症状是加载期抛或静默错值，不是「效果差」。
+     */
+    public static String celestialAdapter(PackTerrainProgram contract) {
+        try {
+            dev.vkdisp.glsl.translate.CelestialVertexAdapterGenerator.Result adapter =
+                    dev.vkdisp.glsl.translate.CelestialVertexAdapterGenerator.generate(contract.inputs());
+            for (TranslateDiagnostic diagnostic : adapter.diagnostics()) {
+                log(diagnostic);
+            }
+            if (adapter.glsl() == null) {
+                VkDisp.LOGGER.warn("vkdisp: [GAP-027] {} 的日月适配层判否 ⇒ 本条不接线"
+                        + "（日月保持原版着色；缺的通道见上面逐条诊断）",
+                        PackTerrainSource.SKYTEXTURED_PROGRAM);
+            }
+            return adapter.glsl();
+        } catch (Throwable t) {
+            VkDisp.LOGGER.error("vkdisp: [GAP-027] 日月适配层生成 FAILED -> 本条不接线: program={}",
+                    PackTerrainSource.SKYTEXTURED_PROGRAM, t);
             return null;
         }
     }

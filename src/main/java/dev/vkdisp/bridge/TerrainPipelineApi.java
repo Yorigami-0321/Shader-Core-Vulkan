@@ -811,7 +811,7 @@ public final class TerrainPipelineApi {
     }
 
     /** 该条程序的块环（未建返回 {@code null} —— 调用点必须显式报错，不静默跳过）。 */
-    private static MappableRingBuffer existingBuiltinsRing(String program) {
+    public static MappableRingBuffer existingBuiltinsRing(String program) {
         return BUILTINS_RINGS.get(program);
     }
 

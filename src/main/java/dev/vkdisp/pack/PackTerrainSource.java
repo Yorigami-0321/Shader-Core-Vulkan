@@ -73,6 +73,17 @@ public final class PackTerrainSource {
      */
     public static final String SKY_PROGRAM = "gbuffers_skybasic";
 
+    /**
+     * GAP-027 天空线第三刀：包的 {@code gbuffers_skytextured}（<b>日月盘</b>）。
+     *
+     * &lt;p&gt;🔴 它<b>既不走</b> {@link #postVertexProgram} 那条 post 恒等 MVP（日月的 uv 是几何数据，
+     * 决定采图集哪一块），也<b>不走</b> chunk 顶点适配层（那条要 {@code ChunkPosition}/光照属性，
+     * 日月顶点流一个都没有）。它的顶点源 = {@code CelestialVertexAdapterGenerator}，
+     * 输入只有原版 {@code POSITION_TEX} 的 {@code Position}/{@code UV0}；
+     * draw 仍由原版驱动（见 {@code bridge/SkyCelestialPack} 的类注释第 2、3 条）。
+     */
+    public static final String SKYTEXTURED_PROGRAM = "gbuffers_skytextured";
+
     /** 保留名：强制「不接线」（与 PackCompositeSource.SELECTION_NONE 同义，避免两处字面量）。 */
     public static final String SELECTION_NONE = PackCompositeSource.SELECTION_NONE;
 

@@ -19,6 +19,7 @@
     "MainPassAttachmentMixin",
     "PreparedRenderTypePipelineMixin",
     "QuadParticleFeatureRendererPipelineMixin",
+    "SkyRendererCelestialPipelineMixin",
     "SkyRendererViewRedirectMixin",
     "VideoSettingsPackOptionsMixin",
     "WeatherEffectRendererPipelineMixin",

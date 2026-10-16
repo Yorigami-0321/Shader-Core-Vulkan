@@ -258,20 +258,14 @@ public final class VkDispConfig {
             .defineInRange("mrt.attachments", 3, 1, 8);
 
     /**
-     * 🔴 GAP-003：派生 MRT 地形管线<b>用包自己的 gbuffers_terrain 片元</b> —— 默认<b>关</b>
-     * （与 {@link #MRT_TERRAIN_ENABLED} 成对，翻默认的共同阻塞项写在那一条的注释里 = GAP-036 ④）。
+     * 🔴 GAP-003：派生 MRT 地形管线<b>用包自己的 gbuffers_terrain 片元</b> —— 默认<b>关</b>，
+     * 与 {@link #MRT_TERRAIN_ENABLED} <b>成对</b>（只开那条 = 半开档、屏幕全黑；翻默认的共同阻塞项
+     * = GAP-036 ④「坏包 + 两条都开 ⇒ renderGroup 抛 Missing uniform VkDispBuiltins 带走客户端」）。
      *
-     * <p><b>为什么保留成独立一键</b>（M1 编码约束 ⑤「逐个开启 + 逐个关闭」）：
-     * 「地形画进多附件 pass」与「片元来自包而不是原版」是两件独立的事 ——
-     * 后者依赖包地形片元的契约解析、绑定组条目与顶点适配层，
-     * 且其中三条 varying 目前只能按常量供值（GAP-007）⇒ 必须能<b>一键退回</b>原版 core/terrain 做对照。
-     * 🔴 但<b>只开 {@code mrt.terrain} 而关本键</b>是半开档 ⇒ 屏幕全黑（见那条的实测读数），
-     * 做对照时两条一起关。
-     *
-     * <p>开启后若所选包<b>没有</b>可用的 gbuffers_terrain 片元，会显式 WARN 并保持原版
-     * （不静默换片元）。🔴 <b>「不崩」这一半今天还不成立</b>：坏包 + 两条都开 ⇒
-     * {@code drawTerrain} 的 {@code renderGroup} 抛 {@code Missing uniform VkDispBuiltins}
-     * 并带走客户端，GAP-036 ④。
+     * <p>保留成独立一键的理由是 M1 ⑤「逐个开启 + 逐个关闭」：「画进多附件 pass」与「片元来自包」
+     * 是两件事，后者还要契约解析/绑定组/顶点适配层，且三条 varying 仍按常量供（GAP-007）
+     * ⇒ 必须能一键退回原版 {@code core/terrain} 做对照。包里没有该程序时显式 WARN，不静默换片元。
+     * <p>📎 逐臂真机读数与半开档实测：{@code docs/13} 的 GAP-003 / GAP-036。
      */
     public static final ModConfigSpec.BooleanValue MRT_PACK_TERRAIN_SHADER = BUILDER
             .comment("GAP-003：MRT 地形管线用包自己的 gbuffers_terrain 片元（默认关，与 mrt.terrain 成对）。"
@@ -282,21 +276,16 @@ public final class VkDispConfig {
     /**
      * 🔴 <b>GAP-027：把包自己的 {@code gbuffers_water} 接进 MRT gbuffer pass</b> —— 默认<b>关闭</b>。
      *
-     * <p>与 {@link #MRT_PACK_TERRAIN_SHADER} 同一条链（选包 → 能力门控 → 选项覆盖 → 编译 →
-     * DRAWBUFFERS 兑现），只把程序名换成 {@code gbuffers_water}；接上后 {@code TRANSLUCENT} 层改用
-     * 水的片元 + <b>水的</b>顶点适配层 + <b>水的</b>绑定组布局（实测 BSL 默认档：2 输出 / 8 sampler /
-     * 14 varying，而地形是 1 / 5 / 9 ⇒ 三样都不能套地形的清单，X39），并在同一 pass 内 OPAQUE 之后
-     * 再画一次 TRANSLUCENT 组（{@code bridge.MrtTerrainPass#drawWaterSegment}，没有新建 FramePass）。
+     * <p>与 {@link #MRT_PACK_TERRAIN_SHADER} 同一条链（选包 → 门控 → 覆盖 → 编译 → DRAWBUFFERS 兑现），
+     * 只换程序名；接上后 {@code TRANSLUCENT} 层用<b>水的</b>片元 + <b>水的</b>适配层 + <b>水的</b>绑定组
+     * （实测 BSL 默认档 2 输出 / 8 sampler / 14 varying，而地形是 1 / 5 / 9 ⇒ 清单不可套用地形，X39），
+     * 并在同一 pass 内 OPAQUE 之后再画一次 TRANSLUCENT 组（{@code MrtTerrainPass#drawWaterSegment}）。
      *
-     * <p>🔖 <b>为什么默认关</b>：它换包语义、又把附件数从「按地形契约定」改成「按两条程序的最大值定」
-     * （{@code MrtPlan.freezePackPrograms}），而不匹配是 {@code setPipeline} 直接抛；按支柱①/②的裁决，
-     * 这类接线要用户显式开启（与 {@code mrt.packTerrainShader}、{@code pack.capabilityGate} 同一口径）。
-     * 🔖 <b>关掉时行为逐字节相同</b>：只接地形一条，pass 只画 OPAQUE 组。包里没有水程序时不接线 +
-     * 一行 {@code not wired because absent}（不静默，X9/X11/T11）。
-     *
-     * <p>🔴 <b>生效时机 = 生成期读一次</b> ⇒ 必须同时进 {@code currentTerrainMemoKey} 与
-     * {@code VkDispConfigHotReload} 的核心快照（{@code GenerationTimeSwitchInventoryTest} 兜，QD-08）。
-     * <p>📎 逐臂真机读数与「画面侧判据仍未拿到」那一格：{@code docs/13} 的 GAP-027（h49 / h50n 两行）。
+     * <p>默认关：它换包语义、又把附件数从「按地形定」改成「按两条程序取 max」
+     * （{@code MrtPlan.freezePackPrograms}），不匹配就是 {@code setPipeline} 抛 ⇒ 崩客户端；按支柱①/②
+     * 这类接线要用户显式开启。<b>关掉逐字节等于今天</b>；包里没这条程序时一行 {@code not wired because
+     * absent} 都不静默（X9/X11/T11）。🔖 生成期读一次 ⇒ 必须进 {@code currentTerrainMemoKey} 与热重载
+     * 核心快照（QD-08，{@code GenerationTimeSwitchInventoryTest} 兜）。📎 逐臂读数：{@code docs/13} GAP-027。
      */
     public static final ModConfigSpec.BooleanValue MRT_PACK_WATER_SHADER = BUILDER
             .comment("GAP-027：把包的 gbuffers_water 接进 MRT gbuffer pass（TRANSLUCENT 层改用"
@@ -306,15 +295,26 @@ public final class VkDispConfig {
             .define("mrt.packWater", false);
 
     /**
-     * 🔴 <b>GAP-007 的替代供值路：包片元里的 {@code normal}/{@code tangent}/{@code binormal}
-     * 由屏幕空间导数现算</b> —— 默认<b>关</b>（关 = 逐字等于今天那三条常量供值）。判据、形态闸门与
-     * 「为什么不走 vertex-format patch」逐字写在 {@code glsl/translate/DerivativeTbn} 与
-     * {@code pack/DerivativeTbnSwitch} 的头部。
+     * 🔴 GAP-007：包片元的 {@code normal}/{@code tangent}/{@code binormal} 由屏幕空间导数现算
+     * （默认关 = 逐字等于今天的常量供值）。判据与闸门见 {@code glsl/translate/DerivativeTbn} 头部。
      */
     public static final ModConfigSpec.BooleanValue MRT_DERIVATIVE_TBN = BUILDER
             .comment("GAP-007：包片元的 normal/tangent/binormal 由屏幕空间导数现算（默认关 = 逐字等于今天的常量供值；"
                     + "只在该程序片元真声明这三条时生效，预处理器罩不住的形态整条不做）。理由见 DerivativeTbn/DerivativeTbnSwitch 头部。")
             .define("mrt.derivativeTbn", false);
+
+    /**
+     * 🔴 GAP-027 天空线第三刀：原版日月那两笔 draw 改用包的 {@code gbuffers_skytextured}（默认关）；
+     * 原版仍驱动几何/姿态/baseVertex。逐字依据与否决项见 {@code bridge/SkyCelestialPack} 头部（QD-13）。
+     */
+    public static final ModConfigSpec.BooleanValue MRT_SKY_PACK_TEXTURED_SHADER = BUILDER
+            .comment("GAP-027：日月两笔 draw 改用包的 gbuffers_skytextured（开=换 drawCelestialBody 的管线并补绑；关=逐字等于今天）")
+            .define("mrt.skyPackTexturedShader", false);
+
+    public static final ModConfigSpec.BooleanValue MIXIN_SKY_CELESTIAL_PACK = BUILDER
+            .comment("M1 ⑤：注入点 skyCelestialPack 的一键关（SkyRenderer#drawCelestialBody 的管线换绑）。"
+                    + "关掉 = 混入原样交回原版管线，日月回到原版着色器。")
+            .define("mixin.skyCelestialPack", true);
 
     /**
      * GAP-003/A：包地形片元的 {@code shadowtex0}/{@code shadowtex1}/{@code shadowcolor0}

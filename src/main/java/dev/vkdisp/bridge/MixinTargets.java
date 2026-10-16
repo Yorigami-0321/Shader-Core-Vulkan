@@ -354,6 +354,25 @@ public final class MixinTargets {
      * 🔖 全仓库里它只有一个调用点（{@code LevelRenderer:386}，在 {@code "sky"} pass 体内、
      * 那一刻没有任何 render pass 打开）⇒ 这两条 @Redirect 的作用域天然只覆盖原版天空那一笔。
      */
+    /**
+     * {@code SkyRenderer#drawCelestialBody} 的描述符（M-1x 目标方法）。
+     *
+     * &lt;p&gt;逐字取自 26.3 源码 {@code SkyRenderer.java:252-253}：形参表就是
+     * {@code (Supplier<String>, RenderPass, GpuBufferSlice, GpuBuffer index, GpuBuffer vertex, int baseVertex)}。
+     * 太阳、月亮、末地闪烁<b>共用这一个私有方法</b>（{@code :222/:229/:239}）⇒ 注入点必须按 label 分流。
+     */
+    public static final String SKY_RENDERER_DRAW_CELESTIAL_BODY =
+            "drawCelestialBody(Ljava/util/function/Supplier;"
+                    + "Lcom/mojang/renderpearl/api/commands/RenderPass;"
+                    + "Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;"
+                    + "Lcom/mojang/renderpearl/api/buffers/GpuBuffer;"
+                    + "Lcom/mojang/renderpearl/api/buffers/GpuBuffer;I)V";
+
+    /** {@code RenderPass#setPipeline} —— 日月换管线的那次调用（原版 {@code SkyRenderer:256}）。 */
+    public static final String RENDER_PASS_SET_PIPELINE =
+            "com/mojang/renderpearl/api/commands/RenderPass.setPipeline"
+                    + "(Lcom/mojang/renderpearl/api/pipeline/CompiledRenderPipeline;)V";
+
     public static final String SKY_RENDERER_RENDER =
             "render(Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;"
                     + "Lnet/minecraft/client/renderer/state/level/SkyRenderState;)V";

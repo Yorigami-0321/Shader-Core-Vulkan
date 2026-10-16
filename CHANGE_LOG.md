@@ -4,6 +4,23 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百七十一）— 🟢 日月这条接线落地（M-16）：原版继续驱动 draw，我方只换管线 + 补绑包的 `gbuffers_skytextured`
+
+> **verdict = 天空第二半的**代码**齐了（新键默认关 ⇒ 画面逐字不变）；判据按本轮序留给统一取证那一轮，不在这里签。**
+
+- **本次改了什么**（新类 3 + 接线 6 处）：
+  - `mixin/SkyRendererCelestialPipelineMixin`（**登记为 M-16**，`docs/04-SPEC` §5.0 新增一行）：`@WrapOperation` 注在 `SkyRenderer.drawCelestialBody:256` 那次 `RenderPass.setPipeline`，用 `@Local(argsOnly=true)` 同时拿 `RenderPass` 与 `label`；**首行是 bridge 埋点转发**（`SkyCelestialPack.onCelestialSite`，M1 ③），**先备料成功再换管线**（备料失败原样交回 `requested` ⇒ 不会出现「换了着色器却没绑 uniform」那种 pass 体内崩帧，GAP-036 ④ 的形状）；`require=1/expect=1`。
+  - `bridge/SkyCelestialPack`：派生管线**逐字继承** `CELESTIAL` 的 `GLOBALS + PROJECTION + DYNAMIC_TRANSFORMS + SAMPLER0 + POSITION_TEX + QUADS + OVERLAY`（少 `SAMPLER0` 就会被原版那句 `setUniform("Sampler0", …)` 抛），再加我方 `packBindGroupLayout` 与包的两个着色器 id；`available()` 一句话说清不接管的四种原因；🔴 **按 label 白名单只认 Sun/Moon** —— `renderEndFlash` 共用同一个私有方法，不区分就会拿包的日月程序去画末地闪烁。
+  - 🔴 **每次 draw 一份自己的块代**：写块是 CPU 直写（`VulkanGpuBuffer.map` = `vmaMapMemory`，`:107,145-146`）⇒ pass 内可写；但日与月是同程序两次 draw、`renderStage` 又在块里 ⇒ `rotate()` → 写 → 绑，顺序由守卫钉住（先写后 rotate 会把刚写的代让出去）。
+  - `GbufferVertexSources` 多一条分流：日月走 `CelestialVertexAdapterGenerator`（`POSITION_TEX` 只有 `Position`/`UV0`，chunk 家族那些属性它一个都没有）；`PackTerrainSource.SKYTEXTURED_PROGRAM` + 虚拟包表一条 + `mrt.skyPackTexturedShader` 进 memo 键与热重载快照 + `SkyPackGbuffer.skyTexturedWired()` 改为读 `SkyCelestialPack.wired()`（唯一真源，不复制第二份条件）。
+- **为什么这条不做成 modifier**：`PipelineModifier` 拿不到 `RenderPass` ⇒ 补绑无处下手（本仓此前设想的「零注入点」在这格不成立，理由已写进登记行）。
+- **影响的文档**：`docs/04-SPEC`（M-16 登记行）、`docs/13`（GAP-027 那行从「下一步是接线」改成「接线已落、真机判据未签」）。
+- **测试结果**：`./gradlew build` → **BUILD SUCCESSFUL，1251 项 0 失败**（+9 条：`SkyCelestialPackWiringTest` 4 + `CelestialVertexAdapterGeneratorTest` 5）。中途三次红都是守卫正常工作：`MixinWiringTest`（首行必须是埋点转发）、`ClassLineRatchetTest`×2（`VkDispConfig` 撞 1047 ⇒ 把两处重复口径的注释压成指针，未抬基线；新键的注释合进 `.comment` 一行）。
+- 🔴 **未解决**：① 真机判据未签（`Mixin apply failed=0`、两条自报、日月同机位对照、正午/夜晚两档）⇒ 本轮序里排在三件功能做完之后；② 穹顶/星点换成包的 `gbuffers_skybasic` 走同一族管线替换（并决定那张全屏三角与 clip 中性化是否退役）；③ 水 2/2（`mat`/`recolor` 需扩 chunk 顶点格式）；④ 云 = 链正确性 `GAP-058`（需真机）；⑤ 上一条 commit（`8505dd2`）因 `github.com:443` 路由层被拦**尚未推送**，本轮一并补推。
+- **是否已提交**：✅ 本轮结束即提交并推送。
+
+---
+
 ## 2026-10-16（一百七十）— 🟡 日月这半先把「供不供得出」证死：`CelestialVertexAdapterGenerator` + 真 BSL `gbuffers_skytextured` 逐条对账通过
 
 > **verdict = 契约层没有障碍（含「片元只写槽 0」这条决定附件数的关键事实），剩下的全是 draw 点接线；本行明确标「还没接」，不许读成日月已支持。**

@@ -220,6 +220,12 @@ public final class VkDispVirtualPack {
         //   适配层而走 post 恒等 MVP（判定与理由见 PackTerrainSource.postVertexProgram），
         //   且它**不进** MrtPlan 的冻结集 —— 那条 pass 只有 1 个颜色目标，并进去会悄悄把地形
         //   pass 的附件数抬到 2，而附件数与派生管线不匹配是 setPipeline 抛 = 崩客户端。
+        // GAP-027 天空线第三刀：日月（gbuffers_skytextured）。闸门 = mrt.skyPackTexturedShader。
+        //   🔖 它的顶点源既不是 chunk 适配层也不是 post 恒等 MVP（分流点见 GbufferVertexSources）；
+        //   它不进 MrtPlan 冻结集（与天空那条同因：那条 pass 只 1 个颜色目标）。
+        table.put(dev.vkdisp.pack.PackTerrainSource.SKYTEXTURED_PROGRAM, new GbufferArtifacts(
+                dev.vkdisp.pack.PackTerrainSource.SKYTEXTURED_PROGRAM,
+                () -> VkDispConfig.MRT_SKY_PACK_TEXTURED_SHADER.get()));
         table.put(dev.vkdisp.pack.PackTerrainSource.SKY_PROGRAM, new GbufferArtifacts(
                 dev.vkdisp.pack.PackTerrainSource.SKY_PROGRAM,
                 () -> VkDispConfig.MRT_SKY_PACK_SHADER.get()));
@@ -1051,6 +1057,7 @@ public final class VkDispVirtualPack {
                 // GAP-054 包侧二分总闸、GAP-007 导数接管：同样在生成期/注册期被读一次 ⇒ 必须进键（QD-08 那一族）。
                 + "|" + VkDispConfig.PACK_DERIVED_PROGRAMS.get()
                 + "|" + VkDispConfig.MRT_DERIVATIVE_TBN.get()
+                + "|" + VkDispConfig.MRT_SKY_PACK_TEXTURED_SHADER.get()
                 + "|" + dev.vkdisp.pack.PackOptionOverrideSwitch.spec();
     }
 

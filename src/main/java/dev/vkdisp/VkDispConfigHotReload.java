@@ -86,7 +86,8 @@ public final class VkDispConfigHotReload {
     private record Snapshot(boolean enabled, boolean debugLog, String packProfile,
             String shaderPack, boolean capabilityGate,
             boolean chainEnableGating, String optionOverrides, boolean packWater,
-            boolean skyPackShader, boolean derivedPrograms, boolean derivativeTbn) {}
+            boolean skyPackShader, boolean derivedPrograms, boolean derivativeTbn,
+            boolean skyPackTexturedShader) {}
 
     /** 最近一次快照；null = 还没见 Loading（防御位，实际由首载 Loading 填充）。 */
     private static volatile Snapshot last;
@@ -336,6 +337,8 @@ public final class VkDispConfigHotReload {
                 VkDispConfig.PACK_DERIVED_PROGRAMS.get(),
                 // GAP-007 导数接管：同样只在生成期被读一次（它决定片元源文本改不改）⇒ 不进边沿判定
                 //   就是「写了配置、日志照打、源文本没变」那一族死开关（QD-08 第五例同形）。
-                VkDispConfig.MRT_DERIVATIVE_TBN.get());
+                VkDispConfig.MRT_DERIVATIVE_TBN.get(),
+                // GAP-027 日月：同样只在生成期读一次（它决定日月适配层生不生成）。
+                VkDispConfig.MRT_SKY_PACK_TEXTURED_SHADER.get());
     }
 }
