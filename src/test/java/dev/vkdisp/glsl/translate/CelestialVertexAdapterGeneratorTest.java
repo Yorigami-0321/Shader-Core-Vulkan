@@ -22,6 +22,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -113,5 +114,67 @@ class CelestialVertexAdapterGeneratorTest {
                     () -> "真包要 '" + input.name() + "'（" + input.type() + " @location "
                             + input.location() + "）而适配层没交；实际:\n" + result.glsl());
         }
+    }
+
+    @Test
+    @DisplayName("🔴 POSITION 形状（穹顶）：没有 UV0 ⇒ 不许引用它；alpha 必须中性交 1.0")
+    void positionFormatSuppliesAlphaAndNeverReadsUv0() {
+        List<PackTerrainProgram.Input> inputs = List.of(
+                in(0, "float", "alpha"), in(1, "vec3", "sunVec"), in(2, "vec3", "upVec"));
+        CelestialVertexAdapterGenerator.Result result = CelestialVertexAdapterGenerator.generate(
+                CelestialVertexAdapterGenerator.Format.POSITION, inputs);
+        assertNotNull(result.glsl(), () -> "穹顶形状被拒：" + result.diagnostics());
+        // 只有 Position 一条属性：顶点流里没有 UV0 ⇒ 引用它 = 加载期抛，绝不出现。
+        assertTrue(result.glsl().contains("alpha = 1.0;"), () -> "穹顶 alpha 必须中性 1.0：\n" + result.glsl());
+        assertTrue(result.constantSupplies().contains("alpha"), "中性 alpha 必须进常量供值名单（自报读得出）");
+        assertFalse(result.glsl().contains("in vec2 UV0"),
+                "POSITION 形状不许声明/引用 UV0（穹顶顶点流根本没有这条属性）");
+        assertFalse(result.glsl().contains("= UV0"),
+                "穹顶适配层若引用未声明的 UV0 就是加载期抛的半接线");
+        // 形状头里只有 Position 一条 in。
+        assertEquals(1, countIn(result.glsl()), "POSITION 形状只该有 1 条 in 属性");
+    }
+
+    @Test
+    @DisplayName("🔴 POSITION 形状遇到 uv 名字也不许绑 UV0：落到零值 + 点名，而不是引用不存在的属性")
+    void positionFormatRefusesUvBinding() {
+        CelestialVertexAdapterGenerator.Result result = CelestialVertexAdapterGenerator.generate(
+                CelestialVertexAdapterGenerator.Format.POSITION, List.of(in(0, "vec2", "texCoord")));
+        assertNotNull(result.glsl());
+        assertFalse(result.glsl().contains("= UV0"), "对不上形状的通道只能零值，不能引用 UV0 属性");
+        assertTrue(result.glsl().contains("texCoord = vec2(0.0);"),
+                () -> "实际:\n" + result.glsl());
+    }
+
+    @Test
+    @DisplayName("🔬 真包对账：BSL 的 gbuffers_skybasic（穹顶）契约能被 POSITION 形状逐条满足")
+    void realBslSkyBasicContractIsServableByPositionFormat() {
+        Assumptions.assumeTrue(Files.isDirectory(INVENTORY), "库存目录不在本地（run/shaderpacks/）");
+        PackTerrainSource.Result skyBasic = PackTerrainSource.generate(
+                INVENTORY, "", "", null, "gbuffers_skybasic");
+        assertTrue(skyBasic.wired(),
+                "BSL 带 gbuffers_skybasic；诊断：" + skyBasic.diagnostics().stream().map(d -> d.message()).toList());
+        PackTerrainProgram program = skyBasic.program();
+        CelestialVertexAdapterGenerator.Result result = CelestialVertexAdapterGenerator.generate(
+                CelestialVertexAdapterGenerator.Format.POSITION, program.inputs());
+        assertNotNull(result.glsl(), () -> "真包穹顶契约本层供不了："
+                + result.diagnostics().stream().map(d -> d.message()).toList());
+        for (PackTerrainProgram.Input input : program.inputs()) {
+            assertTrue(result.glsl().contains(
+                            "layout(location = " + input.location() + ") out " + input.type() + " "
+                                    + input.name() + ";"),
+                    () -> "穹顶真包要 '" + input.name() + "'（" + input.type() + " @" + input.location()
+                            + "）而 POSITION 适配层没交；实际:\n" + result.glsl());
+        }
+        assertFalse(result.glsl().contains("= UV0"), "穹顶真包不该逼出 UV0 引用");
+    }
+
+    private static int countIn(String glsl) {
+        int n = 0;
+        java.util.regex.Matcher m = Pattern.compile("\\)\\s+in\\s+\\w+\\s+\\w+\\s*;").matcher(glsl);
+        while (m.find()) {
+            n++;
+        }
+        return n;
     }
 }

@@ -4,6 +4,20 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百七十三）— 🧩 落穹顶路线的**顶点侧独立零件**：把日月适配层生成器泛化成天空生成器（加 `POSITION` 形状 + `alpha` 中性供值），只零件、不接线
+
+> **verdict = 本轮只补「穹顶/星点换管线」必需的那块可离线验证的顶点生成逻辑，**不**动 `f59cc5c`（一百七十二）钉下的那条顺序约束**：退役全屏接管 + 改 skybasic 顶点源 + 三处 mixin 换管线必须同一次落地，且其正确性只有画面能判 ⇒ 仍归统一取证那一轮。本轮那块零件尚未被任何渲染路径调用，默认档画面零变化。
+
+- **为什么先落这块**：一百七十二把顺序钉死后，穹顶路线里**唯一能在离线守卫下证伪的**一环就是顶点适配层（其余全是资源位/管线注册/渲染线程，都要画面）。把「真机才能判」的那坨留到统一取证，把「纯冷路径字符串、能逐条签核对」的这一块先做并测绿 —— 与本仓既有纪律一致（`DerivativeTbn` / `RenderStageSupply` 都是先落成带守卫的独立零件再接线）。
+- **改了什么**（都到文件:行）：① `glsl/translate/CelestialVertexAdapterGenerator.java` 加 `enum Format{POSITION_TEX, POSITION}`：`POSITION_TEX`=日月那条流（Position+UV0，行为逐字不变，`generate(inputs)` 旧重载仍在、默认走它）；`POSITION`=穹顶那条流（`DefaultVertexFormat.POSITION`，只 Position，`RenderPipelines.java:1042`）。② 供值表 `supply(...)` 现按形状门控 `UV0`：`POSITION` 没有 UV0 ⇒ `texCoord` 不引用它、落零值 + WARN（引用一条本顶点流没有的属性=加载期抛的半接线，这是这块零件最主要的错误形状）。③ 新增 `alpha` 中性供 `1.0`（穹顶应不透明；BSL 用 alpha 表达「这片盖不盖」，STARS/MOON 站的 alpha=0 是**逐站**渲染期口径，不塞进生成期常量）。
+- **依据**（读的是交进包资源的真包，不是文档转述）：`run/bsl-inspect/shaders/program/gbuffers_skybasic.glsl:129-182` —— 片元从 `gl_FragCoord` 反解 `viewPos`、`#ifdef STARS`/`SHADER_SUN_MOON` 都吃 `viewPos`，声明的 varying 只有 `alpha`/`sunVec`/`upVec`；顶点 `gl_Position=ftransform()` ⇒ 几何路线要的就是「Position 进、真实 MVP 出、三条 varying 供上」。这**证实**了一百七十二的判读：穹顶/星点/晨昏是同一条 skybasic 按 `renderStage` 分派（`:169` STARS、`:179` MOON 各把 alpha 归零）。
+- **影响的文档**：`docs/13` GAP-027 天空行补「穹顶顶点零件已落、待接线」。
+- **测试结果**：`./gradlew --offline build` 全绿（1255 用例，0 失败）。新增 3 条守卫到 `CelestialVertexAdapterGeneratorTest`：`POSITION` 只 1 条 in、中性 `alpha=1.0`、绝不引用 `UV0`、`texCoord` 落零值、**真 BSL skybasic 契约能被 POSITION 形状逐条满足**。`MethodLengthRatchetTest` 一度转红（`supply` 加 `alpha` 支过 60 行）⇒ 把每条 `case` 收成单行修回，**未调基线**。
+- **⛔ 仍未完成（如实）**：这块零件**还没接进任何管线** —— 让穹顶真按包 skybasic 画，仍要同一次做：把 `SKY_PROGRAM` 从 `postVertexProgram` 摘掉、`GbufferVertexRoute`/`SkyPackGbuffer`/`SkyPackGeometryRouteTest` 退役、三处 `@WrapOperation`（`SKY`/`STARS`/`SUNRISE_SUNSET`，各自 binding/topology/blend + `renderStage` 供值）换管线。这些是画面判据，归统一取证轮。
+- **是否已提交**：是（单独提交并推送；`skybasic` 顶点源那格因与全屏接管抢同一资源位，仍按一百七十二留待整体落地）。
+
+---
+
 ## 2026-10-16（一百七十二）— 🔴 排到穹顶/星点那三处时撞到一条结构约束：**换管线必须先退役全屏接管那一路**，两者不能先后摆
 
 > **verdict = 本轮不落代码，只把顺序钉死：`gbuffers_skybasic` 在虚拟包里只有一个适配层资源位，而「全屏那一路」与「原版驱动那三处」要的是两种不同的顶点源 —— 谁后写谁覆盖谁，同时画又是双层天空。**

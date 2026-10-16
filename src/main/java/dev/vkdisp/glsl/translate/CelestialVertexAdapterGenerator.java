@@ -41,34 +41,59 @@ import java.util.Set;
 public final class CelestialVertexAdapterGenerator {
 
     /** 原版日月顶点流的两条属性（名字与 {@code DefaultVertexFormat.POSITION_TEX} 逐字一致）。 */
-    private static final String ATTRIBUTES = """
+    private static final String ATTRIBUTES_TEX = """
             layout(location = 0) in vec3 Position;
             layout(location = 1) in vec2 UV0;
             """;
 
+    /** 原版天空穹顶顶点流的单条属性（{@code DefaultVertexFormat.POSITION}：{@code RenderPipelines.java:1042}）。 */
+    private static final String ATTRIBUTES_POSITION = """
+            layout(location = 0) in vec3 Position;
+            """;
+
     private static final String NL = String.valueOf((char) 10);
 
+    /** 顶点流形状（= 原版那条管线声明的 {@code DefaultVertexFormat}）：决定本层能读哪几条属性。 */
+    public enum Format {
+        /** 日月：{@code POSITION_TEX}（有 UV0，无 Color）。 */
+        POSITION_TEX(true),
+        /** 穹顶（{@code gbuffers_skybasic}）：{@code POSITION}（既无 UV0 也无 Color）。 */
+        POSITION(false);
+
+        final boolean hasUv0;
+
+        Format(boolean hasUv0) {
+            this.hasUv0 = hasUv0;
+        }
+
+        String attributes() {
+            return this == POSITION_TEX ? ATTRIBUTES_TEX : ATTRIBUTES_POSITION;
+        }
+    }
+
     /** 头部：引擎的三个内建块（与 {@code GLOBALS}/{@code PROJECTION}/{@code DYNAMIC_TRANSFORMS} 一套布局同源）。 */
-    private static final String HEADER = """
-            #version 330
-            #extension GL_ARB_separate_shader_objects : require
+    private static String header(Format format) {
+        return """
+                #version 330
+                #extension GL_ARB_separate_shader_objects : require
 
-            // vkdisp 日月顶点适配层（按所选包 gbuffers_skytextured 的 varying 契约**自动生成**）
-            //
-            // 输入只有原版 POSITION_TEX 的两条属性；位置算式与原版 core/position_tex 同语义
-            // （ProjMat * ModelViewMat * Position）—— 天体姿态由原版留在 DynamicTransforms 里，本层不重算。
-            #include <minecraft:globals.glsl>
-            #include <minecraft:projection.glsl>
-            #include <minecraft:dynamictransforms.glsl>
+                // vkdisp 天空顶点适配层（按所选包天空程序的 varying 契约**自动生成**）
+                //
+                // 输入只有原版顶点流的属性；位置算式与原版同语义（ProjMat * ModelViewMat * Position）——
+                // 天体姿态由原版留在 DynamicTransforms 里，本层不重算。
+                #include <minecraft:globals.glsl>
+                #include <minecraft:projection.glsl>
+                #include <minecraft:dynamictransforms.glsl>
 
-            """ + ATTRIBUTES + """
+                """ + format.attributes() + """
 
-            // GAP-004 的自定义块：眼空间太阳方向（块名必须与绑定组布局逐字一致）
-            layout(std140) uniform VkDispTerrainParams {
-                vec4 SunDir;
-            };
+                // GAP-004 的自定义块：眼空间太阳方向（块名必须与绑定组布局逐字一致）
+                layout(std140) uniform VkDispTerrainParams {
+                    vec4 SunDir;
+                };
 
-            """;
+                """;
+    }
 
     /** {@code main()} 开头：先把「这一帧这片几何的视空间位置」算出来，下面几条 varying 都从它取。 */
     private static final String MAIN_HEAD = NL + """
@@ -90,97 +115,88 @@ public final class CelestialVertexAdapterGenerator {
     }
 
     /**
-     * 生成适配层。
+     * 生成适配层（默认 {@link Format#POSITION_TEX} = 日月那条顶点流）。
      *
      * @param inputs 包<b>片元</b>声明的 varying 契约（逐位置逐名字对齐的目标）
      */
     public static Result generate(List<PackTerrainProgram.Input> inputs) {
+        return generate(Format.POSITION_TEX, inputs);
+    }
+
+    /**
+     * 生成适配层。
+     *
+     * @param format 原版喂给这笔 draw 的顶点流形状（决定本层能读哪几条属性）
+     * @param inputs 包<b>片元</b>声明的 varying 契约（逐位置逐名字对齐的目标）
+     */
+    public static Result generate(Format format, List<PackTerrainProgram.Input> inputs) {
+        Format shape = format == null ? Format.POSITION_TEX : format;
         List<TranslateDiagnostic> diagnostics = new ArrayList<>();
         Set<String> constants = new LinkedHashSet<>();
         StringBuilder declarations = new StringBuilder();
         StringBuilder body = new StringBuilder();
         for (PackTerrainProgram.Input input : inputs == null ? List.<PackTerrainProgram.Input>of() : inputs) {
-            String assignment = supply(input, constants);
+            String assignment = supply(input, shape, constants);
             if (assignment == null) {
-                diagnostics.add(TranslateDiagnostic.warn(
-                        "日月适配层不认识 varying '" + input.name() + "'（类型 " + input.type()
-                                + "，location " + input.location() + "），按类型零值供值 —— 该通道本轮"
-                                + "**不承诺正确**（不猜，X9）", null, 0));
-                String zero = zeroValue(input.type());
-                if (zero == null) {
-                    diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.ERROR,
-                            "日月适配层供不了类型 '" + input.type() + "'（名字 " + input.name()
-                                    + "）⇒ 本条程序<b>不接线</b>（交回原版 position_tex，不半接）", null, 0));
+                assignment = fallbackAssignment(input, constants, diagnostics);
+                if (assignment == null) {
                     return new Result(null, diagnostics, List.of());
                 }
-                assignment = input.name() + " = " + zero;
-                constants.add(input.name());
             }
             declarations.append("layout(location = ").append(input.location()).append(") out ")
                     .append(input.type()).append(' ').append(input.name()).append(';').append(NL);
             body.append("    ").append(assignment).append(';').append(NL);
         }
         diagnostics.add(TranslateDiagnostic.info(
-                "日月顶点适配层已生成：varyings=" + (inputs == null ? 0 : inputs.size())
+                "天空顶点适配层已生成：shape=" + shape + " varyings=" + (inputs == null ? 0 : inputs.size())
                         + "（常量/中性供值 " + constants.size() + " 条："
-                        + (constants.isEmpty() ? "无" : String.join(", ", constants)) + "）"
-                        + "；输入属性=POSITION_TEX 的 Position/UV0 两条", null, 0));
-        return new Result(HEADER + declarations + MAIN_HEAD + body + "}" + NL, diagnostics,
+                        + (constants.isEmpty() ? "无" : String.join(", ", constants)) + "）", null, 0));
+        return new Result(header(shape) + declarations + MAIN_HEAD + body + "}" + NL, diagnostics,
                 List.copyOf(constants));
     }
 
-    /** 三档供值表；返回 {@code null} = 这个名字本层不认识。 */
-    private static String supply(PackTerrainProgram.Input input, Set<String> constants) {
+    /**
+     * 本层不认名字时的<b>零值兜底</b>：先 WARN（该通道本轮不承诺），类型不认识则 ERROR 并返回 {@code null}
+     * （调用方据此<b>整条不接线</b>，绝不半接 —— 半接线的症状是加载期抛，不是「效果差」）。
+     */
+    private static String fallbackAssignment(PackTerrainProgram.Input input, Set<String> constants,
+            List<TranslateDiagnostic> diagnostics) {
+        diagnostics.add(TranslateDiagnostic.warn(
+                "天空适配层不认识 varying '" + input.name() + "'（类型 " + input.type()
+                        + "，location " + input.location() + "），按类型零值供值 —— 该通道本轮"
+                        + "**不承诺正确**（不猜，X9）", null, 0));
+        String zero = zeroValue(input.type());
+        if (zero == null) {
+            diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.ERROR,
+                    "天空适配层供不了类型 '" + input.type() + "'（名字 " + input.name()
+                            + "）⇒ 本条程序<b>不接线</b>（交回原版天空，不半接）", null, 0));
+            return null;
+        }
+        constants.add(input.name());
+        return input.name() + " = " + zero;
+    }
+
+    /** 三档供值表；返回 {@code null} = 这个名字本层不认识（或形状对不上）。 */
+    private static String supply(PackTerrainProgram.Input input, Format format, Set<String> constants) {
         String name = input.name();
-        // 🔴 类型也要对上：同名不同类型（包写了 vec2 的 texCoord 而本层交 vec2 是好的，
-        //    但反过来若包把 normal 声明成 vec4）就只能按零值供 —— 下面每条都先校验类型。
+        // 🔴 类型必须对上（同名不同类型只能按零值供）；属性可用性也必须对上形状：
+        //    {@code POSITION}（穹顶）没有 UV0，只有 {@code POSITION_TEX}（日月）有 —— 引用一条本顶点流
+        //    没有的属性就是加载期抛的半接线，所以 texCoord 只在 hasUv0 时交 UV0，否则落零值 + WARN。
+        //    中性常量（sunVec/upVec/eastVec/alpha/color）一律进 constants 名单，供自报逐条读回。
+        boolean v3 = is("vec3", input);
         switch (name) {
-            case "texCoord", "vUv", "uv", "texCoord0" -> {
-                if (is("vec2", input)) {
-                    return name + " = UV0";
-                }
-            }
-            case "sunVec" -> {
-                if (is("vec3", input)) {
-                    constants.add(name);
-                    return name + " = normalize(SunDir.xyz)";
-                }
-            }
-            case "upVec" -> {
-                if (is("vec3", input)) {
-                    constants.add(name);
-                    return name + " = normalize(ModelViewMat[1].xyz)";
-                }
-            }
-            case "eastVec" -> {
-                if (is("vec3", input)) {
-                    constants.add(name);
-                    return name + " = normalize(ModelViewMat[0].xyz)";
-                }
-            }
-            case "viewVector" -> {
-                if (is("vec3", input)) {
-                    return name + " = normalize(vkdispAdapterViewPos)";
-                }
-            }
-            case "dist" -> {
-                if (is("float", input)) {
-                    return name + " = length(vkdispAdapterViewPos)";
-                }
-            }
-            // 🔴 原版日月顶点流**没有 Color 元素**（POSITION_TEX 只有 Position/UV0）⇒ 只能给乘法单位元。
-            //   这不是「凑一个值」：1.0 是 albedo 乘法的中性元，不改包算出来的颜色；而绑错通道
-            //   （拿图集或方块色）才会编造数据。缺的那半（原版日月的雨亮度过调制）属
-            //   「按笔的 vertexColor 供值」另一格，见 docs/13 GAP-027 的日月行。
-            case "color" -> {
-                if (is("vec4", input)) {
-                    constants.add(name);
-                    return name + " = vec4(1.0)";
-                }
-            }
-            default -> {
-                return null;
-            }
+            case "texCoord", "vUv", "uv", "texCoord0" -> { if (format.hasUv0 && is("vec2", input)) return name + " = UV0"; }
+            case "sunVec" -> { if (v3) { constants.add(name); return name + " = normalize(SunDir.xyz)"; } }
+            case "upVec" -> { if (v3) { constants.add(name); return name + " = normalize(ModelViewMat[1].xyz)"; } }
+            case "eastVec" -> { if (v3) { constants.add(name); return name + " = normalize(ModelViewMat[0].xyz)"; } }
+            case "viewVector" -> { if (v3) return name + " = normalize(vkdispAdapterViewPos)"; }
+            case "dist" -> { if (is("float", input)) return name + " = length(vkdispAdapterViewPos)"; }
+            // 穹顶（SKY 站）的 alpha 应不透明 ⇒ 中性 1.0（不改包算出的天空色）；STARS/MOON 站 alpha=0
+            // 是<b>逐站</b>抑制口径（渲染期读 renderStage），不属生成期常量。缺 alpha 通道 = 半接线。
+            case "alpha" -> { if (is("float", input)) { constants.add(name); return name + " = 1.0"; } }
+            // 日月顶点流（POSITION_TEX）没有 Color 元素 ⇒ 只能交乘法单位元 vec4(1.0)（绑错通道才是编造数据）。
+            case "color" -> { if (is("vec4", input)) { constants.add(name); return name + " = vec4(1.0)"; } }
+            default -> { return null; }
         }
         return null;
     }
