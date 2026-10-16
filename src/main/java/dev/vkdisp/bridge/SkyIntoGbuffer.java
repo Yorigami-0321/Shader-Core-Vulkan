@@ -144,31 +144,12 @@ public final class SkyIntoGbuffer implements CustomSkyboxRenderer {
             Matrix4fc viewRotationMatrix, GpuBufferSlice skyFog) {
         hookCalls++;
         reportObservationFace(levelRenderState, skyRenderState);
-        // 🔖 与原版第 133 行同一条：天空那一刻的雾就是 skyFog。我方包天空走 bindDefaultUniforms，
-        //   不吃这一步也不报错，但留着它 ⇒ 两档（包 / 原版）在雾上口径一致（GAP-038 的同族）。
+        // 🔖 与原版第 133 行同一条：天空那一刻的雾就是 skyFog。留在这里 ⇒ 包/原版两档在雾上口径一致（GAP-038 同族）。
         RenderSystem.setShaderFog(skyFog);
-        MrtTerrainPass.prepareGbufferViews();
-        GpuTextureView color = MrtTerrainPass.poolWriteView(0);
-        GpuTextureView depth = MrtTerrainPass.depthView();
-        if (color == null) {
-            skipOnce("gbuffer-view-null");
-            return false;
-        }
-        if (depth == null) {
-            // 🔴 包天空那条 pass 不能挂 null 深度（实测：客户端 exit 1，见 SkyPackGbuffer#render 注释）
-            skipOnce("gbuffer-depth-null");
-            return false;
-        }
-        if (!SkyPackGbuffer.enabled()) {
-            // 包天空不接管（关档 / 契约不满足）⇒ 交回原版那一笔，它的两个视图由 M-11 换成同一张图。
-            return false;
-        }
-        lastFrameByPack = SkyPackGbuffer.render(color, depth);
-        if (!lastFrameByPack) {
-            return false;
-        }
-        paintedThisFrame = true;
-        return true;
+        // 🔴🔴 2026-10-16 穹顶换管线轮：全屏接管退役（SkyPackGbuffer 已删）。本钩子恒回 false ⇒ 原版那笔天空照跑，
+        //   它的两个视图由 M-11 换成同一张 colortex0 + gbuffer 深度；穹顶/星点/晨昏改由 SkyGeometryPack 那三处
+        //   @WrapOperation 在原版驱动这笔 draw 时换成包的 gbuffers_skybasic（默认关，闸门见 SkyGeometryPack#enabledFor）。
+        return false;
     }
 
     /**
@@ -276,10 +257,9 @@ public final class SkyIntoGbuffer implements CustomSkyboxRenderer {
      * （地形那一槽的 LOAD/CLEAR 判据用的就是它）。
      */
     private static String whoWillPaint() {
-        if (SkyPackGbuffer.enabled()) {
-            return "包的 skybasic(本帧要写)";
-        }
-        return viewsIntoGbuffer() ? "原版那一笔(M-11)" : "都不写(gbuffer 关档)";
+        // 全屏接管退役后，天空只由「原版那一笔（视图经 M-11 换成 colortex0）」或「都不写（gbuffer 关档）」两种；
+        // 穹顶/星点/晨昏的包着色由 SkyGeometryPack 的三处 @WrapOperation 在那同一笔里换管线，不另开画方。
+        return viewsIntoGbuffer() ? "原版那一笔(M-11，可被包换管线)" : "都不写(gbuffer 关档)";
     }
 
     /**

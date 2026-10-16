@@ -4,6 +4,18 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百七十九）— 🧹 退役全屏接管那一路（完成天空的路线迁移）：删 `SkyPackGbuffer`/`GbufferVertexRoute` + 死 post 路线，天空自此<b>只有一条几何路</b>
+
+> **verdict = 一百七十二钉的顺序约束（换管线必与退役同批）至此<b>闭合</b>：换管线（穹顶/星点/晨昏 + 日月，默认关）已在，本轮把被取代的全屏接管<b>整条撤下</b> ⇒ 天空只剩「原版驱动几何 + `SkyGeometryPack` 换管线」一条路。全程离线可证（build 绿 + MixinWiring），不改默认档画面（那条路本已恒关、惰性）。**
+
+- **改了什么**：① 删 `bridge/SkyPackGbuffer.java` + `pack/GbufferVertexRoute.java` + 守卫 `bridge/SkyPackGRoute…`（`SkyPackGeometryRouteTest.java`，整份测的就是退役中的那两块的谓词）。② `SkyIntoGbuffer.renderSky` 去掉全屏接管分支 ⇒ 恒 `return false`（原版那笔照跑，视图仍由 M-11 换成 colortex0；包着色由 `SkyGeometryPack` 三处 @WrapOperation 在同一笔里换）；`whoWillPaint()` 去 `SkyPackGbuffer.enabled()` 分支。③ `PackTerrainSource` 删死掉的 `linkPostVertexRoute` + `selectVertexSource` + 三处 `GbufferVertexRoute.note`（`postVertexProgram` 已恒 false，那条 gbuffer post 路线无任何程序触达）。④ `RenderStageSupplyTest` 那条读 `SkyPackGbuffer.java` 文本的针 ⇒ 改读 `SkyGeometryPack.java`（`RenderStageSupply.enter(site.stageMacro)` + try-with-resources + scoped 写环在 enter 之后）。
+- **保留**：`PostVertexLinker` 的 clip 中性化<b>代码留</b>（`PackPostChain` 后处理链那一族仍用，守卫 `ndcNativeClipIsLeftAlone` 钉它对链是恒等）—— 只是不再有 gbuffer 程序走它。
+- **测试结果**：`./gradlew --offline build` 全绿（1254 用例，0 失败）。
+- **天空功能现状（据代码）**：五站全接线 + 单一路线 + 退役完成。⛔ 唯一还剩的是<b>画面判据</b>：翻 `mrt.skyPackTexturedShader=true` 真机看图（穹顶/星点/晨昏/日月是否包算、有无 validateDraw 崩）—— 归统一取证轮（MCP 桥此刻不可达，无法本轮签）。
+- **是否已提交**：是（单独提交并推送；默认档画面不变）。
+
+---
+
 ## 2026-10-16（一百七十八）— 🌍 穹顶换管线补全到<b>三站</b>：`renderStars` / `renderSunriseAndSunset` 也接上包的 `gbuffers_skybasic`（gated off）
 
 > **verdict = 一百七十七只接了穹顶一站；本条把星点、晨昏两站用同一个 `SkyGeometryPack`+`SkyGeometrySite` 接上 ⇒ 天空三处可换站<b>全部接线完成</b>。仍默认关，画面不变。**

@@ -259,10 +259,9 @@ public final class PackTerrainSource {
                             + " samplers=" + program.fragmentSamplers().size()
                             + " varyings=" + program.inputs().size(),
                     pack.name(), TranslateDiagnostic.UNKNOWN_LINE));
-            if (postVertexProgram(programName)) {
-                return linkPostVertexRoute(programName, qualified, compiled, program,
-                        pack.name(), profile, diagnostics);
-            }
+            // 🔖🔖 2026-10-16 穹顶换管线轮：天空的 post 恒等 MVP 路线<b>退役</b>（见 SkyPackGbuffer 删除、
+            //   CHANGE_LOG 一百七十六/一百七十二）。今天<b>没有任何 gbuffer 程序</b>走那条路 ⇒ 直接进
+            //   chunk/几何适配层那一条（天空三站由 GbufferVertexSources.skyGeometryAdapter 供 POSITION 顶点）。
             // 🔴 GAP-007 导数接管（chunk 路线）：契约解析必须已经<b>做完</b>（它读的是未改写的那一份），
             //   改写后的那一份才落进资源 —— 顺序反过来就是拿旧契约去接新接口（GAP-022 半翻那一族）。
             //   🔖 判定与改写必须<b>同一次调用</b>产出：适配层要按同一个 plan 补出那两条辅助 varying，
@@ -312,78 +311,6 @@ public final class PackTerrainSource {
      */
     static boolean postVertexProgram(String programName) {
         return false;
-    }
-
-    /**
-     * post 顶点路线：取<b>同一条程序</b>的顶点终稿，交给 {@link PostVertexLinker} 与片元配对。
-     *
-     * <p>🔴 <b>配不上对就整条不接线</b>（而不是退回 chunk 适配层）：片元声明的 varying
-     * （{@code alpha}/{@code sunVec}/{@code upVec}）必须由顶点产出，顶点换不成 ⇒ 链接期才炸，
-     * 而那正是本项目反复付学费的「半接线」形状（片元是包的、顶点不是）。
-     * 与 {@code PackPostChain} 同一条口径：<b>契约从<b>未改写</b>的片元终稿解析，
-     * 落进资源的却是 linker 改写后的那一份</b>（两侧顺序必须与链那一族逐字相同，否则
-     * 「同一个 varying 在两条链上被不同地处理」）。
-     */
-    private static Result linkPostVertexRoute(String programName, String qualifiedName,
-            ShaderPackCompiler.CompileResult compiled, PackTerrainProgram program,
-            String packName, String profile, List<TranslateDiagnostic> diagnostics) {
-        String vertexSource = selectVertexSource(compiled, qualifiedName);
-        if (vertexSource == null) {
-            GbufferVertexRoute.note(programName, null);
-            diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.WARN,
-                    "vkdisp: [GAP-027] " + programName + " 走 post 顶点路线，但包没有成功编译的"
-                            + "顶点终稿（限定名 " + qualifiedName + "）⇒ <b>整条不接线</b>"
-                            + "（退回 chunk 适配层会得到「片元是包的、顶点不是」的半接线 = 链接期炸）",
-                    packName, TranslateDiagnostic.UNKNOWN_LINE));
-            return new Result(null, null, profile, diagnostics);
-        }
-        List<PostPassContract.FragmentInput> inputs = program.inputs().stream()
-                .map(input -> new PostPassContract.FragmentInput(
-                        input.location(), input.type(), input.name()))
-                .toList();
-        PostVertexLinker.Result linked =
-                PostVertexLinker.link(qualifiedName, vertexSource, program.fragmentSource(), inputs);
-        diagnostics.addAll(linked.diagnostics());
-        if (!linked.packVertexSupplied() || linked.vertexSource() == null) {
-            GbufferVertexRoute.note(programName, null);
-            diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.WARN,
-                    "vkdisp: [GAP-027] " + programName + " 的 post 顶点配对未完成"
-                            + "（PostVertexLinker 判否）⇒ 整条不接线，天空保持原版重放档",
-                    packName, TranslateDiagnostic.UNKNOWN_LINE));
-            return new Result(null, null, profile, diagnostics);
-        }
-        // 🔴 GAP-054 的几何路线判据：对**将要交进包资源的那份终稿**量一次，记在这里。
-        //    为什么写点必须与契约产出点同一条路：契约（{@code packContract}）非空 ⇔ 本方法走到过这一行
-        //    ⇒ 渲染期读到的判据不可能比契约旧（X42「两侧同源」在生成期那一半的形态）。
-        boolean clipPassthrough = GbufferVertexRoute.note(programName, linked.vertexSource());
-        diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.INFO,
-                "vkdisp: [GAP-054] " + programName + " 的顶点终稿 clipPassthrough=" + clipPassthrough
-                        + "（=「喂 NDC 全屏三角」这条几何路线的前提；量自终稿文本，不是本层的决定）",
-                packName, TranslateDiagnostic.UNKNOWN_LINE));
-        diagnostics.add(TranslateDiagnostic.of(TranslateDiagnostic.Severity.INFO,
-                "vkdisp: [GAP-027] " + programName + " 走 post 顶点路线: program=" + qualifiedName
-                        + " varyings=" + program.inputs().size()
-                        + " 退化属性=" + linked.degradedAttributes()
-                        + " 合成 varying=" + linked.synthesizedVaryings(),
-                packName, TranslateDiagnostic.UNKNOWN_LINE));
-        return new Result(program, packName, profile, diagnostics,
-                linked.fragmentSource(), linked.vertexSource());
-    }
-
-    /**
-     * 取<b>限定名逐字相等</b>的顶点终稿（与 {@code PackPostChain.selectVertex} 同一条纪律：
-     * 顶点<b>不许跨维度凑</b> —— 片元可以按 world0 &gt; 根 &gt; 其它择优，顶点若跨维度凑，
-     * 就会拿到一份「定义了别的维度才有的宏」的终稿）。
-     */
-    private static String selectVertexSource(ShaderPackCompiler.CompileResult compiled,
-            String qualifiedName) {
-        for (ShaderPackCompiler.CompiledStage stage : compiled.stages()) {
-            if (stage.stage() == ShaderStage.VERTEX && stage.isSuccess()
-                    && qualifiedName.equals(stage.programName())) {
-                return stage.result().text();
-            }
-        }
-        return null;
     }
 
     /**

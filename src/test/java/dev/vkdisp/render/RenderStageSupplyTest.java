@@ -106,13 +106,15 @@ class RenderStageSupplyTest {
         assertFalse(manager.contains("逐 draw 供值**仍未接**"),
                 "这一半已经接上 ⇒ 自报必须跟着改口径（X11：自报不许比代码更自信，也不许比代码更悲观）");
 
-        String sky = Files.readString(Path.of("src/main/java/dev/vkdisp/bridge/SkyPackGbuffer.java"));
-        assertTrue(sky.contains("RenderStageSupply.enter(\"SKY\")"),
-                "天空那笔 draw 必须进 SKY 阶段（BSL 靠这个区分天空与日月/星）");
-        assertTrue(sky.indexOf("RenderStageSupply.enter(\"SKY\")")
-                        < sky.indexOf("updateGbufferBuiltins(PackTerrainSource.SKY_PROGRAM)"),
-                "阶段必须在写环<b>之前</b>生效：环里存的就是那一刻的读数，之后设的值这一帧进不去");
-        assertTrue(sky.contains("try (dev.vkdisp.render.RenderStageSupply.Scope"),
+        // 全屏接管退役后（SkyPackGbuffer 已删），天空三站的 renderStage 由 SkyGeometryPack 现供：
+        //   每站 enter(site.stageMacro)（SKY/STARS/SUNSET），且在写环之前、try-with-resources 结构性还原。
+        String sky = Files.readString(Path.of("src/main/java/dev/vkdisp/bridge/SkyGeometryPack.java"));
+        assertTrue(sky.contains("RenderStageSupply.enter(site.stageMacro)"),
+                "天空那笔 draw 必须按站进 renderStage（SkyGeometrySite 冻的 SKY/STARS/SUNSET；BSL 靠它区分）");
+        assertTrue(sky.lastIndexOf("updateGbufferBuiltins(site.program)")
+                        > sky.indexOf("RenderStageSupply.enter(site.stageMacro)"),
+                "阶段必须在<b>逐站那次写环之前</b>生效：环里存的就是那一刻的读数（ring 初始化那次在前，scoped 那次在后）");
+        assertTrue(sky.contains("try (RenderStageSupply.Scope"),
                 "必须用 try-with-resources 结构性还原（裸 setter 是这一族事故的原形状）");
         assertNull(RenderStageSupply.lastUnknownName());
     }
