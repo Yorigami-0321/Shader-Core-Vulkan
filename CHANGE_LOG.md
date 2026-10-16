@@ -4,6 +4,18 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百七十八）— 🌍 穹顶换管线补全到<b>三站</b>：`renderStars` / `renderSunriseAndSunset` 也接上包的 `gbuffers_skybasic`（gated off）
+
+> **verdict = 一百七十七只接了穹顶一站；本条把星点、晨昏两站用同一个 `SkyGeometryPack`+`SkyGeometrySite` 接上 ⇒ 天空三处可换站<b>全部接线完成</b>。仍默认关，画面不变。**
+
+- **改了什么**：`MixinTargets` 加 `SKY_RENDERER_STARS`（`(RenderPass,float,PoseStack)`，`SkyRenderer.java:266`）与 `SKY_RENDERER_SUNRISE_SUNSET`（`(RenderPass,PoseStack,float,Vector4fc)`，`:284`），PoseStack 逐字 `com.mojang.blaze3d.vertex.PoseStack`。`SkyRendererGeometryPipelineMixin` 再加两个 `@WrapOperation`（同穹顶那一形状：首行埋点 → `enabledFor` → `compiled` → `prepare` 成功才 `original.call(pack)` → `apply`）。
+- **测试结果**：`./gradlew --offline build` 全绿，`MixinWiringTest` 三处注入点合规（首行埋点 / 一键关 / 目标名只引常量）。踩了一处（漏了类收尾大括号）⇒ 补回。
+- **天空功能现状（据代码）**：日月(M-16 `SkyCelestialPack`)+穹顶/星点/晨昏(`SkyGeometryPack`) 五处天空站点<b>全部接线</b>，共用 `mrt.skyPackTexturedShader`（默认 false）+ `mixin.skyCelestialPack` 两道闸。
+- **⛔ 仍未完成（如实）**：① `SkyPackGbuffer`/`GbufferVertexRoute` 已随 re-route 彻底惰性（`SkyIntoGbuffer.renderSky` 那条恒 false），<b>尚未删除</b>（退役残留 + 其守卫 `SkyPackGeometryRouteTest` 一并清）。② 对错是<b>画面判据</b>：翻闸后天空色/混合/`renderStage` 抑制对不对、换管线会不会 validateDraw 崩，只有真机看图能定 ⇒ 统一取证轮。
+- **是否已提交**：是（单独提交并推送；默认档画面不变）。
+
+---
+
 ## 2026-10-16（一百七十七）— 🌍 穹顶**第一站接线落地**（gated off）：`renderSkyDisc` 那笔换用包的 `gbuffers_skybasic`
 
 > **verdict = 穹顶（SKY_DISC）这一笔现在真的会走包程序 —— 但闸门默认关，一笔都不换 ⇒ 默认档画面不变。re-route（一百七十六）让这一刻「打开即用」成为可能，本轮把渲染线程那半边接上。**

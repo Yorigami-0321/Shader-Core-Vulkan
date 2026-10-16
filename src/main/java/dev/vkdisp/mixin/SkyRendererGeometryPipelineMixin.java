@@ -52,4 +52,48 @@ public abstract class SkyRendererGeometryPipelineMixin {
         original.call(pack);
         SkyGeometryPack.apply(self, site, ring);
     }
+
+    /** 星点那笔（原版 {@code SkyRenderer:274} 那次 {@code setPipeline}）换用包的 {@code gbuffers_skybasic}。 */
+    @WrapOperation(method = {MixinTargets.SKY_RENDERER_STARS},
+            at = @At(value = "INVOKE", target = MixinTargets.RENDER_PASS_SET_PIPELINE),
+            require = 1, expect = 1)
+    private void vkdisp$drawStarsWithPackShader(CompiledRenderPipeline requested, RenderPass self,
+            Operation<Void> original) {
+        SkyGeometrySite site = SkyGeometryPack.onSite(SkyGeometrySite.STARS); // M1 ③：首行埋点转发
+        if (!SkyGeometryPack.enabledFor(site)) {
+            original.call(requested);
+            return;
+        }
+        CompiledRenderPipeline pack = SkyGeometryPack.compiled(site);
+        net.minecraft.client.renderer.MappableRingBuffer ring =
+                pack == null ? null : SkyGeometryPack.prepare(site);
+        if (ring == null) {
+            original.call(requested);
+            return;
+        }
+        original.call(pack);
+        SkyGeometryPack.apply(self, site, ring);
+    }
+
+    /** 晨昏那笔（原版 {@code SkyRenderer:298} 那次 {@code setPipeline}）换用包的 {@code gbuffers_skybasic}。 */
+    @WrapOperation(method = {MixinTargets.SKY_RENDERER_SUNRISE_SUNSET},
+            at = @At(value = "INVOKE", target = MixinTargets.RENDER_PASS_SET_PIPELINE),
+            require = 1, expect = 1)
+    private void vkdisp$drawSunriseWithPackShader(CompiledRenderPipeline requested, RenderPass self,
+            Operation<Void> original) {
+        SkyGeometrySite site = SkyGeometryPack.onSite(SkyGeometrySite.SUNRISE_SUNSET); // M1 ③：首行埋点转发
+        if (!SkyGeometryPack.enabledFor(site)) {
+            original.call(requested);
+            return;
+        }
+        CompiledRenderPipeline pack = SkyGeometryPack.compiled(site);
+        net.minecraft.client.renderer.MappableRingBuffer ring =
+                pack == null ? null : SkyGeometryPack.prepare(site);
+        if (ring == null) {
+            original.call(requested);
+            return;
+        }
+        original.call(pack);
+        SkyGeometryPack.apply(self, site, ring);
+    }
 }

@@ -380,6 +380,16 @@ public final class MixinTargets {
     public static final String SKY_RENDERER_SKY_DISC =
             "renderSkyDisc(Lcom/mojang/renderpearl/api/commands/RenderPass;Lorg/joml/Vector3fc;)V";
 
+    /** {@code SkyRenderer#renderStars(RenderPass, float, PoseStack)}（私有，{@code SkyRenderer.java:266}，第 274 行 {@code setPipeline(STARS)}）。GAP-027 星点换管线注入点。 */
+    public static final String SKY_RENDERER_STARS =
+            "renderStars(Lcom/mojang/renderpearl/api/commands/RenderPass;"
+                    + "FLcom/mojang/blaze3d/vertex/PoseStack;)V";
+
+    /** {@code SkyRenderer#renderSunriseAndSunset(RenderPass, PoseStack, float, Vector4fc)}（私有，{@code SkyRenderer.java:284}，第 298 行 {@code setPipeline(SUNRISE_SUNSET)}）。GAP-027 晨昏换管线注入点。 */
+    public static final String SKY_RENDERER_SUNRISE_SUNSET =
+            "renderSunriseAndSunset(Lcom/mojang/renderpearl/api/commands/RenderPass;"
+                    + "Lcom/mojang/blaze3d/vertex/PoseStack;FLorg/joml/Vector4fc;)V";
+
     public static final String SKY_RENDERER_RENDER =
             "render(Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;"
                     + "Lnet/minecraft/client/renderer/state/level/SkyRenderState;)V";
