@@ -302,14 +302,16 @@ public final class PackTerrainSource {
      * 哪些 {@code gbuffers_*} 程序的<b>顶点</b>走「包自己写的 .vsh + post 恒等 MVP」，
      * 而不是 {@code PackVertexAdapterGenerator} 那一族 chunk 顶点适配层。
      *
-     * <p>🔖 判据不是「哪个顺手」而是<b>几何与属性</b>：{@code gbuffers_skybasic} 的片元是屏幕空间的
-     * （{@code gbuffers_skybasic.glsl:84-87} 用 {@code gl_FragCoord} 反解 {@code viewPos}），
-     * 顶点侧不读任何属性、只有 {@code ftransform()} ⇒ 它与后处理链那一族<b>同形</b>；
-     * 而 chunk 适配层要求 {@code ChunkPosition}/{@code UV2} 这类天空几何<b>根本没有</b>的属性
-     * （欠供在加载期就是 {@code ShaderCompileException}，会把启动砸掉）。
+     * <p>🔖 判据不是「哪个顺手」而是<b>几何与属性</b>：曾经只有 {@code gbuffers_skybasic} 走这条
+     * （它的片元是屏幕空间的，{@code gbuffers_skybasic.glsl:84-87} 用 {@code gl_FragCoord} 反解 {@code viewPos}）。
+     * <p>🔴 <b>2026-10-16 穹顶换管线轮：今天恒为 false。</b>天空改走「原版驱动几何 + 派生管线」那条
+     * （{@code SkyGeometrySite} / {@code SkyPackPipeline}），它的顶点是 {@code POSITION} 形状的<b>几何适配层</b>
+     * （{@code chunkAdapter} 那一路，与地形/日月同源），不再是「包 .vsh + clip 中性化」喂 NDC 全屏三角。
+     * 那条全屏接管（{@code SkyPackGbuffer}）已因此退役；{@code PostVertexLinker} 的 clip 中性化<b>代码保留</b>
+     * （链那一族仍可能用，且守卫 {@code ndcNativeClipIsLeftAlone} 钉它对链是恒等），但不再有 gbuffer 程序走它。
      */
     static boolean postVertexProgram(String programName) {
-        return SKY_PROGRAM.equals(programName);
+        return false;
     }
 
     /**

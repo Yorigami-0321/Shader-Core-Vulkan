@@ -64,7 +64,7 @@ class PackTerrainSourceTest {
     }
 
     @Test
-    @DisplayName("🔖 GAP-027 天空线：BSL 的 gbuffers_skybasic 走 post 顶点路线（全屏几何可行的离线证明）")
+    @DisplayName("🔖 GAP-027 天空线：BSL 的 gbuffers_skybasic 走 POSITION 几何适配层（退役全屏接管后的离线证明）")
     void skybasicUsesPostVertexRouteAndNeedsOnlyOneAttachment() {
         Assumptions.assumeTrue(Files.isDirectory(INVENTORY), "库存目录不在本地（run/shaderpacks/）");
         PackTerrainSource.Result sky = PackTerrainSource.generate(
@@ -87,55 +87,44 @@ class PackTerrainSourceTest {
         //   顶点不读任何属性（只有 ftransform()）⇒ 它能走链那一族的 post 恒等 MVP。
         //   若这条不成立，天空就只能走 chunk 适配层（要求 ChunkPosition/UV2 = 天空几何根本没有），
         //   那才是「实现不了」的形状。所以断言的是**配对成功**，不是「跑通了没崩」。
-        assertTrue(sky.postVertexRoute(),
-                "天空必须拿到「包自己的 .vsh + post 恒等 MVP」配对出来的顶点对；没拿到就说明"
-                        + "顶点路线判否（半接线 = 链接期才炸）。诊断："
+        // 🔴 2026-10-16 穹顶换管线轮：天空<b>不再</b>走 post 恒等 MVP（全屏接管退役），改走「原版驱动几何 +
+        //   POSITION 形状几何适配层」（SkyGeometrySite / SkyPackPipeline）。postVertexRoute 必须是 false，
+        //   顶点由 GbufferVertexSources.chunkAdapter 现造，且 gl_Position 用<b>真实 MVP</b>（不是中性 clip）。
+        assertFalse(sky.postVertexRoute(),
+                "天空已改走几何路线，不该再拿到 post 恒等 MVP 配对的对；还在 true = 退役没生效。诊断："
                         + sky.diagnostics().stream().map(d -> d.message()).toList());
 
-        // 片元声明的每条 varying，配对后的顶点终稿里必须有同名同类型的 out
+        // 几何适配层：片元声明的每条 varying 都必须有同名 out（穹顶顶点流喂上去，喂不齐就是链接期抛的半接线）
+        String vertex = GbufferVertexSources.chunkAdapter(PackTerrainSource.SKY_PROGRAM, program);
+        assertNotNull(vertex, "穹顶几何适配层必须能生成（null = 本条判否、不接线）");
         java.util.Set<String> vertexOutputs = new java.util.LinkedHashSet<>();
         java.util.regex.Matcher out = Pattern
                 .compile("layout\\(location\\s*=\\s*\\d+\\)\\s+out\\s+\\w+\\s+(\\w+)\\s*;")
-                .matcher(sky.vertexSource());
+                .matcher(vertex);
         while (out.find()) {
             vertexOutputs.add(out.group(1));
         }
         for (PackTerrainProgram.Input input : program.inputs()) {
             assertTrue(vertexOutputs.contains(input.name()),
                     "片元要的 varying '" + input.name() + "'（location " + input.location()
-                            + "）在配对后的顶点终稿里没有 out 声明 ⇒ 半接线。顶点 out 全集="
+                            + "）在穹顶几何适配层里没有 out 声明 ⇒ 半接线。顶点 out 全集="
                             + vertexOutputs);
         }
         assertTrue(vertexOutputs.containsAll(java.util.List.of("sunVec", "upVec", "alpha")),
                 "BSL 天空片元靠这三条算昼夜与不透明度（sunVisibility=dot(sunVec,upVec)、"
                         + "gl_FragData[0].a=alpha）；少了任何一条画面侧就是静默错值。实际="
                         + vertexOutputs);
-        // 🔖 落进资源的片元必须是 **linker 改写后**的那一份（unifyBuiltinsBlock 会统一两侧内建块）
-        assertTrue(sky.linkedFragment().contains("VkDispBuiltins"),
-                "配对后的片元终稿里应当有统一的 VkDispBuiltins 块");
 
-        // 🔴 真机踩过的形状（2026-10-11）：这条顶点必须走 **post 恒等 MVP**，
-        //   绝不能把 gbufferProjection/gbufferModelView 乘到 NDC 顶点上 —— 那样全屏三角形会被
-        //   再变换一次到退化区域 ⇒ **一个片元都不落**，症状是「常数色探针写进 colortex0 仍是
-        //   (0,0,0)」（当时误判过 skyColor / 深度附件，两个都不是因）。
-        String vertex = sky.vertexSource();
-        assertTrue(vertex.contains("gl_Position"), "顶点终稿必须写 gl_Position");
-        assertFalse(vertex.contains("gbufferProjection *") && vertex.contains("gbufferModelView *"),
-                "post 恒等模式下不许出现 gbuffer MVP 链 —— 出现即说明 ftransform() 按 chunk 族展开了"
-                        + "（那一档的判据是程序族，不是名字前缀）");
-
-        // 🔴 GAP-054 的那一半现在由 **PostVertexLinker 的 clip 中性化**落地，而判据是从这份终稿上**量**出来的。
-        //   这一条断言的是「真包 + 真生成期 ⇒ 天空的几何闸门会放行」；它红 = 真机上天空继续退回原版重放
-        //   （= 用户看到的「天空不是包算的」），所以断言里必须带出实际的 clip 行，不能只说「不对」。
-        assertTrue(GbufferVertexRoute.passesPositionThrough(PackTerrainSource.SKY_PROGRAM),
-                "clipPassthrough 判据位必须被这次生成记成 true。实际 clip 行："
+        // 🔴 几何路线的标志：gl_Position 走<b>真实 MVP</b>（ProjMat * ModelViewMat * Position），
+        //   而不是退役那条全屏路线的中性 clip（vec4(Position,1.0)）。这一条把「换管线」与「退役全屏」锁死在一起
+        //   （同一个顶点源位放不下两种顶点，见 CHANGE_LOG 一百七十二/一百七十五）。
+        assertTrue(vertex.contains("gl_Position = ProjMat * ModelViewMat"),
+                () -> "穹顶几何适配层必须用真实 MVP 写 gl_Position；实际 clip 行："
                         + vertex.lines().filter(l -> l.contains("gl_Position")).toList());
-        assertTrue(vertex.lines().anyMatch(l -> l.strip().equals("gl_Position = vec4(Position, 1.0);")),
-                "真包 ftransform() 的那一行应当被整行换成位置属性；实际："
-                        + vertex.lines().filter(l -> l.contains("gl_Position")).toList());
-        // 🔖 中性化只动 clip：太阳方向仍是 gbufferModelView 乘出来的（sunVisibility=dot(sunVec,upVec)）
-        assertTrue(vertex.contains("gbufferModelView"),
-                "clip 之外的相机数学必须留着，否则 sunVec/upVec 退化成零向量（天空有色但昼夜/日月全错）");
+        assertFalse(vertex.contains("gl_Position = vec4(Position, 1.0);"),
+                "中性 clip（全屏那一路的标志）不该再出现在几何路线的顶点里 —— 出现即退役没生效");
+        // 形状必须是 POSITION（穹顶顶点流没有 UV0）⇒ 不许引用 UV0。
+        assertFalse(vertex.contains("= UV0"), "穹顶 POSITION 适配层不许引用 UV0（穹顶几何没有这条属性）");
     }
 
     @Test

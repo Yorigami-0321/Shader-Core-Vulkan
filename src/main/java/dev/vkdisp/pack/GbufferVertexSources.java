@@ -60,7 +60,12 @@ public final class GbufferVertexSources {
      * 「只翻一半比全不翻更难查」）。
      */
     public static dev.vkdisp.render.OfUniformManager.Family builtinsFamily(String program) {
-        return postVertexRoute(program)
+        // 🔴 判据是「片元拿矩阵干什么」，不是程序名前缀：
+        //   ① post 顶点路线那条（今天空集，见 PackTerrainSource.postVertexProgram）走 CHAIN；
+        //   ② 天空穹顶那一条（gbuffers_skybasic）的片元<b>也是屏幕空间</b>（gl_FragCoord 反解 viewPos），
+        //      它现在走<b>几何适配层</b>而非 post 路线 ⇒ 必须<b>显式</b>留 CHAIN，否则跟着翻到 GBUFFER 口径
+        //      = 半翻那另一半（实测：给它 GBUFFER 族时包算出来的天空是纯黑，GAP-022 已警告过）。
+        return postVertexRoute(program) || PackTerrainSource.SKY_PROGRAM.equals(program)
                 ? dev.vkdisp.render.OfUniformManager.Family.CHAIN
                 : dev.vkdisp.render.OfUniformManager.Family.GBUFFER;
     }
@@ -92,6 +97,11 @@ public final class GbufferVertexSources {
             // 🔴 日月<b>不能</b>吃 chunk 适配层：那条要 ChunkPosition/UV2 这类日月几何根本没有的属性
             //    （欠供在加载期就是 ShaderCompileException ⇒ 启动砸掉）。走专用的 POSITION_TEX 生成器。
             return celestialAdapter(contract);
+        }
+        if (PackTerrainSource.SKY_PROGRAM.equals(program)) {
+            // 🔴 穹顶走 POSITION 形状的<b>几何适配层</b>（穹顶顶点流只有 Position，无 UV0/ChunkPosition）——
+            //    chunk 适配层要的那些属性天空几何根本没有；日月/穹顶各走自己的专用生成器（同一条纪律）。
+            return skyGeometryAdapter(contract);
         }
         boolean terrainProgram = PackTerrainSource.TERRAIN_PROGRAM.equals(program);
         boolean fullLight = terrainProgram && dev.vkdisp.VkDispConfig.MRT_TERRAIN_FULL_LIGHT_PROBE.get();
@@ -140,6 +150,32 @@ public final class GbufferVertexSources {
         } catch (Throwable t) {
             VkDisp.LOGGER.error("vkdisp: [GAP-027] 日月适配层生成 FAILED -> 本条不接线: program={}",
                     PackTerrainSource.SKYTEXTURED_PROGRAM, t);
+            return null;
+        }
+    }
+
+    /**
+     * 穹顶那条程序（{@code gbuffers_skybasic}）的顶点源：原版 {@code POSITION} 顶点流 + 包契约 →
+     * 生成的<b>几何适配层</b>（{@code Format.POSITION}，逐字见 {@link dev.vkdisp.glsl.translate.CelestialVertexAdapterGenerator}）。
+     * 失败 ⇒ {@code null} = 本条不接线（与 {@link #celestialAdapter} 同一条「绝不半接」纪律）。
+     */
+    public static String skyGeometryAdapter(PackTerrainProgram contract) {
+        try {
+            dev.vkdisp.glsl.translate.CelestialVertexAdapterGenerator.Result adapter =
+                    dev.vkdisp.glsl.translate.CelestialVertexAdapterGenerator.generate(
+                            dev.vkdisp.glsl.translate.CelestialVertexAdapterGenerator.Format.POSITION,
+                            contract.inputs());
+            for (TranslateDiagnostic diagnostic : adapter.diagnostics()) {
+                log(diagnostic);
+            }
+            if (adapter.glsl() == null) {
+                VkDisp.LOGGER.warn("vkdisp: [GAP-027] {} 的穹顶几何适配层判否 ⇒ 本条不接线（穹顶保持原版着色）",
+                        PackTerrainSource.SKY_PROGRAM);
+            }
+            return adapter.glsl();
+        } catch (Throwable t) {
+            VkDisp.LOGGER.error("vkdisp: [GAP-027] 穹顶几何适配层生成 FAILED -> 本条不接线: program={}",
+                    PackTerrainSource.SKY_PROGRAM, t);
             return null;
         }
     }

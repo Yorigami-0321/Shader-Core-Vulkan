@@ -4,6 +4,18 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百七十六）— 🔀 穹顶换管线的**枢纽一步**：把 `gbuffers_skybasic` 的顶点源从 post 中性 clip 改回真实 MVP 几何适配层（退役全屏接管的资源位）
+
+> **verdict = 这一步把天空的顶点源位从「全屏那一路」交还给「几何那一路」。它本身不改默认档画面（此刻还没有任何管线消费 skybasic 的几何顶点），但它<font>不是</font>半成品：re-route 后 skybasic 走的是与地形/日月同源的 `chunkAdapter` 路径，喂齐契约就接、喂不齐整条不接。剩下的只是那三处 `@WrapOperation` 去 `SkyPackPipeline.descriptor` 取管线并换上去。**
+
+- **为什么能做（读代码坐实，不是赌）**：资源写入处 `VkDispVirtualPack.java:1188-1190` 的分流是 `postVertexRoute() ? terrain.vertexSource() : GbufferVertexSources.chunkAdapter(...)` ⇒ 只要 `PackTerrainSource.postVertexProgram` 对 skybasic 返回 `false`，skybasic 自动落到 `chunkAdapter`，与日月（`celestialAdapter`）走<b>同一条入口、同一套块统一口径</b>（地形早已用 `program.fragmentSource()` + `chunkAdapter` 渲染正常，证明这条不需要 `PostVertexLinker` 那种跨阶段改写）。
+- **改了什么**：① `PackTerrainSource.postVertexProgram` → 恒 `false`（gbuffer 程序今天无一走 post 路线；`linkPostVertexRoute`/`GbufferVertexRoute` 暂留但无 gbuffer 程序触达，清理并入后续混入那一刀）。② `GbufferVertexSources.chunkAdapter` 加 `SKY_PROGRAM→skyGeometryAdapter(contract)`（`CelestialVertexAdapterGenerator.generate(Format.POSITION, ...)`，一百七十三那块零件）。③ `builtinsFamily` 让 skybasic <b>显式</b>留 `CHAIN`（屏幕空间片元，否则跟翻到 GBUFFER = 纯黑天空，GAP-022 那另一半）。
+- **守卫**：`PackTerrainSourceTest` 那条天空用例的前题<b>逐条翻面</b>：从「断言 post 恒等 + 中性 clip + clipPassthrough」改成「断言 `postVertexRoute()=false`、`chunkAdapter` 造出的几何顶点用真实 MVP（`gl_Position = ProjMat * ModelViewMat`）、中性 clip 行不再出现、不引用 UV0、喂齐 `alpha/sunVec/upVec`」。`./gradlew --offline build` 全绿（含退役后仍存在的 `SkyPackGeometryRouteTest` —— 它测的是 `SkyPackGbuffer` 自身谓词，类还在）。
+- **⛔ 仍缺**：skybasic 几何顶点<b>尚无消费者</b> ⇒ 穹顶还没真按包画。下一步 = 三处 `@WrapOperation`（`renderSkyDisc`/`renderStars`/`renderSunriseAndSunset`）调 `SkyPackPipeline.descriptor(site)` + `RenderStageSupply.enter(site.stageMacro)` 换管线，配 `mixin.skyGeometryPack` 开关（顶 `VkDispConfig` 行棘轮 cap），并<b>同一次</b>清掉 `SkyPackGbuffer`/`GbufferVertexRoute` + 它们残留的守卫。对错仍是画面判据（统一取证轮）。
+- **是否已提交**：是（单独提交并推送；默认档画面不变，与并发会话不冲突）。
+
+---
+
 ## 2026-10-16（一百七十五）— 🧩 穹顶路线第三块离线零件：`SkyPackPipeline`（三处站点共用的派生管线**描述符工厂**，照 `SkyCelestialPack` 同形、去掉 `SAMPLER0`）
 
 > **verdict = 继续只落「离线能证 + 非破坏」的零件。本轮只**新增**两个文件（工厂 + 守卫），不删、不改任何既有渲染路径与配置键 ⇒ 默认档画面零变化、与并发会话在天空线上的改动**不冲突**。`descriptor()` 里不碰 GPU（编译留给混入侧既有兜底），守卫只验形状层。**
