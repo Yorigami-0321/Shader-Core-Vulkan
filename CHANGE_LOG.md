@@ -14,7 +14,8 @@
   - 🔴 **每次 draw 一份自己的块代**：写块是 CPU 直写（`VulkanGpuBuffer.map` = `vmaMapMemory`，`:107,145-146`）⇒ pass 内可写；但日与月是同程序两次 draw、`renderStage` 又在块里 ⇒ `rotate()` → 写 → 绑，顺序由守卫钉住（先写后 rotate 会把刚写的代让出去）。
   - `GbufferVertexSources` 多一条分流：日月走 `CelestialVertexAdapterGenerator`（`POSITION_TEX` 只有 `Position`/`UV0`，chunk 家族那些属性它一个都没有）；`PackTerrainSource.SKYTEXTURED_PROGRAM` + 虚拟包表一条 + `mrt.skyPackTexturedShader` 进 memo 键与热重载快照 + `SkyPackGbuffer.skyTexturedWired()` 改为读 `SkyCelestialPack.wired()`（唯一真源，不复制第二份条件）。
 - **为什么这条不做成 modifier**：`PipelineModifier` 拿不到 `RenderPass` ⇒ 补绑无处下手（本仓此前设想的「零注入点」在这格不成立，理由已写进登记行）。
-- **影响的文档**：`docs/04-SPEC`（M-16 登记行）、`docs/13`（GAP-027 那行从「下一步是接线」改成「接线已落、真机判据未签」）。
+- 🔴 **落完立刻抓到自己造的第二种互斥**（这条比接线本身更要紧）：本类那条全屏接管一旦生效就把原版 `SkyRenderer.render` 整笔抑制掉 —— 而 M-16 的日月**恰恰要借原版那两次 draw**。两者同开 = 日月又没了。⇒ 接管资格从「日月那条程序接上了」改成「**我方覆盖原版那一笔的全部内容**」（`fullSkyCoveredByPack()`，今天 false + 理由写在方法头上），并加一条守卫钉「绝不能用『日月已接线』当接管许可」。解除条件 = 穹顶/星点也改成换原版管线（`SkyRenderer:167/180/274/298`），那张全屏三角与 clip 中性化一并退役。
+- **影响的文档**：`docs/04-SPEC`（M-16 登记行）、`docs/13`（GAP-027 那行从「下一步是接线」改成「接线已落、真机判据未签」+ 互斥这条）。
 - **测试结果**：`./gradlew build` → **BUILD SUCCESSFUL，1251 项 0 失败**（+9 条：`SkyCelestialPackWiringTest` 4 + `CelestialVertexAdapterGeneratorTest` 5）。中途三次红都是守卫正常工作：`MixinWiringTest`（首行必须是埋点转发）、`ClassLineRatchetTest`×2（`VkDispConfig` 撞 1047 ⇒ 把两处重复口径的注释压成指针，未抬基线；新键的注释合进 `.comment` 一行）。
 - 🔴 **未解决**：① 真机判据未签（`Mixin apply failed=0`、两条自报、日月同机位对照、正午/夜晚两档）⇒ 本轮序里排在三件功能做完之后；② 穹顶/星点换成包的 `gbuffers_skybasic` 走同一族管线替换（并决定那张全屏三角与 clip 中性化是否退役）；③ 水 2/2（`mat`/`recolor` 需扩 chunk 顶点格式）；④ 云 = 链正确性 `GAP-058`（需真机）；⑤ 上一条 commit（`8505dd2`）因 `github.com:443` 路由层被拦**尚未推送**，本轮一并补推。
 - **是否已提交**：✅ 本轮结束即提交并推送。

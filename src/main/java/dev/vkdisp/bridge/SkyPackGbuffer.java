@@ -192,7 +192,7 @@ public final class SkyPackGbuffer {
         }
         // 🔴 日月那半缺席时<b>不接管</b>（接管会连日月一起吞 —— 见 maySuppressVanillaSky 的注释）。
         //   包 skytextured 未接线 ⇒ skyTexturedWired 今天恒 false；这里不读配置、不猜。
-        if (!maySuppressVanillaSky(skyTexturedWired())) {
+        if (!maySuppressVanillaSky(fullSkyCoveredByPack())) {
             reportOnce("mrt.skyPackShader=true 但<b>暂不接管</b>：包的 gbuffers_skybasic 不画日月"
                     + "（BSL 的日月在 gbuffers_skytextured，而那条未接线），而接管会让原版 SkyRenderer"
                     + " 整笔不跑（含 renderSun/renderMoon）⇒ 接管 = 画面没有太阳月亮。"
@@ -209,10 +209,19 @@ public final class SkyPackGbuffer {
      * <p>🔖 为什么写成方法而不是内联 {@code false}：接上那条程序时<b>只有这一处</b>要改，
      * 而它改完，上面那道闸与所有自报会一起跟着变（不留「决定了但没落地」的第二份口径）。
      */
-    private static boolean skyTexturedWired() {
-        // 日月这条路的就绪判定只有一个真源（契约 + 两个开关 + 派生管线编译落地）；
-        // 在这里复制一份「看起来一样」的条件就是第二份口径，迟早漂。
-        return SkyCelestialPack.wired();
+    /**
+     * 「这一笔全屏 draw 是否覆盖原版那一笔的<b>全部内容</b>」—— 今天答案是<b>否</b>，且不是因为
+     * {@code gbuffers_skytextured} 没接线：日月那条（M-16）走的是「<b>让原版继续驱动 draw</b>、
+     * 只换它的管线」（{@code bridge/SkyCelestialPack} 类注释第 2③ 与 3① 条）。
+     * ⇒ 本类这条全屏接管与 M-16 <b>互斥</b>：两者同时开 = 本类的回 {@code true} 把原版整笔天空
+     * 抑制掉，其中也包括 M-16 要借力的那两次日月 draw ⇒ 日月又没了（正是本类上一道闸要防的那个形状）。
+     *
+     * &lt;p&gt;解除条件 = 穹顶/星点也改成「换原版管线」（SKY/STARS/SUNRISE_SUNSET 那三处
+     * {@code getCompiledPipeline}，{@code SkyRenderer:167/180/274/298}），本张全屏三角与
+     * {@code PostVertexLinker} 的 clip 中性化一并退役 —— 那一格登记在 docs/13 GAP-027 天空线。
+     */
+    private static boolean fullSkyCoveredByPack() {
+        return false;
     }
 
     /** 契约可用性判定；返回 {@code null} = 可用，否则返回<b>不可用的原因</b>（自报用）。 */

@@ -139,15 +139,42 @@ class SkyPackGeometryRouteTest {
                 "BSL 的 gbuffers_skybasic 不画日月（日月在 SHADER_SUN_MOON 那一支，而 settings.glsl:165 "
                         + "把它注释掉了），日月在 gbuffers_skytextured —— 那条没接线时接管就是<b>吞掉光源**");
         assertTrue(SkyPackGbuffer.maySuppressVanillaSky(true),
-                "接上 skytextured 之后接管必须能恢复（不许把这道闸写成永久拒绝）");
+                "「我方覆盖原版那一笔的全部内容」成立时接管必须能恢复（不许把这道闸写成永久拒绝）"
+                        + " —— 今天它是 false，因为日月走 M-16 的原版驱动 draw，与全屏接管互斥");
 
         String source = code();
-        assertTrue(source.contains("if (!maySuppressVanillaSky(skyTexturedWired()))"),
+        assertTrue(source.contains("if (!maySuppressVanillaSky(fullSkyCoveredByPack()))"),
                 "这道闸必须真的长在 enabled() 里，而不是只在注释里说");
-        assertTrue(source.indexOf("maySuppressVanillaSky(skyTexturedWired())")
+        assertTrue(source.indexOf("maySuppressVanillaSky(fullSkyCoveredByPack())")
                         < source.indexOf("return contractProblem() == null;"),
                 "日月那半必须<b>先于</b>契约判定：契约过了而日月缺席，症状是「天空是包算的但没有太阳」");
         assertTrue(source.contains("return false;"), "判否必须真的回 false（交回原版重放），不是「画半张」");
+    }
+
+    @Test
+    @DisplayName("🔴 全屏接管与 M-16（原版驱动日月）<b>互斥</b>：两者同开 = 又把日月弄没了")
+    void fullscreenTakeoverIsMutuallyExclusiveWithCelestialSwap() {
+        String source = code();
+        // 🔖 位置针之前先 contains
+        assertTrue(source.contains("private static boolean fullSkyCoveredByPack()"),
+                "接管资格必须写成「我方覆盖原版那一笔的全部内容」，而不是「日月那条程序接上了」");
+        assertTrue(source.contains("return false;"),
+                "今天的答案是 false，且理由写在方法头上：M-16 借的就是原版那两次 draw");
+        assertTrue(source.contains("maySuppressVanillaSky(fullSkyCoveredByPack())")
+                        && !source.contains("maySuppressVanillaSky(SkyCelestialPack.wired())"),
+                "绝不能用「日月已接线」当接管许可 —— 那会让两者同时生效并互相抵消");
+        String celestial = readSilently("src/main/java/dev/vkdisp/bridge/SkyCelestialPack.java");
+        assertTrue(celestial.contains("!\"Sun\".equals(label) && !\"Moon\".equals(label)"),
+                "M-16 侧必须仍按 label 白名单分流（End flash 共用同一私有方法）");
+    }
+
+    private static String readSilently(String path) {
+        try {
+            return Files.readString(Path.of(path));
+        } catch (java.io.IOException e) {
+            assumeTrue(false, "读不到 " + path + "：" + e.getMessage());
+            return "";
+        }
     }
 
     private static int occurrences(String text, String needle) {
