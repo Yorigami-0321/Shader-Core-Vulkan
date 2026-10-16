@@ -572,8 +572,8 @@ public final class VkDispVirtualPack {
         static void putGbuffer(java.util.Map<String, String> fragments,
                 java.util.Map<String, String> adapters, String program,
                 String fragmentSource, String adapterSource) {
-            if (fragmentSource == null || adapterSource == null) {
-                return;
+            if (!dev.vkdisp.pack.GbufferSourceReport.bothPresent(program, fragmentSource, adapterSource)) {
+                return; // 只有一侧 = 半接线，两侧一起不落（判据与理由见 GbufferSourceReport）
             }
             fragments.put(program, fragmentSource);
             adapters.put(program, adapterSource);
@@ -1393,7 +1393,7 @@ public final class VkDispVirtualPack {
                 Identifier id = fragment ? artifacts.fragmentResourceId : artifacts.adapterResourceId;
                 out.put(id, entry.getValue().getBytes(StandardCharsets.UTF_8));
             }
-            return java.util.Map.copyOf(out);
+            return dev.vkdisp.pack.GbufferSourceReport.noteWritten(fragment, out);
         }
 
         /**

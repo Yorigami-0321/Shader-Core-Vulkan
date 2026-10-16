@@ -4,6 +4,20 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-16（一百八十四）— 🔬 给「半接线」与「本轮到底落了哪些 id」补两条仪器，把缺陷①从「生成侧丢了」改判成「**写了却取不到**」
+
+> **verdict = 上一轮那条「适配层没进虚拟包」的推测被当场否证。** 同一条臂里 `[GAP-027/落表] stage=vsh` 逐字列出了 `vkdisp_pack:shaders/skybasic_pack_adapter.vsh` 与 `skytextured_pack_adapter.vsh`（22:04:55），而 30 秒后引擎仍然报 `Couldn't find source for VERTEX shader`（22:05:28，4326 条）⇒ 问题不在我们的 memo/生成/落表管线，在**取用侧**。本轮只加仪器、不改任何渲染行为。
+
+- **为什么要专门补**：臂 B 之后只剩三种可能（memo 被上一轮取空 / 生成器返回 null / 表里有但取不到），而日志里一行都分不出来 —— 三条臂只能把「猜哪条」当结论，正是本仓反复记的「没有数字就只能猜」。
+- **新增仪器（两条，都在 `pack/GbufferSourceReport`）**：① `bothPresent` —— `GeneratedSources.putGbuffer` 原来在任一侧为 null 时**静默整条不落表**，现在「只有一侧现成」必须点名是哪一侧（两侧都不在 = 本来就不接线，`not wired because ...` 那条 WARN 已点名，这里不重复）。② `noteWritten` —— 每轮 `openResources` 落表后把 fsh / vsh 两类**进了表的 id 全列出来**。
+- **臂 B2/B3 的读数**：`半接线` 一条都没响（⇒ 落表时两侧都是全的）；`不在程序表里 -> 丢弃` 也没有（⇒ id 算法两侧同源这条假设成立）；片元侧**从头到尾零报错**（只有顶点侧取不到）。已排除的候选：`GbufferProgramPlan.adapterPath/adapterShaderPath` 两侧同一份、`listResources` 两类都列、`toResourceBytes` 无丢弃。
+- **棘轮撞了一次（有用的事实）**：`putGbuffer` 里直接加 11 行 ⇒ `ClassLineRatchetTest` 报 `VkDispVirtualPack.java 长了：1574 > 上限 1573` ⇒ 按 QD-10 落到独立类，`VkDispVirtualPack` 侧只留**两处单行调用**（`bothPresent` 的 3 行 if 换成同形 1 行、`Map.copyOf(out)` 换成 `noteWritten(fragment, out)`），逐字回到 1573。
+- **下一刀的方向（不是修法）**：查「表里有、引擎取不到」这一段 —— 天空两条管线是**首帧 draw 时才懒编译**（地形那条在资源加载期就编），而缺源报在 `Worker-Main-*` ⇒ 先量「懒编译那一刻用的是哪一份 `PackResources`/哪个 ResourceManager 快照」，别再动生成侧。
+- **测试结果**：`./gradlew --offline build` 全绿；真机两臂冷启动（`/tmp/armB2.log`、`/tmp/armB3.log`），默认档画面不变（三闸仍默认关，改动只新增日志行）。取证档已还原（md5 `0f2aaa5c…` = 6 号底档）。
+- **是否已提交**：是（单独提交并推送）。
+
+---
+
 ## 2026-10-16（一百八十三）— 🔴 真机四臂第一次真跑：先揪出一条<b>任何配置都起不来</b>的崩（mixin 形参序），修完跑到世界里之后，天空两路 + 水 TBN 各撞一个具名接线缺陷
 
 > **verdict = 「天空/水代码完成、只差翻闸看图」这个口径被真机否证。** 离线 `build` 对 `@WrapOperation` 的签名**完全无感**（APPLY 期才校验），所以这两支天空 mixin 自 15:53 落地起就让**任何进世界的档**在 `LevelRenderer#addSkyPass` 类转换期崩客户端 —— 与闸门开不开无关（臂 A 两闸全关照崩）。修完之后四臂的读数在下面：三条功能路径各有一个具名缺陷，全部安全拒接、退回原版，没崩帧。
