@@ -759,6 +759,9 @@ C2a 不碰 GPU ⇒ 它的判据是**单测矩阵断言**，跑真机只会得到
 |---|---|---|
 | 一百八十六 | 只换证与改条款 | 零行并入，台账为空 |
 | 一百八十七 | `pack/model` 十个叶子文件（`BlendMode`·`ProgramFallbacks`·`ProgramNames`·`TextureStage`·`PackTexture`·`PixelFormat`·`PixelType`·`TargetFormat`·`BufferObject`·`ImageInformation`）+ `ShaderProperties` 两族分派 + `ShaderPackService` 的 `[pack特性]` 自报 | 🔴 **只到「按 Iris 文法与上限读入模型」**：SSBO 与自定义图像的设备侧（分配/绑定/barrier 时机）一行未接 ⇒ 特性**尚未生效**；判据 16 条（`PortedPackFeatureModelTest`） |
+| 一百八十八–一百九十二 | 又搬 3 个叶子件（`TargetName`·`SamplerTypes`·`AlphaTest`）+ `glsl/translate/AlphaTestEpilogue`（**取规则不取代码**：Iris 的 `CommonTransformer:280/:239` 形状）+ `gaux*` 别名缺陷修复 | `alphaTest.<程序>` 走到**编译后的片元代码**（链上真注入）；SSBO/图像仍停在读入；`gaux` 那条改的是取槽，画面复核欠着 |
+| 一百九十三–一百九十四 | `blend` 三件套（读表 `PackBlendDirectives` / 派生 `PackStepPipelines` / 因子翻译 `PackBlendState`）+ `chainModes()` | 🔴 **零生效**：一百九十三接了又撤，撤的理由（「`getCompiledPipelineNullable` 只查表」）在一百九十五被逐字读源**证伪** |
+| 一百九十五 | 接线落地：`FrameApi#runPostPass` 同行替换成 `PackStepPipelines.compiled(...)`（变体走原版缓存的未命中就地编译） | 链（`composite*`/`deferred*`/`final`）族的 `blend.<程序>` **进到了绘制管线**；🔴 地形/实体等 `gbuffers_*` 族未接、逐缓冲形态 `blend.<程序>.<缓冲>` 未读；真机读数见 `CHANGE_LOG` 一百九十五 |
 
 #### ✅ 骨架在官方 API 内可做（2026-10-17 逐字核过三把钥匙）
 
@@ -771,24 +774,31 @@ C2a 不碰 GPU ⇒ 它的判据是**单测矩阵断言**，跑真机只会得到
 ⇒ 结论：`blend` 与 `filters` **不需要破 T2、不需要原生绕行**，缺的是我方自己的「每程序一套管线 / 每名一个采样器」骨架；
 `size.<目标>` 仍撞 Vulkan 同尺寸规则（要连帧缓冲一起拆）。因子名→`BlendFunction` 的翻译已完成（`bridge/PackBlendState`）。
 
-#### 🔑 混合变体怎么进 `setPipeline`：走注册事件，不走运行期查缓存（2026-10-17 两条实测）
+#### 🔑 混合变体怎么进 `setPipeline`：🔖 上一节的「纯查表」是误判，正解是原版缓存的未命中就地编译（2026-10-17 一百九十五改判）
 
-- `RenderPass.setPipeline` **只收** `CompiledRenderPipeline`（`renderpearl/api/commands/RenderPass.java:32`），
-  而 `RenderSystem.getCompiledPipelineNullable`（`blaze3d/systems/RenderSystem.java:106-120`）是
-  `PIPELINE_MODIFIERS.apply` → 当前缓存 → 回落缓存的**纯查表**，不会顺手编译 ⇒ 拿未注册的变体去查必得 null。
-- 「注册事件里的管线会被编译」这一条**不必假设**，仓内已成事实：16 个 post 槽管线本来就是
-  `PipelineApi#registerPostPipelines(:282-306)` 在 `RegisterRenderPipelinesEvent` 里注册、
-  `FrameApi#runPostPass(:1294)` 再用 `getCompiledPipelineNullable` 取回来画的 —— 真机链一直在跑（`[route]`/post 计数有读数）。
-  ⇒ 混合变体的正确接法：同一次注册事件里按 **(槽, 该包链上程序声明的混合)** 多注册几条
-  （位置 `pipeline/postK@blend<hash>`），运行期只是**换一条已注册的管线**，不碰异步编译、不管
-  `UncheckedAutoCloseable` 的生命周期。上游自建自编译（`GeometryProgram.java:742` + `:1065-1099`
-  `GpuDevice.compilePipeline`，`api/device/GpuDevice.java:54`）是它的架构选择，我方不跟。
-- 已备好的件：`PackBlendDirectives.chainModes()`（**只取 composite/deferred/final**、按值去重 ——
-  给 `gbuffers_water` 的声明建 16 条是白烧 16 次编译，且那条声明在这条路上走不到）、
-  `PackStepPipelines.planTargets`（只动目标0、格式与写掩码原样）、`PackStepPipelines.pipelineFor` 的待建形态。
-- 🔴 欠的一步（下一轮）：`registerVariants(event)` 从 `FullscreenPipelineRegistrar:164` 之后挂上，
-  `runPostPass` 取管线处换成按程序查变体（FrameApi 1674/1675 ⇒ **同行替换**），同轮把 `blend` 升
-  `EFFECTIVE` 并跑一臂真机 —— 那是本目标里第一次真正改像素的接线，不能只靠离线判据。
+- 🔖 **改判**：`RenderSystem.getCompiledPipelineNullable`（`blaze3d/systems/RenderSystem.java:106-120`）
+  不是纯查表 —— 它把入参交给 `PipelineCache#get`，而后者（`blaze3d/pipeline/PipelineCache.java:29-38`）
+  **未命中就当场编译**：`device.compilePipeline(pipeline, this.shaderSource, Util.backgroundExecutor())
+  .join().finishCompile()`，`shaderSource` 是缓存自己的构造参数（`PipelineCache.java:18-26`），
+  结果按**入参对象身份**记进 `Reference2ReferenceOpenHashMap`（`:22`）。
+  ⇒ 派生变体**不需要预先注册**，也**不需要我方自己调 `GpuDevice.compilePipeline`**；
+  唯一前提是「同一条变体每次是同一个对象」，所以 `PackStepPipelines` 的那层身份记忆表是必需的，不是优化。
+  上一节写的是「只读了 RenderSystem 那五行、没跟进 PipelineCache」的结论，两处已按本轮读源改写。
+- **代价照写**：① 首次用到时是**阻塞**编译（`.join()`），付在链的那一格里，换代后只付一次；
+  ② 变体编译失败 ⇒ `PackStepPipelines.compiled` 把它记进 `BROKEN` 并退回族管线（点名一次），
+  绝不每帧重试；没声明混合的程序走的还是原来那一行 `getCompiledPipelineNullable(base)`，
+  **连异常语义都没变**（族管线不见了仍然抛给调用方）。
+- **接法（已落地）**：`FrameApi#runPostPass` 取管线那一行同行替换成
+  `PackStepPipelines.compiled(PipelineApi.postPipeline(passSlot), passPlan.programName())`
+  （FrameApi 1674/1675 ⇒ 只许同行替换，不加行）；派生只动目标0 的 `BlendFunction`，
+  格式与写掩码原样（`planTargets`），其余槽不碰。
+- **覆盖到哪儿为止**：只有**链**（`composite*`/`deferred*`/`final`）族接了 —— 地形/实体等 `gbuffers_*`
+  走的是主 pass 族管线，那条路要的是同一套按程序派生，还没接；逐缓冲形态 `blend.<程序>.<缓冲>` 仍未读。
+- 已备好的件：`PackBlendDirectives.chainModes()`（只取链上族、按值去重）、
+  `PackStepPipelines.planTargets`、`PackStepPipelines.forStep`（纯派生 + 身份记忆）、
+  `PackStepPipelines.compiled`（本轮新增的运行期入口）。
+- 🔴 欠的一步：`gbuffers_*` 族的 `blend` + 逐缓冲形态；同一条派生通道还要吃下 `filters.<目标>`
+  （按名选 `FilterMode`，`GpuDevice.createSampler` 已够用）。
 
 #### 🔴 一条待验的因果假设：`sampler3D` 会不会正在让整条管线建不起来
 

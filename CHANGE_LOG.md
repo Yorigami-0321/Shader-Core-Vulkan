@@ -4,6 +4,64 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-17（一百九十五）— 🔑 第一次真正改到像素的接线落地：`blend.<程序>` 在链上生效（A-B-A 三臂数值判据），上一轮的「纯查表」误判被源码改判
+
+> **verdict = 本目标里第一条「包声明 → 画面」的因果链取到了读数。**
+> 上一轮撤回接线的理由是 `getCompiledPipelineNullable` 只查缓存 —— 这一条**是错的**：
+> 它把入参交给 `PipelineCache#get`，而那里**未命中就当场用原版 `ShaderSource` 编译**。
+> 读源改判后按同行替换接上，三臂（A 基线 / B 声明混合 / A2 回到基线）在真机 NVIDIA 上读到
+> 一个方向正确、量级 6–18 倍于噪声底的差。
+
+- **改判的证据（逐字读源，不是推断）**：`blaze3d/pipeline/PipelineCache.java:29-38` =
+  `cache.get(pipeline)` 未命中 ⇒ `device.compilePipeline(pipeline, this.shaderSource,
+  Util.backgroundExecutor()).join().finishCompile()` 再 `cache.put`；缓存是
+  `Reference2ReferenceOpenHashMap`（`:22`）⇒ **按入参对象身份**记。`shaderSource` 是缓存的构造参数
+  （`:18-26`），所以变体复用同一批着色器 id 就能编出来，我方不需要拿 `GpuDevice.compilePipeline`，
+  也不需要预先 `RegisterRenderPipelinesEvent` 注册（上一轮定的「注册期多注册几条」那条路因此**不必走**）。
+- **落地形状**（FrameApi 1674/1675 ⇒ 只许同行替换，本轮净增 0 行）：
+  `runPostPass` 取管线那一行换成 `PackStepPipelines.compiled(PipelineApi.postPipeline(passSlot),
+  passPlan.programName())`；`compiled` = 派生（`forStep`，身份记忆）→ 走原版查缓存拿
+  `CompiledRenderPipeline` → 编不出来就记进 `BROKEN` 并退回族管线（点名一次，**绝不每帧重试编译**）。
+  🔴 **没声明混合的程序走的还是原来那一行**，连异常语义都没套 try ⇒ 对无 blend 声明的包**零行为变化**
+  （臂 A/A2 就是这条的证据）。另补一条 X11 点名：族管线第 0 个颜色目标为空时「混合没处落」也打一次 WARN。
+- **三臂读数**（每臂冷启动、同档：`mrt.postChain=true` + `postChainMaxPasses=64` + `pixelProbe=true`
+  + `shaderPack` 单变量、进世界后 `time set 6000` + `weather clear`，取连续 3 个探针轮次）：
+
+  | 臂 | 包 | `main` meanRGB | main luma | `colortex0` meanRGB | c0 luma | `[blend]` 行 |
+  |---|---|---|---|---|---|---|
+  | A | BSL_v10.1.8（无 blend 声明） | (159.0, 179.4, 188.7) | 175.7 | (57.9, 84.5, 148.6) | 83.4 | 0 |
+  | B | vkdisp-blend-probe（= BSL + `blend.composite1=ZERO ONE ZERO ONE`） | (194.9, 207.4, 207.3) | 204.7 | (100.7, 125.0, 157.3) | 122.1 | 1 |
+  | A2 | BSL_v10.1.8（回到基线） | (153.4, 173.9, 181.7) | 170.1 | (54.9, 80.1, 139.9) | 79.0 | 0 |
+
+  ⇒ **A↔A2 是同档重复，差 ~3%（170.1 vs 175.7）= 本判据的噪声底**；B 相对它是 `main` +17%、
+  `colortex0` +54%，方向与「`composite1` 这一级不再写第 0 槽 ⇒ 槽里留着上一级的内容」一致。
+  臂 B 的 `[blend]` 自报：`vkdisp:pipeline/post3 → 目标0 混合=Optional[BlendFunction[sourceFactor=ZERO,
+  destFactor=ONE, …]]（程序 composite1）` —— post3 正是链计划里 `composite1` 那一级（`passes=9` 的第四格）。
+  两臂截图（vkdisp 侧，非 Vitrail 参考面）目视与数字同向：B 明显更亮、天空发白。
+  `编译不出来=0`、`退回族管线=0`、`vanished mid-frame=0`、`Game crashed=0`。
+- **覆盖表升档**：`blend.<程序>[.<缓冲>]` 从 `UNHONORED` → `EFFECTIVE`，note 里写清是**半覆盖**
+  （只有链族接了，`gbuffers_*` 走主 pass 族管线那条路还没接；逐缓冲形态仍未读）。
+  `PackFeatureCoverageTest` 的针跟着翻成**双向**：正向钉 `FrameApi` 里有 `PackStepPipelines.compiled(`
+  且 `compiled` 里真的走 `getCompiledPipelineNullable(variant)`；反向针留着（不许退回 `forStep(` 直接上链）。
+  真机侧覆盖汇总随之变成 `EFFECTIVE=353 MODEL_ONLY=0 UNHONORED=4 UNCLASSIFIED=36`（BSL 那份）。
+- **又自伤一次，而且是被编译器当场抓住的第二次**：替换 javadoc 中间一段时新文本自己收了尾
+  （写了 `*/`）而旧文本后面那个尾还留着 ⇒ 注释提前闭合、下一段变裸代码，`build` 报
+  「非法字符 `\uff09`」19 条。上一轮同一刀吃的是 `declared()`。已把这一条并进记忆
+  （改注释块必须带回收尾、改完立刻编译），本轮是改完 30 秒内就红着修回来的，没有攒到轮末。
+- **测试结果**：`./gradlew build` 全绿 = **passed=1309 failed=0 skipped=1**。
+- **未闭合（如实列）**：① `gbuffers_*` 族（地形/实体/水）的 `blend` 还没接 —— 同一条派生通道，
+  但那些步的管线取用点在 `MrtTerrainPass`/主 pass 侧，不是 `runPostPass`；② 逐缓冲形态
+  `blend.<程序>.<缓冲>` 未读；③ 一百八十八（`gaux*` 取槽）与一百九十/一百九十二（`alphaTest`
+  的 discard）仍欠画面复核 —— 本轮的三臂顺带把「探针档能读到数」这件事钉住了，那两条可以照同一套跑；
+  ④ A↔A2 那 3% 的噪声底没查（相机/云/实体位置随世界状态漂），后续判据要按这个底量级判「有没有差」。
+- **影响的文档**：`docs/19-IMPROVEMENT-PATHS.md` §7-9「🔑 混合变体怎么进 setPipeline」整节按读源结果
+  改判重写 + 「移植进度」表补 一百八十八–一百九十五 四行；本条。`NOTICE.md` 未动（本轮零搬运，
+  改的是我方自有件）。探针包与三臂日志都在 `build/`（已 ignore）：`make-blend-probe.py`、
+  `armA-latest.log`、`armB-latest.log`、`armA2-latest.log`、`arm-config.py`（改档脚本按整行锚点改，
+  锚点命中数≠1 就不写盘）。
+
+---
+
 ## 2026-10-17（一百九十四）— 🔑 混合变体的正确接法定死：走注册事件，并把「注册即编译」用仓内既有事实证掉
 
 > **verdict = 接线的最后一处不确定被消除，但本轮仍不改渲染行为。**

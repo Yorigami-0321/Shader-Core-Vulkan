@@ -65,13 +65,13 @@ public final class PackFeatureCoverage {
             new Family("image.NAME（自定义图像）", Status.MODEL_ONLY,
                     "同上：已按 Iris 文法读入，分配/绑定受官方 API 限制未接",
                     List.of("image.")),
-            new Family("blend.<程序>[.<缓冲>]", Status.UNHONORED,
-                    "🔴 2026-10-17 接过一次并**当场撤回**：查表与派生都建好了，但变体管线进不了 "
-                            + "RenderPass —— setPipeline 只收已编译对象（api/commands/RenderPass.java:32），"
-                            + "而 RenderSystem.getCompiledPipelineNullable（blaze3d/systems/RenderSystem.java:106-120）"
-                            + "是纯查缓存、不按需编译 ⇒ 硬接会对每个声明混合的包抛 IllegalStateException。"
-                            + "正解 = GpuDevice.compilePipeline(...:54) 自己编译，并把**编译结果**（不是 RenderPipeline）"
-                            + "记忆在 bridge/PackStepPipelines。逐缓冲形态 blend.<程序>.<缓冲> 也仍未读",
+            new Family("blend.<程序>[.<缓冲>]", Status.EFFECTIVE,
+                    "链上的步按程序取派生管线（FrameApi#runPostPass → bridge/PackStepPipelines.compiled）；"
+                            + "上一轮写的「进不了 setPipeline」是误判 —— RenderSystem.getCompiledPipelineNullable"
+                            + "把入参交给 PipelineCache#get（blaze3d/pipeline/PipelineCache.java:29-38），"
+                            + "那里未命中就当场用原版 ShaderSource 编译并按对象身份记结果。"
+                            + "🔴 半覆盖：只有链（composite/deferred/final）族接了，地形/实体等 gbuffers 族仍在族管线上；"
+                            + "逐缓冲形态 blend.<程序>.<缓冲> 仍未读",
                     List.of("blend.")),
             new Family("size.buffer.* / autoRes.* / relative.*", Status.UNHONORED,
                     "每目标独立分辨率与 Vulkan「同一帧缓冲附件同尺寸」冲突 ⇒ 需按程序分帧缓冲/分 pass",
