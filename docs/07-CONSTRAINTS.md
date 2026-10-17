@@ -439,7 +439,7 @@ if (DEBUG) { LOGGER.info("cull kept={}", kept); }
 ```properties
 minecraft_version        = 26.3
 minecraft_version_range  = [26.3,)
-neo_version              = 26.3.0.51-beta
+neo_version              = 26.3.0.86
 neo_version_range        = [26.3.0,)
 mod_id                   = vkdisp
 mod_group_id             = dev.vkdisp
@@ -451,13 +451,14 @@ mod_group_id             = dev.vkdisp
 
 | 用途 | 用哪个 | 语义 |
 |---|---|---|
-| 编译期依赖（`build.gradle` → `neoForge.version`） | `neo_version` | 精确锁 `26.3.0.51-beta` |
+| 编译期依赖（`build.gradle` → `neoForge.version`） | `neo_version` | 精确锁 `26.3.0.86` |
 | 运行时依赖声明（`neoforge.mods.toml` → `versionRange`） | `neo_version_range` | 只锁下限 `[26.3.0,)` |
 
-理由：26.3 仍在 beta 期，官方每周发新版且版本号带 `-beta` 后缀。若把
-`versionRange` 写成 `[26.3.0.51-beta,)`，用 51 之前任一 beta 的用户会被
-**直接拒载**；等 26.3 转正，版号变成无后缀的 `26.3.0`，字符串不等，
-不同加载器的版本序处理不一致，存在「明明装了却被判不满足」的风险。
+理由：26.3 线几乎每周出新版。若把 `versionRange` 写成 `[26.3.0.86,)`，用 86 之前
+任一构建的用户会被**直接拒载**。🔖 原文另给过一条理由「等 26.3 转正，版号变成无后缀的
+`26.3.0`」—— **2026-10-17 更正：这条没发生**，官方在 `26.3.0.75-beta` 之后只去掉
+`-beta` 后缀、第四段继续往上加（`26.3.0.76` → `26.3.0.86`），不存在无第四段的 `26.3.0`
+构件。结论不变：下限取不带第四段的 `26.3.0`，同线任一构建都满足它。
 
 > 本项目当前**没有发布到任何仓库**，这条约束是前瞻性的；但它同时是
 > `build.gradle` 属性注入表里 `neo_version_range` 必须存在的原因 ——

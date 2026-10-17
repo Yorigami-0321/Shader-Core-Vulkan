@@ -4,6 +4,22 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-17（一百八十五）— ⬆️ NeoForge `26.3.0.51-beta` → `26.3.0.86`：同 MC 线跟进，顺带查实这条线已在 `.76` 转正（`05` §2.1 的一条事实前提是错的）
+
+> **verdict = 升版本身零 fallout：编译零错、1255 条测试全绿、真机一臂跑到 frame 2100+ 且 513 条 `/ERROR` 与 10-15 基线逐族同形同数；本轮唯一被证旧的是一条文口径 —— `05` §2.1 预测「26.3 正式版号 = 无第四段的 `26.3.0`」，实际是去掉 `-beta` 后缀、第四段继续加。**
+
+- **取版本的方式（先排掉两个错判）**：官方 maven `…/neoforged/neoforge/maven-metadata.xml` 的 `<latest>`/`<release>` 都是 `26.3.0.86`，`lastUpdated=20261016154143`。① 本机 Windows 与 WSL 两侧的 gradle 缓存最高只到 `26.3.0.51-beta` ⇒ **离线根本没有可升的目标**，盲改版本号只会让 build 红；② `~/.gradle/gradle.properties` 把 `systemProp.http(s).proxy` 全指到 `127.0.0.1:12334`，代理没起来时任何解析都走不通 ⇒ 第一行改动之前先要有人把代理开起来。
+- **插件不动**：`moddev-gradle` 元数据全量尾 = `2.0.148`，正是当前值 ⇒ `build.gradle` 一字未改（上一基线那次是 147→148 一起抬的）。
+- **改动面**：`gradle.properties`（唯一数据源）+ **五处活镜像**（`02` 末表、`04` 抬头与 `neoForge{}` 示例、`05` §2 锁表与 §2.1、`07` §版本块与理由段、`AGENT_CONTEXT` 两处）+ `06` §6 新行。🔴 **历史取证引用一律不改写**：`04` §3.2/§5.0、`13` GAP-015/019、`19` §2.6 与五个源文件类注释里那些「26.3.0.41-beta / .51-beta sources jar 逐行核实」是**带日期的事实**，把它们改成 86 等于把记录改假。
+- **真机一臂（判据，`runClient -PquickPlay`）**：档 = 6 号底档（md5 `0f2aaa5c…`，自报 `[生效档] 67 键 / 非默认 4`，`ownTerrainPass=false` / `mrt.enabled=false` / `skyPackTexturedShader=false`）。读数：后端 `Using graphics backend Vulkan … NVIDIA 591.86`、`LWJGL 3.4.3+4`（与 `05` §2 那条「原版自带 3.4.3」一致）、运行时 jar 路径点名 `neoforge-26.3.0.86-universal.jar`；计数 `invalid signature=0`、`could not find any targets=0`、`Game crashed=0`、`validateDraw=0`、`Couldn't find source for VERTEX=0`（天空那两条不报是因为闸关着，**不是修好了**）；`/ERROR` **513 条，与 10-15 `armJ-forensic-base` 逐族同形同数**（全是既有的 Complementary 解析失败 + BSL `DRAWBUFFERS` 槽位诊断，与升版无关）；接线自报 `[route]` / `gbuffer programs wired` / `[M-01] hit (wired=6/6)` 全在。
+- **两条新 WARN 族，归因到升版、判为良性**：① `CommonHooks/WP: The following mods have version differences… neoforge (26.3.0.51-beta -> 26.3.0.86)` —— 存档里记的 mod 版本与本次不符，原版只提示；它同时反过来证明运行时确实是 86。② `ConfigTracker: Configuration file run/config/neoforge-local.toml is not correct. Correcting` —— NF 自身的 config schema 在 51→86 间加了键，它自动补默认值（现 3 键全默认），与 vkdisp 的键无关，且 `run/` 不入库。
+- **车道卫生（下次照做）**：客户端 JVM **不随 gradle 任务退出**（`TaskStop` 之后 PID 还在，`taskkill` 不带 `/F` 拒不掉，只能强杀）；强杀前它已把 `vkdisp-client.toml` 回写（md5 漂到 `825511b…`）。还原底档的顺序必须是**先杀进程、后 cp 底档**，否则撞上 `AGENT_CONTEXT` §10.32② 那条「关服回写与改配置竞态」。本轮还原后 md5 回到 `0f2aaa5c…`。
+- **两件没做到的事（不许当成做到了）**：① **画面判据未取** —— 截图那一步被权限判为超出「升版」范围，未绕过，故本轮结论只到仪器级；② 原版签名的源码级核实仍以 `.41`/`.51` 的 sources jar 为据，`.86` 上只证到「目标类能转换、没抛」，`06` §4 的逐行重核**没做**。
+- **测试结果**：`./gradlew build`（联网）全绿 —— `BUILD SUCCESSFUL in 3m`，1255 passed / 0 failed / 1 skipped（那条 skipped 是既有的一项）。
+- **是否已提交**：是（单独提交并推送；本轮不改任何渲染行为，代码默认档与取证档画面均无新差异）。
+
+---
+
 ## 2026-10-16（一百八十四）— 🔬 给「半接线」与「本轮到底落了哪些 id」补两条仪器，把缺陷①从「生成侧丢了」改判成「**写了却取不到**」
 
 > **verdict = 上一轮那条「适配层没进虚拟包」的推测被当场否证。** 同一条臂里 `[GAP-027/落表] stage=vsh` 逐字列出了 `vkdisp_pack:shaders/skybasic_pack_adapter.vsh` 与 `skytextured_pack_adapter.vsh`（22:04:55），而 30 秒后引擎仍然报 `Couldn't find source for VERTEX shader`（22:05:28，4326 条）⇒ 问题不在我们的 memo/生成/落表管线，在**取用侧**。本轮只加仪器、不改任何渲染行为。

@@ -2,7 +2,7 @@
 
 > 配套：`03-DIRECTION.md`（必读前置）、`07-CONSTRAINTS.md`
 > **版本权威：`05-VERSION.md`**（支持范围 = MC 26.3 及之后；当前主线 26.3）
-> 版本锁定：MC **26.3** / NeoForge **26.3.0.51-beta** / Java **25** / MDG **2.0.148** / Gradle **9.4.1**
+> 版本锁定：MC **26.3** / NeoForge **26.3.0.86** / Java **25** / MDG **2.0.148** / Gradle **9.4.1**
 > （工程已是官方 MDK `NeoForgeMDKs/MDK-26.3-ModDevGradle`，实际值以 `gradle.properties` 为准）
 
 ---
@@ -313,7 +313,7 @@ plugins {
 }
 
 neoForge {
-    version = project.neo_version          // = 26.3.0.51-beta，取自 gradle.properties
+    version = project.neo_version          // = 26.3.0.86，取自 gradle.properties
 }
 
 dependencies {

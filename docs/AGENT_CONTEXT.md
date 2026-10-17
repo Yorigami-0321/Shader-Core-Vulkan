@@ -153,7 +153,7 @@
 | **当前主线** | **26.3**（一切开发/验证/验收以它为准） |
 | **不支持** | 26.2 及之前（那代没有 `renderpearl.backend.api`） |
 | 许可证 | **MIT**（`LICENSE` + `gradle.properties` 的 `mod_license=MIT`） |
-| 锁定：MC / NeoForge / Java / MDG | 26.3 / **26.3.0.51-beta** / 25 / 2.0.148 |
+| 锁定：MC / NeoForge / Java / MDG | 26.3 / **26.3.0.86** / 25 / 2.0.148 |
 | 工程形态 | **官方 MDK `NeoForgeMDKs/MDK-26.3-ModDevGradle`**（commit `eec248c`），已铺入 `D:/Code/Minecraft/Shader-Core-Vulkan` |
 | 未来版本 | 按 `06-MIGRATION.md` §4 流程升级，**不做前瞻兼容设计** |
 
@@ -266,7 +266,7 @@ com.mojang.renderpearl.frontend.*         FrontendRenderPipeline / shaders.SPIRV
 Shader-Core-Vulkan/
 ├── LICENSE                  MIT 全文（2026-09-29 定）
 ├── gradle.properties        mod_id=vkdisp, mod_license=MIT, minecraft_version=26.3,
-│                            minecraft_version_range=[26.3,), neo_version=26.3.0.51-beta
+│                            minecraft_version_range=[26.3,), neo_version=26.3.0.86
 ├── build.gradle             官方 MDK（ModDevGradle 2.0.148, toolchain Java 25）
 ├── settings.gradle          foojay-resolver 1.0.0
 ├── gradle/wrapper/          Gradle 9.4.1
