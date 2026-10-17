@@ -4,6 +4,40 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-17（一百九十三）— ⛔ 混合族的接线试了、验明会抛、当场撤回：`setPipeline` 只收已编译对象，而那个 getter 只查缓存
+
+> **verdict = 一次负结果，按正向价值记。** 上一轮留下的「同行替换就能接」在源码级被证伪：
+> 我把 `forStep(...)` 塞进 `runPostPass` 的取管线点之后，读原版实现发现这条路会让
+> **每一个声明了混合的程序抛 `IllegalStateException`** —— 比不支持更糟。改动已 `git checkout` 撤回，
+> 覆盖表把 `blend` 从 `EFFECTIVE` 降回 `UNHONORED` 并写上原因，另加一条**反向针**防止同样的接法再来一次。
+
+- **两步核实（都是逐字读原版，不是推断）**：
+  ① `com/mojang/renderpearl/api/commands/RenderPass.java:32` 只有一签名 `setPipeline(CompiledRenderPipeline)` ——
+  没有「交未编译管线、由 pass 懒编译」的入口；
+  ② `com/mojang/blaze3d/systems/RenderSystem.java:106-120` 的 `getCompiledPipelineNullable` 是
+  `PIPELINE_MODIFIERS.apply` → 当前缓存 `get` → 回落 `fallbackPipelineCache.get` ⇒ **纯查表**。
+  我方 `runPostPass` 在拿到 null 时是硬抛（`post pipeline slot N vanished mid-frame`）⇒ 变体管线必然走到那条抛。
+- **正解已定位并写进类头**：`GpuDevice.compilePipeline(RenderPipeline, ShaderSource, Executor)`
+  （`api/device/GpuDevice.java:54`）自己编译，且记忆表要存 **`CompiledRenderPipeline`** 而不是 `RenderPipeline`
+  （上游 `GeometryProgram.java:742` builder→build、`:1065-1099` `compile(device)` 就是这个形状）。
+  这一步同时是 `filters`/`size` 两族将来要的同一块地基，不算白做。
+- **保留的砖（不接线、零行为影响）**：`pack/PackBlendDirectives`（读表 + 换包必清）、
+  `bridge/PackStepPipelines`（派生 + 按身份记忆，本轮补上「调用方必须先编译」的红字）、
+  `ShaderProperties.blends()/blendDropped()` 与 `classifyFeatureDirective`（QD-04/QD-03 两条棘轮
+  上一轮撞红、已按正规做法修好：抽 helper + final 容器 + `AtomicReference` 快照）。
+- **表的纪律这次真的用上了**：`PackFeatureCoverageTest.effectiveRowsNeedAConsumer` 是**双向**的 ——
+  撤回接线后它立刻把「行还写着 EFFECTIVE」这件事变红；现在再加一条反向针
+  （`blend` 行为 UNHONORED ⇒ `FrameApi` 里不许出现 `PackStepPipelines.forStep(`），
+  要重新接必须先解决编译问题、再同轮升档。汇总串实测回到 `EFFECTIVE=5 MODEL_ONLY=2 UNHONORED=5 UNCLASSIFIED=1`。
+- **测试结果**：`./gradlew build` 全绿 = **1307 passed / 0 failed / 1 skipped**（与上一轮同数；本轮删掉一条针、改两处档位，未新增测试）。
+  🔴 渲染行为**零变化**（接线已撤回）⇒ 仍不安排真机臂；但**画面复核的欠账继续挂着**（一百八十八 `gaux` 槽位、一百九十 `alphaTest`）。
+- **影响的文档**：`PackStepPipelines` 类头（新增「必须先编译」段）、`PackFeatureCoverage` 的 blend 行、本条。`NOTICE.md` 未动（无新并入）。
+- **下一轮**：给 `PackStepPipelines` 补「编译 + 存 `CompiledRenderPipeline`」（含 `ShaderSource` 从哪来 —— 这一步要照上游那样把 shader 源标识一起管），
+  接 `runPostPass` 一处并同行替换（FrameApi 1674/1675 只能同行），同轮把 `blend` 升 `EFFECTIVE` 并**跑一臂真机**：
+  这次不是可选 —— 它是本目标里第一次真正改像素的接线。
+
+---
+
 ## 2026-10-17（一百九十二）— 🧩 混合族的「读表 + 派生 + 记忆」三件齐了，最后一步接线单独留下（并把两条棘轮按正规做法还回去）
 
 > **verdict = 桥这一头建完并测过，渲染那一头**没**接**：`blend.<程序>` 在覆盖表里仍是 `UNHONORED`，

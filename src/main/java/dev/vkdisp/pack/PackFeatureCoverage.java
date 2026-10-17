@@ -66,9 +66,12 @@ public final class PackFeatureCoverage {
                     "同上：已按 Iris 文法读入，分配/绑定受官方 API 限制未接",
                     List.of("image.")),
             new Family("blend.<程序>[.<缓冲>]", Status.UNHONORED,
-                    "官方能表达，且因子名→BlendFunction 的映射已就绪（bridge/PackBlendState，"
-                            + "与官方 TRANSLUCENT/OVERLAY 常量逐字对过）；卡的仍是「整条链只用一条管线」"
-                            + "⇒ 要先有每程序一套管线/一段 pass",
+                    "🔴 2026-10-17 接过一次并**当场撤回**：查表与派生都建好了，但变体管线进不了 "
+                            + "RenderPass —— setPipeline 只收已编译对象（api/commands/RenderPass.java:32），"
+                            + "而 RenderSystem.getCompiledPipelineNullable（blaze3d/systems/RenderSystem.java:106-120）"
+                            + "是纯查缓存、不按需编译 ⇒ 硬接会对每个声明混合的包抛 IllegalStateException。"
+                            + "正解 = GpuDevice.compilePipeline(...:54) 自己编译，并把**编译结果**（不是 RenderPipeline）"
+                            + "记忆在 bridge/PackStepPipelines。逐缓冲形态 blend.<程序>.<缓冲> 也仍未读",
                     List.of("blend.")),
             new Family("size.buffer.* / autoRes.* / relative.*", Status.UNHONORED,
                     "每目标独立分辨率与 Vulkan「同一帧缓冲附件同尺寸」冲突 ⇒ 需按程序分帧缓冲/分 pass",

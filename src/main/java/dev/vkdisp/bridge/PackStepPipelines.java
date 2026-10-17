@@ -29,6 +29,16 @@ import java.util.Optional;
  * （同 {@code MainPassPipelineDerivation} 类头第 5 条）。原版缓存按<b>入参对象</b>查 ⇒
  * 命中前提是「同一条派生结果每次是同一个对象」，故按 (入参管线身份, 混合值) 记一层。
  *
+ * <p>🔴 <b>调用方必须先编译，不能查缓存</b>（2026-10-17 实测，接了又撤）：本类交回的是
+ * {@link RenderPipeline}（未编译），而 {@code RenderPass.setPipeline} 只收
+ * {@code CompiledRenderPipeline}（{@code api/commands/RenderPass.java:32}），
+ * {@code RenderSystem.getCompiledPipelineNullable}（{@code blaze3d/systems/RenderSystem.java:106-120}）
+ * 又<b>只查缓存、不按需编译</b> ⇒ 直接把变体塞进那两个函数，会让每个声明混合的程序在
+ * {@code runPostPass} 那句 {@code IllegalStateException("post pipeline slot … vanished mid-frame")}
+ * 上炸。正解：走 {@code GpuDevice.compilePipeline(pipeline, shaderSource, executor)}
+ * （{@code api/device/GpuDevice.java:54}）自己编译，并把<b>编译结果</b>记进本类记忆表
+ * （上游 {@code GeometryProgram.java:742/1065-1099} 就是这个形状：builder → build → compile(device)）。
+ *
  * <p>🔴 <b>三种情形分得很开</b>：没声明混合 → 原样交回入参管线（零行为变化）；
  * {@code off} → 派生一条「目标0 不带 BlendFunction」的变体（包在要求不混合）；
  * 读不懂 → 计数 + 首次点名，<b>不猜</b>（X11 不许静默降级）。
