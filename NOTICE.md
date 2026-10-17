@@ -68,7 +68,21 @@ LGPL-3.0 §4 的"声明改动"义务逐文件落实在这里。**每个并入文
 
 | 我们的文件 | 上游仓库 @ commit | 来源文件:行 | 读取日期 | 改动声明 |
 |---|---|---|---|---|
-| — | — | — | — | **当前为空：2026-10-17 这一轮只换证，零行并入** |
+| `src/main/java/dev/vkdisp/pack/model/BlendMode.java` | Vitrail `4a45f44` `pack/model/BlendMode.java:1-71` | — | 2026-10-17 | 包名 + tab→四空格 + 本仓【参考调研】文件头；文法与「分隔符是单个空格」规则逐字保留 |
+| `src/main/java/dev/vkdisp/pack/model/ProgramFallbacks.java` | Vitrail `4a45f44` `pack/model/ProgramFallbacks.java:1-161` | Iris `bff1e69` `shaderpack/loading/ProgramId.java`（Vitrail 记其读取日 2026-08-01） | 2026-10-17 | 包名/缩进/文件头；父链表、`gbuffers_clouds` 那条两权威不一致的边、唯一一条非拒绝的混合覆盖、环路防护逐字保留 |
+| `src/main/java/dev/vkdisp/pack/model/ProgramNames.java` | Vitrail `4a45f44` `pack/model/ProgramNames.java:1-268` | — | 2026-10-17 | 包名/缩进/文件头；`NUMBERED`/`SIMPLE`/`CHAINED`/`MAX_SLOT`/`COMPUTE_SUFFIX` 与 `frameRank`·`directiveRank` 两个序逐字保留 |
+| `src/main/java/dev/vkdisp/pack/model/TextureStage.java` | Vitrail `4a45f44` `pack/model/TextureStage.java:1-64` | — | 2026-10-17 | 包名/缩进/文件头；七名闭合集与「final 与 composite 同族」逐字保留 |
+| `src/main/java/dev/vkdisp/pack/model/PackTexture.java` | Vitrail `4a45f44` `pack/model/PackTexture.java:1-84` | Iris `bff1e69` `ShaderPack.readTexture`（冒号 = 游戏的资源 那条判据） | 2026-10-17 | 包名/缩进/文件头；`Raw.bytes()` 与 `gameResource` 规则逐字保留 |
+| `src/main/java/dev/vkdisp/pack/model/PixelFormat.java` | Vitrail `4a45f44` `pack/model/PixelFormat.java:1-48` | — | 2026-10-17 | 包名/缩进/文件头 |
+| `src/main/java/dev/vkdisp/pack/model/PixelType.java` | Vitrail `4a45f44` `pack/model/PixelType.java:1-68` | — | 2026-10-17 | 包名/缩进/文件头；packed 与 plain 的分支逐字保留 |
+| `src/main/java/dev/vkdisp/pack/model/TargetFormat.java` | Vitrail `4a45f44` `pack/model/TargetFormat.java:1-225` | Iris `bff1e69` `gl/texture/InternalTextureFormat`（Vitrail 记其读取日 2026-08-01） | 2026-10-17 | 包名/缩进/文件头；常量、名字表、三通道提升、fixed-function 替换、`Reason`/`Resolution` 逐字保留 |
+| `src/main/java/dev/vkdisp/pack/model/BufferObject.java` | Vitrail `4a45f44` `pack/model/BufferObject.java:1-130` | Iris `bff1e69` `shaderpack.properties.ShaderProperties` 的 `bufferObject.` 分支（上限证据 `:407`/`:431`） | 2026-10-17 | 包名/缩进/文件头；索引 ≤12、`size<1` 即关闭、词数分支、「丢弃并点名」逐字保留 |
+| `src/main/java/dev/vkdisp/pack/model/ImageInformation.java` | Vitrail `4a45f44` `pack/model/ImageInformation.java:1-171` | Iris `bff1e69` 同上文件的 `image.` 分支（第十七条上限证据 `:519`） | 2026-10-17 | 包名/缩进/文件头；六词起、7/8/9 词对应 1D/2D/3D、相对式恰八词、尺寸位回查 defines 逐字保留 |
+
+2026-10-17 第一批移植：`pack/model` 十个叶子文件 —— SSBO（`bufferObject.N`）与自定义图像（`image.NAME`）这两族此前**支持为零**。
+消费入口 = `pack/properties/ShaderProperties`（新增 `bufferObjects()` / `images()` 结构化视图与带 `defines` 的 parse 重载）+ `pack/ShaderPackService`（`[pack特性]` 自报行）。判据 = `src/test/java/dev/vkdisp/pack/model/PortedPackFeatureModelTest`（16 条）。
+
+🔴 **生效状态只到「按 Iris 的文法与上限读入模型」为止** —— SSBO / 自定义图像的分配与绑定仍未接进管线，自报文案里也照这么写，不许被读成「已生效」。
 
 搬的时候每落一个文件，同时做四件事：
 

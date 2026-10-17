@@ -1,5 +1,7 @@
 package dev.vkdisp.pack.properties;
 
+import dev.vkdisp.pack.model.BufferObject;
+import dev.vkdisp.pack.model.ImageInformation;
 import java.io.Reader;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -22,7 +24,10 @@ import java.util.Set;
  * 3. 我们的差异点：① 只处理条件编译，不实现 #define 展开/#include（shaders.properties 不支持，见交接 §6.2）；
  *    ② 选项宏的真正发现（扫 .fsh/.vsh）属 C 线，本类仅消费调用方提供的已定义宏集合；
  *    ③ lang 标签层（option.NAME / value.NAME）按交接 §6.7 先不做，等 F2 落地后与主线确认范围。
- * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；零第三方代码。
+ *    🔖 2026-10-17 移植轮：本类现在**消费**两个 LGPL 移植件（{@code pack/model/BufferObject}、
+ *    {@code pack/model/ImageInformation}），读法与上限都是 Iris 定的、不再是我方自创（台账见 NOTICE.md）。
+ *    ⚠️ 与上游的差别只在视图：被拒的行本类**丢弃并点名**，同时原文仍留在 directives()（T11 不丢键）。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；本类自有，但消费 pack/model 的 Vitrail/Iris 移植件。
  * 5. 性能基线：❄️ 冷路径，不做优化（18-PARALLEL §7.7）。
  */
 public final class ShaderProperties {
@@ -33,6 +38,8 @@ public final class ShaderProperties {
     private final Map<String, Integer> screenColumns;
     private final Map<String, List<String>> profiles;
     private final Map<String, String> programSwitches;
+    private final BufferObject.Reading bufferObjects;
+    private final ImageInformation.Reading images;
 
     private ShaderProperties(Builder b) {
         this.directives = Map.copyOf(b.directives);
@@ -41,27 +48,43 @@ public final class ShaderProperties {
         this.screenColumns = Map.copyOf(b.screenColumns);
         this.profiles = Map.copyOf(b.profiles);
         this.programSwitches = Map.copyOf(b.programSwitches);
+        this.bufferObjects = new BufferObject.Reading(
+                new ArrayList<>(b.bufferObjects.values()), b.bufferObjectDropped);
+        this.images = new ImageInformation.Reading(b.images, b.imageDropped);
     }
 
     public static ShaderProperties parse(Reader reader) {
-        return parse(IdMapProperties.readLines(reader), null);
+        return parse(IdMapProperties.readLines(reader), null, Map.of());
     }
 
     public static ShaderProperties parse(Reader reader, Set<String> definedMacros) {
-        return parse(IdMapProperties.readLines(reader), definedMacros);
+        return parse(IdMapProperties.readLines(reader), definedMacros, Map.of());
     }
 
     public static ShaderProperties parse(String text) {
-        return parse(text, null);
+        return parse(List.of(text.split("\n", -1)), null, Map.of());
     }
 
     public static ShaderProperties parse(String text, Set<String> definedMacros) {
-        return parse(List.of(text.split("\n", -1)), definedMacros);
+        return parse(List.of(text.split("\n", -1)), definedMacros, Map.of());
     }
 
-    private static ShaderProperties parse(List<String> rawLines, Set<String> definedMacros) {
+    /**
+     * 带「包当前设置值」的读法。
+     *
+     * <p>🔴 存在的理由是一条 Iris 的规则：{@code image.NAME} 的尺寸位可以写一个**选项名**而不是数字，
+     * 由包的设置把它落成整数（{@code pack/model/ImageInformation#dimension}）。不给这张表，
+     * 那条本来有效的声明会以「size is not a number」被丢弃。
+     */
+    public static ShaderProperties parse(String text, Map<String, String> defines) {
+        return parse(List.of(text.split("\n", -1)), null, defines);
+    }
+
+    private static ShaderProperties parse(List<String> rawLines, Set<String> definedMacros,
+            Map<String, String> defines) {
         List<String> lines = ConditionalPreprocessor.preprocess(rawLines, definedMacros);
         Builder b = new Builder();
+        b.defines = defines == null ? Map.of() : defines;
         int idx = 0;
         for (String line : lines) {
             idx++;
@@ -100,6 +123,21 @@ public final class ShaderProperties {
         } else if (key.startsWith("program.") && key.endsWith(".enabled")) {
             String name = key.substring("program.".length(), key.length() - ".enabled".length());
             b.programSwitches.put(name, value);
+        } else if (key.startsWith("bufferObject.")) {
+            // 🔴 上限与词数都是 Iris 定的，本类不重算：读不出来就**丢弃并点名**（不是 log 一句然后当没事）。
+            String reason = BufferObject.parse(key.substring("bufferObject.".length()), value,
+                    b.bufferObjects);
+            if (reason != null) {
+                b.bufferObjectDropped.add(key + "=" + value + " : " + reason);
+            }
+            b.directives.put(key, value);
+        } else if (key.startsWith("image.")) {
+            String reason = ImageInformation.parse(key.substring("image.".length()), value,
+                    b.defines, b.images);
+            if (reason != null) {
+                b.imageDropped.add(key + "=" + value + " : " + reason);
+            }
+            b.directives.put(key, value);
         } else {
             // 🔴 GAP-021：`uniform.<类型>.<名>=` / `variable.<类型>.<名>=` **故意**留在通用表里，
             //   不在这里开分支 —— 本类只负责分派，CPU 侧的表达式语法属
@@ -159,6 +197,20 @@ public final class ShaderProperties {
         return programSwitches;
     }
 
+    /**
+     * {@code bufferObject.N}（SSBO）的结构化读法，含被拒的行。
+     *
+     * <p>原文仍留在 {@link #directives()}（T11「未识别键原样保留」）：这里加的是**消费入口**，不是替代视图。
+     */
+    public BufferObject.Reading bufferObjects() {
+        return bufferObjects;
+    }
+
+    /** {@code image.NAME}（自定义图像）的结构化读法，含被拒的行；原文同 {@link #directives()}。 */
+    public ImageInformation.Reading images() {
+        return images;
+    }
+
     private static final class Builder {
         final LinkedHashMap<String, String> directives = new LinkedHashMap<>();
         final List<String> sliders = new ArrayList<>();
@@ -166,5 +218,11 @@ public final class ShaderProperties {
         final LinkedHashMap<String, Integer> screenColumns = new LinkedHashMap<>();
         final LinkedHashMap<String, List<String>> profiles = new LinkedHashMap<>();
         final LinkedHashMap<String, String> programSwitches = new LinkedHashMap<>();
+        final LinkedHashMap<Integer, BufferObject> bufferObjects = new LinkedHashMap<>();
+        final List<String> bufferObjectDropped = new ArrayList<>();
+        final ArrayList<ImageInformation> images = new ArrayList<>();
+        final List<String> imageDropped = new ArrayList<>();
+        /** {@code image.NAME} 尺寸位写选项名时用它落整数；由带 defines 的 parse 重载注入。 */
+        Map<String, String> defines = Map.of();
     }
 }

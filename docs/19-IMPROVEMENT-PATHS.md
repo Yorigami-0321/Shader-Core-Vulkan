@@ -753,7 +753,15 @@ C2a 不碰 GPU ⇒ 它的判据是**单测矩阵断言**，跑真机只会得到
 🔴 这些文件**同时欠两条账**（Vitrail + Iris 都要记，Vitrail 自己的 `NOTICE` 就是这么写的）。
 面外：`compat/sodium/**`（PolyForm）、`pipeline/transform/**`（AGPL 依赖）、Sulkan（GPL）、OptiFine 本体（ARR）。
 
-⚠️ **本轮（`CHANGE_LOG` 一百八十六）只换证与改条款，零行并入** ⇒ `NOTICE.md` 的移植台账现为空表。
+### 移植进度（逐轮更新，判据口径 = 「读入模型」≠「已生效」）
+
+| 轮 | 搬了什么 | 生效到哪一步 |
+|---|---|---|
+| 一百八十六 | 只换证与改条款 | 零行并入，台账为空 |
+| 一百八十七 | `pack/model` 十个叶子文件（`BlendMode`·`ProgramFallbacks`·`ProgramNames`·`TextureStage`·`PackTexture`·`PixelFormat`·`PixelType`·`TargetFormat`·`BufferObject`·`ImageInformation`）+ `ShaderProperties` 两族分派 + `ShaderPackService` 的 `[pack特性]` 自报 | 🔴 **只到「按 Iris 文法与上限读入模型」**：SSBO 与自定义图像的设备侧（分配/绑定/barrier 时机）一行未接 ⇒ 特性**尚未生效**；判据 16 条（`PortedPackFeatureModelTest`） |
+
+🔴 **下一批的先后次序（按「离生效近」排，不按好写排）**：① `pack/target/{ConstDirectives,DrawBuffers,PackDirectives,TargetDirectives}` —— `const` / `DRAWBUFFERS` / `program.*` / `shadow.*` / `albedo.*` 这些**已经在喂我方管线**的指令，把我方自研表换成上游表并与 `pipeline/model` 定一个真源（`DRAWBUFFERS` 现有 14 个文件在用、`gcolor` 5 个，属「已有自研、待定真源」而非零支持）；② `pack/texture/{CustomStorage,CustomImages}` + 设备侧分配，让第一批搬进来的两张表**真的产生一次 draw**；③ `pack/target/{SamplerPlan,TargetPlan,ChainPlan}`（821 / 1644 / 1356 行，含派生管线绑包 sampler 那段——本仓已两次在 `noisetex` 这类漏绑上翻闸即崩）。面外照旧：`compat/sodium/**`（PolyForm）、`pipeline/transform/**`（AGPL 依赖，只取规则）、Sulkan（GPL）、OptiFine 本体（ARR）。
+
 （编号说明：§7-8 是 2026-10-13 收尾时另起的一个 H2 台账，不属本节序列，故本条从 7-7 直接跳到 7-9。）
 
 ---

@@ -4,6 +4,24 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-17（一百八十七）— 📦 移植第一批：`pack/model` 十个 LGPL 叶子文件，把 SSBO 与自定义图像两族从「支持为零」搬到「已按 Iris 文法读入」
+
+> **verdict = 第一批落到了可执行判据上，但只到「读入模型」为止**：`bufferObject.N`（SSBO）与 `image.NAME`（自定义图像）此前在本引擎里**一行代码都不接**（`grep -rlE "bufferObject|drawbuffer" src/main/java` = 0），现在按 Vitrail/Iris 的文法与上限进模型、被拒的行逐条点名、并有一条 `[pack特性]` 自报行；🔴 **分配与绑定仍未接进管线 ⇒ 不许读成「已生效」**。本轮不含渲染行为改动。
+
+- **为什么先搬这一批**：用户裁决是「直接把 Vitrail 和 Iris 对光影包特性的处理移植过来，不要自己实现了」。先按**支持面**排序，不按好写排序。探针是对 `HEAD` 的 `git grep`（不是回忆，也不是我改后的树）：`bufferObject`=0、`"image."`=0、`gbuffers_handled`=0 ⇒ **三族在改前一行都不接**；而同一次核对里 `DRAWBUFFERS`=14 个文件、`gcolor`=5 个文件**已有我方实现** ⇒ 不把它们算进「零支持」，它们属于「已有自研、待与上游表定真源」那一类（见下面「未闭合」第 ② 条）。第一批取其中**叶子最深、又不碰设备**的那两层，代价是本轮只能证到解析，收益是后面每一轮都在已核对的上游表上做，而不是在自己重造的表上做。
+- **移植闭包（10 个文件，逐个读完再搬，不是照目录抄）**：`BlendMode`(71) → `ProgramFallbacks`(161) → `ProgramNames`(268) → `TextureStage`(64) → `PackTexture`(84) → `PixelFormat`(48) → `PixelType`(68) → `TargetFormat`(225) → `BufferObject`(130) → `ImageInformation`(171)。依赖链是**读出来的**：`ImageInformation` 需要 `PackTexture.Shape`/`PixelFormat`/`PixelType`/`TargetFormat.Resolution`，`PackTexture` 需要 `TextureStage`，`TextureStage` 需要 `ProgramNames`，`ProgramNames` 需要 `ProgramFallbacks.names()` —— 这条链决定了本轮的边界，再往下就是 `target/`（`SamplerPlan` 821 / `TargetPlan` 1644 / `ChainPlan` 1356）那一批重型件，另轮开工。
+- **许可义务按 §〇 P1 逐文件落实**：每个文件头写「上游仓库@commit + `文件:行` + 读取日期 + 改了什么」；`NOTICE.md` 移植台账新增 10 行，其中 4 件**记两条上游**（`TargetFormat`/`ProgramFallbacks`/`BufferObject`/`ImageInformation` 的表与文法转录自 Iris，行号证据取自 Vitrail 自己的 `NOTICE`：`ProgramId.java:13-19`/`:47-48`、`ShaderProperties` 的 `:407`/`:431`/`:519`）。改动只有三类：包名、tab→四空格、本仓【参考调研】文件头。
+- **上游语料读数≠我方数据**：`TargetFormat` 注释里「五个包里二十六条指令落在提升路径上」「packed 类型语料里没人写」是 **Vitrail 的语料结论** ⇒ 文件头显式标注「引用它时按上游口径，别当我方实测」（07 X32）。
+- **接线两处**：① `pack/properties/ShaderProperties` 加 `bufferObject.` / `image.` 两族分派 + `bufferObjects()` / `images()` 结构化视图 + **带 `defines` 的 parse 重载**（Iris 允许 `image.NAME` 的尺寸位写**选项名**，不给这张表就会以「size is not a number」把包本来有效的声明丢掉）；🔴 原文**仍留在 `directives()`**（T11 不丢键，也避免动到既有消费方）。② `pack/ShaderPackService` 加 `reportPortedFeatureReadings`：收下一条 INFO（`[pack特性] bufferObject=N image=M 已按 Iris 文法读入（分配/绑定待接线，不是已生效）`）+ 被拒行逐条 WARN，`DROPPED_REPORT_LIMIT=16` 之后汇总成一行（X46 要有读数 + 一条坏包不许淹掉取证日志）。
+- **判据 16 条**（`src/test/java/dev/vkdisp/pack/model/PortedPackFeatureModelTest`）：索引 13 被拒 / `size<1` 是关闭而非报错 / 三词相对式不成形 / 第十七条与至少六词 / 7·8·9 词的形状 / 相对式恰八词 / 尺寸位回查 defines / `RGB8` 提升且 `alphaAdded` / 乱名字回落不抛 / packed 的 `bytesPerTexel` 不乘通道数（12 vs 3 vs 4 三种算法各自的值）/ `off` ≠ 读不懂 / 双空格使混合整条失效 / `dh_shadow` 属 shadow 几何 / 编号上限 99 / 帧序 ≠ 指令折叠序 / 水与云的兜底链 / `gbuffers_spidereyes` 那条覆盖挂在**被问的名字**上 / 冒号=游戏的资源 / `Raw.bytes()`=1024。
+- **两条我自己造成的红，都归因后修掉（不怪守卫）**：① image 系列断言我漏写了 `pixelType` 那一位（上游词序是 sampler/format/internal/**pixelType**/clear/relative/尺寸），七词会被读成 1D ⇒ 断言与真实文法对不上 ⇒ 补齐词数后 16 条全绿；② `BlendMode` 我写了五词串、`PixelType` 我按 12 心算了 `UNSIGNED_BYTE × RGB`（其实是 3）⇒ 改成 `FLOAT × RGB = 12` 与 `UNSIGNED_INT_10_10_10_2 × RGBA = 4`（packed 不乘通道数，正是这个类存在的全部理由）。
+- 🔴 **一次真实损坏与恢复（记下来，别再犯）**：给 `ShaderPackService` 打补丁的脚本用 `io.open(f,'w')` **先截断后编码**，脚本在写 emoji 时抛 `UnicodeEncodeError` ⇒ 该文件被截成 0 字节。因该文件本轮**无其它未提交改动**，`git checkout --` 从 HEAD 完整恢复（744 行）；此后所有补丁脚本一律 **先 `s.encode('utf-8')` 再 `open(f,'wb')`**。⇒ 教训：「用脚本改文件」本身也要有失败模式，写序错了就不是dry-run。
+- **影响的文档**：`NOTICE.md`（台账 10 行 + 生效状态说明）；`docs/19-IMPROVEMENT-PATHS.md` §7-9 的移植面进度；本条 CHANGE_LOG。🔴 `docs/13-GAP-REGISTRY.md` 本轮**没**动：SSBO/图像的「分配与绑定」缺口要等接线轮有判据了再立条，现在立等于登记一个还没测过的东西。
+- **测试结果**：`./gradlew build` 全绿 = **1271 passed / 0 failed / 1 skipped**（上轮 1255 + 本轮 16 条判据）；`ShaderPackService` 786 行、`ShaderProperties` 228 行，均不在 `ClassLineRatchetTest` 的 CAPS 名单内 ⇒ 巨类基线未动。本轮不改渲染行为 ⇒ 不安排真机臂。
+- **未闭合，别当做到了**：① `bufferObject`/`image` 的**设备侧**（分配、绑定、`glMemoryBarrier` 时机、image load/store 的 Vulkan 形态）一行未接 ⇒ 特性还没生效；② `ProgramNames`/`ProgramStage` 与 `TargetFormat` 与既有 `pipeline/model/VertexElementFormat` 之间存在**两张表并存**，接线轮必须定一个真源，否则「一个族两处住」就是本仓反复记的那类漂移；③ 其余零支持族（`gbuffers_handled.`、`shadow.gcolor`、`exclude_preset`、`variablePriority`）与 `target/` 那三个重型件仍在队列里。
+
+---
+
 ## 2026-10-17（一百八十六）— 🔁 **换证：MIT → LGPL-3.0-or-later**，并把「光影包特性的处理」从自研改为**直接移植 Iris / Vitrail**（本轮零行并入）
 
 > **verdict = 这是一轮纯条款/许可轮，没动一行渲染代码。** 换证必须先于移植，因为 MIT 与 LGPL 不同族 ⇒ 在旧证下搬一行就违约一行。

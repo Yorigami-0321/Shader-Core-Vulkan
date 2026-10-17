@@ -6,6 +6,8 @@ import dev.vkdisp.glsl.preprocess.ConstEvaluator;
 import dev.vkdisp.glsl.preprocess.GlslPreprocessor;
 import dev.vkdisp.glsl.preprocess.IncludeResolver;
 import dev.vkdisp.pack.properties.PackLangFile;
+import dev.vkdisp.pack.model.BufferObject;
+import dev.vkdisp.pack.model.ImageInformation;
 import dev.vkdisp.pack.properties.ShaderProperties;
 import dev.vkdisp.pack.ShaderPackRepository.MountPlan;
 import dev.vkdisp.pack.ShaderPackScanner.DiscoveredPack;
@@ -64,6 +66,8 @@ public final class ShaderPackService {
 
     /** shaders.properties 在包内的固定位置（相对 shaders/ 根）。 */
     public static final String PROPERTIES_FILE = "shaders.properties";
+    /** 一条坏包不该用几千行日志把取证日志淹掉：被丢弃的声明逐条点名到这么多条，其余汇总成一行。 */
+    private static final int DROPPED_REPORT_LIMIT = 16;
 
     /** 单个包的加载结果：模型 + 诊断；{@code pack == null} 表示该包未能组装成模型（诊断里必有说明）。 */
     public record LoadResult(ShaderPack pack, List<TranslateDiagnostic> diagnostics) {
@@ -171,6 +175,7 @@ public final class ShaderPackService {
         // （profiles → ShaderPack#profiles；sliders/screen → Option#slider / #screen；
         // programSwitches → Program#settings），故不在此重复收录。
         Map<String, String> directives = shaderProperties == null ? Map.of() : shaderProperties.directives();
+        reportPortedFeatureReadings(shaderProperties, diagnostics);
 
         Map<String, ProgramBlueprint> blueprints = collectPrograms(plan, diagnostics);
         Map<String, Map<String, String>> settings = deriveSettings(shaderProperties, blueprints.keySet());
@@ -281,6 +286,45 @@ public final class ShaderPackService {
     // ------------------------------------------------------------------ shaders.properties
 
     /** 读取并解析 {@code shaders.properties}（A 线）；文件缺失返回 null，解析失败记 WARN 后按「无配置」继续。 */
+    /**
+     * 移植件读出来的东西必须自报（07 §〇 P1 + X46「先证明被测物确实在跑」）：
+     * 「包声明了我方一行没读」与「读了但画面还没兑现」在日志里必须长得不一样。
+     *
+     * <p>🔴 这里只证到「声明已按 Iris 的文法与上限读入模型」；SSBO / 自定义图像的分配与绑定
+     * 尚未接进管线（移植面见 19 §7-9）⇒ 文案写明「不是已生效」，不许被读成生效。
+     */
+    private static void reportPortedFeatureReadings(ShaderProperties shaderProperties,
+            List<TranslateDiagnostic> diagnostics) {
+        if (shaderProperties == null) {
+            return;
+        }
+        BufferObject.Reading buffers = shaderProperties.bufferObjects();
+        ImageInformation.Reading images = shaderProperties.images();
+        if (!buffers.buffers().isEmpty() || !images.images().isEmpty()) {
+            diagnostics.add(TranslateDiagnostic.of(
+                    TranslateDiagnostic.Severity.INFO,
+                    "vkdisp: [pack特性] bufferObject=" + buffers.buffers().size()
+                            + " image=" + images.images().size()
+                            + " 已按 Iris 文法读入（分配/绑定待接线，不是已生效）",
+                    PROPERTIES_FILE, TranslateDiagnostic.UNKNOWN_LINE));
+        }
+        List<String> dropped = new ArrayList<>(buffers.dropped());
+        dropped.addAll(images.dropped());
+        for (int i = 0; i < Math.min(dropped.size(), DROPPED_REPORT_LIMIT); i++) {
+            diagnostics.add(TranslateDiagnostic.of(
+                    TranslateDiagnostic.Severity.WARN,
+                    "vkdisp: [pack特性] 丢弃并点名: " + dropped.get(i),
+                    PROPERTIES_FILE, TranslateDiagnostic.UNKNOWN_LINE));
+        }
+        if (dropped.size() > DROPPED_REPORT_LIMIT) {
+            diagnostics.add(TranslateDiagnostic.of(
+                    TranslateDiagnostic.Severity.WARN,
+                    "vkdisp: [pack特性] 另有 " + (dropped.size() - DROPPED_REPORT_LIMIT)
+                            + " 条被丢弃（前 " + DROPPED_REPORT_LIMIT + " 条已逐条点名）",
+                    PROPERTIES_FILE, TranslateDiagnostic.UNKNOWN_LINE));
+        }
+    }
+
     private static ShaderProperties readShaderProperties(
             ShaderPackRepository.MountPlan plan, List<TranslateDiagnostic> diagnostics) {
         if (!plan.shaderFiles().contains(PROPERTIES_FILE)) {
