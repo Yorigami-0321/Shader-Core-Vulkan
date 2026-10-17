@@ -760,7 +760,33 @@ C2a 不碰 GPU ⇒ 它的判据是**单测矩阵断言**，跑真机只会得到
 | 一百八十六 | 只换证与改条款 | 零行并入，台账为空 |
 | 一百八十七 | `pack/model` 十个叶子文件（`BlendMode`·`ProgramFallbacks`·`ProgramNames`·`TextureStage`·`PackTexture`·`PixelFormat`·`PixelType`·`TargetFormat`·`BufferObject`·`ImageInformation`）+ `ShaderProperties` 两族分派 + `ShaderPackService` 的 `[pack特性]` 自报 | 🔴 **只到「按 Iris 文法与上限读入模型」**：SSBO 与自定义图像的设备侧（分配/绑定/barrier 时机）一行未接 ⇒ 特性**尚未生效**；判据 16 条（`PortedPackFeatureModelTest`） |
 
-🔴 **下一批的先后次序（按「离生效近」排，不按好写排）**：① `pack/target/{ConstDirectives,DrawBuffers,PackDirectives,TargetDirectives}` —— `const` / `DRAWBUFFERS` / `program.*` / `shadow.*` / `albedo.*` 这些**已经在喂我方管线**的指令，把我方自研表换成上游表并与 `pipeline/model` 定一个真源（`DRAWBUFFERS` 现有 14 个文件在用、`gcolor` 5 个，属「已有自研、待定真源」而非零支持）；② `pack/texture/{CustomStorage,CustomImages}` + 设备侧分配，让第一批搬进来的两张表**真的产生一次 draw**；③ `pack/target/{SamplerPlan,TargetPlan,ChainPlan}`（821 / 1644 / 1356 行，含派生管线绑包 sampler 那段——本仓已两次在 `noisetex` 这类漏绑上翻闸即崩）。面外照旧：`compat/sodium/**`（PolyForm）、`pipeline/transform/**`（AGPL 依赖，只取规则）、Sulkan（GPL）、OptiFine 本体（ARR）。
+#### 🔴 闸门事实（2026-10-17 源码级核实）：SSBO 与自定义图像**官方 API 表达不了**
+
+`bufferObject.N`（SSBO）与 `image.NAME`（storage image）这两族**不可能**只靠官方渲染 API 生效。逐字证据
+（取自本机 `mergeWithSources_*_output.jar`，非回忆）：
+
+| 事实 | 出处 |
+|---|---|
+| 缓冲的 usage 位止于 `USAGE_INDIRECT_PARAMETERS = 512`，**没有任何 STORAGE 位** | `com/mojang/renderpearl/api/buffers/GpuBuffer.java:13-22` |
+| 管线能绑的描述符种类只有三种：`COMBINED_IMAGE_SAMPLER` / `UNIFORM_BUFFER` / `TEXEL_BUFFER` | `com/mojang/renderpearl/api/pipeline/UniformType.java:8-11` |
+| 后端建 `descriptorType` 时是对上面这个枚举做 switch ⇒ 没有第四个分支可走 | `com/mojang/renderpearl/backend/vulkan/VulkanRenderPipeline.java:92-98` |
+
+上游的绕法已经看清（Vitrail `render/storage/StorageBuffers.java:3-27`）：**绕过游戏的门面**——
+`lwjgl-vma` + `VK12.vkCreateBuffer` 自己建缓冲，再用三个 accessor mixin
+（`mixin/access/{CommandEncoder,GpuDevice,VulkanCommandEncoder}Accessor`）在 push descriptor 里
+**顶替 `VkBuffer` 句柄与 range**。这条路能走通，但它同时踩我方的两条现行约束：
+**T2「所有新增 GPU 操作走 `com.mojang.renderpearl.*`」** 与 **X7「不许绑死后端」**
+（`VK12`/`Vma` 是 Vulkan 专属），且属于 `17-NATIVE.md` §5.2 的 **G 系列闸门**（需裁决 + 取证才建）。
+
+⇒ 这是一个**只能由用户裁决**的分岔，不是工程上可以自行绕过的：
+
+| 选项 | 代价 |
+|---|---|
+| **A. 开原生闸门**：按 Vitrail 的路子接 VMA + 裸 `vkCreateBuffer` + 三个 accessor mixin（登记制开启） | 绑死 Vulkan 后端（X7 破例）、G 系列要真机取证、原生构件进分发 jar；换来 SSBO/自定义图像真正生效 |
+| **B. 明确登记为不承诺**：这两族保持「已解析、拒接并点名」，画面按包的兜底走 | 依赖 SSBO/图像的现代包（BSL/Complementary 高级材质线、大量 compute 包）永远不兼容，支柱①「完整兼容」在这两族上有确定缺口 |
+| **C. 用 `UNIFORM_BUFFER` 伪接** | 写不回（shader 对 SSBO 的写入是这族特性的核心），只会把「不支持」变成「看起来支持而语义错」⇒ **不建议** |
+
+🔴 **下一批的先后次序（按「离生效近」排，不按好写排）**：① `pack/target/{ConstDirectives,DrawBuffers,PackDirectives,TargetDirectives}` —— `const` / `DRAWBUFFERS` / `program.*` / `shadow.*` / `albedo.*` 这些**已经在喂我方管线**的指令，把我方自研表换成上游表并与 `pipeline/model` 定一个真源；**并把 `alphaTest` 的 `discard(...)` 接进片元末尾**（注入点 = `pack/PackTerrainSource` / `pack/PackCompositeSource` 造源码处 —— 移植件已解析、设置键已存但**没有消费者**，这条是「按官方 API 就能生效」的那一族）（`DRAWBUFFERS` 现有 14 个文件在用、`gcolor` 5 个，属「已有自研、待定真源」而非零支持）；② `pack/texture/{CustomStorage,CustomImages}` + 设备侧分配，让第一批搬进来的两张表**真的产生一次 draw**；③ `pack/target/{SamplerPlan,TargetPlan,ChainPlan}`（821 / 1644 / 1356 行，含派生管线绑包 sampler 那段——本仓已两次在 `noisetex` 这类漏绑上翻闸即崩）。面外照旧：`compat/sodium/**`（PolyForm）、`pipeline/transform/**`（AGPL 依赖，只取规则）、Sulkan（GPL）、OptiFine 本体（ARR）。
 
 （编号说明：§7-8 是 2026-10-13 收尾时另起的一个 H2 台账，不属本节序列，故本条从 7-7 直接跳到 7-9。）
 

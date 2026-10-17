@@ -9,6 +9,7 @@ import dev.vkdisp.pack.properties.ShaderProperties;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -238,4 +239,107 @@ final class PortedPackFeatureModelTest {
         assertEquals(1, parsed.images().dropped().size());
         assertEquals("4096", parsed.directives().get("bufferObject.0"));
     }
+
+    @Test
+    @DisplayName("TargetName：legacy 别名按位置解，不按猜")
+    void legacyAliasesResolveByPosition() {
+        assertEquals(0, TargetName.index("gcolor").getAsInt());
+        assertEquals(1, TargetName.index("gdepth").getAsInt());
+        assertEquals(2, TargetName.index("gnormal").getAsInt());
+        assertEquals(3, TargetName.index("composite").getAsInt());
+        assertEquals(4, TargetName.index("gaux1").getAsInt());
+        assertEquals(7, TargetName.index("gaux4").getAsInt());
+        assertEquals(7, TargetName.index("colortex7").getAsInt());
+        assertEquals(OptionalInt.empty(), TargetName.index("gaux5"), "别名表到 gaux4 为止");
+        assertEquals(OptionalInt.empty(), TargetName.index("gdepthtex"), "它不是颜色目标");
+        assertEquals(OptionalInt.empty(), TargetName.index("colortex32"), "上限 32 是排他的");
+    }
+
+    @Test
+    @DisplayName("TargetName：colorimg 不认别名（参考实现自己构造的集合就是这个形状）")
+    void imageNameSetHasNoAliases() {
+        assertEquals(7, TargetName.imageIndex("colorimg7").getAsInt());
+        assertEquals(OptionalInt.empty(), TargetName.imageIndex("gaux4img"));
+        assertEquals(OptionalInt.empty(), TargetName.imageIndex("colorimg100"), "两位数字封顶");
+        assertEquals(Optional.of("gaux4"), TargetName.legacyAlias(7));
+        assertEquals(Optional.empty(), TargetName.legacyAlias(8));
+    }
+
+    @Test
+    @DisplayName("TargetName：带后缀的指令名拆成索引+后缀；程序名的目录形态被剥平")
+    void suffixedDirectivesAndBareNames() {
+        TargetName.Suffixed a = TargetName.split("gaux1Format").orElseThrow();
+        assertEquals(4, a.index());
+        assertEquals("Format", a.suffix());
+
+        TargetName.Suffixed b = TargetName.split("colortex14Clear").orElseThrow();
+        assertEquals(14, b.index());
+        assertEquals("Clear", b.suffix());
+
+        assertEquals(Optional.empty(), TargetName.split("colortex7"), "没有后缀不是 split 的活");
+        assertEquals("composite1", TargetName.bareName("world0/composite1"));
+        assertEquals("composite1", TargetName.bareName("composite1"));
+    }
+
+    @Test
+    @DisplayName("AlphaTest：off/false 都是不测，读不懂是 empty 而不是不测")
+    void alphaTestParsing() {
+        assertEquals(Optional.of(AlphaTest.OFF), AlphaTest.parse("off"));
+        assertEquals(Optional.of(AlphaTest.OFF), AlphaTest.parse("FALSE"));
+        assertEquals(Optional.empty(), AlphaTest.parse("GREATER"), "只有一个词 ⇒ empty");
+        assertEquals(Optional.empty(), AlphaTest.parse("GREATER  0.5"), "双空格是参考实现会拒的一行");
+        assertEquals(AlphaTest.Function.GREATER,
+                AlphaTest.parse("GL_GREATER 0.5").orElseThrow().function());
+        // 第三个 token 忽略而不是拒：行尾一句注释不该害得包丢掉阈值。
+        assertEquals(0.5F, AlphaTest.parse("GREATER 0.5 trailing").orElseThrow().reference());
+        assertFalse(AlphaTest.OFF.tests());
+        assertTrue(AlphaTest.CUTOUT.tests());
+    }
+
+    @Test
+    @DisplayName("AlphaTest：发出的是取反形态，阈值按包写的样子印（不许 1.0E-4）")
+    void alphaTestDiscardText() {
+        assertEquals("", AlphaTest.OFF.discard("x"));
+        assertEquals("discard;", new AlphaTest(AlphaTest.Function.NEVER, 0F).discard("x"));
+        assertEquals("if (!(x > 0.5)) { discard; }", AlphaTest.CUTOUT.discard("x"));
+        // 🔴 实测：上游注释承诺「印成包写的 0.0001」，而它自己的实现给的是 0.00010
+        //   （Float.toString(0.0001F) 是 "1.0E-4"，BigDecimal 的 scale 把它落成五位）。
+        //   数值等价、GLSL 合法 ⇒ 本仓**按上游行为断言**，不悄悄改成注释承诺的样子；
+        //   要改就得在 NOTICE.md 台账里把这条声明成我方改动。
+        assertEquals("if (!(x > 0.00010)) { discard; }", AlphaTest.NON_ZERO.discard("x"));
+        assertEquals("if (!(x > 0.1)) { discard; }", AlphaTest.ONE_TENTH.discard("x"));
+        assertEquals("if (!(x == 0.25)) { discard; }",
+                new AlphaTest(AlphaTest.Function.EQUAL, 0.25F).discard("x"));
+    }
+
+    @Test
+    @DisplayName("ShaderProperties：alphaTest 进结构化视图，读不懂的行点名，原文不丢")
+    void alphaTestsDispatch() {
+        ShaderProperties parsed = ShaderProperties.parse("""
+                alphaTest.gbuffers_terrain=GREATER 0.5
+                alphaTest.gbuffers_hand=off
+                alphaTest.gbuffers_water=not-a-test
+                """);
+        assertEquals(2, parsed.alphaTests().size());
+        assertEquals(AlphaTest.Function.GREATER,
+                parsed.alphaTests().get("gbuffers_terrain").function());
+        assertEquals(AlphaTest.OFF, parsed.alphaTests().get("gbuffers_hand"));
+        assertEquals(1, parsed.alphaTestDropped().size());
+        assertEquals("GREATER 0.5", parsed.directives().get("alphaTest.gbuffers_terrain"));
+    }
+
+    @Test
+    @DisplayName("回归针：链侧解析器走移植件的表，不许再把 gaux* 硬编成某一个槽位")
+    void chainResolverDelegatesToThePortedTable() throws Exception {
+        java.nio.file.Path file = java.nio.file.Path.of("src/main/java/dev/vkdisp/bridge/FrameApi.java");
+        if (!java.nio.file.Files.isReadable(file)) {
+            return;
+        }
+        String src = java.nio.file.Files.readString(file);
+        assertTrue(src.contains("TargetName.index(name)"),
+                "颜色目标的名字→槽位必须由 pack/model/TargetName 回答");
+        assertFalse(src.contains("poolView(4)"),
+                "缺陷针：此前所有 gaux* 一律绑 colortex4（注释写的却是 N+3）⇒ 不许回来");
+    }
 }
+

@@ -1,5 +1,6 @@
 package dev.vkdisp.pack.properties;
 
+import dev.vkdisp.pack.model.AlphaTest;
 import dev.vkdisp.pack.model.BufferObject;
 import dev.vkdisp.pack.model.ImageInformation;
 import java.io.Reader;
@@ -7,6 +8,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -40,6 +42,8 @@ public final class ShaderProperties {
     private final Map<String, String> programSwitches;
     private final BufferObject.Reading bufferObjects;
     private final ImageInformation.Reading images;
+    private final Map<String, AlphaTest> alphaTests;
+    private final List<String> alphaTestDropped;
 
     private ShaderProperties(Builder b) {
         this.directives = Map.copyOf(b.directives);
@@ -51,6 +55,8 @@ public final class ShaderProperties {
         this.bufferObjects = new BufferObject.Reading(
                 new ArrayList<>(b.bufferObjects.values()), b.bufferObjectDropped);
         this.images = new ImageInformation.Reading(b.images, b.imageDropped);
+        this.alphaTests = Map.copyOf(b.alphaTests);
+        this.alphaTestDropped = List.copyOf(b.alphaTestDropped);
     }
 
     public static ShaderProperties parse(Reader reader) {
@@ -129,6 +135,17 @@ public final class ShaderProperties {
                     b.bufferObjects);
             if (reason != null) {
                 b.bufferObjectDropped.add(key + "=" + value + " : " + reason);
+            }
+            b.directives.put(key, value);
+        } else if (key.startsWith("alphaTest.")) {
+            // 🔴 这条测试是 pass 的属性而不是程序的：键按「真正服务该 pass 的文件名」写，与 Iris 同口径。
+            //   读不懂的行**丢弃并点名**，不猜 —— 错的阈值就是一张有洞的、或本该有洞却没有洞的画面。
+            String program = key.substring("alphaTest.".length());
+            Optional<AlphaTest> test = AlphaTest.parse(value);
+            if (test.isPresent()) {
+                b.alphaTests.put(program, test.get());
+            } else {
+                b.alphaTestDropped.add(key + "=" + value + " : 既不是 off/false，也不是「函数 + 参考值」");
             }
             b.directives.put(key, value);
         } else if (key.startsWith("image.")) {
@@ -211,6 +228,21 @@ public final class ShaderProperties {
         return images;
     }
 
+    /**
+     * {@code alphaTest.<程序>} 的结构化读法：程序名 → 该 pass 的 alpha 测试（函数 + 参考值）。
+     *
+     * <p>🔴 只有**读进来**这一步：把 {@code discard(...)} 写到片元末尾还没接（注入点在
+     * {@code pack/PackTerrainSource} 与 {@code pack/PackCompositeSource} 造源码处）⇒ 这条特性尚未生效。
+     */
+    public Map<String, AlphaTest> alphaTests() {
+        return alphaTests;
+    }
+
+    /** 被丢弃的 {@code alphaTest.} 行，逐条带原因。 */
+    public List<String> alphaTestDropped() {
+        return alphaTestDropped;
+    }
+
     private static final class Builder {
         final LinkedHashMap<String, String> directives = new LinkedHashMap<>();
         final List<String> sliders = new ArrayList<>();
@@ -222,6 +254,8 @@ public final class ShaderProperties {
         final List<String> bufferObjectDropped = new ArrayList<>();
         final ArrayList<ImageInformation> images = new ArrayList<>();
         final List<String> imageDropped = new ArrayList<>();
+        final LinkedHashMap<String, AlphaTest> alphaTests = new LinkedHashMap<>();
+        final List<String> alphaTestDropped = new ArrayList<>();
         /** {@code image.NAME} 尺寸位写选项名时用它落整数；由带 defines 的 parse 重载注入。 */
         Map<String, String> defines = Map.of();
     }

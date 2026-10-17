@@ -71,6 +71,8 @@ import net.minecraft.client.renderer.MappableRingBuffer;
 import dev.vkdisp.glsl.translate.BuiltinsBlockLayout;
 import dev.vkdisp.pipeline.model.MrtPlan;
 import dev.vkdisp.render.OfUniformManager;
+import dev.vkdisp.pack.model.TargetName;
+import java.util.OptionalInt;
 
 /**
  * 原版绘制 API 唯一入口（06-MIGRATION.md §2.1 的 bridge 红线，07-CONSTRAINTS T5）。
@@ -1371,22 +1373,19 @@ public final class FrameApi {
             if (custom != null) {
                 return custom;
             }
-            if (name.startsWith("colortex")) {
-                try {
-                    int slot = Integer.parseInt(name.substring("colortex".length()));
-                    GpuTextureView v = MrtTerrainPass.poolView(slot);
-                    if (v != null) {
-                        return v;
-                    }
-                } catch (NumberFormatException ignored) {
-                    // 非 colortex<数字> 形态走占位（不抛 —— 名字来自固定超集）。
-                }
-                return fallbackView;
+            // 颜色目标的名字→槽位交给 pack/model/TargetName（Vitrail/Iris 移植件）：编号形态
+            // colortexN 与 legacy 别名 gcolor0/gdepth1/gnormal2/composite3/gaux1..4=4..7 一张表管住。
+            // 🔴 此前这里自己 parse 后缀，并把**所有** gaux* 一律绑到 colortex4（注释写的却是 N+3），
+            //   四个 legacy 名根本不认 —— 五个语料包真在用这些名字（Mellow 的 127 个程序读 gaux1，
+            //   Complementary 读 gaux2/gaux4 九十九次），按错就是采错图，而画面只会显示「颜色不对」。
+            OptionalInt target = TargetName.index(name);
+            if (target.isPresent()) {
+                GpuTextureView v = MrtTerrainPass.poolView(target.getAsInt());
+                return v != null ? v : fallbackView;
             }
-            // OF: gauxN = colortex(N+3)（BSL 生态里 gaux1 = colortex4 —— h44 §4.5 同源判据）。
-            if (name.startsWith("gaux")) {
-                GpuTextureView g = MrtTerrainPass.poolView(4);
-                return g != null ? g : fallbackView;
+            if (name.startsWith("colortex")) {
+                // colortexFoo 这类非数字形态仍走占位（不抛 —— 名字来自固定超集）。
+                return fallbackView;
             }
             if (name.startsWith("depthtex")) {
                 // 🔴 GAP-023：先取**该时刻的深度快照**，取不到才回退活深度。

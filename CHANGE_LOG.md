@@ -4,6 +4,45 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-17（一百八十八）— 🩹 移植第二批：别名表与 alpha test 进引擎，并核出「SSBO/自定义图像官方 API 表达不了」这条闸门
+
+> **verdict = 一批真修 + 一条决定路线的事实。** 第二批搬 `TargetName`(137) 与 `AlphaTest`(138) 两个零依赖叶子件：
+> 前者当场修掉链侧一处真缺陷（**所有 `gaux*` 被硬编成 colortex4**，legacy 名 `gcolor`/`gdepth`/`gnormal`/`composite` 根本不认），
+> 后者把 `alphaTest.<程序>` 从「存成字符串没人读」推进到「结构化读入」；🔴 同时源码级核实：
+> **官方 26.3 渲染 API 里没有 storage 缓冲的表达** ⇒ SSBO 与自定义图像不可能只靠官方 API 生效（闸门，见 19 §7-9）。
+
+- **链侧缺陷的证据（不是推测）**：`bridge/FrameApi` 原 1386-1390 行写着「OF: `gauxN = colortex(N+3)`」，代码却是 `poolView(4)` 无条件 ——
+  `gaux2/3/4` 全被绑到 colortex4；而 `gcolor/gdepth/gnormal/composite` 四个别名直接落到后面的兜底分支。
+  上游表给的是位置对应 `gcolor0/gdepth1/gnormal2/composite3/gaux1..4=4..7`（Vitrail `TargetName.java:33-34`），
+  并说明这**不是 folklore**：八个语料包里五个真用这些名字，Mellow 在 127 个程序里读 `gaux1`、Complementary 读 `gaux2`/`gaux4` 九十九次。
+  ⇒ 已改为 `TargetName.index(name)`，FrameApi 由 1675 行降到 1674（巨类棘轮只会更宽松），并留一条**源码回归针**测试：
+  `TargetName.index(name)` 必须在、`poolView(4)` 不许回来。
+- **alpha test 这一步到了哪儿**：`ShaderProperties` 现把 `alphaTest.<程序>` 解析成 `alphaTests()`（程序名 → 函数 + 参考值），
+  读不懂的行逐条点名、原文仍留在 `directives()`（T11）。🔴 **`discard(...)` 还没写进片元末尾** ⇒ 这条特性仍未生效；
+  注入点是 `pack/PackTerrainSource` / `pack/PackCompositeSource` 造源码处，已写进 19 §7-9 的下一批次序第 ① 位。
+  此前我方把该设置存成字符串（`ShaderPackService:551-552`）而**全仓无消费者** —— 这正是 GAP-021 那类「键在表里不等于有人管」的复发形态。
+- 🔴 **闸门事实（源码级，逐字取自本机 `mergeWithSources` 产物）**：`renderpearl/api/buffers/GpuBuffer.java:13-22` 的 usage 位止于
+  `INDIRECT_PARAMETERS=512`，**无 STORAGE**；`api/pipeline/UniformType.java:8-11` 只有 `COMBINED_IMAGE_SAMPLER`/`UNIFORM_BUFFER`/`TEXEL_BUFFER`；
+  `backend/vulkan/VulkanRenderPipeline.java:92-98` 建 `descriptorType` 时就是对这三个枚举做 switch ⇒ 没有第四个分支。
+  上游 Vitrail 的绕法已看清（`render/storage/StorageBuffers.java:3-27`：`lwjgl-vma` + `VK12.vkCreateBuffer` +
+  三个 `mixin/access/*Accessor` 在 push descriptor 里顶替 `VkBuffer` 句柄），但它同时踩我方 **T2（GPU 操作走 renderpearl）**
+  与 **X7（不许绑死后端）**，且属 `17-NATIVE` §5.2 的 **G 系列闸门** ⇒ 已列成 A/B/C 三选项（开闸 / 明确不承诺 / 用 UNIFORM_BUFFER 伪装，
+  第三项会把「不支持」变成「看着支持而语义错」故不建议），**待用户裁决**。本轮把 SSBO/图像保持为「已解析、拒接并点名」。
+- **上游自己的一处注释与实现不一致（按实现断言，不悄悄改）**：`AlphaTest.literal()` 的注释承诺印成包写的 `0.0001`，
+  实际 `new BigDecimal(Float.toString(0.0001F)).toPlainString()` 给的是 `0.00010`（`Float.toString` 先产出 `1.0E-4`）。
+  数值等价、GLSL 合法 ⇒ 判据按**实测值**断言，台账记这条为上游行为；要改成注释承诺的样子，得先声明成我方改动。
+- **判据净增 7 条**（共 23 条）：别名按位置解（含 `gaux5`/`gdepthtex`/`colortex32` 三种拒法）、`colorimg` 无别名、
+  `split` 的后缀拆分、`bareName` 剥目录、`off`/`false` 与「读不懂 ≠ 不测」、单空格分隔与 `GL_` 前缀与第三词忽略、
+  发出的 GLSL 形态、`ShaderProperties.alphaTests()` 分发、链侧回归针。
+- **测试结果**：`./gradlew build` 全绿 = **1278 passed / 0 failed / 1 skipped**（上轮 1271 + 本批 7）。本轮不改渲染行为
+  ⇒ 不安排真机臂；但别名那条修正**改变了采样绑定的槽位**，属画面可见面 ⇒ 已在「未闭合」里点名要一臂复核。
+- **影响的文档**：`NOTICE.md`（台账 +2 行、生效状态更正）、`docs/19-IMPROVEMENT-PATHS.md` §7-9（闸门段 + 下一批次序改为「先接 alphaTest 注入」）、本条。
+- **未闭合，别当做到了**：① `alphaTest` 的 discard 注入未做 ⇒ 未生效；② SSBO/自定义图像停在闸门前（需裁决）；
+  ③ 别名修正的画面复核未跑（`gaux2/3/4` 现在会绑到与昨天不同的槽位，方向按上游表是对的，但**没看图**）；
+  ④ 我方 `pack/ProgramStage`、`pipeline/model/VertexElementFormat` 与移植件的表仍是两处住 ⇒ 真源未定。
+
+---
+
 ## 2026-10-17（一百八十七）— 📦 移植第一批：`pack/model` 十个 LGPL 叶子文件，把 SSBO 与自定义图像两族从「支持为零」搬到「已按 Iris 文法读入」
 
 > **verdict = 第一批落到了可执行判据上，但只到「读入模型」为止**：`bufferObject.N`（SSBO）与 `image.NAME`（自定义图像）此前在本引擎里**一行代码都不接**（`grep -rlE "bufferObject|drawbuffer" src/main/java` = 0），现在按 Vitrail/Iris 的文法与上限进模型、被拒的行逐条点名、并有一条 `[pack特性]` 自报行；🔴 **分配与绑定仍未接进管线 ⇒ 不许读成「已生效」**。本轮不含渲染行为改动。
