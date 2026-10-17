@@ -10,7 +10,7 @@ package dev.vkdisp.bridge;
  *    {@code RenderSystem.setShaderFog(terrainFog)} 那一行（GAP-038 的官方口径就长这样）；
  *    ② Mixin 0.8.7 的 {@code @Inject}/{@code @At} **注解签名**（javap 核实常量池，不读实现）。
  *    许可证：Mojang EULA（只观察签名、语句与时序）+ Mixin MIT。
- *    → 能否并入本项目（MIT）：可以 —— 本文件是独立编写的桥接侧，零源码搬运
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件是独立编写的桥接侧，零源码搬运
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：原版自己就在 pass 体第一句把 {@code terrainFog} 交给 {@code setShaderFog}
@@ -24,7 +24,7 @@ package dev.vkdisp.bridge;
  *    🔖 与 M-05 的第二个差别：字段从 {@code volatile Object} 变成<b>类型化</b>的
  *    {@code ChunkSectionsToRender} + {@code GpuBufferSlice} ⇒ 调用点的 {@code instanceof} 那一段
  *    「捕获到别的东西」的兜底分支<b>物理消失</b>（类型由注入点保证，不再靠运行时猜）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：热路径但极轻 —— 每帧两次引用赋值；不做性能优化（17 §3.2）。
  */
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;

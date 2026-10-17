@@ -8,7 +8,7 @@ package dev.vkdisp.pipeline.model;
  *    许可证：GLSL 规范是 Khronos 公开发布的事实性规范文本 → 只取「哪些字符合法」这一不受版权保护的事实，
  *    零文本搬运；本仓库 docs 为本项目自有文档。参考模组（VulkanMod / Sulkan / Beryl）零接触
  *    —— 按 docs/07-CONSTRAINTS.md L12「判不过就换参考，不再读它的代码」，本文件不含任何参考模组源码。
- *    → 能否并入本项目（MIT）：本文件为独立实现，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：GLSL 标识符词法（等价正则 [A-Za-z_][A-Za-z0-9_]*）。
  * 2. 备选：用 java.lang.Character.isJavaIdentifierStart —— 否决（Java 标识符允许 Unicode 与 '$'，
@@ -16,7 +16,7 @@ package dev.vkdisp.pipeline.model;
  * 3. 我们的差异点：两条可测谓词 —— ① GLSL 标识符合法（属性名/绑定名）；② 缓存键文本安全
  *    （无空白、无 '|'、无控制字符，用于缓存键的长度前缀编码）。校验不抛异常，由调用方转成
  *    ModelDiagnostic；只有 PipelineCacheKey 这种「必须给出确定键」的入口才抛 IllegalArgumentException。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制，只含规范词法事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制，只含规范词法事实。
  * 5. 性能基线：❄️ 冷路径（构建管线/格式时一次性校验），不做任何性能优化（18-PARALLEL §7.7）。
  */
 import java.util.Objects;

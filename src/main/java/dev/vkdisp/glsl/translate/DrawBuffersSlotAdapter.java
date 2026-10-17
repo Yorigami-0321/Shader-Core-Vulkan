@@ -4,10 +4,10 @@ package dev.vkdisp.glsl.translate;
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
  *    参考对象 = ① GLSL 官方公开语义：gl_FragData[n] 是 GLSL 1.20 及以前的片元内建输出数组，
  *    它与「location n」**没有必然关系** —— 槽位由引擎按包的 DRAWBUFFERS 注释兑现；
- *    ② 本仓库 glsl.translate 其余 8 段的形态（纯文本变换 + 诊断列表 + 行号契约），同为 MIT 自有代码。
+ *    ② 本仓库 glsl.translate 其余 8 段的形态（纯文本变换 + 诊断列表 + 行号契约），同为 LGPL-3.0-or-later 自有代码。
  *    **不搬运任何第三方着色器文本，不搬运 Mojang 源码。**
  *    另参考本仓库 docs/13-GAP-REGISTRY.md 的 GAP-003 行与 evidence/h06（BSL 实测口径）。
- *    → 能否并入本项目（MIT）：可以（语义是公开事实，实现为本项目自研）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（语义是公开事实，实现为本项目自研）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：原版 GlslCompiler 走 core profile，只认 layout(location = N) out vec4；
  *    「DRAWBUFFERS 是注释里的约定、引擎必须自己兑现」这件事**没有任何官方实现可抄** —— 原版没有包加载器。
@@ -18,7 +18,7 @@ package dev.vkdisp.glsl.translate;
  *    因此行号映射完全不受影响（同 ①–④ 与 ⑥ 段口径）；且**只认预处理后仍存活的那一条标记** ——
  *    死分支里的标记已被 #if 求值消掉，所以「当前配置下活着的分支」是**结构上唯一**的，
  *    不需要猜，也不需要包选项知识。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：冷路径（每阶段一次线性扫描），不做优化（18-PARALLEL §7.7、T14）。
  */
 import dev.vkdisp.glsl.TranslateDiagnostic;

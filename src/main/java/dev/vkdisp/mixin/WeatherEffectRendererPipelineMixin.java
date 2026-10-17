@@ -9,13 +9,13 @@ package dev.vkdisp.mixin;
  *    {@code renderOit(OitStage, WeatherRenderState, RenderPass)}（OIT）；
  *    MixinExtras 的 {@code @WrapOperation} / {@code @Local(argsOnly = true)} 公开契约（只观察签名）。
  *    许可证：Mojang EULA（只观察语句与形参表）+ Mixin MIT + NeoForge/MixinExtras LGPL-2.1（只观察契约）
- *    → 能否并入本项目（MIT）：可以；本文件独立编写，零源码搬运
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件独立编写，零源码搬运
  *    → 例外条款：无；不含 GPL / ARR 代码；参考模组（VulkanMod / Sulkan / Beryl）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：与云同形 —— 原版把 pass 与管线一起交给这个私有方法。
  * 2. 备选：注公开那条 —— <b>否决</b>（同样拿不到管线，且 OIT 路径不经过它）。
  * 3. 我们的差异点：方法体只有「埋点 + 一次 bridge 判定 + 原样交给 original」（X25）；
  *    pass 身份来自形参 {@code renderPass} 的对象比较（不是静态标志）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：每帧 1 次（天气整屏一次 draw）⇒ 不构成热点；埋点按 M-01 节流口径。
  */
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;

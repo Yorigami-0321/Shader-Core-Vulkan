@@ -3,11 +3,11 @@ package dev.vkdisp.config;
  * 【参考调研】GAP-009 能力门控单测 / 门控判据与门控行为
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
  *    参考对象 = 本仓库自有的 {@link PackOptions} / {@link Option} / {@link OptionFixtures}
- *    （MIT 项目自有代码 + 自造最小样本）；判据口径来自 docs/13-GAP-REGISTRY.md GAP-009 条目
+ *    （LGPL-3.0-or-later 项目自有代码 + 自造最小样本）；判据口径来自 docs/13-GAP-REGISTRY.md GAP-009 条目
  *    与 review/2026-10-04-GAP009-素材缺失裁决简报.md。
  *    第三方 shaderpack 素材**零接触**：本测试用的星号标记样本是**按 BSL 实测事实手写的最小夹具**
  *    （19 条星号中取 3 条代表性项），不复制任何包的 lang 文本（18-PARALLEL §7.6 只允许自造最小样本）。
- *    → 能否并入本项目（MIT）：可以（测试代码不进分发 jar）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（测试代码不进分发 jar）
  *    → 例外条款：无
  * 1. 官方/主实现：无（门控是本项目自研的编排逻辑）。
  * 2. 备选：无。
@@ -22,7 +22,7 @@ package dev.vkdisp.config;
  *      <li>🔴 <b>作用域不适用时不干预</b>（X27：不在没执行的地方砍特性）。</li>
  *      <li>🔴 <b>不写用户文件</b>：门控走 {@code PackOptions#set}，存储层完全不被触碰。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

@@ -15,7 +15,7 @@ import java.util.Set;
  *    gauxN / noisetex 这套**内建纹理命名规则**（格式事实，不受版权保护；`04-SPEC.md` §3.2 已登记同一口径），
  *    与本仓库自有实现事实（`SamplerDimensionPlan` 的声明派生 + `PackPostChain:223-232` 的「对差 + WARN + 排除」）。
  *    外部候选 glsl-preprocessor / glsl-transformer（GPL-3.0 + 例外）按禁止处理（`07` L12 / X20 / X21）：
- *    不读其代码、零代码并入。本项目 MIT。
+ *    不读其代码、零代码并入。本项目 LGPL-3.0-or-later。
  * 1. 职责：把「布局里该有哪些 sampler 名」与「包这一帧实际声明了什么」分成两件事 ——
  *    前者由 OF 命名规则**生成**（不再是「扫某个包得到的名单」），后者是包转译终稿的**声明快照**。
  * 2. 差异点：🔴 布局在**游戏启动期**随管线注册一次定死（`PipelineApi` 的 required 管线计数断言要求无条件注册），

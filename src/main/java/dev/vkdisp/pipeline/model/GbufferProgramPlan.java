@@ -4,13 +4,13 @@ package dev.vkdisp.pipeline.model;
  * {@link MrtPlan}（多附件冻结契约）+ {@link PackTerrainProgram}（单条程序的渲染契约）+
  * {@link TerrainDerivedPlan}（层 × 变体的派生管线规格）
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
- *    参考对象 = 本项目自有的三个纯数据类（同为 MIT，零外部代码）与
+ *    参考对象 = 本项目自有的三个纯数据类（同为 LGPL-3.0-or-later，零外部代码）与
  *    {@code docs/04-SPEC.md} §5.0（M-01 注入点）/ {@code docs/13-GAP-REGISTRY.md} GAP-027 条目。
  *    原版侧只用到一条**事实性 API 形状**（{@code RenderPipeline.Snippet} 的
  *    {@code withDepthStencilState} 覆盖是逐管线的，不是逐 pass 的 —— javap 核实
  *    {@code RenderPipeline$Builder} 与 {@code DepthStencilState} 的公开签名，Mojang EULA，
  *    **不搬运任何实现语句**)。
- *    → 能否并入本项目（MIT）：可以（本文件是独立编写的纯数据决策表）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件是独立编写的纯数据决策表）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码，也不含 Mojang 的着色器文本
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：无（原版没有「一个 gbuffer pass 里同时挂多条包程序」这个概念 ——
@@ -36,7 +36,7 @@ package dev.vkdisp.pipeline.model;
  *    ④ 自报行由本类生成（{@link #wiredReport} / {@link #notWiredReport}）：
  *      「接了哪几条、各几个输出、最后几个附件」与「为什么没接」都必须<b>一行说清</b>
  *      （GAP-026 同一口径：不报 = 不知道）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 冷路径（管线注册一次 / 资源重载一次）；渲染期只读已冻结的结果。
  */
 import java.util.ArrayList;

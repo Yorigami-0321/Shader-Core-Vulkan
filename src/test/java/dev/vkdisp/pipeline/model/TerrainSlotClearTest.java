@@ -5,7 +5,7 @@ package dev.vkdisp.pipeline.model;
  *    参考对象 = 本仓库自有的 {@code dev.vkdisp.bridge.MrtTerrainPass}（被替换的旧实现）
  *    与 {@code evidence/h27b-isolated-lane-replication.md} §六（绿天空的实测定位链）。
  *    仓库内自有文档与自有代码，不受版权保护。
- *    → 能否并入本项目（MIT）：可以（测试代码不进分发 jar）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（测试代码不进分发 jar）
  *    → 例外条款：无
  * 1. 官方/主实现：无（纯逻辑决策类）。
  * 2. 备选：无。
@@ -18,7 +18,7 @@ package dev.vkdisp.pipeline.model;
  *      <li>🔴 <b>生产模式是零值，不是「换成另一个好看的颜色」</b> ——
  *      任何非零颜色都会以「假色天空」的形式出现在用户画面里。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时。
  */
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;

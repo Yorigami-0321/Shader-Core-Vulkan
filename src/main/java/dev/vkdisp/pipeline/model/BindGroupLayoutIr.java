@@ -6,10 +6,10 @@ package dev.vkdisp.pipeline.model;
  *      .withUniform(..., UNIFORM_BUFFER).build() 的官方用法形状，以及真实管线例子里
  *      colortex0 / depthtex0 / OfSceneParams 这类绑定名）；
  *    ② F1 已冻结的 dev.vkdisp.bridge.RenderApi（风格参照：纯 Java record 承载跨线契约）。
- *    许可证：本仓库自有文档与自有契约（MIT 项目）→ 可直接消费；
+ *    许可证：本仓库自有文档与自有契约（LGPL-3.0-or-later 项目）→ 可直接消费；
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触
  *    —— 按 docs/07-CONSTRAINTS.md L12「判不过就换参考，不再读它的代码」。
- *    → 能否并入本项目（MIT）：本文件为独立实现，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：原版 BindGroupLayout 的声明顺序语义 —— 采样器 / uniform 缓冲按声明顺序占用
  *    binding 索引（0..n-1）；绑定名是管线侧契约（如 colortex0 / depthtex0 / OfSceneParams）。
@@ -18,7 +18,7 @@ package dev.vkdisp.pipeline.model;
  * 3. 我们的差异点：① 纯 Java record 中间表示，索引 = 声明顺序（由本类持有，不放在 Binding 里，
  *    避免出现「索引与顺序不一致」这种半非法状态）；② 提供 canonicalText()/parseCanonicalText()
  *    做打印比对与篡改检测；③ 损坏输入（空名 / 重名 / 未知 kind / 索引错位）全部显式诊断（T11）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制，只含官方 API 的声明顺序事实与本仓库文档。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制，只含官方 API 的声明顺序事实与本仓库文档。
  * 5. 性能基线：❄️ 冷路径（构建管线时一次性生成），不做任何性能优化（18-PARALLEL §7.7）。
  */
 import java.util.ArrayList;

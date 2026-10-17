@@ -5,17 +5,17 @@ package dev.vkdisp.pipeline.model;
  *    参考对象 = ① docs/04-SPEC.md §3.3（BindGroupLayout.builder().withSampler("colortex0")/
  *    .withUniform("OfSceneParams", UNIFORM_BUFFER) 的官方用例形状）；② docs/18-PARALLEL.md §4 E 线
  *    「中间表示能被序列化后打印比对」。
- *    许可证：JUnit 5 = EPL-2.0（仅 testImplementation 依赖，不进分发 jar）；本仓库 docs 为 MIT 项目自有文档。
+ *    许可证：JUnit 5 = EPL-2.0（仅 testImplementation 依赖，不进分发 jar）；本仓库 docs 为 LGPL-3.0-or-later 项目自有文档。
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触 —— 按 docs/07-CONSTRAINTS.md L12
  *    「判不过就换参考，不再读它的代码」。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的测试）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的测试）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：JUnit 5 标准断言（assertEquals / assertThrows / assertTrue），用例取值照抄本仓库
  *    docs/04-SPEC.md §3.3（绑定声明顺序 / 例子里的 colortex0、depthtex0、OfSceneParams）与 §4 属性表。
  * 2. 备选：手写 main() 断言 —— 否决（F4 已接好 JUnit 5，失败要能在 ./gradlew test 里显式红）。
  * 3. 我们的差异点：断言「声明顺序即索引」、规范文本逐字符一致、往返解析后值相等，以及篡改（未知 kind / 索引错位 /
  *    行格式坏 / 头坏）必须显式报错而非静默接受（T11）。
- * 4. 许可证核对：本项目 MIT；JUnit EPL-2.0 仅测试期依赖；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；JUnit EPL-2.0 仅测试期依赖；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时，无性能影响（18-PARALLEL §7.7）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

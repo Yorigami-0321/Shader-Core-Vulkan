@@ -13,7 +13,7 @@ import java.util.TreeSet;
  *    （{@code uniform.<类型>.<名>} / {@code variable.<类型>.<名>}）+ 「uniform/variable 可互相引用」
  *    这条事实（BSL v10.1.8 实测：{@code uniform.float.timeAngle} 引用 4 个 {@code variable.float.*}，
  *    {@code uniform.float.isCold} 引用同段稍后定义的 {@code yCold2/yCold3} ⇒ 必须先建依赖图再求值）。
- *    → 能否并入本项目（MIT）：可以（独立编写，零第三方代码）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（独立编写，零第三方代码）
  *    → 例外条款：无
  * 1. 官方/主实现：无外部可读实现（Iris 源码禁读 / OptiFine 闭源）。
  * 2. 备选：把求值塞进 {@code ShaderProperties.classify}（否决：那是冷路径的**分派**层，
@@ -28,7 +28,7 @@ import java.util.TreeSet;
  *    ④ 本类不做日志：诊断以数据形式交给调用方（冷路径 = {@code PackCompositeSource} 的
  *       诊断列表；每帧 = {@code render/PackUniformSupply} 的一次性 WARN），
  *       这样本包既能进渲染路径也能进纯 JUnit 车道（同 {@code NightVisionSupply} 的隔离理由）。
- * 4. 许可证核对结论：本项目 MIT；零第三方代码并入。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * 5. 性能基线：❄️ 冷路径构造；每帧一次求值（每定义一条小 AST 遍历）。
  */
 public final class PackUniformSet {

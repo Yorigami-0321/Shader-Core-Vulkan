@@ -8,7 +8,7 @@ package dev.vkdisp.pack;
  *    许可证：sp614x/optifine 无 LICENSE（GitHub license API 404）→ ARR，按 07-CONSTRAINTS X20 不并入其文本表达，
  *    仅使用不受版权保护的事实性信息（属性名、分量个数与类型），零文本复制；Iris（LGPL-3.0，已核 LICENSE）同口径；
  *    参考模组（VulkanMod / Sulkan / Beryl）零接触。04-SPEC §4 引用的 SKILL.md"字段名字面一致"坑同样只取结论。
- *    → 能否并入本项目（MIT）：本文件为独立实现的枚举，只含格式事实，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现的枚举，只含格式事实，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：04-SPEC §4 属性表——Position(vec3f) / Color(vec4ub) / UV0(vec2f) / UV1(vec2s) / UV2(vec2s) /
  *    Normal(vec3b) / mc_Entity(vec2s) / mc_midTexCoord(vec2f)；OF 官方 Attributes 表还列出 at_tangent、at_velocity、at_midBlock。
@@ -20,7 +20,7 @@ package dev.vkdisp.pack;
  *    UV1/UV2 的"用途"描述与 OF 官方 vaUV1=overlay / vaUV2=lightmap 亦不一致——本契约只冻结"名字 + 类型"两列，
  *    按 §4 为准；用途出入已随本任务上报 lead，由 env-1 决定是否修订 §4；
  *    ③ 字面一致要求直接用 GLSL 属性名做枚举常量（Position / mc_midTexCoord 等是合法 Java 标识符），name() 即字面量。
- * 4. 许可证核对：本项目 MIT；本文件零第三方代码复制，仅含文档事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；本文件零第三方代码复制，仅含文档事实。
  * 5. 性能基线：❄️ 冷路径（构建管线/格式时引用一次），不做任何性能优化（18-PARALLEL §7.7）。
  */
 

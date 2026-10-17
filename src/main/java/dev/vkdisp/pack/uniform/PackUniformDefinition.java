@@ -7,7 +7,7 @@ package dev.vkdisp.pack.uniform;
  *    {@code uniform.<float|int|bool|vec2|vec3|vec4>.<名>=<表达式>} 与
  *    {@code variable.<同名空间>.<名>=<表达式>}；两者表达式的写法完全一致，
  *    区别只有一句：「uniform 会算好并上传 GPU，variable 只是中间量、不上传」。
- *    → 能否并入本项目（MIT）：可以（本文件是独立编写的记录类型）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件是独立编写的记录类型）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无外部可读实现（Iris 源码禁读，OptiFine 闭源）⇒ 按文档格式自建。
  * 2. 备选：把整行原样塞进 {@code ShaderPack#properties()} 就完事（现状就是这么处理的，
@@ -19,7 +19,7 @@ package dev.vkdisp.pack.uniform;
  *        vec 上传通路，超出本条判据 ⇒ 由 {@link PackUniformSet} 点名跳过，不静默）；
  *    ③ 名字保留包给的原文（大小写敏感）：OF 的 uniform 名就是 GLSL 标识符，
  *       改成小写会和我们自己的收编名对不上。
- * 4. 许可证核对结论：本项目 MIT；零第三方代码并入。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * 5. 性能基线：❄️ 冷路径构造、每帧只读。
  */
 record PackUniformDefinition(

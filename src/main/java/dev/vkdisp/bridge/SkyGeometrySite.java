@@ -8,7 +8,7 @@ package dev.vkdisp.bridge;
  *    `:284,298` = renderSunriseAndSunset），以及那三条管线的定义（`RenderPipelines.java:1037-1083`）；
  *    ② 本仓库自有的 {@link SkyCelestialPack}（日月那一格的同类形状：换管线前先备好块字节 + 逐站
  *    `renderStage`）。外部候选（Iris / OptiFine / VulkanMod / Sulkan / Beryl）零接触（07-CONSTRAINTS L12）。
- *    许可证：独立编写（MIT），零第三方代码、零 Mojang 着色器文本。
+ *    许可证：独立编写（LGPL-3.0-or-later），零第三方代码、零 Mojang 着色器文本。
  * 1. 官方/主实现：原版这三处各自走 `RenderPipelines.{SKY,STARS,SUNRISE_SUNSET}`，没有「换成包程序」
  *    这回事 ⇒ 本表是本项目的责任分离点：把「站点 → 程序 / 顶点形状 / 渲染阶段宏」收在一处，
  *    这样三处混入与派生管线构造读<b>同一份事实</b>，各写一遍就会不一致（QD-02 同族）。
@@ -21,7 +21,7 @@ package dev.vkdisp.bridge;
  *    _MOON` 把那些站的 `alpha` 归零来抑制原版叠加 —— 即<b>同一个片元程序按渲染阶段分派</b>。
  *    🔴 本表<b>只是数据</b>（不参与任何判定、每站一份），消费它的混入与管线构造尚未落地（见
  *    CHANGE_LOG 一百七十三/一百七十二的顺序约束：换管线与退役全屏接管必须同一次做，且只能画面判）。
- * 4. 许可证核对：本项目 MIT；零第三方代码并入。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * 5. 性能基线：❄️ 纯枚举常量，渲染期零计算；本表被读的那一刻也不建任何 GPU 资源。
  */
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;

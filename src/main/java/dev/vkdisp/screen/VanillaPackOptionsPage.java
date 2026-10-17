@@ -15,7 +15,7 @@ package dev.vkdisp.screen;
  *    {@link dev.vkdisp.config.PackOptionsSession}/{@link dev.vkdisp.config.PackOptionStore}
  *    （会话 + 落盘）、{@code dev.vkdisp.pack.PackCompositeSource#loadSelectedForOptions}、
  *    旧 {@code PackOptionsScreen} 的<b>语义</b>（不是它的布局）。
- *    → 能否并入本项目（MIT）：可以；本文件独立编写
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件独立编写
  *    → 例外条款：无 GPL / LGPL / ARR 代码并入
  * 1. 官方/主实现：整条通路都在原版类里 —— 我们只是<b>往原版的 OptionsList 里加行</b>，
  *    滚动、每行两列、标签绘制、键盘/朗读、关屏时的 {@code applyUnsavedChanges} 全是原版在做。
@@ -29,7 +29,7 @@ package dev.vkdisp.screen;
  *    旧标签截断 {@code fitLabel} 也没了（原版按 {@code OptionInstance.caption} 画）。
  *    ⚠️ 语义差一条，必须自报而不是假装等价：<b>换包</b>之后本页选项行仍属于<b>开屏那一刻</b>的那个包
  *    （原版没有「重建页」的入口给我们调），所以页头明说「换包后请重开本页」。
- * 4. 许可证核对：本项目 MIT；零第三方代码并入。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * 5. 性能基线：开屏一次遍历 {@code definitions()} 建按钮（与旧屏幕 {@code init()} 同量级，
  *    旧屏幕还要每帧画一批文本标签 ⇒ 这里只会更省）；不测不下结论（T14 / X55）。
  */

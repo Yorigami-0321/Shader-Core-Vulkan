@@ -11,7 +11,7 @@ package dev.vkdisp.bridge;
  *    ④ 原版 {@code RenderSystem.bindDefaultUniforms} / {@code RenderSystem.getSamplerCache} /
  *    {@code TextureManager#getTexture} / {@code TextureAtlas.LOCATION_BLOCKS}（均 public，签名逐个核实）。
  *    许可证：Mojang EULA + NeoForge LGPL-2.1。**只调用公开 API，零源码搬运、零着色器文本搬运。**
- *    → 能否并入本项目（MIT）：可以 —— 本文件为独立编写的桥接封装
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件为独立编写的桥接封装
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：NeoForge 官方 {@code FrameGraphSetupEvent} + 原版
@@ -34,7 +34,7 @@ package dev.vkdisp.bridge;
  *          才知道自己在哪个 pass 里 ⇒ 用 {@link #active()} 让它在 MRT pass 内返回
  *          <b>多附件变体</b>，pass 外返回单附件变体。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 可关闭的诊断路径（默认关 ⇒ 常规帧零开销）。**开启时的双绘代价未测。**
  */
 import com.mojang.blaze3d.framegraph.FramePass;

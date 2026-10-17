@@ -20,7 +20,7 @@ import dev.vkdisp.glsl.lexer.GlslTokens;
  *    18-PARALLEL §4 D 线明示「按禁止处理」，一律不读其代码、零代码行并入
  *    （07-CONSTRAINTS L12 §1.3 陷阱 2 / X21、17-NATIVE §1.1.1）。
  *    许可证：本文件为独立编写的纯 Java 实现，不含任何外部项目代码；样本在单测中自造（§7.6）。
- *    → 能否并入本项目（MIT）：可以 —— 只采纳不受版权保护的事实性信息（内建语义、名字字面一致要求）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 只采纳不受版权保护的事实性信息（内建语义、名字字面一致要求）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：展开形态取自「M 原版核心着色器写法」与「OF 内建 uniform 语义」的合成 ——
  *    任务描述给出的形状是 {@code ProjMat * ModelViewMat * vec4(vaPosition, 1)}；其中**矩阵名以本仓库
@@ -37,7 +37,7 @@ import dev.vkdisp.glsl.lexer.GlslTokens;
  *    拒绝把内建语义套到错误阶段（X9 + T11）；⑤ 展开只改标识符区间，行数不变，
  *    C 线的行号映射不被切断；⑥ 展开会引入 gbufferProjection / gbufferModelView 的**使用**，
  *    其声明由随后运行的 UniformInjector 按 04-SPEC §3.2 补齐（同一条流水线上的分工）。
- * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载期一次，08-TESTING §8 解析+转译全部 program ≤ 1 秒 由 P2 主线
  *    实测把关）；两遍线性扫描，无缓存、无预优化（18-PARALLEL §7.7、T14 达标即停）。

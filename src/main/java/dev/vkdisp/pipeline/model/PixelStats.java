@@ -3,7 +3,7 @@ package dev.vkdisp.pipeline.model;
  * 【参考调研】GPU→CPU 像素回读的**统计口径**（把「看截图」变成「日志里的数字」）
  * 0. 合规核对（第 0 步闸门）：
  *    参考对象 = ① 本仓库自有的取证工具 {@code tools/vulkan-local/flicker_ratio.py}
- *    与 {@code tools/vulkan-local/p24_luma.py}（MIT 自有脚本）—— 它们**已经**定好了两个口径，
+ *    与 {@code tools/vulkan-local/p24_luma.py}（LGPL-3.0-or-later 自有脚本）—— 它们**已经**定好了两个口径，
  *    本类把它们**搬进进程内**，而不是另立一套：
  *    <ul>
  *      <li>闪烁判据：中心矩形 x∈[45%,65%] / y∈[15%,75%]，某像素 RGB 三通道**都 ≤ 8** 记为黑；</li>
@@ -17,7 +17,7 @@ package dev.vkdisp.pipeline.model;
  *    {@code USAGE_COPY_DST | USAGE_MAP_READ}（该类用的 usage 值就是 9）。
  *    ③ 原版 {@code com.mojang.renderpearl.api.GpuFormat#RGBA8_UNORM}（blockSize = 4）
  *    与 Vulkan 规范的「texel 字节序 = R,G,B,A」这一格式事实（不受版权保护）。
- *    → 能否并入本项目（MIT）：可以 —— 本文件为独立编写的纯 Java 统计类，零代码搬运
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件为独立编写的纯 Java 统计类，零代码搬运
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：无（官方只提供「把像素搬进 ByteBuffer」，不提供「统计成可比数字」）。
@@ -45,7 +45,7 @@ package dev.vkdisp.pipeline.model;
  *      <li>🔖 <b>零 GPU 依赖</b>：只吃 {@code byte[]} + 几何 ⇒ 可在无 GPU 的单测里逐位断言，
  *          这与本仓库 {@code pipeline/model} 其余类的分工一致。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制（统计口径取自本仓库自有脚本与公开格式事实）。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制（统计口径取自本仓库自有脚本与公开格式事实）。
  * 5. 性能基线：❄️ 诊断冷路径（默认关；开启时按 {@code mrt.pixelProbeEvery} 节流，
  *    每次只统计一块矩形，不做全帧逐像素输出）。
  */

@@ -5,7 +5,7 @@ package dev.vkdisp;
  *    参考对象 = FML loader-12.0.0 的 net.neoforged.fml.event.config.ModConfigEvent$Reloading
  *    与 $Loading（官方事件定义类 —— javap 只核实构造签名 / getConfig() / IModBusEvent 标记与触发链：
  *    nightconfig FileWatcher.addWatch → ConfigWatcher.run → ConfigTracker.loadConfig(…,
- *    Loading::new / Reloading::new) → setConfig 发事件；不复制其实现）。→ 能否并入本项目（MIT）：
+ *    Loading::new / Reloading::new) → setConfig 发事件；不复制其实现）。→ 能否并入本项目（LGPL-3.0-or-later）：
  *    可以 —— 只订阅事件公开 API 与调用原版 Minecraft 公开方法
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码。
  * 1. 官方/主实现：ModConfigEvent.Reloading —— 「配置文件变更后重新加载完成」语义
@@ -26,7 +26,7 @@ package dev.vkdisp;
  *       快照前移后重复保存同值不重发；
  *    ③ 回调跑在 nightconfig Watcher 线程 → 经 {@code minecraft.execute} 挪回渲染线程再执行
  *       （重载与开屏都不允许在观察者线程直接开跑）；全程 catch Throwable 打 ERROR 原文（T11）。
- * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只观察事件签名（07-CONSTRAINTS L5-L8 / X19-X21）。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；参考按禁止处理，只观察事件签名（07-CONSTRAINTS L5-L8 / X19-X21）。
  * 5. 性能基线：❄️ 冷路径（配置文件变更才触发），不做优化（T14）。
  */
 

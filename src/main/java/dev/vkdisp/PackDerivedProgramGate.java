@@ -5,7 +5,7 @@ package dev.vkdisp;
  * <p>0. 合规核对（第 0 步闸门）：参考对象 = 本仓库既有同类桥接类 {@code PackPostVertexSwitch} /
  *    {@code PackChainGatingSwitch}（把「一个取证总闸 + 它的点名自报」收成独立小类），
  *    以及 {@code docs/13-GAP-REGISTRY.md} 的 GAP-054「八臂之后的形状」行。
- *    → 可并入本项目（MIT）：是，全部为仓库内自有代码与自有文档事实；例外条款：无。
+ *    → 可并入本项目（LGPL-3.0-or-later）：是，全部为仓库内自有代码与自有文档事实；例外条款：无。
  * 1. 官方/主实现：无 —— OptiFine/Iris 没有「只加载资源不装程序」这一档，这是二分定位用的取证闸。
  * 2. 备选：① 把判定与自报写在 {@code VkDispVirtualPack} 里 —— <b>否决</b>：那个类已在
  *          {@code ClassLineRatchetTest} 的巨类名单里（上限 1573 行，只许降），棘轮的指示就是
@@ -15,7 +15,7 @@ package dev.vkdisp;
  *    （三源回落内置 passthrough、{@code postChain=EMPTY}、各槽布局清空、逐程序 gbuffer 产物 reset），
  *    唯一区别是<b>不碰</b> {@code PackTextures.setDesired} 与 {@code ActivePackUniforms.install} ——
  *    那两条正是「包自带的贴图/模型」与「包自己写下的 uniform 表达式」。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 冷路径（每次资源生成读一次），不进每帧路径。
  */
 public final class PackDerivedProgramGate {

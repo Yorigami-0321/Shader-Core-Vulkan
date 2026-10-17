@@ -25,7 +25,7 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    （07-CONSTRAINTS L12 §1.3 陷阱 2 / X21），本任务不读其代码、零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 编排类，不含任何第三方项目代码；
  *    输入数据（用户 shaderpacks 目录）只读，绝不写回（04-SPEC §3.1）。
- *    → 能否并入本项目（MIT）：可以（仅编排本项目自研组件）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅编排本项目自研组件）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无外部实现可参考（两个参考模组都不做 OF 包加载器），按本项目契约自行编排。
  * 2. 备选：① 直接读包里 composite.fsh 原文当源 —— 否决：选项覆盖没法进（宏要在预处理**前**改写），
@@ -42,7 +42,7 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *       P4.3 起 profile 之后回放 {@link PackOptionStore}（GUI 改动优先于 profile，与
  *       {@link PackOptionsSession} 同链 —— 选项屏幕与生效路径共用一条编排，单一真源）；
  *    ④ 输出全是内存数据，不触碰 {@code com.mojang.*}（18-PARALLEL §2 并行判据）。
- * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（虚拟包 openResources 时调用一次），清晰优先，不做任何性能优化
  *    （18-PARALLEL §7.7、07-CONSTRAINTS T14 / X14）。

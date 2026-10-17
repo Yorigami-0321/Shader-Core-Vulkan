@@ -3,15 +3,15 @@ package dev.vkdisp.bridge;
  * 【自行补充】R7 ⑤-d 前置（GAP-049 池尺寸锚点）的守卫 / 纯函数真值表 + 只读工程自身文件
  * 0. 合规核对（第 0 步闸门）：参考对象 = 本仓库 {@code bridge/GbufferSizeAnchor.java}、
  *    {@code bridge/MainPassTakeover.java}、{@code bridge/MrtTerrainPass.java} 与
- *    {@code docs/13-GAP-REGISTRY.md} 的 {@code GAP-049}（本项目自有文档，MIT）。
- *    → 可并入本项目（MIT）：本文件不引用任何外部代码。
+ *    {@code docs/13-GAP-REGISTRY.md} 的 {@code GAP-049}（本项目自有文档，LGPL-3.0-or-later）。
+ *    → 可并入本项目（LGPL-3.0-or-later）：本文件不引用任何外部代码。
  * 1. 官方/主实现：无。
  * 2. 备选：把 {@code RenderTarget} / {@code GpuTextureView} 拉进单测真建一张图 —— <b>否决</b>：
  *    测试运行时没有 MC 与 renderpearl（{@code GAP-050} 那一族，第三次撞到就是上一轮）。
  *    ⇒ 判定本体是纯 int 函数，能真跑；「什么时候被调、调了会不会改行为」是形状约束 ⇒ 文本钉住。
  * 3. 我们的差异点：这条判据的<b>反面</b>也要钉 —— 「核对不许顺手改成修正」（换池尺寸 = 重建整条池，
  *    那是 ⑤-d 的活，混进来就分不开归因）。
- * 4. 许可证核对：本项目 MIT。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later。
  * 5. 性能基线：❄️ 单测。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

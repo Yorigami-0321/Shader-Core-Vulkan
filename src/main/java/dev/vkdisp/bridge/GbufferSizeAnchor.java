@@ -4,8 +4,8 @@ package dev.vkdisp.bridge;
  * 0. 合规核对（第 0 步闸门）：参考对象 = 本仓库自有码 {@code bridge/MainPassTakeover.java}
  *    （主 pass 自己那条 target0 的尺寸从哪来）与 {@code bridge/MrtTerrainPass.java#ensureColortex}
  *    （池按谁的尺寸建），以及本项目文档 {@code docs/13-GAP-REGISTRY.md} 的 {@code GAP-049}
- *    （两条「主目标」handle 不同源）。许可证：本项目 MIT，零第三方代码。
- *    → 能否并入本项目（MIT）：可以，本文件独立编写
+ *    （两条「主目标」handle 不同源）。许可证：本项目 LGPL-3.0-or-later，零第三方代码。
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以，本文件独立编写
  *    → 例外条款：无；不含任何 GPL / ARR 代码（参考模组零接触，07-CONSTRAINTS L12）
  * 1. 官方/主实现：原版没有「两张主目标」这件事 —— 差异来自 NeoForge 对 {@code LevelRenderer} 的补丁
  *    （{@code targets.main} 与 {@code gameRenderer.mainRenderTarget()} 实测连纹理都不是同一张）。
@@ -16,7 +16,7 @@ package dev.vkdisp.bridge;
  * 3. 我们的差异点：把这条巧合<b>钉成可见条件</b> —— 每次建池核对一次，同尺寸/漂移/未知各计数，
  *    首次漂移点名两个尺寸并说明「⑤-d 之前必须改成以主 pass 的 target0 建池」。判定本体是纯函数
  *    （{@link #mismatch}）⇒ 不启动客户端就能单测。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：每帧 1–2 次（{@code ensureColortex} 的两个入口）：两次整数比较 + 三个计数器，零分配。
  */
 import dev.vkdisp.VkDisp;

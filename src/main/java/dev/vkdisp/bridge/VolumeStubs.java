@@ -7,9 +7,9 @@ package dev.vkdisp.bridge;
  *    {@code (label, usage, format, width, height, depthOrLayers, mipLevels)} 这个重载，
  *    {@code depthOrLayers > 1} 即 3D 纹理）与 {@code CommandEncoder#writeToTexture}；
  *    ② 本仓库自有 {@link ShadowStubs} / {@code NeutralMaterialMaps}（同款「类型正确的中性桩」
- *    既有实现，MIT 自有代码，本类沿用其纪律与注释密度）。
+ *    既有实现，LGPL-3.0-or-later 自有代码，本类沿用其纪律与注释密度）。
  *    许可证：Mojang EULA —— 只调用公开 API，零源码搬运。
- *    → 能否并入本项目（MIT）：可以 —— 独立编写的桥接封装
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 独立编写的桥接封装
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无（原版没有「包片元的 sampler3D 缺省值」这个概念）。
  *    🔴🔴 <b>2026-10-05 实测更正（h33，MCP 驱动 runClient 抓到）</b>：
@@ -52,7 +52,7 @@ package dev.vkdisp.bridge;
  *      <li>🔖 <b>永不作 render pass 附件</b>：与 {@link ShadowStubs} 同一条纪律 ——
  *          同一 image 既作读写附件又作采样器是 UB。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；只调用公开 API，无代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只调用公开 API，无代码复制。
  * 5. 性能基线：❄️ 懒建一次（4×4×4 RGBA8 = 256 字节），渲染期零分配（只读视图）。
  */
 import com.mojang.blaze3d.systems.RenderSystem;

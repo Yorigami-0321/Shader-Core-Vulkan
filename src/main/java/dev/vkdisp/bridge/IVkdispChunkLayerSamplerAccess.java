@@ -11,7 +11,7 @@ import org.jspecify.annotations.Nullable;
  *    ② 原版 {@code LevelRenderer} 第 146 行的字段声明与第 437-449 行的按需重建
  *    （随 MDG 分发的 sources jar，只观察字段类型与重建条件）。
  *    许可证：Mixin = MIT；原版 = Mojang EULA（只观察字段与语义）。
- *    → 能否并入本项目（MIT）：可以 —— 本文件是本项目原创契约接口，零第三方代码
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件是本项目原创契约接口，零第三方代码
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：Mixin 官方范式 —— mixin 类 {@code implements} 本接口，
@@ -22,7 +22,7 @@ import org.jspecify.annotations.Nullable;
  * 3. 我们的差异点：接口放在 {@code bridge/}（依赖方向 = mixin → bridge），
  *    方法名带 {@code vkdisp$} 前缀避免与原版成员相撞；原版字段是 {@code @Nullable} 的，
  *    本接口照抄该可空性（{@code org.jspecify} 口径，QD-01）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：热路径但极轻 —— 一次字段读（无分配、无创建）；不做性能优化（17 §3.2）。
  */
 public interface IVkdispChunkLayerSamplerAccess {

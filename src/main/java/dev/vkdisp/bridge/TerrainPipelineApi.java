@@ -9,7 +9,7 @@ package dev.vkdisp.bridge;
  *    用法照 {@code PostPass}：构造 → {@code currentBuffer().map(false,true)} 写 → {@code close} 落盘 →
  *    {@code RenderPass.setUniform(name, buffer)}）。
  *    许可证：Mojang EULA（原版）。**只观察公开 API 的调用形状，不复制实现语句、不搬运着色器文本。**
- *    → 能否并入本项目（MIT）：可以 —— 本文件是独立编写的桥接封装
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件是独立编写的桥接封装
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：原版 {@code RenderPipeline.builder(snippet).withLocation(...).build()} 派生范式；
@@ -20,7 +20,7 @@ package dev.vkdisp.bridge;
  *    ② 每个注入点各有独立入口（{@link #onWireTerrainHit()} / {@link #onBindTerrainParamsHit}）与
  *    独立配置键，满足 M1「逐个开启 + 逐个关闭」；③ 绑定动作只在「两个 override 形参都为 null」
  *    时执行 —— 那正是原版唯一会走 {@code layer.pipeline(...)} 的分支，与 M-01 的替换条件严格对称。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制（07-CONSTRAINTS §〇 P1、L5-L8）。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制（07-CONSTRAINTS §〇 P1、L5-L8）。
  * 5. 性能基线：注册为❄️ 冷路径（资源加载期）；绑定为热路径但每帧仅 2–3 次
  *    {@code setUniform}，不引入分配、不做 per-frame map（理由见 {@link #terrainParamsRing()}）。
  */

@@ -9,7 +9,7 @@ package dev.vkdisp.pack.properties;
  *    lang 文件的**格式事实**（{@code key=value}、{@code §} 转义序列、{@code option.NAME} / {@code value.NAME}
  *    键名前缀）属 OptiFine / Iris 的公开文件格式约定，不受版权保护；
  *    本文件**独立实现**读取，不复制任何实现的解析代码（参考模组源码零接触，L12 / X20 / X21）。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的纯 Java 解析类）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的纯 Java 解析类）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：lang 文件的格式事实（键值行 + Minecraft 的 {@code \u00a7} 转义约定）。
  * 2. 备选：
@@ -36,7 +36,7 @@ package dev.vkdisp.pack.properties;
  *      <li>🔖 <b>解析的是「包自己怎么声明依赖」这件事，不是显示什么</b> ——
  *          显示名文本只用来判末尾星号与匹配能力别名，其余原样保留。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制（解析器为本文件独立实现）。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制（解析器为本文件独立实现）。
  * 5. 性能基线：❄️ 冷路径（切包时读一次；BSL 的 en_US.lang 约 380 行），不做任何性能优化（T14）。
  */
 import java.io.BufferedReader;

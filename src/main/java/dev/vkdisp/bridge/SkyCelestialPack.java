@@ -11,7 +11,7 @@ package dev.vkdisp.bridge;
  *    {@code GLOBALS + PROJECTION + DYNAMIC_TRANSFORMS + SAMPLER0 + POSITION_TEX + QUADS + OVERLAY}
  *    （{@code RenderPipelines.java:1084-1094}）。
  *    外部候选（Iris / OptiFine / VulkanMod / Sulkan / Beryl）零接触（07-CONSTRAINTS L12）。
- *    许可证：独立编写（MIT），零第三方代码、零 Mojang 着色器文本。
+ *    许可证：独立编写（LGPL-3.0-or-later），零第三方代码、零 Mojang 着色器文本。
  *
  * <p>1. 官方/主实现：NeoForge 没有「把包的 gbuffer 程序接到原版某笔 draw 上」的公开钩子；
  *    官方给的是<b>管线替换</b>那条通道（{@code RenderSystem.getCompiledPipelineNullable} 首条语句
@@ -41,7 +41,7 @@ package dev.vkdisp.bridge;
  *       ④ <b>只认 Sun/Moon 两个 label</b>：{@code renderEndFlash} 也走同一个私有方法
  *          （{@code SkyRenderer:232-241}），不区分就会拿包的日月程序去画末地闪烁。
  *
- * <p>4. 许可证核对：本项目 MIT；零第三方代码并入。
+ * <p>4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * <p>5. 性能基线：开启时每帧多两次「写块 + 一次 4 顶点 draw」（原版本来也发这两次 draw），
  *    不新增缓冲与分配；不测不下结论（T14 / X55）。
  */

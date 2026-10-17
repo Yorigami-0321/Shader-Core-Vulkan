@@ -18,7 +18,7 @@ import java.util.Set;
  *    许可证：sp614x/optifine 无 LICENSE（GitHub license API 404）→ ARR，按 07-CONSTRAINTS X20 不并入其文本表达，
  *    仅用不受版权保护的事实性信息（键名/条目语法/目录语义），零文本复制；Iris（LGPL-3.0，已核 LICENSE）同口径；
  *    参考模组（VulkanMod / Sulkan / Beryl）零接触。
- *    → 能否并入本项目（MIT）：本文件为独立实现的 record，只含格式事实，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现的 record，只含格式事实，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：OF 官方事实——profile.NAME= 由条目构成（OPTION:值、OPTION=值、OPTION 开、!OPTION 关、
  *    profile.其他名 继承、!program.名 禁程序，程序名可带维度前缀）；sliders= 列出滑条选项；
@@ -30,7 +30,7 @@ import java.util.Set;
  *    因为"空目录禁用维度"这一语义无法从 programs 列表推导（08-TESTING §4 的 world0/world-1/world1/world_end 覆盖）；
  *    ③ properties 存原始单值视图（重复键后写覆盖），结构化解读（screen/blend/flip 等）归 A 线 pack/properties/ 的 ShaderProperties；
  *    ④ 关键约束照抄 04-SPEC §3.1：本对象及其消费方只读用户包，绝不写回（不学 Sulkan 反复写 options.resourcePacks）。
- * 4. 许可证核对：本项目 MIT；本文件零第三方代码复制，仅含文档事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；本文件零第三方代码复制，仅含文档事实。
  * 5. 性能基线：❄️ 冷路径（切包/重载时构造一次，之后只读），不做任何性能优化（18-PARALLEL §7.7）。
  */
 

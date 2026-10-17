@@ -15,7 +15,7 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    外部候选 IrisShaders/glsl-transformer（GPL-3.0 + 例外条款，18-PARALLEL §4 D 线明示"按禁止处理"）→
  *    按禁止处理（07-CONSTRAINTS L12 §1.3 陷阱 2 / X21），本任务不读其代码、零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 实现，不含任何外部项目代码。
- *    → 能否并入本项目（MIT）：可以 —— 只采纳不受版权保护的事实性信息（uniform 名/类型/语义）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 只采纳不受版权保护的事实性信息（uniform 名/类型/语义）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：04-SPEC §3.2 的 uniform 表（经 UniformCatalog 固化）；注入点选在**文件头部区**
  *    （空行 / 注释 / 预处理指令之后、首条代码之前），这是 GLSL 里"全局作用域且在所有使用之前、
@@ -41,7 +41,7 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    141 阶段矩阵 D 类 6×FRAGMENT + 8 潜伏）。登记范围仅限 {@link UniformCatalog} 的 23 条：
  *    非内建顶层同名（如 #ifdef 互斥双分支的双份 {@code float time}，dh 实证 program_dh_terrain.glsl:57,:59
  *    与 :309,:311）不登记、不 WARN，维持现状（不制造假"重复声明"）。
- * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载期一次）；两趟线性扫描，无缓存、无预优化
  *    （18-PARALLEL §7.7、T14 达标即停）。

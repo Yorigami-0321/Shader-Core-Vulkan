@@ -4,9 +4,9 @@ package dev.vkdisp.pipeline.model;
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
  *    参考对象 = ① 本仓库 docs/04-SPEC.md §4「顶点格式扩展」属性表（名字列 + 类型列，任务点名的权威依据）；
  *    ② F2 已冻结的 dev.vkdisp.pack.VertexAttribute（同仓库契约，名字/类型与 §4 逐项对应）。
- *    许可证：本仓库自有文档与自有契约（MIT 项目）→ 可直接消费；参考模组（VulkanMod LGPL-3.0 /
+ *    许可证：本仓库自有文档与自有契约（LGPL-3.0-or-later 项目）→ 可直接消费；参考模组（VulkanMod LGPL-3.0 /
  *    Sulkan GPL-3.0 / Beryl ARR）零接触 —— 按 docs/07-CONSTRAINTS.md L12「判不过就换参考，不再读它的代码」。
- *    → 能否并入本项目（MIT）：本文件为独立实现，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：04-SPEC §4 的「名字 + 类型」两列（Position/vec3f、Color/vec4ub、UV0/vec2f、
  *    UV1/vec2s、UV2/vec2s、Normal/vec3b、mc_Entity/vec2s、mc_midTexCoord/vec2f）。
@@ -16,7 +16,7 @@ package dev.vkdisp.pipeline.model;
  * 3. 我们的差异点：声明里保留原始类型字符串（而不是直接给枚举），好处是未知类型能在
  *    VertexLayout 里变成 UNKNOWN_ATTRIBUTE_TYPE 诊断而不是编译不过或静默按 0 字节算；
  *    canonicalText() 给出稳定单行形式，供缓存键与打印比对复用。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制，只含文档事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制，只含文档事实。
  * 5. 性能基线：❄️ 冷路径小对象，不做任何性能优化（18-PARALLEL §7.7）。
  */
 import java.util.Objects;

@@ -10,7 +10,7 @@ package dev.vkdisp.bridge;
  *    ③ {@code LevelRenderer} 的三个 pass 创建点：{@code "sky"} 第 382 行、{@code "main"} 第 403 行、
  *    以及 {@code FrameGraphSetupEvent} 在第 249 行触发（早于两者）。
  *    全部为「观察公开签名与语句顺序」，零源码搬运（Mojang EULA）。
- *    → 能否并入本项目（MIT）：可以 —— 本文件是独立编写的桥接侧
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件是独立编写的桥接侧
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：{@code FramePass#requires} 就是官方给「必须后跑」的声明方式。
@@ -21,7 +21,7 @@ package dev.vkdisp.bridge;
  * 3. 我们的差异点：{@code requires} 的边必须在**两边都已存在**之后才加得成，而我方 pass 创建最早
  *    （第 249 行的事件）⇒ 本类做成「谁先到谁登记，后到的那一方补边」的<b>双向</b>登记，
  *    于是「我方 pass ↔ 原版 sky pass」这条边与创建顺序无关。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 只在装配期跑（每帧 ≤3 次引用赋值），渲染期零开销。
  */
 import com.mojang.blaze3d.framegraph.FramePass;

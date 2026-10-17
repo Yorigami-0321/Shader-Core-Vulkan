@@ -11,7 +11,7 @@ import java.util.Optional;
  *    只提取目录命名与覆盖语义这类格式事实。许可证：该仓库无 LICENSE（GitHub license API 404）→ ARR，
  *    按 07-CONSTRAINTS X20 文本表达不可并入，仅用不受版权保护的事实性信息，零复制；Iris（LGPL-3.0，已核 LICENSE）同口径；
  *    参考模组（VulkanMod / Sulkan / Beryl）零接触。
- *    → 能否并入本项目（MIT）：本文件为独立实现的枚举，只含格式事实，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现的枚举，只含格式事实，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：OF 官方说明——着色器可按世界维度放在 /shaders/world&lt;id&gt; 子目录（world-1 = 下界、world1 = 末地）；
  *    world 文件夹存在时该维度只从其加载 .vsh/.fsh（忽略默认文件夹）；空 world 文件夹 = 该维度禁用着色器；
@@ -21,7 +21,7 @@ import java.util.Optional;
  *    ② 模组维度目录名任意（world&lt;id&gt;），枚举只做"已知目录名 ↔ 语义"映射：未知目录名 fromFolder 返回 Optional.empty，
  *    原始目录名由 Program#dimensionFolder 与 ShaderPack#dimensionFolders 原样保留（不静默丢弃，T11）；
  *    ③ 空目录禁用语义只落在 ShaderPack#dimensionFolders（目录存在性集合）上，扁平 programs 列表表达不了空目录。
- * 4. 许可证核对：本项目 MIT；本文件零第三方代码复制，仅含文档事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；本文件零第三方代码复制，仅含文档事实。
  * 5. 性能基线：❄️ 冷路径（扫描期一次性映射），不做任何性能优化（18-PARALLEL §7.7）。
  */
 

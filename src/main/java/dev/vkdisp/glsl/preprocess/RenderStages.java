@@ -11,7 +11,7 @@ package dev.vkdisp.glsl.preprocess;
  *    ③ 真机日志（{@code evidence/h49-water-translucent-draw.md}）：
  *    {@code gbuffers_skybasic.vsh:243: error: 'MC_RENDER_STAGE_STARS' : undeclared identifier}。
  *    许可证：文档站 = 社区文档（事实层面）；BSL = 其自有许可（**只读它引用了哪些名字**，
- *    不复制其代码）；本项目 = MIT。→ 能否并入：可以（本文件是独立编写的常量表）
+ *    不复制其代码）；本项目 = LGPL-3.0-or-later。→ 能否并入：可以（本文件是独立编写的常量表）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：Iris / OptiFine 在预处理期把这组宏塞进包的着色器源，并提供 {@code renderStage}
  *    这个 {@code uniform int} 的逐 draw 值。
@@ -23,7 +23,7 @@ package dev.vkdisp.glsl.preprocess;
  * 3. 我们的差异点：<b>宏名集合按文档事实给全</b>（含 Iris 自己标注「当前未使用」的那几个 ——
  *    给了不伤，不给则引用它的包直接编译失败）；{@code renderStage} 的<b>逐 draw 供值</b>是
  *    <b>另一件事</b>，本类不假装做完（见 {@code docs/13-GAP-REGISTRY.md} GAP-028 的 ③）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 冷路径（预处理期建一次宏表），渲染期零访问。
  */
 import java.util.ArrayList;

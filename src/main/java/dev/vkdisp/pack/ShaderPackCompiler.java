@@ -24,7 +24,7 @@ import java.util.Set;
  *    ③ 本仓库既有产出：B 线 {@link ShaderPackRepository}（只读 IO）、本环境的 {@link ShaderPackService}
  *    （程序枚举）、D 线 {@link GlslPipeline}（预处理 + 转译编排）。
  *    许可证：本文件为独立编写的纯 Java 编排层，不含任何第三方项目代码。
- *    → 能否并入本项目（MIT）：可以（仅编排本项目自研组件）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅编排本项目自研组件）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无外部实现可参考 —— 两个参考模组（VulkanMod / Sulkan）都没有 OF/Iris 包加载器
  *    （AGENT_CONTEXT §1「也没有任何参考模组做过 OF 包加载器」），故本类按本项目契约自行编排。
@@ -37,7 +37,7 @@ import java.util.Set;
  *    ③ 复用 {@link ShaderPackService#load} 的程序枚举结果，不重复实现「哪些文件算程序」的判定；
  *    ④ 输入输出全是内存数据（文本 + POJO），不触碰 {@code com.mojang.*}
  *       （18-PARALLEL §2 并行判据四条）。
- * 4. 许可证核对结论：本项目 MIT；零第三方代码并入（07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；零第三方代码并入（07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（切包/重载时调用一次），清晰优先，不做任何性能优化
  *    （18-PARALLEL §7.7、07-CONSTRAINTS T14 / X14）。
  */

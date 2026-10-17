@@ -10,7 +10,7 @@ package dev.vkdisp.mixin;
  *    第 403 行 {@code FramePass pass = frame.addPass("main");}）；
  *    ③ 原版 {@code FrameGraphBuilder#addPass(String)} 的公开签名与 {@code FramePass#requires(FramePass)}。
  *    许可证：Mojang EULA（只观察语句）+ Mixin MIT + NeoForge/MixinExtras LGPL-2.1（只观察契约）。
- *    → 能否并入本项目（MIT）：可以；本文件为独立编写的注入类，零第三方代码复制
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件为独立编写的注入类，零第三方代码复制
  *    → 例外条款：无；不含任何 GPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：{@code @WrapOperation} 包住「返回值」，先 {@code original.call(...)} 拿到
@@ -21,7 +21,7 @@ package dev.vkdisp.mixin;
  * 3. 我们的差异点：方法体只有「original.call + 一行转发」（X25）。边的加法与双向登记都在
  *    {@code bridge.PassOrder}。⚠️ 两个 {@code @WrapOperation} 各 {@code require=1/expect=1}：
  *    少包一个 = 那条边永远连不上，而症状只是「画面顺序时好时坏」，必须是硬失败。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 装配期每帧 2 次（{@code addSkyPass} / {@code addMainPass} 各一），渲染期零开销。
  */
 import com.mojang.blaze3d.framegraph.FrameGraphBuilder;

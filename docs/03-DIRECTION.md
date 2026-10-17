@@ -13,16 +13,20 @@
 
 | 参考模组 | 许可证 | 借鉴方式 | 价值 |
 |---|---|---|---|
-| **VulkanMod** | LGPL-3.0 | **只能读，不能抄**（本项目是 MIT，LGPL 不同族，见 `07-CONSTRAINTS.md` §〇） | ⭐⭐⭐⭐⭐ 最高：它验证了"模组自己当渲染后端"整条路的可行性，其挂载模式与格式表是**思路**上的最佳范本 |
+| **VulkanMod** | LGPL-3.0 | 🔖 **2026-10-17 换证后可搬**（本项目现为 LGPL-3.0-or-later，同族；逐文件进 `NOTICE.md` 台账）。旧条「只能读不能抄」的唯一依据是「MIT 与 LGPL 不同族」，该前提已随换证消失 | ⭐⭐⭐⭐⭐ 最高：它验证了"模组自己当渲染后端"整条路的可行性，其挂载模式与格式表是**思路**上的最佳范本 |
 | **Sulkan (sulkanShaders)** | GPL-3.0 | **只能读，不能抄**（GPL 传染，抄了你的项目必须整体 GPL 开源） | ⭐⭐⭐⭐ 高：它验证了"在原版 Vulkan 上注册自定义 RenderPipeline"的具体做法，是**思路**上的最佳范本 |
 | **Beryl** | ARR（闭源，作者同 xCollateral） | 不可借鉴代码 | ⭐⭐ 参考：它是 VulkanMod 的着色器管线，证明这条路有商业/闭源可行性 |
 
-> ⚠️ **共同结论**：这三个参考模组**没有一个的代码能用**（它们分别是 LGPL / GPL / ARR，与 MIT 不同族）。
+> ⚠️ **共同结论（2026-09-29 原判）**：这三个参考模组**没有一个的代码能用**（它们分别是 LGPL / GPL / ARR，与 MIT 不同族）。
 > 它们的价值全部是"证明这条路能走通"+"告诉我们该往哪个方法打洞"。
+> 🔖 **2026-10-17 换证后重判**：**LGPL-3.0 那一族已放开**（VulkanMod 可搬；Iris / Vitrail 成为光影包特性层的移植主源），
+> GPL（Sulkan）/ ARR（Beryl）两族的判定**不变**。逐上游判定表 = `NOTICE.md`「移植政策」。
 > 🔖 **2026-10-10 更正**：本行旧文案写「本项目 MIT，100% 自研代码」—— 那是早期文档自己加的限制，
 > **不是 MIT 的要求**。准确表述：**代码 100% 来自 MIT/Apache-2.0/BSD 族或我们自己**，
 > 并保留上游署名与改动声明（`07-CONSTRAINTS.md` §〇 / §1.3；已裁决实例 = `19-IMPROVEMENT-PATHS.md` §7-1 的 jcpp）。
-> ⛔ LGPL / GPL / ARR 的边界**没有放宽**。
+> ⛔ 当时（2026-10-10）LGPL / GPL / ARR 的边界**没有放宽**。
+> 🔖 **2026-10-17 放宽了 LGPL 一族**（用户裁决换证 LGPL-3.0-or-later + 直接移植 Iris/Vitrail）；
+> **GPL / AGPL / PolyForm Shield / ARR 四族仍未放宽**（`07-CONSTRAINTS.md` L13）。
 
 **关键事实：Sulkan 和 VulkanMod 都完全不支持 OptiFine/Iris 格式着色器包。** 这正是新方向真正的技术空白与价值所在——两个参考模组都只做"自带内嵌着色器/自研管线"，没有人做"兼容 OF/Iris 包的加载器"。这部分必须自研，没有轮子可造。
 
@@ -68,7 +72,9 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 └─────────────────────────────────────────────────────────┘
 ```
 
-**不碰任何第三方渲染模组，不碰 Vitrail，不自己写 Vulkan 设备。** 只写"OF 格式 → RenderPipeline"这一层的翻译器 + 帧图编排。
+**不与任何第三方渲染模组做运行期集成、不碰 Vitrail 的模组本体、不自己写 Vulkan 设备。** 只写"OF 格式 → RenderPipeline"这一层的翻译器 + 帧图编排。
+🔖 **2026-10-17 补一条**：「不碰 Vitrail」管的是**集成**（不装它的 jar、不调它的类）；这一层**光影包特性的处理**现在**直接移植 Vitrail / Iris 的源码**
+（改包名 + 逐文件声明来源与改动，见 `NOTICE.md`），两件事不冲突：我们分发的 jar 里仍然不含 `dev/vitrail/**`。
 
 ---
 
@@ -161,9 +167,9 @@ com.mojang.renderpearl.frontend.*        ← FrontendRenderPipeline / shaders.SP
 
 | 项目 | 旧方向（改写别人的渲染器） | 新方向 |
 |---|---|---|
-| PolyForm Shield 类非竞争许可 | 🔴 直接踩线 | 🟢 **零接触**，合规风险清零（本项目对外只有一句"独立实现"） |
-| 与 Vitrail 的关系 | 需要上游配合改代码 | 🟢 **完全不碰**，两个模组可共存 |
-| 借鉴 VulkanMod (LGPL) | — | 🔴 **只能读思路，不能移植代码**（MIT 与 LGPL 不同族） |
+| PolyForm Shield 类非竞争许可 | 🔴 直接踩线 | 🟢 **零接触**（不搬 Sodium 代码、不集成其 jar）；对外表述改为「按 LGPL-3.0-or-later 分发，含 Iris / Vitrail 衍生代码，逐文件见 `NOTICE.md`」——🔴 2026-10-17 起**不得再写"独立实现"**，那已成假话 |
+| 与 Vitrail 的关系 | 需要上游配合改代码 | 🟢 **不做集成**，两个模组可共存；🔖 2026-10-17 起它是光影包特性层的**源码移植主源**（LGPL 同族） |
+| 借鉴 VulkanMod (LGPL) | — | 🟢 **2026-10-17 起可移植代码**（本项目已换 LGPL-3.0-or-later，同族；逐文件进台账） |
 | 借鉴 Sulkan (GPL) | — | 🔴 **只能读思路，不能抄代码** |
 | 借鉴 Beryl (ARR) | — | 🔴 完全不可 |
 | 本项目许可证 | 被迫纠结 | ✅ **已定：MIT**（`LICENSE` + `gradle.properties` 的 `mod_license=MIT`） |

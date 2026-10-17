@@ -5,9 +5,9 @@ package dev.vkdisp.pipeline.model;
  *    参考对象 = 本仓库 {@code dev.vkdisp.glsl.translate} 8 段流水线的**产物格式**
  *    （{@code FragmentOutputAdapter} 合成的 {@code layout(location=N) out vec4 vkdispFragOutN;}
  *    与 {@code UniformInjector} 收编出的 {@code layout(std140) uniform VkDispBuiltins { … }}）
- *    —— 同为 MIT 自有代码，无任何外部参考对象，故不存在许可证问题。
+ *    —— 同为 LGPL-3.0-or-later 自有代码，无任何外部参考对象，故不存在许可证问题。
  *    另参考本仓库 docs/13-GAP-REGISTRY.md 的 GAP-003 行与 evidence/h06、h07 的实测口径。
- *    → 能否并入本项目（MIT）：可以（本文件即被参考方本身）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件即被参考方本身）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码，也不含任何 Mojang 着色器文本
  * 1. 官方/主实现：无（原版没有「包片元契约」这个概念 —— 它是本项目把 OF 方言落到
  *    Vulkan 管线接口时**必须显式声明**的一层事实）。
@@ -18,7 +18,7 @@ package dev.vkdisp.pipeline.model;
  * 3. 我们的差异点：把「这个包的地形片元到底要什么」变成**可单测的纯数据**（输出数 /
  *    自由 sampler 名 / 输入 varying 签名 / **声明写哪些槽**），让「附件数该是多少、绑定组该登记哪些条目、
  *    顶点适配层该产出哪些 varying」「诊断该读哪一槽」四件事**各有唯一真源**，而不是散落字面量。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：冷路径（每次资源重载解析一次）；渲染期零开销（只读已解析结果）。
  */
 import java.util.ArrayList;

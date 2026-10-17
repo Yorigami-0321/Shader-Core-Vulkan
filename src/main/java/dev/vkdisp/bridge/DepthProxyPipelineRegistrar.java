@@ -6,7 +6,7 @@ package dev.vkdisp.bridge;
  *    只观察事件签名与订阅写法，不复制其实现）+ 本仓库 {@code render/FullscreenPipelineRegistrar}
  *    与 {@code bridge/MrtTerrainPass} 的 @EventBusSubscriber 用法（bridge 里做订阅**已有先例**，
  *    MrtTerrainPass 就是 bridge 包内的 @EventBusSubscriber）。
- *    → 能否并入本项目（MIT）：可以（独立编写的接线类，零被参考方代码）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（独立编写的接线类，零被参考方代码）
  *    → 例外条款：无
  * 1. 官方/主实现：一个 mod 的 mod bus（{@code IModBusEvent} 走的那条）上可以挂**多个**
  *    {@code @EventBusSubscriber} 类，事件 post 时逐个 listener 调用；
@@ -19,7 +19,7 @@ package dev.vkdisp.bridge;
  *      registeredPipelineCount 的那一行埋点），然后删掉本类。除此没有别的差异。
  * 3. 我们的差异点：注册本体仍在 {@link PipelineApi}（07 T5：业务包零 com.mojang.renderpearl import），
  *    本类只做事件接线 + 失败原文（catch Throwable 后把 t 打进 ERROR，不吞，X11）。
- * 4. 许可证核对：本项目 MIT；只调用公开 API，无代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只调用公开 API，无代码复制。
  * 5. 性能基线：启动期一次性注册，冷路径，不做性能优化（17-NATIVE.md §3.2）。
  */
 import net.neoforged.api.distmarker.Dist;

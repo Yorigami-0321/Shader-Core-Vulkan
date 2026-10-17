@@ -5,13 +5,13 @@ package dev.vkdisp.glsl.translate;
  *    参考对象 = ① 本仓库 docs/04-SPEC.md §3.2（表 + 上传注记「布局与缓冲」）；
  *    ② std140 公开事实性规则（偏移期望值全部在本文件手算写出，可复核）；
  *    ③ 本仓库 UniformInjector / OfGlslTranslator 的真实输出（对账用例）。
- *    许可证：本文件为独立编写的测试代码（MIT）。
+ *    许可证：本文件为独立编写的测试代码（LGPL-3.0-or-later）。
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：合成块源 → {@link BuiltinsBlockLayout#parse} → 断言成员序/偏移/字节数；
  *    末例跑真转译（OfGlslTranslator）解析终稿，验证「解析器认得注入器的发射形态」。
  * 2. 备选：无（布局解析无第二实现，错误共享面由手算期望值对冲）。
  * 3. 我们的差异点：期望偏移是**手算常数**而非"再算一遍" —— 解析器与断言不共享实现。
- * 4. 许可证核对结论：本项目 MIT。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later。
  * 5. 性能基线：❄️ 冷路径单测，不评估性能（T14）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

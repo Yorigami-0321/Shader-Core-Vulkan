@@ -5,7 +5,7 @@ package dev.vkdisp.pack;
  * <p>0. 合规核对：参考对象 = 本仓库自有实现 —— 顶点适配层生成器
  *    {@link dev.vkdisp.glsl.translate.PackVertexAdapterGenerator}（chunk 几何那一族）与
  *    {@link dev.vkdisp.glsl.translate.PostVertexLinker}（后处理链那一族，post 恒等 MVP）。
- *    外部候选（Iris / OptiFine / VulkanMod）零接触；许可证：本文件独立编写（MIT），
+ *    外部候选（Iris / OptiFine / VulkanMod）零接触；许可证：本文件独立编写（LGPL-3.0-or-later），
  *    不含任何 GPL / LGPL / ARR 代码（07-CONSTRAINTS §〇 P1 / L5-L8）。
  *
  * <p>1. 官方/主实现：本类不引入新机制，只是把「同一个虚拟包文件里长出两套顶点源决策」这件事
@@ -22,7 +22,7 @@ package dev.vkdisp.pack;
  *    而是<b>链接期抛异常</b>。所以本类的两条路都必须与片元<b>同批</b>产出、要么都不给
  *    （{@code generateGbufferSource} 那侧的既有纪律，这里不重复一遍判定）。
  *
- * <p>4. 许可证核对：本项目 MIT；零第三方代码并入。
+ * <p>4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码并入。
  *
  * <p>5. 性能基线：❄️ 冷路径 —— 只在生成期（换包 / 换配置）被调，渲染期零调用、零分配。
  */

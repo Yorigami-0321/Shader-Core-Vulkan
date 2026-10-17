@@ -11,7 +11,7 @@ import java.util.Set;
  *    向量分量访问 `.x/.y/.z/.w`（含 `.rgba`/`.stpq`/`.0123`，不支持 swizzle）——
  *    出处 = shaders.properties 官方参考「Custom Uniforms」页（本项目只读事实，零代码复制；
  *    Iris/OptiFine 实现本体属 LGPL/闭源 ⇒ 禁止读码，见 07-CONSTRAINTS L12 / X19-X21）。
- *    → 能否并入本项目（MIT）：可以（本文件是独立编写的 AST）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件是独立编写的 AST）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无（OptiFine 无源码可参考，Iris 源码禁止读）⇒ 按文档语法自建。
  * 2. 备选：复用 {@code glsl/preprocess/DefineProcessor.ExprEval}（否决：那是**整数宏**口径，
@@ -22,7 +22,7 @@ import java.util.Set;
  *    ② 矩阵分量访问 `matrix.<row>.<column>` **不做**（文档有、包没用，且需要喂进 Matrix4f，
  *    登记为缺口）；③ 树里只有 `double` 与「名+分量下标」两种叶子，
  *    于是本包全程零 Minecraft / 零 renderpearl / 零 joml 类型（架构约束见 06-MIGRATION §2.1）。
- * 4. 许可证核对结论：本项目 MIT；零第三方代码并入。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * 5. 性能基线：❄️ 冷路径解析 + 每帧一次求值（十来个 double 运算），不做优化（T14 / X15）。
  */
 sealed interface UniformExpr permits UniformExpr.Literal, UniformExpr.Name, UniformExpr.Unary,

@@ -6,7 +6,7 @@ package dev.vkdisp.pack.uniform;
  *    零代码复制）；期望值全部由本人按文档语义手算写出，不复用被测实现的任何中间结果
  *    （18-PARALLEL §7.6「独立硬编码断言」纪律）。
  *    本文件不含任何第三方着色器包片段。
- *    许可证：本项目 MIT；零第三方代码并入。
+ *    许可证：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * 1. 主实现：{@link PackUniformSet#fromProperties} → {@link PackUniformSet#evaluate}。
  * 2. 备选：无（{@code gather()} 那条依赖 Minecraft 运行态的车道由本类的纯函数等价物覆盖，
  *    实体类在这条测试运行时里会 {@code NoClassDefFoundError} —— 见 NightVisionSupply 的隔离理由）。

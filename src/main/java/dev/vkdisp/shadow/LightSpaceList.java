@@ -10,7 +10,7 @@ package dev.vkdisp.shadow;
  *    **X9 前提修正**：对合并 jar 全部 .java 源检索 lightSpace/shadowMatrix/shadowProjection/
  *    shadowModelView/cascade = 0 命中，shadow* 类仅实体投影斑 —— 原版 26.3 不存在可接入的
  *    光空间列表，本类即「自建列表」本体（18-PARALLEL §5 P3.1 完整块 ①）。
- *    → 能否并入本项目（MIT）：可以（独立纯 Java + joml 数学，零第三方代码）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（独立纯 Java + joml 数学，零第三方代码）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无外部实现可参考（原版无阴影贴图系统），按 04-SPEC 契约自行实现。
  * 2. 备选：① 等接原版列表 —— 否决（原版没有，前提已证伪）；② 直接在 FrameApi 里内联单矩阵
@@ -22,7 +22,7 @@ package dev.vkdisp.shadow;
  *    ② **V/P 分开存**：为 04-SPEC §3.2 包侧 `shadowModelView`/`shadowProjection` 预备
  *       （本方管线仍合成为单个 uLight，数值与旧链逐位等价）；
  *    ③ **永不返回空列表**：方向向量零/非规数 → 显式 IllegalArgumentException（T11 不静默）。
- * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，零代码并入（07-CONSTRAINTS X19-X21）。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；参考按禁止处理，零代码并入（07-CONSTRAINTS X19-X21）。
  * 5. 性能基线：❄️ 冷路径构造（列表由 bridge 每会话构建一次并缓存），清晰优先，不做优化
  *    （18-PARALLEL §7.7、07-CONSTRAINTS T14/X14）。
  */

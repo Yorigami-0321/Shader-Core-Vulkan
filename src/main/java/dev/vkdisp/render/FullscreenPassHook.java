@@ -8,7 +8,7 @@ package dev.vkdisp.render;
  *    ClientHooks#fireResourceLoadFinishedEvent 发资源事件）。
  *    许可证：NeoForge 事件定义 LGPL-2.1（只观察事件签名与触发时机，不复制其实现）；
  *    本文件为独立编写的接线类。
- *    → 能否并入本项目（MIT）：可以 —— 只调用事件公开 API 与本方 bridge，不含被参考方代码
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 只调用事件公开 API 与本方 bridge，不含被参考方代码
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：RenderLevelStageEvent.AfterLevel —— 每帧一次（世界内），触发点在
  *    GameRenderer#renderLevel 内、LevelRenderer.render() 返回**之后**（帧图已执行 →
@@ -30,7 +30,7 @@ package dev.vkdisp.render;
  *    ClientResourceLoadFinishedEvent 为门闩：完成后才轮询/绘制；完成后仍不就绪则打一次 ERROR
  *    （编译可能真失败，T11 不许静默）；绘制期异常 catch Throwable 打 ERROR 原文（不吞）；
  *    总开关关闭走 WARN 降级分支。业务包零 com.mojang.renderpearl import。
- * 4. 许可证核对：本项目 MIT；只调用公开 API，无代码复制（07-CONSTRAINTS §〇 P1、L5-L8）。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只调用公开 API，无代码复制（07-CONSTRAINTS §〇 P1、L5-L8）。
  * 5. 性能基线：每帧一次 draw，冷路径（按 task-2 要求）不做性能优化（17-NATIVE.md §3.2）。
  */
 import dev.vkdisp.VkDisp;

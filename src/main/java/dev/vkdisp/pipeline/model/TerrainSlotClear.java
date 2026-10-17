@@ -3,11 +3,11 @@ package dev.vkdisp.pipeline.model;
  * 【参考调研】地形 MRT pass 的**逐槽清屏色**决策（修「诊断色泄漏进用户可见画面」）
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
  *    参考对象 = ① 本仓库自有的 {@code dev.vkdisp.bridge.MrtTerrainPass#diagnosticClear}
- *    （被替换掉的旧实现，MIT 自有代码）与其上的注释 —— 该注释写明了诊断色当初**为什么**这么选；
+ *    （被替换掉的旧实现，LGPL-3.0-or-later 自有代码）与其上的注释 —— 该注释写明了诊断色当初**为什么**这么选；
  *    ② docs/13-GAP-REGISTRY.md GAP-009 / GAP-011 与 {@code evidence/h27b-isolated-lane-replication.md} §六
  *    （绿天空的实测定位：本类要修的就是那一条）。
  *    全部为仓库内自有文档与自有代码，不受版权保护。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的纯 Java 决策类）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的纯 Java 决策类）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无（原版没有「gbuffer 槽清屏成什么」这个概念）。
  * 2. 备选：
@@ -39,7 +39,7 @@ package dev.vkdisp.pipeline.model;
  *      「本帧清屏是零值 ⇒ 截图里天空黑是<b>预期</b>，不是故障」，
  *      这样取证者不会把「设计如此」误读成「又坏了」。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制（决策表为本文件独立定义）。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制（决策表为本文件独立定义）。
  * 5. 性能基线：❄️ 冷路径（建 pass 描述符时算一次，每帧一次 switch）；不做优化（T14）。
  */
 import java.util.Objects;

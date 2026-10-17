@@ -3,8 +3,8 @@ package dev.vkdisp.pipeline.model;
  * 【参考调研】像素回读探针的**测哪一槽**决策（把「挑一个槽」变成可单测的纯逻辑）
  * 0. 合规核对（第 0 步闸门）：
  *    参考对象 = ① 本仓库自有的 {@code dev.vkdisp.bridge.TargetReadback}（被本类取代的那段挑槽逻辑，
- *    MIT 自有代码）—— 它暴露出「硬编码挑槽」这个缺陷形态；② 本仓库自有的
- *    {@code dev.vkdisp.glsl.translate.DrawBuffersSlotAdapter} 的槽位表语义（同样 MIT 自有）；
+ *    LGPL-3.0-or-later 自有代码）—— 它暴露出「硬编码挑槽」这个缺陷形态；② 本仓库自有的
+ *    {@code dev.vkdisp.glsl.translate.DrawBuffersSlotAdapter} 的槽位表语义（同样 LGPL-3.0-or-later 自有）；
  *    ③ BSL v10.1.8 的实测数字（{@code run/h27/logs/latest.log} 里 {@code colorTargets=8} /
  *    {@code slots=8} 两行 + {@code shaders/program/gbuffers_terrain.glsl} 的四条 DRAWBUFFERS 标记）。
  *    🔖 <b>那两个 8 不属于「包默认档」</b>（2026-10-08 h48r 更正）：打出 8 的那些臂带着
@@ -14,7 +14,7 @@ package dev.vkdisp.pipeline.model;
  *    ⇒ 本类的<b>逻辑</b>不受影响（它防的是「附件存在 ≠ 附件被写了」，两档都成立），
  *      受影响的是「拿这组数字当默认档」的判读。
  *    全部为仓库内自有代码 / 自有实测 / 不受版权保护的事实，不搬运任何第三方或 Mojang 源码。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的纯 Java 决策类）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的纯 Java 决策类）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码，也不含任何 Mojang 着色器文本
  * 1. 官方/主实现：无（Vulkan / 原版里都不存在「诊断该读哪一张图」这个概念）。
  * 2. 备选：
@@ -42,7 +42,7 @@ package dev.vkdisp.pipeline.model;
  *      <li>🔖 <b>截断必须自报</b>：槽数上限由 {@link #MAX_COLORTEX_PROBES} 封顶（显存预算），
  *          截断时 {@link #truncated()} 为 true 并在 note 里点名被丢掉的槽。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制（判据全部来自本仓库自有实测与自有代码）。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制（判据全部来自本仓库自有实测与自有代码）。
  * 5. 性能基线：❄️ 冷路径（决策每探针轮算一次，默认 300 帧一轮）。
  */
 import java.util.List;

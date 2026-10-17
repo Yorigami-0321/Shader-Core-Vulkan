@@ -32,7 +32,7 @@ import dev.vkdisp.glsl.lexer.GlslTokens;
  *    外部候选 IrisShaders/glsl-transformer（GPL-3.0 + 例外条款，18-PARALLEL §4 D 线明示
  *    "按禁止处理"）→ 按禁止处理（07-CONSTRAINTS L12 §1.3 陷阱 2 / X21），零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 实现，不含任何外部项目代码。
- *    → 能否并入本项目（MIT）：可以 —— 只采纳不受版权保护的驱动报错事实、公开语言语义与仓库文档事实
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 只采纳不受版权保护的驱动报错事实、公开语言语义与仓库文档事实
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：GLSL 公开词法（gl_ 前缀保留）+ GLSL 1.20 公开类型语义（旧顶点属性
  *    gl_Vertex / gl_Color / gl_MultiTexCoord0..7 为 vec4、gl_Normal 为 vec3；固定功能矩阵
@@ -62,7 +62,7 @@ import dev.vkdisp.glsl.lexer.GlslTokens;
  *    {@link Result#insertedLineCount()} 供入口构造 "最终行 → C 线输出行"映射，
  *    本级诊断行号在 C 线输出坐标系（插入之前）；⑧ 成功替换 / 注入不产生诊断（与 ①–④ 级
  *    同口径；未闭合块注释的 ERROR 仍由 {@link GlslTextScan#codeViews} 按各变换类同款口径报出）。
- * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载期一次）；候选 × 行的线性扫描 + 行级正则，无缓存、无预优化
  *    （18-PARALLEL §7.7、T14 达标即停）。

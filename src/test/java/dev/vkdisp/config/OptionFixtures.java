@@ -2,16 +2,16 @@ package dev.vkdisp.config;
 /**
  * 【参考调研】F 线单测 / 选项 fixture（F2 冻结契约的最小构造器）
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
- *    参考对象 = 本仓库自有冻结契约 dev.vkdisp.pack.Option / OptionType / ShaderPack（MIT 项目自有）
+ *    参考对象 = 本仓库自有冻结契约 dev.vkdisp.pack.Option / OptionType / ShaderPack（LGPL-3.0-or-later 项目自有）
  *    与 docs/18-PARALLEL.md §7.6（fixture 与第三方素材限制：只允许自造最小样本）。
- *    许可证：本项目自有类型（MIT）→ 可直接构造；JUnit 5 = EPL-2.0，仅 testImplementation 依赖，不进分发 jar。
+ *    许可证：本项目自有类型（LGPL-3.0-or-later）→ 可直接构造；JUnit 5 = EPL-2.0，仅 testImplementation 依赖，不进分发 jar。
  *    第三方 shaderpack / 参考模组零接触（07-CONSTRAINTS L12 / X20）。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的测试脚手架，数据全部自造）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的测试脚手架，数据全部自造）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：F2 冻结契约的公开构造器（Option 的 6 字段、ShaderPack 的 8 字段）。
  * 2. 备选：每个测试类各写一份构造代码 —— 否决（重复，且"字段顺序写错"这类低级错误会散落各处）。
  * 3. 我们的差异点：fixture 只造内存对象，不读任何文件、不起游戏、不碰 GPU（18-PARALLEL §2 并行判据）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时，无性能影响。
  */
 import java.util.List;

@@ -12,7 +12,7 @@ package dev.vkdisp.bridge;
  *    ③ MixinExtras（NeoForge 自带）的 {@code @WrapOperation} + {@code @Local(argsOnly = true)} 契约
  *    —— 只观察注解签名，不读实现。
  *    许可证：Mojang EULA（只观察语句与形参表）+ Mixin MIT + NeoForge/MixinExtras LGPL-2.1（只观察契约）。
- *    → 能否并入本项目（MIT）：可以 —— 本文件是独立编写的桥接判定，零源码搬运
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件是独立编写的桥接判定，零源码搬运
  *    → 例外条款：无；不含任何 GPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：原版把 {@code RenderPass} 一路传到取管线那一刻 ⇒ 身份判据本来就在那里，
@@ -25,7 +25,7 @@ package dev.vkdisp.bridge;
  * 3. 我们的差异点：判定写成<b>纯函数</b>（{@link #select} / {@link #selectForMainPass}）⇒
  *    不启动客户端就能单测「错配必须被拒」。本类不含渲染调用，也不碰 {@code RenderSystem}；
  *    表的<b>所有权</b>仍在 {@code TerrainPipelineApi}（注册与查询同源），这里只是读 + 身份比较的结果应用。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：🔴 热路径 —— ⑤-c 起 {@code selectForMainPass} 是<b>每次 draw</b> 一次
  *    （{@code PreparedRenderType#draw}）：一次布尔短路 + 一层按对象身份的记忆表（见
  *    {@code MainPassPipelineDerivation} 类头第 5 条），本类自身零分配。

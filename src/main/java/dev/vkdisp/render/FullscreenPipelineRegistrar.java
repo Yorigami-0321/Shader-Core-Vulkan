@@ -5,7 +5,7 @@ package dev.vkdisp.render;
  *    参考对象 = NeoForge 26.3.0.23-beta RegisterRenderPipelinesEvent 的官方用法
  *    （NeoForgeRenderPipelines）与本仓库 P0.1 骨架的 @EventBusSubscriber 写法。
  *    许可证：NeoForge 事件定义 LGPL-2.1（只观察订阅与调用方式，不复制其实现）；本文件为独立编写的接线类。
- *    → 能否并入本项目（MIT）：可以 —— 只调用事件公开 API 与本方 bridge，不含被参考方代码
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 只调用事件公开 API 与本方 bridge，不含被参考方代码
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：NeoForgeRenderPipelines 范本（@EventBusSubscriber(value = Dist.CLIENT, modid = ...)
  *    + static @SubscribeEvent 方法 + event.registerPipeline(...)）；事件由原版
@@ -14,7 +14,7 @@ package dev.vkdisp.render;
  * 2. 备选：手动 modEventBus.addListener —— 不必要，官方注解订阅即可；本任务全部走官方 API，无需 GAP 登记。
  * 3. 我们的差异点：注册本体在 bridge/PipelineApi（07 T5：业务包零 com.mojang.renderpearl import），
  *    本类只做事件接线 + 埋点：成功打含 location 与计数的 info，失败 catch Throwable 打 ERROR 原文。
- * 4. 许可证核对：本项目 MIT；只调用公开 API，无代码复制（07-CONSTRAINTS §〇 P1、L5-L8）。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只调用公开 API，无代码复制（07-CONSTRAINTS §〇 P1、L5-L8）。
  * 5. 性能基线：启动期一次性注册，冷路径，不做性能优化（17-NATIVE.md §3.2）。
  */
 import dev.vkdisp.VkDisp;

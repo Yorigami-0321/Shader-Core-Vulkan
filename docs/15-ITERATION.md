@@ -102,7 +102,7 @@ git reset --hard HEAD
 
 | # | 约束 | 出处 |
 |---|---|---|
-| A1 | **不得复制任何第三方代码**（MIT 下不许并入 LGPL/GPL/ARR） | `07-CONSTRAINTS.md` §〇 P1/P2 + §一 |
+| A1 | **不得复制任何第三方代码而不记账**：LGPL-3.0 一族（Iris/Vitrail/VulkanMod）可搬但**逐文件进 `NOTICE.md` 台账**；**GPL / AGPL / PolyForm Shield / ARR 四族仍一行不许**（2026-10-17 换证同轮边界） | `07-CONSTRAINTS.md` §〇 P1/P2/P3 + §一 L13 |
 | A2 | 不得把「Sodium 替代品」写进对外文字 | `07-CONSTRAINTS.md` L3 |
 | A3 | 不得向 Sodium 提 PR | `07-CONSTRAINTS.md` L4 |
 | A4 | 所有 GPU 操作走 `com.mojang.renderpearl.*` | `07-CONSTRAINTS.md` T2 |

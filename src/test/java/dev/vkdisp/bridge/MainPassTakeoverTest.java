@@ -3,14 +3,14 @@ package dev.vkdisp.bridge;
  * 【参考调研】R7 / M-04 ⑤-a 的判据与接线守卫 / 只读工程自身文件
  * 0. 合规核对（第 0 步闸门）：参考对象 = 本仓库 {@code bridge/MainPassTakeover.java}、
  *    {@code mixin/MainPassAttachmentMixin.java}、{@code bridge/MixinTargets.java}、
- *    {@code VkDispConfig.java}，以及 {@code docs/04-SPEC.md} §5.0.7（本项目自有文档，MIT）。
- *    → 可并入本项目（MIT）：本文件不引用任何外部代码，只做纯函数断言 + 文本断言。
+ *    {@code VkDispConfig.java}，以及 {@code docs/04-SPEC.md} §5.0.7（本项目自有文档，LGPL-3.0-or-later）。
+ *    → 可并入本项目（LGPL-3.0-or-later）：本文件不引用任何外部代码，只做纯函数断言 + 文本断言。
  * 1. 官方/主实现：无。
  * 2. 备选：无。
  * 3. 我们的差异点：把「label 改名 / 补槽尺寸不一致」这两条会<b>静默退回今天画面</b>的路径
  *    钉成构建期红灯（X11 不静默降级）。⚠️ 但「注入到底命中没命中」这条<b>单测给不出证据</b> ——
  *    它只在真机日志里（{@code 主 pass 接管=} 那一格），本文件不假装覆盖了它。
- * 4. 许可证核对：本项目 MIT。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later。
  * 5. 性能基线：❄️ 单测。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

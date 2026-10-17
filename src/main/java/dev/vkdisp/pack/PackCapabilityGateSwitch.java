@@ -6,7 +6,7 @@ package dev.vkdisp.pack;
  *    以及本仓库既有的「纯逻辑类不直引 FML 配置体系」约定
  *    （见 {@code PackCompileCache} 类注释里实测到的 {@code NoClassDefFoundError: IConfigSpec}）。
  *    全部为仓库内自有文档事实与自有约定。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的极小桥接类）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的极小桥接类）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：NeoForge {@code ModConfigSpec}（只用 {@code get()} 读值）。
  * 2. 备选：
@@ -23,7 +23,7 @@ package dev.vkdisp.pack;
  *    而不是默认生效让用户莫名其妙少了特性。这与 {@code mrt.*} 诊断开关默认关是同一条纪律。</p>
  *    <p>🔖 <b>为什么提供 {@link #override}</b>：单测必须在无 FML 环境里驱动这条分支
  *    （默认关时测不到「门控生效」那条路）；显式覆盖比反射可控，也不会把真错误伪装成默认值。</p>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 冷路径每包读一次配置值，代价可忽略。
  */
 import java.util.function.BooleanSupplier;

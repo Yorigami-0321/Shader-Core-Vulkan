@@ -2,14 +2,14 @@ package dev.vkdisp.bridge;
 /**
  * 【参考调研】GAP-003 方案 A 接线纪律的单测 / 只读工程自身源码
  * 0. 合规核对（第 0 步闸门）：参考对象 = 本仓库 `src/main/java/dev/vkdisp/bridge/` 与
- *    `pipeline/model/TerrainDerivedPlan`（MIT，自有代码）+ `docs/04-SPEC.md` §5.0。
- *    → 可并入本项目（MIT）：本文件只做源码文本断言，不引用任何外部代码。
+ *    `pipeline/model/TerrainDerivedPlan`（LGPL-3.0-or-later，自有代码）+ `docs/04-SPEC.md` §5.0。
+ *    → 可并入本项目（LGPL-3.0-or-later）：本文件只做源码文本断言，不引用任何外部代码。
  * 1. 官方/主实现：无（纯文本断言）。
  * 2. 备选：无。
  * 3. 我们的差异点：把「方案 A 的接线纪律」变成构建期红灯 ——
  *    其中两条是**静默失效**（不出错、只是没生效）：① 帧图 pass 被剔除；
  *    ② M-01 的活动标记漏清 ⇒ 原版 pass 拿到多附件管线。
- * 4. 许可证核对：本项目 MIT。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later。
  * 5. 性能基线：❄️ 单测。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

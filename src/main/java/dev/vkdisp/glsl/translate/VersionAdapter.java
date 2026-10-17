@@ -25,7 +25,7 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    外部候选 IrisShaders/glsl-transformer（GPL-3.0 + 例外条款，18-PARALLEL §4 D 线明示
  *    "按禁止处理"）→ 按禁止处理（07-CONSTRAINTS L12 §1.3 陷阱 2 / X21），零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 实现，不含任何外部项目代码。
- *    → 能否并入本项目（MIT）：可以（仅采纳不受版权保护的驱动报错原文、版本门控数值与判定规则）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅采纳不受版权保护的驱动报错原文、版本门控数值与判定规则）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：GLSL 公开语义 —— {@code #version N} 声明源码方言版本；Vulkan SPIR-V 桌面
  *    着色器要求 N ≥ 140（shaderc 实测，见 0 ①）；片元 in / 顶点 out 的 {@code layout(location)}
@@ -48,7 +48,7 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    不被切断；⑤ SSO 判定 = 注释剥离后的全文扫描，模式只认 GL_ARB_ 前缀与 enable / require /
  *    warn 三种行为（与 0 ③ 的门控原文一一对应）；多行同名扩展以「存在任一活跃行为」为准
  *    （后行覆盖的病态形态无输入证据，发生时由驱动显式报错，T11）。
- * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载期一次）；两遍线性扫描（第一遍剥注释扫 SSO、第二遍改版本），
  *    无缓存、无预优化（18-PARALLEL §7.7、T14 达标即停）。

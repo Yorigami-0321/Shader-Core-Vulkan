@@ -8,7 +8,7 @@ package dev.vkdisp.mixin;
  *    ② 原版 {@code ChunkSectionLayer#pipeline(boolean)} 的源码（随 MDG 分发的
  *    {@code minecraft-patched-26.3.0.41-beta-sources.jar}）。
  *    许可证：Mixin = MIT（FabricMC 官方 LICENSE）；原版 = Mojang EULA（只观察方法签名）。
- *    → 能否并入本项目（MIT）：可以 —— 同族可并入；且本文件不含任何被参考方代码
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 同族可并入；且本文件不含任何被参考方代码
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：Mixin 官方范式 {@code @Inject(method=…, at=@At("HEAD"), cancellable=true, require=1)}
@@ -19,7 +19,7 @@ package dev.vkdisp.mixin;
  *    收敛到 {@code bridge.MixinTargets} 常量，类字面量等于把硬编码散回每个 mixin 文件）。
  * 3. 我们的差异点：**只转发，不写业务**（07-CONSTRAINTS X25）。方法体只有
  *    ① 埋点 ② 一次查表 ③ 命中才提前返回；全部策略在 {@code bridge.TerrainPipelineApi}。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：热路径但极轻（每帧 2–6 次查表 + 每层 1 次 name()，无分配）；不做性能优化
  *    （17-NATIVE.md §3.2）。
  */

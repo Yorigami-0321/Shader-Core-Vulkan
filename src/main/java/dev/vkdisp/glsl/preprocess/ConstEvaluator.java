@@ -19,7 +19,7 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    外部候选 IrisShaders/glsl-preprocessor（GPL-3.0 + 例外条款）→ 一律按禁止处理
  *    （handover §2.1 / 07-CONSTRAINTS X20/X21），本任务不读其代码、零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 类，不含任何外部项目代码。
- *    → 能否并入本项目（MIT）：可以（仅采纳不受版权保护的事实性选项语法）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅采纳不受版权保护的事实性选项语法）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：handover §6.3 的选项定义语法 + §5.3④（白名单 const 才可见，名单外默认不可见）
  *    + F3 的 SourceLineMap 契约（识别出的选项要能指回原文件行）。
@@ -27,7 +27,7 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    默认不可见"），故严格按白名单 + 候选值列表识别。
  * 3. 我们的差异点：识别结果以 OptionConstant 列表形式返回（供 C 线内部校验 / 上游选项模型消费），
  *    不修改文本（文本透传），行号经传入的 lineMap 指回原文件。
- * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径；单次线性扫描 + 白名单 HashSet，清晰优先、无缓存、无性能优化
  *    （18-PARALLEL §7.7、T14 达标即停）。

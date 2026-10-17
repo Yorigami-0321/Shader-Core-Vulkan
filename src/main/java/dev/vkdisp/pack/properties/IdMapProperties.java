@@ -15,13 +15,13 @@ import java.util.Set;
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
  *    参考对象 = OptiFine 官方文档 ID 映射语法（<kind>.<ID>=<对象列表>，支持 namespace:path 与 :prop=value 长格式）
  *    与 Iris IdMap（LGPL-3.0，只读格式事实）；零代码复制。ARR 项目不碰。
- *    → 能否并入本项目（MIT）：可以（仅含格式事实）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅含格式事实）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：键 = 替代 ID（整数），值 = 被映射对象列表；长格式 namespace:path:type=value 的 :type=value 部分
  *    是属性过滤条件。一个 ID 只允许一行（重复 = T11 显式报错）。支持条件编译（#ifdef 等）。
  * 2. 备选：无。
  * 3. 我们的差异点：ID→图层号映射的「图层号」语义由主线消费，本类只产出 ID→对象引用列表。
- * 4. 许可证核对结论：本项目 MIT；本文件零第三方代码。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；本文件零第三方代码。
  * 5. 性能基线：❄️ 冷路径，不做优化（18-PARALLEL §7.7）。
  */
 final class IdMapProperties {

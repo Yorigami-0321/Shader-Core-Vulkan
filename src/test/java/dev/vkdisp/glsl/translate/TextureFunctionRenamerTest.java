@@ -20,7 +20,7 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    外部候选 IrisShaders/glsl-transformer（GPL-3.0 + 例外条款）→ 按禁止处理
  *    （07-CONSTRAINTS L12 §1.3 陷阱 2 / X21），本任务不读其代码、零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 测试；样本全部为本任务自造（18-PARALLEL §7.6）。
- *    → 能否并入本项目（MIT）：可以（仅采纳不受版权保护的事实性信息）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅采纳不受版权保护的事实性信息）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：JUnit 5 字符串逐字比对 —— 旧名全家福逐条断言、shadow 包装的返回类型适配、
  *    嵌套调用、跨行调用的显式降级。
@@ -31,7 +31,7 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    二遍幂等、源已有 texture_0 时确定性避让 texture_1、调用位判定（跨空白 / shadow 包装内层）、
  *    .texture 成员位与形参位、注释 / 字符串 / #define 与半词 mytexture 不动、仅声明不触发、CRLF 保留。
  *    样本全部为本任务自造（18-PARALLEL §7.6），不取自任何第三方包。
- * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：测试代码不进运行时；冷路径无性能要求（18-PARALLEL §7.7）。
  */

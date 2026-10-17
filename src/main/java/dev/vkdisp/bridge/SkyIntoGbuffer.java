@@ -16,7 +16,7 @@ package dev.vkdisp.bridge;
  *    ③ 本仓库自有：{@link MrtTerrainPass}（colortex 池与代次口径、gbuffer 深度）、
  *    {@link SkyPackGbuffer}（包的 {@code gbuffers_skybasic} 一次全屏）、{@link PassOrder}
  *    （「terrain requires 原版 sky」那条边）。
- *    → 能否并入本项目（MIT）：可以；本文件独立编写
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件独立编写
  *    → 例外条款：无 GPL / ARR 代码并入；LGPL-2.1 的 NeoForge 接口按 API 使用，不复制其实现
  * 1. 官方/主实现：①② 本身就是官方通路 —— 钩子回 {@code true} = 原版让位，{@code @Redirect} 换实参 =
  *    原版自己那一笔画到我方图上。两者都落在原版 {@code "sky"} pass 体内 ⇒ 四道门控<b>由原版判</b>
@@ -30,7 +30,7 @@ package dev.vkdisp.bridge;
  * 3. 我们的差异点：天空不再需要「我方 pass」这个前提 ⇒ {@code GbufferTarget} 整类删除、原版
  *    {@code SkyRenderer} 实例<b>复用</b>而不是复制，代次口径与地形 / 云同一条（都写
  *    {@code poolWriteView(0)}，都在 {@code advanceWritten} 之前）。
- * 4. 许可证核对：本项目 MIT；零第三方代码并入。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * 5. 性能基线：每帧一次天空（原版那一笔或包的一次全屏 draw，3~10 顶点），与换代前同量级；
  *    不测不下结论（T14 / X55）。
  */

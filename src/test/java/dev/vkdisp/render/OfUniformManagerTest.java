@@ -4,13 +4,13 @@ package dev.vkdisp.render;
  * 0. 合规核对（第 0 步闸门，通过）：
  *    参考对象 = 本仓库 docs/04-SPEC.md §3.2 上传注记（布局与缓冲）+ BuiltinsBlockLayout
  *    的 std140 偏移规则（同一规则的消费侧）。期望字节全部手算写出。
- *    许可证：本文件为独立编写的测试代码（MIT）；不含任何 GPL / LGPL / ARR 代码。
+ *    许可证：本文件为独立编写的测试代码（LGPL-3.0-or-later）；不含任何 GPL / LGPL / ARR 代码。
  * 1. 官方/主实现：合成块 → {@link BuiltinsBlockLayout#parse} → {@link OfUniformManager#write}
  *    → 对 direct ByteBuffer 绝对读断言。gather() 不单测（依赖 vanilla 运行态 —— 由
  *    runClient 证据行覆盖，X9 取证走真实跑）。
  * 2. 备选：无。
  * 3. 我们的差异点：偏移期望 = 手算常数（不复用被测实现的任何计算）。
- * 4. 许可证核对结论：本项目 MIT。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later。
  * 5. 性能基线：❄️ 冷路径单测（T14）。
  */
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;

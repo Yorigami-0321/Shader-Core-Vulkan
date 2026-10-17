@@ -22,7 +22,7 @@ import dev.vkdisp.glsl.lexer.GlslTokens;
  *    glsl-preprocessor（同）→ 18-PARALLEL §4 D 线明示「按禁止处理」，例外条款是否覆盖本项目
  *    未核实，一律不读其代码、零代码行并入（07-CONSTRAINTS L12 §1.3 陷阱 2 / X21、17-NATIVE §1.1.1）。
  *    许可证：本文件为独立编写的纯 Java 实现，不含任何外部项目代码；样本在单测中自造（§7.6）。
- *    → 能否并入本项目（MIT）：可以 —— 只采纳不受版权保护的事实性信息（内建语义、限定符语法）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 只采纳不受版权保护的事实性信息（内建语义、限定符语法）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：GLSL 公开语义 —— ① gl_FragColor 等价于「location 0 的 vec4 输出」；
  *    ② gl_FragData[n] 等价于「location n 的 vec4 输出」，n 由 DRAWBUFFERS 决定，OF 语义最多 8 个
@@ -41,7 +41,7 @@ import dev.vkdisp.glsl.lexer.GlslTokens;
  *    ⑤ gl_FragData 下标非整数字面量或越界（> 7）时出 ERROR 且不改写，绝不静默；
  *    ⑥ 重写只发生在「无注释无字符串视图」的标识符上，注释 / 字符串 / #define 续行一字不动；
  *    ⑦ 行数除头部区插入外不变，C 线的行号映射不被切断，诊断行号仍是**本阶段输入**行号。
- * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载期一次，08-TESTING §8 解析+转译全部 program ≤ 1 秒 由 P2 主线
  *    实测把关）；两遍线性扫描，无缓存、无预优化（18-PARALLEL §7.7、T14 达标即停）。

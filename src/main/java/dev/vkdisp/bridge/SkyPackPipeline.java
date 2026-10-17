@@ -7,7 +7,7 @@ package dev.vkdisp.bridge;
  *    <b>先 build 描述符、编译交给 {@code RenderSystem.getCompiledPipeline} 在渲染线程做</b>）。
  *    与日月的唯一结构差异：穹顶/星点/晨昏<b>不采图集</b> ⇒ 不留 {@code SAMPLER0}。
  *    外部候选（Iris / OptiFine / VulkanMod / Sulkan / Beryl）零接触（07-CONSTRAINTS L12）。
- *    许可证：独立编写（MIT），零第三方代码、零 Mojang 着色器文本。
+ *    许可证：独立编写（LGPL-3.0-or-later），零第三方代码、零 Mojang 着色器文本。
  * 1. 官方/主实现：原版这三处走各自管线（{@code RenderPipelines.{SKY,STARS,SUNRISE_SUNSET}}），没有「换成包程序」
  *    这回事 ⇒ 本类是本项目的派生管线工厂；它的<b>逐站形状差异全部读 {@link SkyGeometrySite}</b>（同源，QD-02），
  *    不在这里各写一遍。
@@ -17,7 +17,7 @@ package dev.vkdisp.bridge;
  * 3. 我们的差异点：🔖 本类<b>只产出描述符</b>（{@code RenderPipeline.build}），<b>不</b>在这里调
  *    {@code getCompiledPipeline}（那要 GPU、跑在渲染线程的混入里）—— 这样离线守卫能验到「形状/绑定组/位置」这层，
  *    而真正编译失败仍由混入侧的既有兜底（{@code SkyCelestialPack} 同款：没落地就本帧不换）。
- * 4. 许可证核对：本项目 MIT；零第三方代码并入。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * 5. 性能基线：❄️ 描述符每程序每契约建一次（与 {@code SkyCelestialPack} 同一缓存口径）；渲染期不建。
  */
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;

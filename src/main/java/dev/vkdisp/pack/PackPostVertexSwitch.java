@@ -8,7 +8,7 @@ import java.util.function.BooleanSupplier;
  * <p>0. 合规核对（第 0 步闸门）：参考对象 = 本仓库既有同类桥接类 {@link PackChainGatingSwitch}
  * —— 它把 h33 实测的「配置键名当 Java 字段名 ⇒ {@code NoSuchFieldException} 被吞 ⇒ 开关恒为默认值
  * 且日志看起来完全正常」这条教训固化成两个分开的常量。全部为仓库内自有代码与自有文档事实
- * → 可并入本项目（MIT）；例外条款：无。
+ * → 可并入本项目（LGPL-3.0-or-later）；例外条款：无。
  *
  * <p>1. 官方/主实现：NeoForge {@code ModConfigSpec}（只用 {@code get()} 读值）。
  *
@@ -21,7 +21,7 @@ import java.util.function.BooleanSupplier;
  * 那是 2026-10-10 真机「屏幕双向镜像虚影 + 固定间隔长条云」的<b>已定案根因</b>（GAP-030），
  * 所以「关」是回到一个<b>已知错</b>的行为，不是保守行为。留这个键的唯一用途是 A/B 取证。
  *
- * <p>4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * <p>4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * <p>5. 性能基线：❄️ 冷路径（每次链装配读一次），不做优化（18-PARALLEL §7.7）。
  */
 public final class PackPostVertexSwitch {

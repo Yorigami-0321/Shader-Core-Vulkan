@@ -3,14 +3,14 @@ package dev.vkdisp.bridge;
  * 【参考调研】H 线 mixin 接线纪律的单测 / 只读工程自身资源文件
  * 0. 合规核对（第 0 步闸门）：参考对象 = 本仓库 {@code src/main/resources/vkdisp.mixins.json}、
  *    {@code src/main/templates/META-INF/neoforge.mods.toml}、{@code docs/04-SPEC.md} §5.0、
- *    {@code docs/07-CONSTRAINTS.md} M1/T1/X26（本项目自有文档，MIT）。
- *    → 可并入本项目（MIT）：本文件不引用任何外部代码，只做文本断言。
+ *    {@code docs/07-CONSTRAINTS.md} M1/T1/X26（本项目自有文档，LGPL-3.0-or-later）。
+ *    → 可并入本项目（LGPL-3.0-or-later）：本文件不引用任何外部代码，只做文本断言。
  * 1. 官方/主实现：无（纯文本断言）。
  * 2. 备选：无。
  * 3. 我们的差异点：把「mixin 静默不加载」这一类**不报错的失效**变成构建期红灯 ——
  *    X26（建了 mixins.json 却没取消 toml 注释）与 T1（compatibilityLevel 必须是 JAVA_25）
  *    都是历史上真实踩过的坑，而它们**不会**让 `./gradlew build` 失败。
- * 4. 许可证核对：本项目 MIT。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later。
  * 5. 性能基线：❄️ 单测。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

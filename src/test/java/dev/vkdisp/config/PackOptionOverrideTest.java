@@ -5,7 +5,7 @@ package dev.vkdisp.config;
  *    {@code docs/13-GAP-REGISTRY.md} GAP-008 条目（h42 §4.2 的两臂数字
  *    {@code outputs 8→1 / samplers 7→5 / varyings 15→9} 与 §五 登记的下一步
  *    「做真正单变量的 PARALLAX A/B」）+ 本仓库自有的 {@code PackCapabilityGate}（同族处置形态）。
- *    → 能否并入本项目（MIT）：可以（测试代码不进分发 jar）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（测试代码不进分发 jar）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无（纯逻辑类）。
  * 2. 备选：无。
@@ -18,7 +18,7 @@ package dev.vkdisp.config;
  *      <li>🔖 <b>空转必须吵出来</b>：包没有这个选项时静默跳过，与「施加了但画面没变」
  *          在日志上完全一样（h33 死开关那一次的形态）。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

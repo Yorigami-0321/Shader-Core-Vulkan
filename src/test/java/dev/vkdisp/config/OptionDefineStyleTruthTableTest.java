@@ -10,9 +10,9 @@ package dev.vkdisp.config;
  *    ③ docs/07-CONSTRAINTS.md X9（待确认项不许用猜的值填）与 T11（跳过必须显式 WARN）；
  *    ④ C 预处理器语言事实（不受版权保护）：#define NAME 替换文本 / #define NAME（空替换文本）/ #undef NAME /
  *       #ifdef 只测"是否已定义"。
- *    许可证：本仓库自有文档与自有类型（本项目 MIT）→ 可直接消费；参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 /
+ *    许可证：本仓库自有文档与自有类型（本项目 LGPL-3.0-or-later）→ 可直接消费；参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 /
  *    Beryl ARR）与 OptiFine（sp614x/optifine 无 LICENSE = ARR）零接触、未读其任何代码（07-CONSTRAINTS L12 / X20）。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的测试，用例数据全部自造）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的测试，用例数据全部自造）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：JUnit 5 表驱动断言 —— 同一份 Option 定义 + 同一份值快照分别按 LITERAL / IFDEF_TRUE 求值，
  *    逐行对比 #define 表输出；期望值全部手写在真值表里（不由被测逻辑反推，避免自证循环）。
@@ -21,7 +21,7 @@ package dev.vkdisp.config;
  * 3. 我们的差异点：① 一行 = 一个选项在两种风格下的期望产物，循环逐行对比；② 附加"必须逐字节相同"断言
  *    （非布尔 define / uniforms / diagnostics / 跳过行为与风格无关）；③ 并排表可直接当 P4.2 / P4.3 的对比材料；
  *    ④ 不改 docs/（文档同步归 env-1，18-PARALLEL §7.2）。
- * 4. 许可证核对：本项目 MIT；JUnit 5 = EPL-2.0（仅 testImplementation 依赖，不进分发 jar）；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；JUnit 5 = EPL-2.0（仅 testImplementation 依赖，不进分发 jar）；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时，无性能影响（18-PARALLEL §7.7）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

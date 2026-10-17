@@ -3,13 +3,13 @@ package dev.vkdisp.pipeline.model;
  * 【参考调研】GAP-027「多条 gbuffer 程序接进同一个 MRT pass」决策表的单测 / 纯数据断言
  * 0. 合规核对（第 0 步闸门）：参考对象 = 本仓库 `docs/13-GAP-REGISTRY.md` GAP-027 条目
  *    与 `evidence/h48w-gap022-real-matrices.md` 实测的水契约（2 输出 / 槽 [0,1]）。
- *    被测类 `GbufferProgramPlan` 是本项目自有的纯数据决策表（MIT，零原版类型依赖）。
- *    → 可并入本项目（MIT）：本文件只断言行为，不含任何第三方代码。
+ *    被测类 `GbufferProgramPlan` 是本项目自有的纯数据决策表（LGPL-3.0-or-later，零原版类型依赖）。
+ *    → 可并入本项目（LGPL-3.0-or-later）：本文件只断言行为，不含任何第三方代码。
  * 1. 官方/主实现：同被测类（纯数据表）。
  * 2. 备选：无（本就是单测）。
  * 3. 我们的差异点：期望值**独立于实现写死**（附件数取 max、水关着时逐字不变、
  *    只有真挂水的层才关写深度），这样「实现悄悄改错一条语义」会当场变红。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 单测，不适用。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

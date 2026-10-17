@@ -14,11 +14,11 @@ import org.junit.jupiter.api.Test;
 /**
  * 【参考调研】A 线 ShaderProperties 单测 / OF shaders.properties 语法事实
  * 0. 合规核对：参考 = OptiFine 官方文档 shaders.properties 语法（仓库外事实，零代码复制）；本测试为独立硬编码断言，
- *    不含任何第三方着色器包片段（18-PARALLEL §7.6）。→ 能否并入本项目 MIT：可以。
+ *    不含任何第三方着色器包片段（18-PARALLEL §7.6）。→ 能否并入本项目 LGPL-3.0-or-later：可以。
  * 1. 主实现：逐字段断言「做对了」（不是「看起来对」），期望值独立写出，避免用实现验证实现。
  * 2. 备选：无。
  * 3. 差异点：无。
- * 4. 许可证核对结论：MIT；零第三方代码。
+ * 4. 许可证核对结论：LGPL-3.0-or-later（本项目）；零第三方代码。
  * 5. 性能基线：测试不进运行时。
  */
 class ShaderPropertiesTest {

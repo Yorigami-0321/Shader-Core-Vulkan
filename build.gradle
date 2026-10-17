@@ -388,12 +388,14 @@ publishing {
     }
 }
 
-// 分发合规：jar 内必须随带 LICENSE 全文
-// 依据 docs/07-CONSTRAINTS.md L10 / P3「分发时 jar 内必须带 LICENSE」，
-// 以及 docs/01-DEV-LOOP.md §3.2「[ ] 含 LICENSE（本项目是 MIT，必须随分发）」。
-// 仓库根 LICENSE 不会自动进入 jar，必须显式声明为打包输入。
+// 分发合规：jar 内必须随带许可证全文 + 归属声明
+// 依据 docs/07-CONSTRAINTS.md L10（随带 LICENSE）与 NOTICE.md：本项目 2026-10-17 起为 LGPL-3.0-or-later，
+// LGPL-3.0 按引用并入 GPL-3.0 条款 ⇒ 两份原文都要带上；§4 的 prominent notice 义务由 NOTICE.md 承担。
+// 仓库根这三个文件不会自动进入 jar，必须显式声明为打包输入。
 tasks.named('jar', Jar).configure {
     from('LICENSE')
+    from('GPL-3.0.txt')
+    from('NOTICE.md')
 }
 
 tasks.withType(JavaCompile).configureEach {

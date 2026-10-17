@@ -10,7 +10,7 @@ package dev.vkdisp.mixin;
  *    （返回 {@code CompiledRenderPipeline} ⇒ 补槽必须发生在<b>进缓存之前</b>，也就是这一行）；
  *    ② MixinExtras 的 {@code @WrapOperation} / {@code @Local(argsOnly = true)} 公开契约（不读实现）。
  *    许可证：Mojang EULA（只观察语句与形参表）+ Mixin MIT + NeoForge/MixinExtras LGPL-2.1（只观察契约）
- *    → 能否并入本项目（MIT）：可以；本文件独立编写，零源码搬运
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件独立编写，零源码搬运
  *    → 例外条款：无；不含任何 GPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：原版在这里「取编译好的管线 → 交给当前 pass」，中间没有任何可按 pass 分派的钩子；
@@ -23,7 +23,7 @@ package dev.vkdisp.mixin;
  *    这<b>一处</b>就是全部 RenderType 的公共通路，逐族注是十几处注入点换一处。
  * 3. 我们的差异点：方法体只有「埋点 + 一次 bridge 判定 + 原样把结果交给 original」（X25）。
  *    pass 身份来自<b>形参</b> {@code renderPass} 的对象比较（不是静态标志，{@code GAP-040} 那一族）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：🔴 最热的取管线点（每帧每次 draw 一次）。handler 只做一次对象引用比较 +
  *    一次身份表查（{@code MainPassPipelineDerivation.remember}），零分配；埋点按 M-01 节流口径。
  */

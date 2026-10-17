@@ -17,7 +17,7 @@ package dev.vkdisp.bridge;
  *    </ul>
  * 3. 我们的差异点：把「这个 UB 必须一直有一次性说明」变成构建期红灯 ——
  *    将来若有人「顺手把那条 WARN 删掉换安静」，构建会失败。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 单测（扫源码，不进渲染路径）。
  */
 import static org.junit.jupiter.api.Assertions.assertFalse;

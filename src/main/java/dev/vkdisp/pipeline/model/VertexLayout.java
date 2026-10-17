@@ -7,11 +7,11 @@ package dev.vkdisp.pipeline.model;
  *      彩色尖刺且不报错 —— E 线的存在理由就是提前在单测里排掉这个雷）；
  *    ③ 公开的顶点缓冲布局事实：交错（interleaved）顶点布局的 offset = 前序属性字节数之和，
  *      stride = 全部属性字节数之和（通用图形事实，不受版权保护）。
- *    许可证：本仓库 docs（MIT 项目自有）+ 通用布局事实 → 可并入。
+ *    许可证：本仓库 docs（LGPL-3.0-or-later 项目自有）+ 通用布局事实 → 可并入。
  *    ⚠️ 18-PARALLEL §4 E 线参考列提到 VulkanMod 的 GlUtil.vulkanFormat「格式表思路」：VulkanMod = LGPL-3.0，
- *    与 MIT 不同族 → 按 docs/07-CONSTRAINTS.md L12「判不过就换参考，不再读它的代码」，
- *    本文件不读其任何源码，计算规则来自 04-SPEC §4 + 公开布局事实。
- *    → 能否并入本项目（MIT）：本文件为独立实现，可并入
+ *    当时与 MIT 不同族 → 按 docs/07-CONSTRAINTS.md L12「判不过就换参考，不再读它的代码」独立编写；
+ *    本文件不读其任何源码，计算规则来自 04-SPEC §4 + 公开布局事实。（🔖 2026-10-17 换证后与它同族 ⇒ 可搬，但逐文件进 NOTICE.md 台账；本文件仍自研）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：交错布局的紧致累加（offset_i = sum(size_0..size_{i-1})，stride = sum(size_i)）。
  * 2. 备选：按 Vulkan std140 / 4 字节对齐插入 padding —— 否决（04-SPEC §4 未给对齐列，
@@ -21,7 +21,7 @@ package dev.vkdisp.pipeline.model;
  *    ② 损坏输入全部转成显式诊断（空属性集 = INFO、重复属性 = WARN 且首个生效、未知类型 = ERROR 且跳过、
  *    非法名字 = ERROR 且跳过），绝不静默算一个错 stride；
  *    ③ 提供 canonicalText()/parseCanonicalText() 做「序列化后打印比对」与篡改检测（单测证据）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制，只含文档事实与公开布局事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制，只含文档事实与公开布局事实。
  * 5. 性能基线：❄️ 冷路径（构建顶点格式时一次性计算），不做任何性能优化（18-PARALLEL §7.7）。
  */
 import java.util.ArrayList;

@@ -8,7 +8,7 @@ package dev.vkdisp.glsl.translate;
  *    {@code dFdx}/{@code dFdy} 在 fragment 阶段对任意表达式合法（GLSL 330 core 内建），
  *    以及「由位置的偏导取面法线、由 uv 的偏导重建切线基」是公开的 derivative mapping 做法。
  *    外部候选（OptiFine 的 vertex format patch / Iris / VulkanMod / Sulkan / Beryl）零接触
- *    （07-CONSTRAINTS L12）：本类<b>不</b>改顶点格式，也不搬任何实现。许可证：独立编写（MIT）。
+ *    （07-CONSTRAINTS L12）：本类<b>不</b>改顶点格式，也不搬任何实现。许可证：独立编写（LGPL-3.0-or-later）。
  * 1. 官方/主实现：OptiFine 系给 chunk 网格加 {@code at_tangent}/{@code mc_Entity}/{@code mc_midBlock}
  *    这几个顶点属性。本前端<b>不走那条</b>，理由是本仓库实测事实（不是偏好）：
  *    ① 26.3 的 {@code DefaultVertexFormat.BLOCK} 只有 Position/Color/UV0/UV2
@@ -41,7 +41,7 @@ package dev.vkdisp.glsl.translate;
  *       ④ 切线取 uv 偏导，行列式退化（该面 uv 沿一个方向不变）时退到「与法线垂直的任一单位向量」，
  *          并把退化算成一个<b>读数</b>（不自报等于没测）；
  *       ⑤ 一切可退回：闸门 {@code mrt.derivativeTbn} 默认关 ⇒ 片元源文本<b>逐字不变</b>。
- * 4. 许可证核对：本项目 MIT；零第三方代码并入，也不含 Mojang 着色器文本。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码并入，也不含 Mojang 着色器文本。
  * 5. 性能基线：❄️ 冷路径（生成期一次文本改写）。渲染期 = 每片元两次位置导数 + 两次 uv 导数 + 叉乘，
  *    与包自己在法线贴图路径上做的同量级；不测不下结论（T14 / X55）。
  */

@@ -13,7 +13,7 @@ import java.util.List;
  *    许可证：sp614x/optifine 无 LICENSE（GitHub license API 404）→ ARR，按 07-CONSTRAINTS X20 不并入其文本表达，
  *    仅用不受版权保护的事实性信息（键名/语法形态），零文本复制；Iris（LGPL-3.0，已核 LICENSE）同口径；
  *    参考模组（VulkanMod / Sulkan / Beryl）零接触。
- *    → 能否并入本项目（MIT）：本文件为独立实现的 record，只含格式事实，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现的 record，只含格式事实，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：OF 官方事实——选项有两个来源：(a) shader 源文件里的宏/常量注释（#define NAME 或 // #define NAME、
  *    #define NAME 值 // 允许值 [v1 v2 v3]、const int NAME = 值; // 允许值 [v1 v2 v3]，行尾注释兼作 tooltip）；
@@ -24,7 +24,7 @@ import java.util.List;
  *    这是解析层策略（打 WARN、禁用），不进本模型字段；② lang 标签（option.NAME / value.NAME）与 tooltip 展示层暂不入契约，
  *    需要时走 18-PARALLEL §3.2 增补；③ screen 字段只存该选项归属的子屏名（"" = 主屏或未配置），
  *    screen= 的完整结构（链接 [NAME]、<profile>、通配 * 、columns）归 A 线 pack/properties/ 的 ShaderProperties。
- * 4. 许可证核对：本项目 MIT；本文件零第三方代码复制，仅含文档事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；本文件零第三方代码复制，仅含文档事实。
  * 5. 性能基线：❄️ 冷路径（加载/重载时构造一次），不做任何性能优化（18-PARALLEL §7.7）。
  */
 

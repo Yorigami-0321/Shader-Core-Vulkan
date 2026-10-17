@@ -10,9 +10,9 @@ package dev.vkdisp.bridge;
  *    ② 原版 {@code LevelRenderer} 的调用序与取值来源（第 545-568 行 prepare、
  *    第 727 行 {@code renderGroup(TRANSLUCENT)}、第 738 行 clouds ⇒ <b>云在地形之后</b>；
  *    {@code optionsRenderState} 来自 {@code gameRenderer.gameRenderState()} 第 174 行）；
- *    ③ 本仓库自有的 {@code SkyIntoGbuffer}（同一族「把非地形 draw 搬进 gbuffer」的既有实现，MIT）。
+ *    ③ 本仓库自有的 {@code SkyIntoGbuffer}（同一族「把非地形 draw 搬进 gbuffer」的既有实现，LGPL-3.0-or-later）。
  *    许可证：Mojang EULA（只观察签名与调用时机）+ NeoForge LGPL-2.1（同上）。
- *    → 能否并入本项目（MIT）：可以 —— 本文件是独立编写的桥接封装，零源码搬运。
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件是独立编写的桥接封装，零源码搬运。
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码。
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）。
  * 1. 官方/主实现：原版自己就是「开一个 pass、把 RenderPass 交给 CloudRenderer」。
@@ -46,7 +46,7 @@ package dev.vkdisp.bridge;
  *          所以本类自己声明观测面：打出 status / 云色 alpha / 云高 / 云范围，
  *          并在 pass 之后取一次 {@code c0@afterClouds} 探针。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 默认关（{@code mrt.cloudsPass=false} ⇒ 常规帧零开销）；
  *    开启时每帧多一个全屏 pass + 一次 {@code prepare}（原版本来也做这两件事，代价同量级）。
  */

@@ -13,7 +13,7 @@ import java.util.Set;
  *    与「行尾反斜杠续行」的 .properties 格式事实（事实性信息，不受版权保护）；Iris 同语义（LGPL-3.0，只读事实）。
  *    零代码复制。表达式求值口径对齐本仓库自有
  *    {@code glsl/preprocess/DefineProcessor.ExprEval}（标识符未定义 → 0、非零为真），非外部来源。
- *    → 能否并入本项目（MIT）：可以（仅含格式事实）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅含格式事实）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：OF 用基于选项宏的条件编译做整段包含/剔除；本预处理在「已知已定义宏集合」上求值，
  *    把不满足条件的分支整段去掉。shaders.properties 不提供 #define / #include（见 18-PARALLEL 交接 §6.2），
@@ -24,7 +24,7 @@ import java.util.Set;
  *    {@code #if MC_VERSION >= 11800} 永远按 0 判假 ⇒ BSL 生物群集那批 uniform 一直取老数字 ID 那一支）。
  *    取值走 {@link dev.vkdisp.McVersion#numericOf(String)}，编码口径与出处写在那儿。
  *    其余比较式取值环境（选项当前数值等）仍未取证（X9）⇒ 按 0/1 求值且**不猜**，缺哪个补哪个。
- * 4. 许可证核对结论：本项目 MIT；本文件零第三方代码。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；本文件零第三方代码。
  * 5. 性能基线：❄️ 冷路径（加载/重载时跑一次），不做任何性能优化（18-PARALLEL §7.7）。
  */
 final class ConditionalPreprocessor {

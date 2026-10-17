@@ -18,7 +18,7 @@ import java.util.Set;
  *    ③ Iris 官方文档 {@code shaders.properties}「Reference/Attributes」与「OpenGL Profiles」节
  *    （兼容档 {@code gl_*} ↔ 核心档 {@code va*} 的对应关系；Iris 为 LGPL-3.0，同样只取格式事实）。
  *    许可证：本文件为独立编写的纯 Java 解析器，不含任何第三方项目代码，仅含不受版权保护的格式事实。
- *    → 能否并入本项目（MIT）：可以
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：OF/Iris 的属性命名事实（见下方 {@link #ATTRIBUTE_ALIASES} 的逐条来源注释）；
  *    uniform 声明的 GLSL 词法事实（{@code uniform <类型> <名字>;}，以及 {@code uniform 块名 { ... }} 形态）。
@@ -34,7 +34,7 @@ import java.util.Set;
  *    ③ 输入必须是 include 已展开、转译**之前**的文本 —— 这样既覆盖被包含文件里的声明，
  *       又不会把 D 线 {@code UniformInjector} 注入的内建 uniform 误记成"包自己声明的"；
  *    ④ 不解析 uniform 块内的成员（块内名字需块级解析，不在本阶段范围，显式记 INFO）。
- * 4. 许可证核对结论：本项目 MIT；参考一律只取格式事实、零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；参考一律只取格式事实、零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载时一次性），清晰优先，不做任何性能优化（18-PARALLEL §7.7、T14/X14）。
  */

@@ -7,7 +7,7 @@ package dev.vkdisp.pack.properties;
  *    🔶 **不复制任何第三方包的语言文件文本**（18-PARALLEL §7.6：只允许自造最小样本）。
  *    自造样本里的选项名（PARALLAX / ADVANCED_MATERIALS 等）是**标识符事实**，
  *    描述文本是本文件自己写的，不逐字复制。
- *    → 能否并入本项目（MIT）：可以（测试代码不进分发 jar）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（测试代码不进分发 jar）
  *    → 例外条款：无
  * 1. 官方/主实现：无（本类为本项目自研的只读解析器）。
  * 2. 备选：无。
@@ -22,7 +22,7 @@ package dev.vkdisp.pack.properties;
  *      取交集会让门控恒空转（静默失效）。</li>
  *      <li>🔖 <b>坏行要警告</b>，缺文件不警告（缺 lang 是合法的）。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

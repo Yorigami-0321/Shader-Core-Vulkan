@@ -8,7 +8,7 @@ package dev.vkdisp.bridge;
  *    静默早退谓词 {@code texture != null && quadCount != 0}、第 235 行的
  *    {@code drawIndexed(6 * this.quadCount, …)}（sources jar 逐字核实）。
  *    许可证：Mixin = MIT；原版 = Mojang EULA（只观察字段与谓词）。
- *    → 能否并入本项目（MIT）：可以 —— 本项目原创契约接口
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本项目原创契约接口
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：Mixin 官方 {@code @Accessor} 范式（运行期生成 getter，改名即硬失败）。
@@ -22,7 +22,7 @@ package dev.vkdisp.bridge;
  *    用它做判据会把「响亮失败」误登记成「静默失效」。
  *    两个引用字段的类型都是 {@code CloudRenderer} 的 private 嵌套类，在 Java 源码里不可命名 ⇒
  *    要交出它们只能退化成 {@code Object}（访问器返回类型放宽），本轮不引入这个不确定性。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：一次 int 字段读；无分配。
  */
 public interface IVkdispCloudMeshProbe {

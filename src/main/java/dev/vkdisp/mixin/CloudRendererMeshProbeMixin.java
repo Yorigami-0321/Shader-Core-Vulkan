@@ -7,7 +7,7 @@ package dev.vkdisp.mixin;
  *    {@code private int quadCount}、第 198 行早退谓词、第 235 行 {@code drawIndexed(6 * quadCount)}
  *    （sources jar 逐字核实）。
  *    许可证：Mixin = MIT；原版 = Mojang EULA（只观察字段与谓词）。
- *    → 能否并入本项目（MIT）：可以；本文件为独立编写的注入类
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件为独立编写的注入类
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：Mixin 官方 {@code @Accessor} 范式（abstract getter，applier 生成实现）。
@@ -15,7 +15,7 @@ package dev.vkdisp.mixin;
  *    旧实现即此，失败只 WARN 且改名即哑）。
  * 3. 我们的差异点：**只有抽象访问器**；为什么不再交出 {@code texture}/{@code utb} 两个引用字段，
  *    理由逐条写在 {@code bridge.IVkdispCloudMeshProbe} 的类注释第 3 条（X25）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 只在诊断档自报时读一次 int。
  */
 import dev.vkdisp.bridge.IVkdispCloudMeshProbe;

@@ -17,6 +17,7 @@
 >   ⇒ 顺带证明「游戏自带坐标随 MC 小版本漂」这条必须进升版核查表，已登记 `06-MIGRATION` §3 **V6** + `07` §5.1 + `05-VERSION` §2。
 > §7-2 **已裁决（2026-10-10）**：允许引用游戏自带的 `lwjgl-shaderc`，取方案 (b)「只作差分 oracle」⇒ 落地边界见该节表格。
 > 现在只剩 §7-4（C2b 排哪一轮真机取证）**待判**；§7-3 的「级联/阴影」处置**已执行**（暂不做级联，改立 `GAP-034`），只剩 C2b 排期。
+> ✅ **§7-9 已裁决（2026-10-17）**：换证 **LGPL-3.0-or-later** + 光影包特性层**直接移植 Iris / Vitrail**（GLSL 转换层只搬规则、不引 AGPL 库）。
 > ✅ **§7-5 已裁决（2026-10-12）**：mixin 的**类别**限制废除（**登记制 / 可关闭制 / 逐个开启三条保留**）、
 >   **X24 作废**、**X23 保留**、**M-04 整主 pass 多附件排为下一轮目标**。
 >   ⇒ 方案与阶梯见新增的 **§5A**（R0…R7）；逐点登记见 `04-SPEC.md` §5.0 的 M-04 / M-06…M-14；
@@ -123,7 +124,7 @@
 | `glsl-transformer` (Douira) | **AGPL-3.0**（README 还要求使用方也 AGPL） | ❌ | — | ⛔ **禁止**（X20/X21）——它恰好是搜「java glsl parser」最容易命中的那个，务必拦住 |
 | `glsl-preprocessor` (IrisShaders) | **GPL-3.0 + 例外条款** | ❌ | — | ⛔ **禁止**（X21，`07` §1.3 陷阱 2 点名的正是这类） |
 | **Iris** `glsl-transformer` 路 + `IncludeProcessor` 逐行 | LGPL-3.0 | ❌ 思路 | 事实：**Iris 的 include 也是逐行的**，`gl_FragData` 改写走 AST 但 `LineTransform/StringTransformations` 仍是行/正则；uniform 位置靠运行时 `glGetUniformLocation`（GL 能问，Vulkan 不能） | 🟢 两点可用结论：**「我们并不比 Iris 更脆弱」**（别为脆弱本身焦虑，为静默焦虑）；**GL 的反射式查询在 Vulkan 上没有对等物**（⇒ §4.2 必须走 SPIR-V 反射或声明派生） |
-| **Vitrail** `common/.../glsl/` | LGPL-3.0 | ❌ 思路 | 事实：它**自建无损 token 词法器**，注释原话「保留每个空格、注释、换行，使未改动的流能拼回完全相同的原文」；并有 `TokenStream/IncludeExpander/Macros/SamplerPlan`；SPIR-V 交给原版 `GlslCompiler`（shaderc），随后 **SPIRV-Cross 反射**读它的产物 | 🟢 这两条正是 L1 与 §4.2 的目标形态（**只用结论，代码一行不碰**，且它 NOTICE 自承其 `DRAWBUFFERS/const` 语法派生自 Iris ⇒ 那部分连思路都按 LGPL 处理） |
+| **Vitrail** `common/.../glsl/` | LGPL-3.0 | ✅ **可搬**（2026-10-17 换证；台账另记 Iris） | 事实：它**自建无损 token 词法器**，注释原话「保留每个空格、注释、换行，使未改动的流能拼回完全相同的原文」；并有 `TokenStream/IncludeExpander/Macros/SamplerPlan`；SPIR-V 交给原版 `GlslCompiler`（shaderc），随后 **SPIRV-Cross 反射**读它的产物 | 🟢 这两条正是 L1 与 §4.2 的目标形态（**只用结论，代码一行不碰**，且它 NOTICE 自承其 `DRAWBUFFERS/const` 语法派生自 Iris ⇒ 那部分连思路都按 LGPL 处理） |
 
 ### 2.4 对 GAP-005 的更正（登记在 `13-GAP-REGISTRY.md:32`）
 
@@ -727,6 +728,36 @@ C2a 不碰 GPU ⇒ 它的判据是**单测矩阵断言**，跑真机只会得到
 
 ---
 
+### 7-9 ✅ 已裁决（2026-10-17）：**换证 LGPL-3.0-or-later** + **光影包特性层直接移植 Iris / Vitrail**
+
+用户原话：「**更改协议**……**现在直接把 Vitrail 和 Iris 对光影包特性的处理移植过来，不要自己实现了**」。
+追问定下两点：① 项目许可证 = **LGPL-3.0-or-later**（不是 GPL，也不是 AGPL）；
+② Iris 的 GLSL 转换层链 **AGPL-3.0 的 glsl-transformer** ⇒ **只搬规则、不引库**，项目不升 AGPL。
+
+一手核过的许可（本机检出 + `cmp`，不是回忆）：
+
+| 上游 | 许可证 | 判定 | 本机钉版 |
+|---|---|---|---|
+| Iris | LGPL-3.0（`LICENSE` + README §License） | ✅ 可搬 | `bff1e69…`，分支 `26.1`，工作树干净 |
+| Vitrail | LGPL-3.0 + 84 KB `NOTICE` | ✅ 可搬（**主源**） | `4a45f44…`，分支 `fix/review-of-26-3-support`，🔴 本机工作树 12 处改动 + `CHANGELOG.md` 冲突未解 ⇒ 只按 commit 记 |
+| glsl-transformer | AGPL-3.0 | ❌ 不引库，只取规则 | —— |
+| Sodium | PolyForm Shield 1.0.0 | ❌ 不可搬；Iris 的 `compat/sodium/**` 面外 | —— |
+| Sulkan / OptiFine / Beryl | GPL-3.0 / ARR / ARR | ❌ 照旧 | —— |
+
+**为什么换证这件事必须先做**：MIT 与 LGPL 不同族 ⇒ 搬一行就违约一行。条款（`07` §〇 P1–P4、L13；台账与判定表 = `NOTICE.md`）
+先落地，代码才允许动。
+
+**下一轮的移植面**（按 Vitrail `NOTICE` 已点名「转录自 Iris」的文件排，全为 LGPL 干净件）：
+`pack/model/{ProgramFallbacks,TargetFormat,BufferObject,ImageInformation}`、
+`pack/target/{ConstDirectives,DrawBuffers,TargetDirectives}`、`pack/source/{IncludeExpander,PropertiesFile}`。
+🔴 这些文件**同时欠两条账**（Vitrail + Iris 都要记，Vitrail 自己的 `NOTICE` 就是这么写的）。
+面外：`compat/sodium/**`（PolyForm）、`pipeline/transform/**`（AGPL 依赖）、Sulkan（GPL）、OptiFine 本体（ARR）。
+
+⚠️ **本轮（`CHANGE_LOG` 一百八十六）只换证与改条款，零行并入** ⇒ `NOTICE.md` 的移植台账现为空表。
+（编号说明：§7-8 是 2026-10-13 收尾时另起的一个 H2 台账，不属本节序列，故本条从 7-7 直接跳到 7-9。）
+
+---
+
 ## §7-8 · 阶梯剩余判据台账（2026-10-13 收尾交接；每格都写「最省的一刀」与臂数）
 
 > 用途：下一轮不必翻 `CHANGE_LOG` 找「还欠什么」。代码侧（第 1~6 步的注入点与「必须物理消失」那一栏）
@@ -798,9 +829,9 @@ unzip -p ~/.gradle/caches/modules-2/files-2.1/org.lwjgl/lwjgl-shaderc/3.4.3/*/lw
 | SPIRV-Reflect / SPIRV-Cross | [LICENSE](https://github.com/KhronosGroup/SPIRV-Reflect/blob/main/LICENSE) / [SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross/blob/master/LICENSE) = **Apache-2.0** | 可（但本项目优先用原版已有反射面，见 §4.2） |
 | ANTLR `grammars-v4/glsl` | [GLSLLexer.g4](https://github.com/antlr/grammars-v4/tree/master/glsl) 逐文件 = **MIT** | 🔴 目标 GLSL 4.60、无展开引擎、维护弱 ⇒ 不作地基 |
 | tree-sitter-glsl | [LICENSE](https://github.com/tree-sitter-grammars/tree-sitter-glsl/blob/master/LICENSE) = **MIT** | 🔴 158 行、tree-sitter-c 派生 ⇒ 不覆盖 GLSL ES |
-| **glsl-transformer** (Douira) | [LICENSE](https://github.com/Douira/glsl-transformer/blob/master/LICENSE) = **AGPL-3.0**（README 还要求使用方同许可） | ⛔ **禁止**（X20/X21）——「java glsl parser」搜索首位命中，务必挡住 |
+| **glsl-transformer** (Douira) | [LICENSE](https://github.com/Douira/glsl-transformer/blob/master/LICENSE) = **AGPL-3.0**（README 还要求使用方同许可） | ⛔ **不引库**（2026-10-17 裁决；原 X20/X21 判定继续有效）——「java glsl parser」搜索首位命中，务必挡住 |
 | **glsl-preprocessor** (IrisShaders) | POM = **GPL-3.0 + 例外条款** | ⛔ **禁止**（X21，`07` §1.3 陷阱 2 点名此类） |
-| Iris（LGPL-3.0）/ Vitrail（LGPL-3.0）/ VulkanMod（LGPL-3.0）/ Sulkan（GPL-3.0）/ OptiFine（ARR） | 见 `03-DIRECTION.md` 附录 A + 各仓库 LICENSE | ❌ 一行不抄；只取本文标注为「事实/思路」的结论 |
+| Iris（LGPL-3.0）/ Vitrail（LGPL-3.0）/ VulkanMod（LGPL-3.0）/ Sulkan（GPL-3.0）/ OptiFine（ARR） | 见 `03-DIRECTION.md` 附录 A + 各仓库 LICENSE | 🔖 **2026-10-17 分族改判**：前三者（LGPL-3.0）**可搬**，逐文件进 `NOTICE.md` 台账；Sulkan（GPL-3.0）与 OptiFine（ARR）**仍一行不抄** |
 | **GLSL 规范（续行与 `#define` 语义）** | [GLSLangSpec.4.60](https://registry.khronos.org/OpenGL/specs/gl/GLSLangSpec.4.60.html) | 规范内容不受版权保护 ⇒ 可作 A2 的行为依据 |
 | `EnvironmentAttributes.SUN_ANGLE` 语义 | [minecraft.net 1.21.11 发布文](https://www.minecraft.net/en-us/article/minecraft-java-edition-1-21-11)：**度数**、自东向西顺时针、随相机位置插值 | 与 `probeAngle:738-742` 的度→弧度转换一致 ⇒ §4.3 判定「单位不是隐患」 |
 | OF 内建 uniform 语义（`sunAngle` 0..1 / `sunPosition` 视空间 ×100 / `shadowLightPosition` 择日或月） | [OptiFineDoc shaders.txt](https://github.com/sp614x/optifine/blob/master/OptiFineDoc/doc/shaders.txt)（原文即 OF 文档） | 用于校 `OfUniformManager:187-190` 的供值口径 |

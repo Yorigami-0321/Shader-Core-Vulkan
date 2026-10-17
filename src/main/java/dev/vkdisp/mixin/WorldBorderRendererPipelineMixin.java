@@ -7,7 +7,7 @@ package dev.vkdisp.mixin;
  *    （第 158 行是那次 {@code renderPass.setPipeline(RenderSystem.getCompiledPipeline(renderPipeline))}）；
  *    MixinExtras 的 {@code @WrapOperation} / {@code @Local(argsOnly = true)} 公开契约（只观察签名）。
  *    许可证：Mojang EULA（只观察语句与形参表）+ Mixin MIT + NeoForge/MixinExtras LGPL-2.1（只观察契约）
- *    → 能否并入本项目（MIT）：可以；本文件独立编写，零源码搬运
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件独立编写，零源码搬运
  *    → 例外条款：无；不含 GPL / ARR 代码；参考模组（VulkanMod / Sulkan / Beryl）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：边界自己就是一条 {@code RenderType} 之外的专用管线（{@code RenderPipelines.WORLD_BORDER}），
  *    取管线那一刻同样带着 {@code renderPass}。
@@ -15,7 +15,7 @@ package dev.vkdisp.mixin;
  *    那一句只在开改进透明时才会走到 ⇒ 归 OIT 那一族（少注一处就少一处未取证的注入点）。
  * 3. 我们的差异点：方法体只有「埋点 + 一次 bridge 判定 + 原样交给 original」（X25）；
  *    pass 身份来自形参 {@code renderPass} 的对象比较（不是静态标志）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：每帧 1 次（且只有镜头进得去边界力场时才有 {@code state.alpha > 0}）⇒ 不构成热点。
  */
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;

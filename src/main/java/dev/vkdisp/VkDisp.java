@@ -3,12 +3,12 @@ package dev.vkdisp;
  * 【参考调研】P0.1 骨架 / 官方 MDK 骨架
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
  *    NeoForge MDK 26.3 模板（ModDevGradle）许可证 = MIT —— 证据：仓库根 TEMPLATE_LICENSE.txt（NeoForged，MIT）+ 官方仓库 LICENSE 文件；
- *    → 能否并入本项目（MIT）：可以（MIT 同族可并入，保留署名，已随分发）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（MIT 同族可并入，保留署名，已随分发）
  *    → 例外条款：无；不含任何 LGPL / GPL / ARR 内容
  * 1. 官方/主实现：NeoForge MDK 26.3 (ModDevGradle 2.0.147, commit eec248c) — 参考了：@Mod 注册方式、IEventBus 注入、配置注册。
  * 2. 备选：无（本阶段只要骨架）
  * 3. 我们的差异点：仅做 P0.1 骨架，不写渲染管线；后续按 01-DEV-LOOP.md 顺序推进。
- * 4. 许可证核对：MIT（本项目）；MDK 模板 MIT；不并入 LGPL/GPL 代码。
+ * 4. 许可证核对：LGPL-3.0-or-later（本项目，2026-10-17 换证）；MDK 模板 MIT；可并 LGPL-3.0/MIT/Apache-2.0/BSD 族且逐文件进 NOTICE.md 台账；GPL/AGPL/PolyForm/ARR 仍不并。
  * 5. 性能基线：P0.1 冷路径（启动日志），无优化需求。
  */
 

@@ -8,7 +8,7 @@ package dev.vkdisp.bridge;
  *    许可证：Mojang EULA（原版）+ NeoForge LGPL-2.1（事件定义）→ 只观察 javap 签名与官方注册用法
  *    （原版 RenderPipelines.java 的 snippet/注册写法、NeoForgeRenderPipelines 的订阅写法），零源码文本搬运；
  *    参考模组（VulkanMod / Sulkan 等）零接触。
- *    → 能否并入本项目（MIT）：可以 —— 本文件是独立实现的薄封装，只调用公开 API，不含被参考方代码
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件是独立实现的薄封装，只调用公开 API，不含被参考方代码
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：原版 RenderPipelines.POST_PROCESSING_SNIPPET（343-345 行：基于 GLOBALS_SNIPPET +
  *    PrimitiveTopology.TRIANGLES，自带 Globals UBO 布局、无顶点绑定）+ 原版 TRACY_BLIT / ENTITY_OUTLINE_BLIT
@@ -23,7 +23,7 @@ package dev.vkdisp.bridge;
  *    FULLSCREEN_LOCATION 字符串常量与 registerFullscreenPipeline(...) 调用，零 com.mojang.renderpearl import；
  *    注册成功的管线实例暂存于本类，供 bridge/FrameApi 绘制时取用（业务层拿不到原版类型）；
  *    注册异常不在本类吞掉，原样抛给业务层打 ERROR 原文。
- * 4. 许可证核对：本项目 MIT；只调用公开 API 签名，无代码复制（07-CONSTRAINTS §〇 P1、L5-L8）。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只调用公开 API 签名，无代码复制（07-CONSTRAINTS §〇 P1、L5-L8）。
  * 5. 性能基线：启动期一次性注册，冷路径，不做性能优化（17-NATIVE.md §3.2）。
  */
 import com.mojang.renderpearl.api.GpuFormat;

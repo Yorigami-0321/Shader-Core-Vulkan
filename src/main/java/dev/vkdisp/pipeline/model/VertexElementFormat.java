@@ -5,11 +5,11 @@ package dev.vkdisp.pipeline.model;
  *    参考对象 = ① 本仓库 docs/04-SPEC.md §4「顶点格式扩展」属性表（任务点名的权威依据：每项的类型列）；
  *    ② 公开的图形格式事实：分量宽度（f = 32 位浮点、s = 16 位有符号整数、b = 8 位有符号整数、
  *      ub = 8 位无符号整数），即 OpenGL/Vulkan 顶点属性的通用格式事实，不受版权保护。
- *    许可证：本仓库 docs（MIT 项目自有）+ 通用格式事实 → 可并入。
+ *    许可证：本仓库 docs（LGPL-3.0-or-later 项目自有）+ 通用格式事实 → 可并入。
  *    ⚠️ 18-PARALLEL §4 E 线参考列提到 VulkanMod 的 GlUtil.vulkanFormat「格式表思路」：VulkanMod = LGPL-3.0，
- *    与 MIT 不同族 → 按 docs/07-CONSTRAINTS.md L12「判不过就换参考，不再读它的代码」，
- *    本文件不读、不参考其任何源码；格式表事实来源 = 04-SPEC §4 + 公开格式事实。
- *    → 能否并入本项目（MIT）：本文件为独立实现的枚举，可并入
+ *    当时与 MIT 不同族 → 按 docs/07-CONSTRAINTS.md L12「判不过就换参考，不再读它的代码」独立编写；
+ *    本文件不读、不参考其任何源码；格式表事实来源 = 04-SPEC §4 + 公开格式事实。（🔖 2026-10-17 换证后与它同族 ⇒ 可搬，但逐文件进 NOTICE.md 台账；本文件仍自研）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现的枚举，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：04-SPEC §4 属性表的类型列（vec3f / vec4ub / vec2f / vec2s / vec3b，外加 at_tangent 的 vec4f）。
  * 2. 备选：泛解析任意 "vecN<type>" 字符串 —— 否决（未知分量数/未知分量类型必须显式报错（T11），
@@ -17,7 +17,7 @@ package dev.vkdisp.pipeline.model;
  * 3. 我们的差异点：① 只收 04-SPEC §4 与 F2 VertexAttribute 用到的 6 种格式；
  *    ② 字节数 = 分量数 × 分量宽度（紧凑打包，不插入隐式对齐填充，见 VertexLayout 的说明）；
  *    ③ 未知格式返回 Optional.empty()，由 VertexLayout 转成 UNKNOWN_ATTRIBUTE_TYPE 显式诊断。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制，只含文档事实与公开格式事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制，只含文档事实与公开格式事实。
  * 5. 性能基线：❄️ 冷路径（构建顶点格式时查一次表），不做任何性能优化（18-PARALLEL §7.7）。
  */
 import java.util.ArrayList;

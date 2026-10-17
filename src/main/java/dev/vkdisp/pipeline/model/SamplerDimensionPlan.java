@@ -4,7 +4,7 @@ package dev.vkdisp.pipeline.model;
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
  *    参考对象 = ① 本仓库自有的 {@link PackTerrainProgram}（同一层事实：包片元要什么）、
  *    {@code dev.vkdisp.bridge.NeutralMaterialMaps} / {@code ShadowStubs}
- *    （同款「类型正确的中性桩」既有实现，MIT 自有代码）；
+ *    （同款「类型正确的中性桩」既有实现，LGPL-3.0-or-later 自有代码）；
  *    ② GLSL / Vulkan 的**语言与规范事实**（{@code sampler3D} 的坐标是三维、
  *    描述符类型必须与视图的实际维度匹配）—— 语言事实不受版权保护。
  *    实测依据（本仓库 evidence）：
@@ -16,7 +16,7 @@ package dev.vkdisp.pipeline.model;
  *      <li>原实现把它们落到 {@code default -> atlas}（2D 视图）⇒ 描述符类型不匹配 = UB，
  *          且<b>本机无 validation layer ⇒ 不报错</b>（{@code AGENT_CONTEXT} §9.4.15）。</li>
  *    </ul>
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的纯 Java 决策类）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的纯 Java 决策类）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：GLSL 的 sampler 维度语义（{@code sampler2D} 收 vec2 坐标、
  *    {@code sampler3D} 收 vec3）与 Vulkan「描述符类型 ↔ 视图维度必须匹配」的规范要求。
@@ -41,7 +41,7 @@ package dev.vkdisp.pipeline.model;
  *          本引擎没有它 ⇒ 语义等价于「无光照贡献」= 全 0 纹理
  *          （而不是喂图集，那会把图集的颜色当成体积光照强度）。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 冷路径（每次资源重载解析一次）；渲染期只读已解析结果。
  */
 import java.util.ArrayList;

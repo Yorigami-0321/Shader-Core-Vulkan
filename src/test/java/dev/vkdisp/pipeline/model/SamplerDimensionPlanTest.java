@@ -7,7 +7,7 @@ package dev.vkdisp.pipeline.model;
  *    实测依据 = BSL v10.1.8 全包 sampler 声明统计（sampler3D 共 4 个：
  *    lighttex / lighttex0 / lighttex1 / voxeltex）—— **该数字来自扫 zip 的统计，
  *    本测试不复制包的任何源码文本**，只用这 4 个**名字**作为夹具（名字是事实，不是版权内容）。
- *    → 能否并入本项目（MIT）：可以（测试代码不进分发 jar）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（测试代码不进分发 jar）
  *    → 例外条款：无
  * 1. 官方/主实现：无（本类为本项目自研的决策层）。
  * 2. 备选：无。
@@ -19,7 +19,7 @@ package dev.vkdisp.pipeline.model;
  *      <li>🔴 <b>同名两种类型</b>取先出现 + 警告（不静默取最后一个）。</li>
  *      <li>🔴 <b>块内成员不被当成 sampler</b>（VkDispBuiltins 的成员名不是自由声明）。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

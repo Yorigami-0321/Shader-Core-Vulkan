@@ -9,11 +9,11 @@ package dev.vkdisp.config;
  *    ③ docs/08-TESTING.md §4（shaders.properties 的选项能被枚举、sliders/profiles、"const int X = 0; // [0 1 2]" 型
  *    选项常量能被识别）；④ docs/07-CONSTRAINTS.md T11（降级必须显式 WARN）；⑤ F2 已冻结的
  *    dev.vkdisp.pack.Option / OptionType / ShaderPack（字段与语义直接消费，不改）。
- *    许可证：本仓库自有文档与自有冻结契约（本项目 MIT）→ 可直接消费；
+ *    许可证：本仓库自有文档与自有冻结契约（本项目 LGPL-3.0-or-later）→ 可直接消费；
  *    OptiFine（sp614x/optifine）无 LICENSE 文件 → ARR，按 07-CONSTRAINTS X20 只取不受版权保护的格式事实
  *    （选项取值形态与 profile.NAME 条目语法），零文本复制；Iris（LGPL-3.0）同口径；
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触 —— 按 L12「判不过就换参考，不再读它的代码」。
- *    → 能否并入本项目（MIT）：本文件为独立实现，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：OF 选项语义的格式事实（经 F2 冻结契约的 Javadoc 转述，不读 OF 源码）：
  *    properties 侧 {key=v1|v2|v3}；GLSL 侧 {#define NAME 值 // [v1 v2 v3]} 与 {const int NAME = 值; // [v1 v2 v3]}；
@@ -31,7 +31,7 @@ package dev.vkdisp.config;
  *    INTEGER / FLOAT / STRING 取允许值首项，无允许值列表时取类型零值；⑤ profile 继承用访问栈检测环；{!program.名} 这类
  *    非选项条目由本线显式 WARN 并跳过（program 开关归管线层，不是选项值）；⑥ 选项名匹配是精确匹配
  *    （不做大小写折叠猜测，避免把"猜"写进契约）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制，只消费本项目 F2 冻结契约与自有文档事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制，只消费本项目 F2 冻结契约与自有文档事实。
  * 5. 性能基线：❄️ 冷路径（切包 / 改选项 / 应用 profile 时调用，事后只读），不做任何性能优化（18-PARALLEL §7.7）；
  *    不做缓存、不做增量，只用 LinkedHashMap / ArrayList 这类最直白的数据结构。
  */

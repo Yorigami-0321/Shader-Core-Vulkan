@@ -5,15 +5,15 @@ package dev.vkdisp.config;
  *    参考对象 = ① 本仓库 docs/18-PARALLEL.md §4 F 线（"选项默认值正确"）与 §7.3（并行线证据：单测全绿 +
  *    边界用例清单）；② docs/04-SPEC.md §3.1 / §3.5；③ docs/07-CONSTRAINTS.md T11（降级不静默）；
  *    ④ F2 冻结契约 dev.vkdisp.pack.Option（defaultValue 为空串 = 解析层未取到默认值）。
- *    许可证：本仓库自有文档与自有类型（MIT）→ 可直接消费；JUnit 5 = EPL-2.0（仅测试期依赖，不进分发 jar）。
+ *    许可证：本仓库自有文档与自有类型（LGPL-3.0-or-later）→ 可直接消费；JUnit 5 = EPL-2.0（仅测试期依赖，不进分发 jar）。
  *    第三方源码零接触（07-CONSTRAINTS L12）。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的测试）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的测试）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：JUnit 5 标准断言（assertEquals / assertTrue / assertFalse）。
  * 2. 备选：手写 main() 断言 —— 否决（F4 已接好 JUnit 5，失败必须在 ./gradlew test 里显式红）。
  * 3. 我们的差异点：把"默认值正确"拆成可逐条断言的用例：正常默认值 / 大小写归一 / 缺省推导（有允许值 /
  *    无允许值）/ 非法默认值回退 / 越界默认值钳制 / 重复声明 / null 条目 / 空选项集 / 未识别允许值。
- * 4. 许可证核对：本项目 MIT；JUnit EPL-2.0 仅测试期依赖；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；JUnit EPL-2.0 仅测试期依赖；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时，无性能影响（18-PARALLEL §7.7）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

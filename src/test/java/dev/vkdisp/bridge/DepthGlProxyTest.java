@@ -12,7 +12,7 @@ package dev.vkdisp.bridge;
  * 3. 我们的差异点：两套透视式在这里<b>各自独立实现一遍</b>（不复用被测实现的任何算式），
  *    期望值来自 GAP-022 登记的推导；守卫部分沿用 {@code BridgeNullableContractTest}
  *    与 {@code GenerationTimeSwitchInventoryTest} 的源码扫描做法。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 单测（不进渲染路径）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

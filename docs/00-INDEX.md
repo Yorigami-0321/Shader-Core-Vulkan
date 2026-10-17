@@ -1,6 +1,6 @@
 # 00 · 文档索引
 
-> 工程：`vkdisp`（Vulkan Shader Dispatcher）· 许可证：**MIT**
+> 工程：`vkdisp`（Vulkan Shader Dispatcher）· 许可证：**LGPL-3.0-or-later**（2026-10-17 由 MIT 换证，见 `NOTICE.md`）
 > 定位：基于 Minecraft **原版 Vulkan 渲染后端**的、兼容 **OptiFine / Iris 格式**着色器包的引擎。
 > 最后整理：2026-10-10（文档梳理收尾：CHANGE_LOG 压缩修复 + 版本/mixin 镜像全仓同步；详见 `CHANGE_LOG.md` 顶部条目）
 

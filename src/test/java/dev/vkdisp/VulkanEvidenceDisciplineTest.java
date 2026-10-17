@@ -18,7 +18,7 @@ package dev.vkdisp;
  *    </ul>
  * 3. 我们的差异点：把「规范文档仍然写着 Vulkan 强制要求 + 禁止把裸
  *    `./gradlew runClient` 当作取证步骤」做成构建期红灯，防止规范被后来者删掉或改松。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 单测（只读文档，不进任何运行时）。
  */
 import static org.junit.jupiter.api.Assertions.assertFalse;

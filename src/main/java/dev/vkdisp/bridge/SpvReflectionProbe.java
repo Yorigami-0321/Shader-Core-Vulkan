@@ -8,7 +8,7 @@ import java.util.List;
  * 【参考调研】C0 · 原版 SPIR-V 反射面只读探针（19 §4.2 的「权威臂」核实载体）
  * 0. 合规：参考对象 = 原版 26.3 自带的 `com.mojang.renderpearl.backend.api.SpvModule` 与其
  *    `frontend/shaders/SpvUtil`（我们**编译所依赖的原版 API**，读它 = 读接口；零代码并入，
- *    本项目 MIT 不受影响）。数值口径的出处逐条写在常量注释里，未核实的一律标「未验」不作依据。
+ *    本项目 LGPL-3.0-or-later 不受影响）。数值口径的出处逐条写在常量注释里，未核实的一律标「未验」不作依据。
  * 1. 职责：把 `SpvModule.reflect()` 的 descriptor 集合抽成**我方自有不可变记录**，
  *    使 `pack/`、`pipeline/` 不必 import 原版类型（T5）。
  * 2. 差异点：原版反射面是**可变的**（`Descriptor.binding(int)` / `descriptorSetIndex(int)`）——

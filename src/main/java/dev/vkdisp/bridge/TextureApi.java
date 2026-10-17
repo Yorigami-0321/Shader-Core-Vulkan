@@ -5,14 +5,14 @@ package dev.vkdisp.bridge;
  *    参考对象 = 原版 26.3 客户端 jar 内 com.mojang.renderpearl.api.textures.*
  *    与 com.mojang.blaze3d.pipeline.RenderTarget（RenderTarget 未迁入 renderpearl，仍在 blaze3d）。
  *    只观察 javap 签名与官方调用点（PostPass/RenderTarget），零源码文本搬运；参考模组零接触。
- *    → 能否并入本项目（MIT）：本文件为独立的薄封装签名，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立的薄封装签名，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：原版 GpuTexture/GpuTextureView（getColorTextureView 等）与
  *    PostPass 对输入纹理 view+sampler 的官方用法。
  * 2. 备选：无（GAP 判定：不需要登记）。
  * 3. 我们的差异点：只冻结纯 Java 视图（尺寸/格式/是否可写），colortex 池（RenderTargetPool）
  *    的真实分配留关键路径；A–F 并行线不触碰本实现。
- * 4. 许可证核对：本项目 MIT；只调用公开 API 签名，无代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只调用公开 API 签名，无代码复制。
  * 5. 性能基线：每帧一次视图读取，冷路径（P0 阶段），无优化需求。
  */
 

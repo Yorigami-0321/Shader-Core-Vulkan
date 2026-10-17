@@ -5,15 +5,15 @@ package dev.vkdisp.config;
  *    参考对象 = ① 本仓库 docs/18-PARALLEL.md §4 F 线（"值越界能钳制并打 WARN（T11）"）与 §7.3
  *    （并行线证据：边界用例 = 越界 / 非法值 / 缺省）；② docs/04-SPEC.md §3.1 / §3.5；③ docs/07-CONSTRAINTS.md T11；
  *    ④ F2 冻结契约 dev.vkdisp.pack.Option / OptionType。
- *    许可证：本仓库自有文档与自有类型（MIT）→ 可直接消费；JUnit 5 = EPL-2.0（仅测试期依赖）。
+ *    许可证：本仓库自有文档与自有类型（LGPL-3.0-or-later）→ 可直接消费；JUnit 5 = EPL-2.0（仅测试期依赖）。
  *    第三方源码零接触（07-CONSTRAINTS L12）。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的测试）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的测试）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：JUnit 5 标准断言（assertEquals / assertThrows / assertTrue / assertFalse）。
  * 2. 备选：只测"正常赋值" —— 否决（T11 的证据点恰恰在越界 / 非法值 / 空值这些降级路径上）。
  * 3. 我们的差异点：非法值用例覆盖了三类"看起来像数字但其实不是"的陷阱：GLSL 的 "1f" 后缀、
  *    "0x1p3" 十六进制浮点、"NaN"/"Infinity"；越界用例覆盖允许值列表两端与 32 位整数边界。
- * 4. 许可证核对：本项目 MIT；JUnit EPL-2.0 仅测试期依赖；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；JUnit EPL-2.0 仅测试期依赖；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时，无性能影响（18-PARALLEL §7.7）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

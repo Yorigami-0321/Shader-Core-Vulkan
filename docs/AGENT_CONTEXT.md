@@ -22,6 +22,28 @@
 
 ---
 
+## 0.0 🔴 2026-10-17 裁决：换证 **LGPL-3.0-or-later** + 光影包特性层**直接移植**（许可相关表述以本节为准，覆盖 §0 / §0.1 里的旧口径）
+
+> 用户原话：「**更改协议**……**现在直接把 Vitrail 和 Iris 对光影包特性的处理移植过来，不要自己实现了**」
+> 追问定下的两点：项目许可证 = **LGPL-3.0-or-later**；Iris 的 GLSL 转换层（链 AGPL-3.0 的 glsl-transformer）
+> = **只搬规则、不引库** ⇒ 项目**不**升 AGPL。
+
+| 面 | 现行规则 | 真源 |
+|---|---|---|
+| 许可证 | MIT → **LGPL-3.0-or-later**（`LICENSE` 与 gnu.org 逐字节一致，另附 `GPL-3.0.txt`） | `NOTICE.md`、`07` §〇 |
+| 可搬 | **LGPL-3.0 一族**：Iris / Vitrail / VulkanMod | `NOTICE.md`「移植政策」判定表 |
+| 仍不可搬 | GPL-3.0（Sulkan）、**AGPL-3.0（glsl-transformer，只取规则不引库）**、PolyForm Shield（Sodium，含 Iris 的 `compat/sodium/**`）、ARR（OptiFine / Beryl） | `07` L13 |
+| 记账 | 搬一个文件 = 文件头（仓库@commit + `文件:行` + 读取日期 + 改动声明）+ `NOTICE.md` 台账一行 | `07` §〇 P1 |
+| 钉版 | Iris `bff1e69cb6c5519d8745784aa9c8b92984de67e7`（分支 `26.1`，工作树干净）；Vitrail `4a45f44bbe160ddae94da945a92e791cd96d1ec5`（分支 `fix/review-of-26-3-support`，🔴 本机工作树有 12 处改动、`CHANGELOG.md` 冲突未解 ⇒ **只按 commit 记，不按工作树**） | `NOTICE.md` |
+| 打包 | jar 随带 `LICENSE` + `GPL-3.0.txt` + `NOTICE.md`（`build.gradle` 的 jar 块） | `07` §〇 P3 / L10 |
+
+> 🔴 **三句话从 2026-10-17 起是假话，见到就改**：「本项目 MIT」、「100% 自研」、
+> 「独立实现，与任何第三方着色器加载器/渲染优化模组均无关联」。
+> 🔖 **带日期的历史条目与旧裁决不改写**（`CHANGE_LOG`、`review/`、§2 决策表里的旧行）—— 只在现行条款与本节加更正。
+> ⚠️ **本轮只换证与改条款，零行并入** ⇒ 移植台账现为空表；移植本体是下一轮。
+
+---
+
 ## 0.1 🔴 当前目标（2026-10-02 用户指令，**优先级最高**）
 
 > 用户原话：「**目的依旧是高性能，稳定，以及保持兼容性让 optfine/iris 着色器完整的运行在 vulkan 上。
@@ -131,7 +153,10 @@
 >
 > 追加指令：「**目标是 26.3 及之后发布的新版本这点需要明确，目前主线以 26.3 为准。**」
 >
-> 许可证指令：「**本项目许可证选择 MIT**」
+> 许可证指令：「**本项目许可证选择 MIT**」（2026-09-29）
+>
+> 🔖 **2026-10-17 换证指令**：「**更改协议**……**现在直接把 Vitrail 和 Iris 对光影包特性的处理移植过来，不要自己实现了**」
+> ⇒ MIT → **LGPL-3.0-or-later**，见 §0.0
 >
 > 流程指令：「**开发测试流程文档，要把模组构建，运行 gradlew runClient 测试实际产物，
 > 然后再根据错误去修复，直到完成所有的开发任务**」
@@ -139,11 +164,12 @@
 > 性能与参考指令：「**模组要兼顾性能，部分需求可改成用 c++ 或 rust 实现。
 > 每一部分的实现最好都先去找参考。**」
 
-**新定位**：一个**独立**的 NeoForge 客户端模组 —— 基于**原版自带的 Vulkan 渲染后端**，
+**新定位**：一个 NeoForge 客户端模组 —— 基于**原版自带的 Vulkan 渲染后端**，
 实现一个能加载 **OptiFine / Iris 格式** 着色器包的引擎。
-**许可证 MIT；🔖 旧文案「完全自研」已于 2026-10-10 更正**（那是早期文档自己加的限制，不是 MIT 的要求），
-准确表述 = **代码 100% 来自 MIT / Apache-2.0 / BSD 族或我们自己，并保留上游署名与改动声明**
-（权威条款 `07-CONSTRAINTS.md` §〇 / §1.3；口径实例 `03-DIRECTION.md` §0、`19-IMPROVEMENT-PATHS.md` §7-1）。
+**许可证 LGPL-3.0-or-later（2026-10-17 由 MIT 换证，见 §0.0 / `NOTICE.md`）**。
+准确表述 = **渲染后端与帧图是我们自己的；「光影包特性的处理」这一层按同轮裁决直接移植 Iris / Vitrail（LGPL-3.0 同族）**，
+其余并入按 MIT / Apache-2.0 / BSD 族处理，一律保留上游署名与改动声明
+（权威条款 `07-CONSTRAINTS.md` §〇 / §1.3 / L13；口径实例 `19-IMPROVEMENT-PATHS.md` §7-1 与 §7-9）。
 
 ### 版本基线（已明确，权威文档 `05-VERSION.md`）
 
@@ -152,19 +178,23 @@
 | **支持范围** | **MC 26.3 及之后发布的新版本** |
 | **当前主线** | **26.3**（一切开发/验证/验收以它为准） |
 | **不支持** | 26.2 及之前（那代没有 `renderpearl.backend.api`） |
-| 许可证 | **MIT**（`LICENSE` + `gradle.properties` 的 `mod_license=MIT`） |
+| 许可证 | **LGPL-3.0-or-later**（`LICENSE` + `GPL-3.0.txt` + `NOTICE.md` + `gradle.properties` 的 `mod_license=LGPL-3.0-or-later`；2026-10-17 换证） |
 | 锁定：MC / NeoForge / Java / MDG | 26.3 / **26.3.0.86** / 25 / 2.0.148 |
 | 工程形态 | **官方 MDK `NeoForgeMDKs/MDK-26.3-ModDevGradle`**（commit `eec248c`），已铺入 `D:/Code/Minecraft/Shader-Core-Vulkan` |
 | 未来版本 | 按 `06-MIGRATION.md` §4 流程升级，**不做前瞻兼容设计** |
 
-- **不与任何第三方渲染模组做集成**（不依赖、不替代、不做「假 XX」），**完全不碰 Vitrail**（两者可共存）
+- **不与任何第三方渲染模组做集成**（不依赖、不替代、不做「假 XX」），**不装 Vitrail 的 jar**（两者可共存）
+  🔖 2026-10-17：**「不集成」≠「不搬源码」** —— Vitrail / Iris 的光影包特性处理按裁决**移植源码**（改包名 + 逐文件声明），
+  我们的 jar 里仍不含 `dev/vitrail/**`（`07` §七 那条 jar 判据继续有效）
 - **不自己写 Vulkan 设备** —— 用原版 `com.mojang.renderpearl.backend.vulkan`
-- 自研的部分：① OF/Iris 格式解析器 ② pass 编排 ③ GLSL 转译 ④ 选项 GUI
+- 分工（2026-10-17 重划）：① **OF/Iris 格式解析与光影包特性处理 = 直接移植 Vitrail / Iris**（原「自研」项，已被裁决替换）
+  ② pass 编排 ③ GLSL 转译（🔴 其中链 glsl-transformer 的那层**只搬规则不引库**）④ 选项 GUI —— ②③④ 仍是我们的
 - **遇到原版 Vulkan 不支持的特性可以自行补充**，但必须先登记、必须收敛在 `platform/`、
   必须能在官方补上后一处回退（策略见 `12-GAP-STRATEGY.md`，登记表 `13-GAP-REGISTRY.md`）
-- **MIT 的红线是「不越界」，不是「完全自研」**（2026-10-10 用户更正）：**不得并入** LGPL / GPL / ARR 代码；
-  MIT / Apache-2.0 / BSD 族**可以并入**，条件是保留其 `LICENSE`（及 `NOTICE`，若有）并**声明改动**
-  （`07-CONSTRAINTS.md` §〇 / §1.3；已裁决实例 = `19-IMPROVEMENT-PATHS.md` §7-1 的 jcpp）
+- **红线是「不越界 + 逐文件记账」，不是「完全自研」**（2026-10-10 更正，2026-10-17 换证后仍是这条理）：
+  **LGPL-3.0 / MIT / Apache-2.0 / BSD 族可以并入**，条件是保留其 `LICENSE`（及 `NOTICE`，若有）、
+  **声明改动**并进 `NOTICE.md` 台账；🔴 **GPL / AGPL / PolyForm Shield / ARR 四族仍一行不搬**
+  （`07-CONSTRAINTS.md` §〇 / §1.3 / L13；实例 = §7-1 的 jcpp、§7-9 的换证与移植）
 - **开发循环**：改代码 → `./gradlew build` → `./gradlew runClient` 看真实产物 → 按错误修 →
   重跑，直到任务完成（`01-DEV-LOOP.md`）
 - **两条前置纪律**：**参考先行**（每部分开工前先调研，`17-NATIVE.md` §1）+
@@ -187,11 +217,13 @@
 
 | 模组 | 许可证 | 借鉴 | 核心价值 |
 |---|---|---|---|
-| **VulkanMod** | **LGPL-3.0** | ❌ 只读思路，不搬代码（本项目 MIT） | ⭐⭐⭐⭐⭐ `ExtendedRenderPipeline` 挂载模式、`ShaderManagerM` 注入点、`gl/VkGlProgram` 的 ID 映射、`GlUtil.vulkanFormat` 格式表、`shader/layout/*` 对齐工具 |
+| **VulkanMod** | **LGPL-3.0** | 🟢 **2026-10-17 起可搬代码**（本项目已换 LGPL-3.0-or-later；逐文件进台账） | ⭐⭐⭐⭐⭐ `ExtendedRenderPipeline` 挂载模式、`ShaderManagerM` 注入点、`gl/VkGlProgram` 的 ID 映射、`GlUtil.vulkanFormat` 格式表、`shader/layout/*` 对齐工具 |
 | **Sulkan** | **GPL-3.0** | ❌ **只能读思路，一行代码都不能抄** | ⭐⭐⭐⭐⭐ `VulkanDeviceShaderCompilerMixin` 证明第三方可在原版 Vulkan 上插 pipeline；`ShaderPipelines` 是官方 Builder 的活样板；帧图 `addPass` 插入法 |
 | **Beryl** | **ARR** | ❌ 不可用 | 仅确认 VulkanMod 路线有人付费支持 |
 
-> ⚠️ **MIT 决定之后：三个参考模组没有一个的代码能用。** 它们的价值全在"证明可行"+"该往哪打洞"。
+> ⚠️ **MIT 决定之后（2026-09-29）：三个参考模组没有一个的代码能用。** 它们的价值全在"证明可行"+"该往哪打洞"。
+> 🔖 **2026-10-17 换证后重判**：LGPL-3.0 一族已放开（VulkanMod 可搬，Iris / Vitrail 成为光影包特性层的移植主源）；
+> GPL（Sulkan）/ ARR（Beryl）两族照旧。判定表 = `NOTICE.md`「移植政策」。
 
 **两个参考模组都完全不支持 OptiFine/Iris 格式**（全仓库 grep 为空）—— 这是真正的技术空白，
 新方向没有现成轮子可造，必须自研。也没有任何参考模组做过"OF 包加载器"。
@@ -206,7 +238,7 @@
 | D2 | 「假 Sodium」方案有法律风险，**放弃** | 2026-09-29 | PolyForm Noncompete/Competition |
 | D3 | **整体切换到新方向**（原版 Vulkan 后端 + OF/Iris 引擎） | 2026-09-29 | 用户指令；风险清零 |
 | D4 | 所有 GPU 操作走官方 `com.mojang.renderpearl.*` | 2026-09-29 | 用户约束：禁止重复造轮子 |
-| D5 | ~~不抄 Sulkan(GPL)/Beryl(ARR) 代码；VulkanMod(LGPL) 可控移植~~ → **改为：三个参考模组一律只读思路、不搬代码** | 2026-09-29（2026-09-29 随 MIT 收紧） | 许可合规：MIT 与 LGPL/GPL 不同族 |
+| D5 | ~~不抄 Sulkan(GPL)/Beryl(ARR) 代码；VulkanMod(LGPL) 可控移植~~ → ~~三个参考模组一律只读思路、不搬代码~~ → 🔖 **2026-10-17 再改：LGPL-3.0 一族放开**（Iris / Vitrail / VulkanMod 可搬，逐文件进 `NOTICE.md` 台账）；**GPL / AGPL / PolyForm / ARR 四族仍不搬** | 2026-09-29（同日随 MIT 收紧）→ **2026-10-17（换证 LGPL-3.0-or-later，见 §0.0）** | 许可合规：2026-09-29 是「MIT 与 LGPL 不同族」，2026-10-17 变成同族 |
 | D6 | 不向 Sodium 提 PR（CONTRIBUTING 拒绝任何 AI 生成代码） | 2026-09-29 | 合规 |
 | **D7** | **支持范围 = MC 26.3 及之后；当前主线锁 26.3；不支持 26.2 及之前** | **2026-09-29** | **用户明确指令** |
 | D8 | 不做前瞻性兼容设计，只做可迁移性隔离（`bridge` 包） | 2026-09-29 | 避免过度设计 |
@@ -264,8 +296,10 @@ com.mojang.renderpearl.frontend.*         FrontendRenderPipeline / shaders.SPIRV
 
 ```
 Shader-Core-Vulkan/
-├── LICENSE                  MIT 全文（2026-09-29 定）
-├── gradle.properties        mod_id=vkdisp, mod_license=MIT, minecraft_version=26.3,
+├── LICENSE                  LGPL-3.0 全文（2026-09-29 定为 MIT → 2026-10-17 换证；与 gnu.org 逐字节一致）
+├── GPL-3.0.txt              LGPL-3.0 按引用并入的 GPL-3.0 条款全文
+├── NOTICE.md                许可声明 + 第三方构件 + 移植台账（2026-10-17 新建）
+├── gradle.properties        mod_id=vkdisp, mod_license=LGPL-3.0-or-later, minecraft_version=26.3,
 │                            minecraft_version_range=[26.3,), neo_version=26.3.0.86
 ├── build.gradle             官方 MDK（ModDevGradle 2.0.148, toolchain Java 25）
 ├── settings.gradle          foojay-resolver 1.0.0
@@ -299,7 +333,7 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
 | **`13-GAP-REGISTRY.md`** | ★★ 补充策略的执行载体（先登记再实现） |
 | **`17-NATIVE.md`** | ★★★ **性能预算 + 参考先行**；C++/Rust 仅作未验证的可选项（D14/D15） |
 | `08-TESTING.md` | 阶段验收 + 回归清单 + **性能硬指标** |
-| `07-CONSTRAINTS.md` | 许可证（§〇 MIT + P1/P2/P3）+ L1–L12 + 技术约束 T1–T16 + 红线 X1–X21 |
+| `07-CONSTRAINTS.md` | 许可证（§〇 LGPL-3.0-or-later + P1–P4）+ L1–L13 + 技术约束 T1–T16 + 红线 X1–X21；台账在根目录 `NOTICE.md` |
 | `16-READING.md` | 阅读顺序（按新编号） |
 | `15-ITERATION.md` | 三层防乱协议 |
 
@@ -311,7 +345,7 @@ git 已初始化并提交（`51cb2b0` MDK 骨架 → `a6a0609` 文档清理 + �
 
 | # | 决策点 | 状态 |
 |---|---|---|
-| Q1 | ~~**本项目许可证？** LGPL-3.0 / MIT~~ | ✅ **已定（2026-09-29）：MIT**。`LICENSE` 全文 + `gradle.properties` 的 `mod_license=MIT`；由此产生 P1/P2/P3 三条硬约束，**VulkanMod(LGPL) 也只能读不能抄**（`07-CONSTRAINTS.md` §〇） |
+| Q1 | ~~**本项目许可证？** LGPL-3.0 / MIT~~ | ✅ 2026-09-29 定 **MIT** → 🔖 **2026-10-17 用户裁决改 **LGPL-3.0-or-later****（`LICENSE` + `GPL-3.0.txt` + `NOTICE.md` + `mod_license`；硬约束由 P1/P2/P3 变 P1–P4）。放开的是 LGPL 一族，**不是**全部（`07-CONSTRAINTS.md` §〇 / L13） |
 | Q2 | ~~是否仍锁 MC 26.3？~~ | ✅ **已定**：支持 **26.3 及之后**，主线 **26.3** |
 | Q3 | ~~**是否保留 Sodium 可选增强？**~~ | ✅ **已定（2026-09-29）：不保留，与 Sodium 彻底隔绝**（`07-CONSTRAINTS.md` L11） |
 | Q3b | 是否需要与**其它**第三方渲染模组（Vitrail 等）做集成？ | ❌ **不需要**。一律零集成，地形走原版 `SectionRenderDispatcher` |

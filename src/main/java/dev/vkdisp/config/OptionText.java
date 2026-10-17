@@ -5,8 +5,8 @@ package dev.vkdisp.config;
  *    参考对象 = ① 本仓库 docs/04-SPEC.md §3.1 / §3.5（Option/OptionType 的取值形态：true|false、
  *    整数列表、浮点列表、文本值；选项 → #define / uniform）；② docs/08-TESTING.md §4
  *    （"const int X = 0; // [0 1 2]" 型选项常量的取值必须能识别与求值）；③ docs/07-CONSTRAINTS.md T11。
- *    许可证：本仓库自有文档（本项目 MIT）→ 可直接消费。第三方源码零接触（07-CONSTRAINTS L12）。
- *    → 能否并入本项目（MIT）：本文件为独立实现，可并入
+ *    许可证：本仓库自有文档（本项目 LGPL-3.0-or-later）→ 可直接消费。第三方源码零接触（07-CONSTRAINTS L12）。
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：GLSL ES 的十进制字面量与标识符词法事实（不受版权保护的语言事实）：
  *    标识符 = [A-Za-z_][A-Za-z0-9_]*；整数字面量 = 可选符号 + 十进制数字；
@@ -18,7 +18,7 @@ package dev.vkdisp.config;
  * 3. 我们的差异点：① 只认 ASCII 标识符（GLSL 不含 Unicode 标识符，Character.isLetter 放行中文会生成非法 GLSL）；
  *    ② 浮点规范化保证输出一定是 GLSL float 形态（整数形态补 ".0"，见 canonicalFloat），
  *    避免 "#define X 2" 被 GLSL 当成 int 造成类型不匹配；③ 所有校验都是纯函数、可单测。
- * 4. 许可证核对：本项目 MIT；只用 JDK 标准库类型，零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只用 JDK 标准库类型，零第三方代码复制。
  * 5. 性能基线：❄️ 冷路径（切包 / 改选项时调用），不做任何性能优化（18-PARALLEL §7.7）。
  */
 

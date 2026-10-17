@@ -34,7 +34,8 @@
       去 17-NATIVE.md §1.3 的默认参考清单里查
       🔴 先做合规核对（17-NATIVE.md §1.1.1）——这是第 0 步，不是最后一步：
          · 查参考项目的 LICENSE 文件（只信仓库里的文件，不信平台页面）
-         · 判「能否并入本项目 MIT」→ 不能就换参考，别再读它的代码
+         · 判「能否并入本项目 LGPL-3.0-or-later」→ 不能就换参考，别再读它的代码
+            （🔖 2026-10-17 换证：LGPL-3.0 一族已放开，但**并来的每一行都要进 `NOTICE.md` 台账**）
          · 无 LICENSE 文件 = ARR = 不可用；「GPL + 例外条款」= 按禁止处理
       然后写下：【参考调研】注释块第 0 条（合规）+ 1/2/3/4/5 条
       没写或第 0 条写「未核实」→ 不许动手（07 T13）
@@ -252,7 +253,7 @@ unzip -l "$JAR" | grep -c '\.class'        # 必须 > 0
 ```
 [ ] .class 数量 > 0（本项目早期踩过"jar 里一个 class 都没有"的坑）
 [ ] 含 META-INF/neoforge.mods.toml，且 modId 与 gradle.properties 的 mod_id 一致
-[ ] 含 LICENSE（本项目是 MIT，必须随分发）
+[ ] 含 LICENSE + GPL-3.0.txt + NOTICE.md（LGPL 再分发必须随附，07 §〇 P3）
 [ ] 不含 net/minecraft/**
 [ ] 不含 com/mojang/**
 [ ] 不含 net/caffeinemc/**、dev/vitrail/**

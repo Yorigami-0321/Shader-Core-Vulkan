@@ -6,7 +6,7 @@ package dev.vkdisp.pack;
  *    读取侧范式，含 h33 实测的「配置键名 ≠ Java 字段名」那条真实缺陷与它的修法）；
  *    ② {@code docs/07-CONSTRAINTS.md} T11（降级必须可见）/ X9（不猜）。
  *    全部为仓库内自有文档事实与自有代码。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的极小桥接类）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的极小桥接类）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：NeoForge {@code ModConfigSpec}（只用 {@code get()} 读值）。
  * 2. 备选：
@@ -22,7 +22,7 @@ package dev.vkdisp.pack;
  * 3. 我们的差异点：与 {@code PackCapabilityGateSwitch} 完全同构，额外多一条纪律：
  *    <b>本开关是 {@code String} 而非布尔</b> ⇒ 除了「字段找不到」，还多一类失败
  *    「类型不是字符串配置项」，两者都必须<b>分别</b>吵出来（都归到同一个 failure 通道）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 冷路径每包读一次配置值，代价可忽略。
  */
 import java.util.function.Supplier;

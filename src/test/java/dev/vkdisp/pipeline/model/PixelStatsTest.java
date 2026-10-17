@@ -6,7 +6,7 @@ package dev.vkdisp.pipeline.model;
  *    ② {@code tools/vulkan-local/p24_luma.py}（luma 系数 0.2126/0.7152/0.0722）
  *    ③ {@code evidence/h28-…}（判据「逐像素恰好 0」）、{@code evidence/h31-…}（「不翻转」判读对象）
  *    全部为本仓库自有脚本与自有证据文件，不受版权保护。
- *    → 能否并入本项目（MIT）：可以（测试代码不进分发 jar）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（测试代码不进分发 jar）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无（纯逻辑统计类）。
  * 2. 备选：无。
@@ -19,7 +19,7 @@ package dev.vkdisp.pipeline.model;
  *      <li>🔖 <b>无样本 ≠ 全黑</b> —— 「没采到」与「采到且全黑」必须返回不同的值，
  *      否则日志上「没有数字」会被读成「数字是 0」（h42 刚被自己推翻过一次结论）。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

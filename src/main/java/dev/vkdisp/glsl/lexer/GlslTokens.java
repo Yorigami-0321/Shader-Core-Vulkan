@@ -14,7 +14,7 @@ import java.util.List;
  *    {@code preprocess/DefineProcessor.ExprEval}（真 token 词法）。
  *    外部候选：ANGLE 的 preprocessor 分层（BSD-3，**只当架构参照**，不并 C++）；
  *    glsl-transformer / glsl-preprocessor（GPL-3.0+例外）按禁止处理（`07` L12 / X20 / X21）——
- *    未读其代码、零行并入。本项目 MIT。
+ *    未读其代码、零行并入。本项目 LGPL-3.0-or-later。
  * 1. 职责：**全仓唯一的词法源**。三条硬性质：
  *    ① **无损** —— {@link #render(List)} 把 {@link #tokenize(String)} 的结果拼回去必须与输入**逐字节相同**
  *      （未改动的区段不许被规范化：注释里承载包语义，如 {@code DRAWBUFFERS:} / {@code const} 指令 /

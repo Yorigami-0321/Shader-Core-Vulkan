@@ -6,7 +6,7 @@ package dev.vkdisp.mixin;
  *    {@code @WrapOperation}/{@code @Local} 契约 + 原版 {@code ChunkSectionsToRender$DrawIndirect#render}
  *    第 **121** 行的 {@code getCompiledPipeline}）；本文件只换目标类与 {@code multiDraw} 一项。
  *    许可证：Mixin = MIT；MixinExtras/NeoForge = LGPL-2.1（只观察契约）；原版 = Mojang EULA（只观察语句）。
- *    → 能否并入本项目（MIT）：可以；独立编写，零第三方代码复制
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；独立编写，零第三方代码复制
  *    → 例外条款：无；不含任何 GPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：同 M-15 另一支（{@code @WrapOperation} + {@code @Local(argsOnly = true)}）。
@@ -15,7 +15,7 @@ package dev.vkdisp.mixin;
  * 3. 我们的差异点：两支合起来才覆盖「地形取管线」的全部两条路（{@code usingMultiDrawIndirectForTerrain}
  *    二选一，见 {@code LevelRenderer} 第 269-275 行）—— <b>少注一支 = 那一支仍走静态标志判定</b>，
  *    这与旧 M-05「两个重载都要注」是同一条纪律。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：🔴 热路径（本机 lavapipe 走的正是这一支）。一次引用比较 + 一次 map.get，无分配。
  */
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;

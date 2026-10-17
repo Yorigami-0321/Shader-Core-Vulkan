@@ -6,8 +6,8 @@ package dev.vkdisp.glsl.translate;
  *    由转译终稿解析出的 {@code layout(location = N) in <type> <name>;} 签名）与既有 8 段管线；
  *    ② 原版 {@code core/terrain.vsh} 的**位置算式**（Mojang EULA：只保留数学事实，
  *    本文件是**独立重写**的等价表达，不逐行搬运原版着色器文本）。
- *    同为 MIT 自有代码 + 公开数学事实，无任何第三方代码或着色器文本并入。
- *    → 能否并入本项目（MIT）：可以
+ *    同为 LGPL-3.0-or-later 自有代码 + 公开数学事实，无任何第三方代码或着色器文本并入。
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码，也不含 Mojang 着色器文本
  * 1. 官方/主实现：原版只提供 core/terrain 这一对固定顶点/片元，没有「按包生成适配层」这回事。
  * 2. 备选：① 手写一份覆盖全部 OF varying 的静态适配层 —— 否决（实测 BSL 开高级材质后
@@ -16,7 +16,7 @@ package dev.vkdisp.glsl.translate;
  *    资源加载失败 ⇒ 客户端起不来。② 拒接多槽路径 —— 否决：那就把本轮成果退回到「只支持默认配置」。
  * 3. 我们的差异点：**按包的契约生成**适配层，逐条 varying 声明 + 逐条供值，
  *    供不出来的显式记成常量 + 出 WARN（不静默、不假装）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：冷路径（每次资源重载生成一次字符串，产物缓存在虚拟包资源里）。
  */
 import dev.vkdisp.glsl.TranslateDiagnostic;

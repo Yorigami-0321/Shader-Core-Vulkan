@@ -4,9 +4,9 @@ package dev.vkdisp.pack;
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
  *    参考对象 = 本仓库自研的 B 线 ShaderPackScanner / ShaderPackService / ShaderPackCompiler /
  *    PackCompileCache 与 P4.2 建立的包选择三态口径（docs/18-PARALLEL.md §5 P4.2）——
- *    同为 MIT 自有代码，无任何外部参考对象。外部候选 IrisShaders / glsl-transformer（GPL-3.0）
+ *    同为 LGPL-3.0-or-later 自有代码，无任何外部参考对象。外部候选 IrisShaders / glsl-transformer（GPL-3.0）
  *    按禁止处理（07-CONSTRAINTS L12），本任务不读其代码、零代码行并入。
- *    → 能否并入本项目（MIT）：可以（仅编排本项目自研组件）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅编排本项目自研组件）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无外部实现可参考（原版没有包加载器），按本项目契约自行编排。
  * 2. 备选：① 复用 PackCompositeSource 的 generate 顺带返回地形源 —— 否决：那条链的语义是
@@ -18,7 +18,7 @@ package dev.vkdisp.pack;
  *       保证「composite 用的包」与「地形用的包」永远是同一个；
  *    ② **无产出即显式 null**（调用方据此保持原版 core/terrain），并 WARN 说明原因；
  *    ③ **维度偏好 world0 > 根 > 其它**（与 composite 同规则，主世界地形语义最常用）。
- * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只读思路，零代码并入。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；参考按禁止处理，只读思路，零代码并入。
  * 5. 性能基线：冷路径（虚拟包 openResources 时一次），清晰优先，不做性能优化。
  */
 import dev.vkdisp.config.OptionDiagnostic;

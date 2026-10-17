@@ -22,7 +22,7 @@ import dev.vkdisp.glsl.translate.ShaderStage;
  *    （自定义传染许可）→ 例外条款是否覆盖本项目未核实，一律按禁止处理
  *    （18-PARALLEL §4 C/D 行已按此口径记录；07-CONSTRAINTS L12 §1.3 陷阱 2 / X20 / X21），
  *    本任务不读其代码、零代码行并入。许可证：本文件为独立编写的纯 Java 编排类，不含任何外部项目代码。
- *    → 能否并入本项目（MIT）：可以 —— 仅串联本仓库 C 线（GlslPreprocessor）与 D 线
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 仅串联本仓库 C 线（GlslPreprocessor）与 D 线
  *      （OfGlslTranslator）自研实现，只采纳不受版权保护的事实性信息（OF 格式语义、行号要求）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：18-PARALLEL §4 的两线公开入口 —— C 线 GlslPreprocessor.analyze
@@ -43,7 +43,7 @@ import dev.vkdisp.glsl.translate.ShaderStage;
  *       预处理指令需要删除、也没有任何注入时，整个 TranslateResult（文本 + 诊断 + 行号映射）
  *       两轮完全相等。选项识别以首次输入为准（输出已删指令，第二遍不再发现选项）——
  *       幂等断言只针对 TranslateResult。
- * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外与自定义传染参考按禁止处理，只读思路、零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；GPL-3.0+例外与自定义传染参考按禁止处理，只读思路、零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载期一次）；纯顺序调用两个已有阶段（三段式预处理 + 五级转译），
  *    无缓存、无预优化（18-PARALLEL §7.7、T14 达标即停；08-TESTING §8 "解析+转译全部 program

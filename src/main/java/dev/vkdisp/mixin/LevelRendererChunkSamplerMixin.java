@@ -7,7 +7,7 @@ package dev.vkdisp.mixin;
  *    ② 原版 {@code LevelRenderer} 第 146 行字段声明与第 437-449 行重建条件
  *    （随 MDG 分发的 {@code minecraft-patched-*-sources.jar}，只观察字段类型与语义）。
  *    许可证：Mixin = MIT（FabricMC 官方 LICENSE）；原版 = Mojang EULA（只观察字段）。
- *    → 能否并入本项目（MIT）：可以 —— 同族可并入；本文件不含任何被参考方代码
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 同族可并入；本文件不含任何被参考方代码
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：Mixin 官方 {@code @Accessor} 范式 —— 抽象方法由运行期 applier 生成实现，
@@ -18,7 +18,7 @@ package dev.vkdisp.mixin;
  * 3. 我们的差异点：**只有抽象访问器，零方法体**（X25「mixin 只转发，不写业务」的极限形态）。
  *    「用不用这个实例」的决策在 {@code MrtTerrainPass#atlasSampler()}，由
  *    {@code mixin.reuseChunkSampler} 把关（X29 可关闭制）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：热路径 —— 每帧一次字段读，无分配、无 {@code createSampler}。
  */
 import com.mojang.renderpearl.api.textures.GpuSampler;

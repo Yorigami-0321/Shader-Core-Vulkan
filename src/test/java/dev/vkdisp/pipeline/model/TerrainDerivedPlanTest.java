@@ -3,12 +3,12 @@ package dev.vkdisp.pipeline.model;
  * 【参考调研】H 线 M-01 规格表单测 / 纯数据断言（无原版类型、无 GPU 依赖）
  * 0. 合规核对（第 0 步闸门）：参考对象 = 本仓库 {@code docs/04-SPEC.md} §5.0 与原版 26.3
  *    {@code RenderPipelines} 地形管线的**事实性参数**（Mojang EULA，只提取参数值，不搬运代码）。
- *    → 可并入本项目（MIT）：本文件只断言参数表，不含被参考方代码；不含 GPL/LGPL/ARR。
+ *    → 可并入本项目（LGPL-3.0-or-later）：本文件只断言参数表，不含被参考方代码；不含 GPL/LGPL/ARR。
  * 1. 官方/主实现：同被测类（纯数据表）。
  * 2. 备选：无（本就是单测）。
  * 3. 我们的差异点：期望值**逐条抄自证据文件里的源码级核实表**，而不是抄自实现 ——
  *    这样「实现抄漏了原版状态」会当场变红，而不是跟着实现一起错。
- * 4. 许可证核对：本项目 MIT。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later。
  * 5. 性能基线：❄️ 单测，不适用。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

@@ -8,14 +8,14 @@ package dev.vkdisp.mixin;
  *    {@code renderOit(…)} 第 223 行（OIT）；MixinExtras 的 {@code @WrapOperation} /
  *    {@code @Local(argsOnly = true)} 公开契约（只观察签名）。
  *    许可证：Mojang EULA（只观察语句与形参表）+ Mixin MIT + NeoForge/MixinExtras LGPL-2.1（只观察契约）
- *    → 能否并入本项目（MIT）：可以；本文件独立编写，零源码搬运
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件独立编写，零源码搬运
  *    → 例外条款：无；不含 GPL / ARR 代码；参考模组（VulkanMod / Sulkan / Beryl）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：原版把 {@code RenderPass} 与要用的管线一起交给这个私有方法 ⇒ 身份与入参都在手边。
  * 2. 备选：注公开的 {@code render(CloudStatus, RenderPass)} —— <b>否决</b>：它拿不到管线（管线在它内部按
  *    {@code CloudStatus} 选），而且 OIT 那条路径不经过它 ⇒ 收敛点只有私有这一条。
  * 3. 我们的差异点：方法体只有「埋点 + 一次 bridge 判定 + 原样交给 original」（X25）；
  *    pass 身份来自形参 {@code renderPass} 的对象比较（不是静态标志，{@code GAP-040} 那一族）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：每帧 1 次（云是整屏一次 draw）⇒ 不构成热点；埋点按 M-01 节流口径。
  */
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;

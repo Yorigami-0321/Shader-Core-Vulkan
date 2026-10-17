@@ -2,7 +2,7 @@ package dev.vkdisp.bridge;
 /**
  * 【自行补充】GAP-027 日月接线的守卫（注入点注册、label 分流、换代、两侧同源、关档退回）
  * 0. 合规核对：参考对象 = 本仓库自有 {@code MrtTerrainPassWiringTest} / {@code MixinWiringTest}
- *    （源码针 + 位置针的形状）。零外部实现。许可证：MIT。
+ *    （源码针 + 位置针的形状）。零外部实现。许可证：LGPL-3.0-or-later。
  * 1..5. 同族：见 {@link SkyCelestialPack} 的头部。
  */
 import java.nio.file.Files;

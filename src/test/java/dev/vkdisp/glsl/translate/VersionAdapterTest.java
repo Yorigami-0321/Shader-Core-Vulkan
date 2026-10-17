@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
  * 2. 备选：无 —— 直接喂字符串、断言输出字节（08-TESTING §8.1）。
  * 3. 被测差异点（与 {@link VersionAdapter} 类注释 3 对齐）：三段升级规则、注释保护、
  *    不合成、等行数零诊断、幂等、SSO 行为白名单、ES profile 恒原样。
- * 4. 许可证核对结论：MIT 项目内自写测试（07-CONSTRAINTS §〇 P1）。
+ * 4. 许可证核对结论：LGPL-3.0-or-later 项目内自写测试（07-CONSTRAINTS §〇 P1）。
  * 5. 性能基线：本文件无性能断言（纯单测）。
  */
 class VersionAdapterTest {

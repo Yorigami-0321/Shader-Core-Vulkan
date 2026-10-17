@@ -5,7 +5,7 @@ package dev.vkdisp.bridge;
  *    参考对象 = 原版 26.3 客户端 jar 内 com.mojang.renderpearl.api.pipeline.*（运行平台官方 API）
  *    + NeoForge 26.3.0.23-beta NeoForgeRenderPipelines（LGPL-2.1，官方注册用法范本）。
  *    只观察 javap 签名与官方调用点，零源码文本搬运；参考模组（VulkanMod/Sulkan 等）零接触。
- *    → 能否并入本项目（MIT）：本文件为独立的薄封装签名，仅引用公开 API 类型，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立的薄封装签名，仅引用公开 API 类型，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：原版 RenderPipeline.Builder（withLocation/withVertexShader/withFragmentShader/
  *    withBindGroupLayout/withVertexBinding/withColorTargetState/withSnippet/build）与
@@ -13,7 +13,7 @@ package dev.vkdisp.bridge;
  * 2. 备选：无（官方 API 完整，GAP 判定：不需要登记）。
  * 3. 我们的差异点：本接口只冻结「业务包能拿到什么签名」，真实构建收敛在 bridge 实现（PipelineApi）；
  *    E 线（pipeline/model 纯计算件）消费这些签名做中间表示，不直接 import renderpearl。
- * 4. 许可证核对：本项目 MIT；只调用公开 API 签名，无代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只调用公开 API 签名，无代码复制。
  * 5. 性能基线：构建期一次性调用，冷路径，无优化需求。
  */
 import java.util.List;

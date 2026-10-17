@@ -92,7 +92,7 @@
 | `04-SPEC.md` | ✅ | 技术规格书（含组件参考/热度表、`accel/` 层） |
 | `05-VERSION.md` | ✅ **版本权威** | 支持范围、锁定表、兼容策略 |
 | `06-MIGRATION.md` | ✅ | 版本迁移预案 |
-| `07-CONSTRAINTS.md` | ✅ | 工程约束清单（MIT + L1–L12 + T1–T16 + X1–X21） |
+| `07-CONSTRAINTS.md` | ✅ | 工程约束清单（LGPL-3.0-or-later + L1–L13 + T1–T16 + X1–X21）；许可与移植台账见根目录 `NOTICE.md` |
 | `08-TESTING.md` | ✅ | 测试与验收标准（性能为硬指标） |
 | `12-GAP-STRATEGY.md` | ✅ | 特性缺口与自行补充策略 |
 | `13-GAP-REGISTRY.md` | ✅ | 特性缺口登记表 |

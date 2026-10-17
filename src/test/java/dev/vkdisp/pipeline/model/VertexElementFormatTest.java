@@ -4,16 +4,16 @@ package dev.vkdisp.pipeline.model;
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
  *    参考对象 = ① 本仓库 docs/04-SPEC.md §4「顶点格式扩展」属性表（类型列：vec2f / vec3f / vec2s / vec3b / vec4ub）；
  *    ② 公开的格式事实：f = 4 字节、s = 2 字节、b / ub = 1 字节。
- *    许可证：JUnit 5 = EPL-2.0（仅 testImplementation 依赖，不进分发 jar）；本仓库 docs 为 MIT 项目自有文档。
+ *    许可证：JUnit 5 = EPL-2.0（仅 testImplementation 依赖，不进分发 jar）；本仓库 docs 为 LGPL-3.0-or-later 项目自有文档。
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触 —— 按 docs/07-CONSTRAINTS.md L12
  *    「判不过就换参考，不再读它的代码」。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的测试）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的测试）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：JUnit 5 标准断言（assertEquals / assertThrows / assertTrue），用例取值全部照抄
  *    本仓库 docs/04-SPEC.md §4 的属性表与 docs/08-TESTING.md §5 的 stride 自检要求。
  * 2. 备选：手写 main() 断言 —— 否决（F4 已接好 JUnit 5，且失败要能在 ./gradlew test 里显式红）。
  * 3. 我们的差异点：数值断言逐项照抄 04-SPEC §4 的类型列，另用 assertThrows/empty 断言未知类型必须显式不可用（T11）。
- * 4. 许可证核对：本项目 MIT；JUnit EPL-2.0 仅测试期依赖；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；JUnit EPL-2.0 仅测试期依赖；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时，无性能影响（18-PARALLEL §7.7）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

@@ -8,7 +8,7 @@ package dev.vkdisp.bridge;
  *    与项目既有的 5 参便捷重载并列，同文件第 28/36/53 行）；
  *    ③ 原版 {@code DeviceLimits#maxColorAttachments}（设备能力）。
  *    许可证：Mojang EULA。**只调用公开 API，不复制实现语句、不搬运着色器文本。**
- *    → 能否并入本项目（MIT）：可以 —— 本文件为独立编写的桥接封装
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件为独立编写的桥接封装
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：原版 {@code RenderPassDescriptor.builder(...)} + 多次 {@code withColorAttachment}，
@@ -21,7 +21,7 @@ package dev.vkdisp.bridge;
  * 3. 我们的差异点：① 附件数由设备能力收敛（{@link MrtPlan#clampSlots}），超限与「设备不支持」
  *    分开报错（T11）；② 每个附件写**逐槽不同的 R 指纹**，使「分槽生效」成为可量化判据；
  *    ③ 整条路径**默认关闭**（配置项），关闭时常规帧零开销（支柱③）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：管线注册 ❄️ 冷路径；绘制属可关闭的按需诊断（默认关闭），不做性能优化。
  */
 import com.mojang.blaze3d.pipeline.RenderTarget;

@@ -9,7 +9,7 @@ package dev.vkdisp.pipeline.model;
  *    （{@code (startIndex, endIndex, Supplier<ColorTargetState>)} 批量设置）。
  *    许可证：Mojang EULA（原版）。**只提取「附件数上限」「批量设置 API 形状」这类事实与公开签名**，
  *    不搬运实现语句、不搬运着色器文本。
- *    → 能否并入本项目（MIT）：可以 —— 事实性上限与公开 API 形状不受版权保护；本文件为独立编写的规格表
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 事实性上限与公开 API 形状不受版权保护；本文件为独立编写的规格表
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：原版 {@code RenderPassDescriptor} 与 {@code RenderPipeline} 的多附件通道本身 ——
@@ -22,7 +22,7 @@ package dev.vkdisp.pipeline.model;
  *    否则 validation error；这不是可以「先只写不接」的中间态）。
  * 3. 我们的差异点：把「槽位数 / 每槽格式 / 槽位指纹编码」摊成**纯数据表**，
  *    让「三槽各自拿到不同内容」成为可单测、可量化判读的事实，而不是靠肉眼。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 冷路径（管线注册一次）+ 可关闭的按需绘制（默认关闭 ⇒ 常规帧零开销）。
  */
 import java.util.ArrayList;

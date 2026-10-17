@@ -3,12 +3,12 @@ package dev.vkdisp.pipeline.model;
  * 【参考调研】取证「取证件」—— 当前**实际生效**的包选项覆盖（防静默空转）
  * 0. 合规核对（第 0 步闸门）：
  *    参考对象 = ① 本仓库自有的 {@code dev.vkdisp.config.PackOptionStore}（选项 GUI「完成」的落盘格式，
- *    MIT 自有代码）；② 本仓库自有的 {@code dev.vkdisp.pack.PackOptionOverrideSwitch}
- *    （配置侧覆盖串，MIT 自有代码）；③ 本仓库 h27 实测记录的一条真实事故形态：
+ *    LGPL-3.0-or-later 自有代码）；② 本仓库自有的 {@code dev.vkdisp.pack.PackOptionOverrideSwitch}
+ *    （配置侧覆盖串，LGPL-3.0-or-later 自有代码）；③ 本仓库 h27 实测记录的一条真实事故形态：
  *    「B 臂漏带包选项覆盖 ⇒ `ADVANCED_MATERIALS` 丢失 ⇒ 被测 sampler 压根没声明
  *    ⇒ A/B **静默变成空转**」，而日志看起来完全正常。
  *    全部为仓库内自有代码与自有实测事实，不受版权保护。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的纯 Java 描述类）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的纯 Java 描述类）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码，也不含任何 Mojang 源码
  * 1. 官方/主实现：无（Vulkan / 原版里都不存在「取证时自报生效配置」这个概念）。
  * 2. 备选：
@@ -25,7 +25,7 @@ package dev.vkdisp.pipeline.model;
  * 3. 我们的差异点：把「两个来源 + 它们的合并结果」做成一份**可自报**的纯数据，
  *   关键语义是<b>合并优先级</b>必须显式且可单测 —— 否则「配置串说 PARALLAX=false、
  *   store 里也是 false」这类情况无法与「配置串写了但没命中」区分。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 冷路径（每探针轮构造一次；默认 300 帧一轮）。
  */
 

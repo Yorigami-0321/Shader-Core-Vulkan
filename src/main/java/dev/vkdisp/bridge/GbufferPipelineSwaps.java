@@ -21,7 +21,7 @@ package dev.vkdisp.bridge;
  *    <b>缓存未命中就地编译</b>（{@code device.compilePipeline(...).join().finishCompile()}）
  *    ⇒ 派生管线<b>不需要</b>预先 {@code RegisterRenderPipelinesEvent} 注册。
  *    许可证：Mojang EULA + NeoForge LGPL-2.1（均只观察签名/契约）。
- *    → 能否并入本项目（MIT）：可以 —— 本文件是独立编写的桥接封装，零源码搬运。
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件是独立编写的桥接封装，零源码搬运。
  *    → 例外条款：无；不含任何 GPL / ARR 代码。
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）。
  * 1. 官方/主实现：NeoForge 的 pipeline modifier 就是官方给的「不改 mixin、在装配层换管线」通道。
@@ -35,7 +35,7 @@ package dev.vkdisp.bridge;
  *          自己编一个名字会在 {@code PipelineModifierStack:63-66} 那一条被抛出来。</li>
  *      <li>🔖 <b>不认识的管线原样返回</b>（返回入参本身 = 不触发那条抛错检查）。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  *    🔖 本仓已记过一条同族事实（{@code VkDispConfigHotReload} 类注释第 14 行）：
  *    26.3 的 {@code @EventBusSubscriber} <b>没有</b> {@code bus} 属性 —— mod 总线事件
  *    （{@code IModBusEvent}）由 NeoForge 自己路由，注解里不写总线名。

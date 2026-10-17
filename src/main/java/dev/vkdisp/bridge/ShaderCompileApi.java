@@ -7,7 +7,7 @@ package dev.vkdisp.bridge;
  *    许可证：Mojang EULA（原版）→ 只观察 javap 反编译签名与调用点字节码（PipelineBuilder 中
  *    `compileToSpv(Identifier.toString(), 源文本, ShaderType, ShaderDefines, ShaderSource)` 的实参顺序），
  *    零源码文本搬运；参考模组（VulkanMod / Sulkan / Iris）零接触。
- *    → 能否并入本项目（MIT）：可以 —— 本文件是独立编写的薄封装，只调用公开 API，不含被参考方代码
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件是独立编写的薄封装，只调用公开 API，不含被参考方代码
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：原版 PipelineBuilder#generateBackendCreateInfo 的编译调用 —— 每个阶段
  *    `GlslCompiler.compileToSpv(name, source, type, defines, shaderSource)` → SpvModule；
@@ -22,7 +22,7 @@ package dev.vkdisp.bridge;
  *    ② ShaderSource 桩对 getInclude 返回 null —— 若转译产物仍残留 #include，shaderc 回调会拿到
  *    "not found" 错误并经 ShaderCompileException 显式报出（T11，不静默吞掉残留指令）；
  *    ③ 设备未就绪 / 意外异常一律降级为显式失败视图，绝不抛给业务层（T11 + 调用方打 ERROR）。
- * 4. 许可证核对：本项目 MIT；只调用公开 API 签名，无代码复制（07-CONSTRAINTS L5-L8）。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只调用公开 API 签名，无代码复制（07-CONSTRAINTS L5-L8）。
  * 5. 性能基线：启动/重载期每个阶段一次（冷路径），不做性能优化（17-NATIVE §3.2、T14）。
  */
 import com.mojang.blaze3d.systems.RenderSystem;

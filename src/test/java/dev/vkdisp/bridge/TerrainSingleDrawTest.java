@@ -2,8 +2,8 @@ package dev.vkdisp.bridge;
 /**
  * 【自行补充】R7 ⑤-d 第一刀（关掉地形双绘）的形状守卫 / 只读工程自身文件
  * 0. 合规核对（第 0 步闸门）：参考对象 = 本仓库 {@code bridge/TerrainSingleDraw.java}、
- *    {@code bridge/MrtTerrainPass.java}、{@code VkDispConfig.java}（本项目自有码/文档，MIT）。
- *    → 可并入本项目（MIT）：本文件不引用任何外部代码。
+ *    {@code bridge/MrtTerrainPass.java}、{@code VkDispConfig.java}（本项目自有码/文档，LGPL-3.0-or-later）。
+ *    → 可并入本项目（LGPL-3.0-or-later）：本文件不引用任何外部代码。
  * 1. 官方/主实现：无。
  * 2. 备选：直接调 {@code TerrainSingleDraw.drawnByMainPass()} 断言真假 —— <b>否决</b>：它第一句就读
  *    {@code VkDispConfig}（FML 的 {@code ModConfigSpec}），而测试运行时没有 FML（{@code GAP-050} 那一族，
@@ -11,7 +11,7 @@ package dev.vkdisp.bridge;
  *    ⇒ 本文件的职责是<b>形状</b>：两笔 draw 都被同一个判定挡住、判定要两个条件、开关默认关。
  *    「跳过之后画面还有没有地形」是<b>真机判据</b>，不假装单测覆盖了它。
  * 3. 我们的差异点：钉住「不许只看配置键就跳过」这条安全边界 —— 那是能把屏幕画空的操作。
- * 4. 许可证核对：本项目 MIT。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later。
  * 5. 性能基线：❄️ 单测。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

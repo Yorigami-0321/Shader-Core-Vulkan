@@ -9,7 +9,7 @@ package dev.vkdisp.pack.uniform;
  *    另有一条更硬的守卫 {@link #wholeRealBslPropertiesFileFromLocalPack()}：它直接读
  *    仓库外的本地包（{@code run/h27/shaderpacks/}，不在 git 里）拿全文，缺文件即跳过 ⇒
  *    「抄的 12 行」与「真包」两份口径互相校验，抄错也会红灯。
- *    许可证：本项目 MIT；零第三方代码并入。
+ *    许可证：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * 1. 主实现：{@link ShaderPropertiesParsePath}（真包那条走完整冷路径：条件编译 + 续行合并）。
  * 2. 备选：只测自造表达式（否决：GAP-021 的判据就是「BSL 那 28+13 行要能算出来」，
  *    自造样本证不到 `smooth(1, if(in(biome, …), 1, 0), 10, 10) + \\` 这种四行续写的形状）。

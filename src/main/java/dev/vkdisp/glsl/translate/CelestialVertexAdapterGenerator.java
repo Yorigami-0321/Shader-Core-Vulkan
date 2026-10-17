@@ -9,7 +9,7 @@ package dev.vkdisp.glsl.translate;
  *    （{@code RenderPipelines.java:1092} 的 {@code withVertexBinding(0, DefaultVertexFormat.POSITION_TEX)}，
  *    元素名 {@code Position}/{@code UV0} —— {@code DefaultVertexFormat.java:78}）。
  *    外部候选（Iris / OptiFine / VulkanMod / Sulkan / Beryl）零接触（07-CONSTRAINTS L12）。
- *    许可证：独立编写（MIT），零第三方代码与零 Mojang 着色器文本。
+ *    许可证：独立编写（LGPL-3.0-or-later），零第三方代码与零 Mojang 着色器文本。
  * 1. 官方/主实现：没有「按包契约给原版顶点流生成适配层」这回事（原版日月用 {@code core/position_tex}）。
  * 2. 备选：① 直接复用 {@link PackVertexAdapterGenerator} —— <b>否决</b>：它的属性表与位置算式是
  *       <b>chunk 那一族</b>的（{@code ChunkPosition}/{@code CameraBlockPos}/{@code CameraOffset}/{@code UV2}
@@ -26,7 +26,7 @@ package dev.vkdisp.glsl.translate;
  *          而包逐字写 {@code color = gl_Color;}。这不是猜：格式里没有这个通道 ⇒ 中性乘法单位元是唯一
  *          不编造数据的选法，并且<b>必须出 WARN 点名</b>（否则下一轮有人以为日月被原版色调过）；
  *       ③ 契约里出现<b>本生成器不认识</b>的名字 ⇒ 按类型零值 + 逐条 WARN，绝不「挑一个像的」（X9）。
- * 4. 许可证核对：本项目 MIT；零第三方代码并入。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * 5. 性能基线：❄️ 冷路径（换包 / 换配置生成一次字符串）。渲染期与原版 {@code position_tex} 同形
  *    （一次 4 顶点 + 一次 6 索引的 draw 由原版发），不另加计算。
  */

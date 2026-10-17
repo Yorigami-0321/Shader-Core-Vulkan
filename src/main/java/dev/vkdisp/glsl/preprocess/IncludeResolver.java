@@ -12,7 +12,7 @@ import java.util.Map;
  *    外部候选 IrisShaders/glsl-preprocessor（GPL-3.0 + 例外条款）→ 一律按禁止处理
  *    （handover §2.1 / 07-CONSTRAINTS X20/X21），本任务不读其代码、零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 接口，不含任何外部项目代码。
- *    → 能否并入本项目（MIT）：可以（仅采纳不受版权保护的事实性路径语义）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅采纳不受版权保护的事实性路径语义）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：本仓库 handover §6.5 的 #include 路径语义 —— 解析器只负责把"被包含路径"
  *    翻译成一个相对 shaders/ 顶层的 key，真正的文件读取由调用方注入（测试用内存 Map，
@@ -21,7 +21,7 @@ import java.util.Map;
  *    （handover §0），故改为接口注入。
  * 3. 我们的差异点：接口只暴露 read(pathFromShadersRoot)，路径归一（去 ./、解析 ../、反斜杠归一）
  *    由 IncludeProcessor 负责，本接口保持最小、可测试。
- * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载期一次性），无缓存、无性能优化（18-PARALLEL §7.7、T14 达标即停）。
  */

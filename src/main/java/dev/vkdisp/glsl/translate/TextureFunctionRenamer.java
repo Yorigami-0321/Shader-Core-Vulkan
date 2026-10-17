@@ -24,7 +24,7 @@ import dev.vkdisp.glsl.lexer.GlslTokens;
  *    18-PARALLEL §4 D 线明示「按禁止处理」，一律不读其代码、零代码行并入
  *    （07-CONSTRAINTS L12 §1.3 陷阱 2 / X21、17-NATIVE §1.1.1）。
  *    许可证：本文件为独立编写的纯 Java 实现，不含任何外部项目代码；样本在单测中自造（§7.6）。
- *    → 能否并入本项目（MIT）：可以 —— 只采纳不受版权保护的事实性信息（函数名映射、返回类型）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 只采纳不受版权保护的事实性信息（函数名映射、返回类型）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：GLSL 公开函数表 —— 现代名按「采样器类型 + 查找方式」重载：
  *    texture(sampler2D, vec2) 等；textureProj 对应旧的 *Proj；textureLod 对应旧的 *Lod。
@@ -54,7 +54,7 @@ import dev.vkdisp.glsl.lexer.GlslTokens;
  *    标识符及两表键集均不冲突的序号（确定性）。无调用位则不触发（护住只声明不调用的场景），
  *    该改写不产生诊断（与调用位改名同口径的正常变换）。转译目标仓库事实：VersionAdapter
  *    {@code TARGET_VERSION = 410}（VersionAdapter.java:81，shaderc 硬地板）。
- * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载期一次，08-TESTING §8 解析+转译全部 program ≤ 1 秒 由 P2 主线
  *    实测把关）；一次线性扫描，无缓存、无预优化（18-PARALLEL §7.7、T14 达标即停）。

@@ -29,7 +29,7 @@ import dev.vkdisp.glsl.translate.UniformInjector;
  *    （07-CONSTRAINTS L12 §1.3 陷阱 2 / X20 / X21），本任务不读其代码、零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 测试；全部 GLSL 样本与 include fixture 均为本任务
  *    自造的最小字符串（18-PARALLEL §7.6：禁止把第三方 pack 的 .glsl 片段复制进单测预期值）。
- *    → 能否并入本项目（MIT）：可以（仅依赖仓库内 F3 契约与自研 C/D 实现）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅依赖仓库内 F3 契约与自研 C/D 实现）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：JUnit 5 字符串逐字节比对 + TranslateResult.isSuccess()/diagnostics()/originOf()
  *    断言；幂等口径与 D 线一致（文本不动点；无删除无注入时整个结果相等）。
@@ -37,7 +37,7 @@ import dev.vkdisp.glsl.translate.UniformInjector;
  * 3. 我们的差异点：边界用例按 §7.3 显式列清单 —— 循环 include、缺失文件、超深/未闭合条件块、
  *    条件分支（跳过分支里的 attribute 不进转译）、null 四类入参、敌意输入；另断言入口级适配
  *    （预处理失败短路 + 上游 WARN 诊断合并），这两点是单独测 C/D 时看不到的。
- * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：测试代码不进运行时；冷路径无性能要求（18-PARALLEL §7.7）。
  */

@@ -5,14 +5,14 @@ package dev.vkdisp.bridge;
  *    参考对象 = 原版 Minecraft 26.3 客户端 jar 内 com.mojang.renderpearl.api.device.*（运行平台与官方 API 提供方）。
  *    许可证：Mojang EULA（原版）+ NeoForge LGPL-3.0（运行时）→ 只观察 javap 签名与官方调用点日志格式，
  *    零源码文本搬运，不复制其实现。参考模组（VulkanMod/Sulkan 等）零接触。
- *    → 能否并入本项目（MIT）：本文件为独立实现的薄封装，仅调用公开 API，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现的薄封装，仅调用公开 API，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：原版 net.minecraft.client.Minecraft 构造后端选择链（458-531 行官方用法范本：
  *    device.getDeviceInfo() → backendName()/name()/vendorName()/driverInfo()）
  * 2. 备选：无（官方 API 完整，见 GAP 判定：不需要登记）
  * 3. 我们的差异点：只暴露纯 Java 视图（backendKind()/deviceInfo()），业务包零 renderpearl import；
  *    设备未就绪时返回 "UNKNOWN" / 抛出明确异常，绝不静默。
- * 4. 许可证核对：本项目 MIT；只调用公开 API 签名，无代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只调用公开 API 签名，无代码复制。
  * 5. 性能基线：启动期一次性调用，无热路径需求。
  */
 import com.mojang.blaze3d.systems.RenderSystem;

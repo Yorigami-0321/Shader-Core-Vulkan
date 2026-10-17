@@ -25,34 +25,43 @@
 
 ---
 
-## 〇、本项目许可证：**MIT**（已定）
+## 〇、本项目许可证：**LGPL-3.0-or-later**（2026-10-17 换证，此前为 MIT）
 
 ```
-LICENSE                  ← 工程根，MIT 全文
-gradle.properties        ← mod_license=MIT
-TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
+LICENSE                  ← 工程根，LGPL-3.0 全文（与 gnu.org 原文逐字节一致，sha256 已记在 NOTICE.md）
+GPL-3.0.txt              ← LGPL-3.0 按引用并入的 GPL-3.0 条款全文
+NOTICE.md                ← 许可声明 + 第三方构件清单 + 移植台账
+gradle.properties        ← mod_license=LGPL-3.0-or-later（值必须纯 ASCII）
+TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（只管模板文件本身，保留）
 ```
 
-**这个决定带来三条硬约束：**
+**换证动因 = 一条用户裁决（2026-10-17）**：「直接把 Vitrail 和 Iris 对光影包特性的处理移植过来，
+不要自己实现了。」Iris 与 Vitrail 都是 **LGPL-3.0**（一手核过 `LICENSE`），并入即构成再许可 ⇒ MIT 撑不住。
+可单方改写的依据：343 个 commit 里 341 个著作权人为同一人（另 2 个是 `vkdisp <vkdisp@local>` 机器人提交），
+无第三方 contributor 需要点头；**已按 MIT 拿走副本的下游不受影响，且本改写不可撤回**。
+
+**这个许可证带来四条硬约束：**
 
 | # | 约束 | 原因 |
 |---|---|---|
-| **P1** | **不得并入任何 LGPL / GPL 代码** | MIT 与 LGPL-3.0 / GPL-3.0 不是同族；一旦并入，整个工程就要改许可证 |
+| **P1** | **并入的每个文件都要写文件头 + 进 `NOTICE.md` 移植台账**（来源仓库@commit、来源 `文件:行`、读取日期、改了什么） | LGPL-3.0 §4(a) 要求修改过的文件带显著说明；没有台账 = 无法自证来源 = 视同未核实 |
 | **P2** | **不得并入任何 ARR 内容** | All Rights Reserved 的内容无权再分发 |
-| **P3** | **分发时 jar 内必须带 `LICENSE`** | MIT 的署名要求：许可声明须随副本或实质部分一并提供 |
+| **P3** | **分发的 jar 内必须带 `LICENSE` + `GPL-3.0.txt` + `NOTICE.md`** | 再分发时必须随附许可全文与归属声明；`build.gradle` 的 jar 打包块已显式声明这三个输入 |
+| **P4** | **我们自己那部分必须保持完整公开源码** | LGPL-3.0 的"随附源码"义务，现由公开 GitHub 仓库满足 ⇒ 一旦转私有就不能再分发 |
 
-> 换句话说：**选 MIT 不等于「必须完全自研」**。
-> 🔖 **2026-10-10 用户更正**：本节旧文案写的是「MIT 选了就得完全自研」，那是**早期文档自行加的自我限制，
-> 不是 MIT 的要求**。合规底线只有一条：**完全遵守 MIT、不越界**。真实规则就是 §1.3 的判定表 ——
-> **MIT / Apache-2.0 / BSD 族可以并入代码**（条件是保留其 `LICENSE`/`NOTICE` 并**声明改动**），
-> LGPL / GPL / ARR 仍然一行不搬、只读思路。
-> ⇒ 所以 `L7`（移植 VulkanMod）**依然作废** —— 因为它是 **LGPL-3.0**，与「能不能用第三方库」无关。
+> 代价（诚实登记，别再写成"零维护"）：**许可传染从此是常态**。
+> 从此每个搬进来的文件都欠一条声明义务，产物里要**同时**有我们的 `LICENSE`（P3）、上游的
+> `LICENSE`/`NOTICE` 副本，以及逐文件的改动声明（Apache-2.0 §4(b) 那条同样继续适用）。
+> 已裁决的实例：`docs/19-IMPROVEMENT-PATHS.md` §7-1（jcpp，Apache-2.0，允许移植核心）。
 >
-> 代价（诚实登记，别再写成"零维护"）：一旦引入带 `NOTICE` 的上游，产物里要**同时**有
-> 我们的 `LICENSE`（P3）**和**上游的 `LICENSE`/`NOTICE` 副本 + 改动声明（Apache-2.0 §4）。
-> 已列入 §七 自检清单的一条。已裁决的实例：`docs/19-IMPROVEMENT-PATHS.md` §7-1（**jcpp，Apache-2.0，允许移植核心**）。
+> 🔖 **2026-10-10 的那条更正继续有效**：「选了许可证就得完全自研」从来不是任何许可证的要求，
+> 那是早期文档自己加的自我限制。这次换证**不是**把那条限制改小，而是把它**取消**。
 >
-> 好处仍然成立：**不会有许可传染**，不用逐文件加 LGPL 头，不用维护上游的 copyleft 义务。
+> 🔴 **换证不等于全开**：**只放开 LGPL-3.0 一族**（Iris / Vitrail / VulkanMod）。
+> AGPL-3.0（glsl-transformer）**只搬规则、不引库**（同轮裁决，否则项目被顶到 AGPL）；
+> GPL-3.0（Sulkan）**仍然不搬**（吸 GPL 会把整个项目推到 GPL-3.0，超出裁决范围）；
+> PolyForm Shield（Sodium）与 ARR（OptiFine / Beryl）**与我们的许可证无关，本来就不能搬**。
+> 逐上游的判定表见 `NOTICE.md`「移植政策」一节。
 
 ---
 
@@ -60,18 +69,19 @@ TEMPLATE_LICENSE.txt     ← NeoForge MDK 模板自带的 MIT（保留）
 
 | # | 约束 | 原因 |
 |---|---|---|
-| **L1** | **本项目许可证 = MIT，已写入 `LICENSE` 与 `gradle.properties`** | 无许可证 = 默认保留所有权利 = 别人无法合法使用 |
+| **L1** | **本项目许可证 = LGPL-3.0-or-later**，已写入 `LICENSE` + `GPL-3.0.txt` + `NOTICE.md` + `gradle.properties`（2026-10-17 由 MIT 换证） | 无许可证 = 默认保留所有权利 = 别人无法合法使用。换证动因与「改写不可撤回」见 §〇 |
 | **L2** | **不得复制 Sodium 的**任何**代码** | Sodium 是 PolyForm Shield 1.0.0（**不是 LGPL**）。但注意：`Noncompete`/`Competition` 约束的是**持有其授权的人**（"use the software"），本项目既不依赖也不使用其代码 ⇒ 从未成为 licensee ⇒ **该条款对我们不生效**。真正约束我们的只是**不复制代码**这一条本身 |
 | **L3** | **不得把本项目描述成「Sodium 替代品」** | 事实层面：本项目做的是**在 Vulkan 上跑 OF/Iris 着色器包**，Sodium 是区块渲染引擎优化，两者**不是同一层的东西、不构成竞争关系**；Sodium 与着色器包本身无关。⇒ 本条是**表述纪律**（不误导用户 + 不触碰其商标/品牌），**不是**许可证风险 |
 | **L4** | **不得向 Sodium 仓库提 PR 或 issue 索要内部 API** | 其 CONTRIBUTING 明确拒绝任何 AI 生成代码 |
 | **L5** | **不得复制 Sulkan（GPL-3.0）的任何代码** | `.java` / `.glsl` / 资源文件，一个字都不抄 |
 | **L6** | **不得复制 Beryl（ARR）的任何内容** | All Rights Reserved，完全不可用 |
-| **L7** | **不得复制 VulkanMod 的任何代码**（见 §〇 P1） | VulkanMod 是 LGPL-3.0，与 MIT 不同族；**只读思路，不搬代码** |
-| **L8** | **不得复制 Vitrail（LGPL-3.0）的代码** | 同上，且与本项目无关 |
-| **L9** | **不得声称与 CaffeineMC / Iris / OptiFine / Vitrail 存在关联** | 避免商标与归属问题 |
-| **L10** | **jar 内必须包含 `LICENSE`** | MIT 署名要求 |
+| **L7** | ✅ **作废（2026-10-17）**：VulkanMod（LGPL-3.0）**可以搬代码** | 它当初被禁的唯一理由是「与 MIT 不同族」，该前提随换证一起消失。搬之前仍受 §〇 P1 约束：**逐文件进台账 + 声明改动** |
+| **L8** | ✅ **反转（2026-10-17）**：Vitrail（LGPL-3.0）是**光影包特性层的主移植源** | 同轮裁决「直接把 Vitrail 和 Iris 对光影包特性的处理移植过来，不要自己实现了」。它的 `NOTICE` 已逐文件示范过「来源 + 行号 + 读取日期 + 改动」的记账口径，照那个口径搬 |
+| **L9** | **衍生来源必须声明；但不得暗示官方关联或背书**（2026-10-17 改写：旧条「不得声称与 Iris / Vitrail 存在关联」随移植裁决作废） | LGPL-3.0 §4 的 prominent notice 是**义务**不是选项；归属 ≠ 背书，商标纪律原样保留 |
+| **L10** | **jar 内必须包含 `LICENSE` + `GPL-3.0.txt` + `NOTICE.md`** | LGPL 再分发必须随附许可全文与归属声明（§〇 P3）；打包输入见 `build.gradle` 的 jar 块 |
 | **L11** | 🔴 **与 Sodium 彻底隔绝：零代码、零依赖、零集成、零兼容、零引用** | 用户 2026-09-29 拍板：「不保留，和 sodium 彻底隔绝开」。见 §1.2 |
 | **L12** | 🔴 **调研参考前必须先核许可证（合规是第 0 步，不是最后一步）** | 一旦先读了代码，就难以自证"没受影响"；先判合规才能自证清白。见 §1.3 |
+| **L13** | 🔴 **移植面的三条边界**（2026-10-17 换证同轮裁决）：① Iris / Vitrail / VulkanMod（**LGPL-3.0**）**可搬**，逐文件进台账；② **AGPL-3.0（glsl-transformer）只搬规则、不引库**；③ **GPL-3.0（Sulkan）不搬**（吸 GPL 会把整个项目顶到 GPL-3.0），Iris 的 `compat/sodium/**`（PolyForm Shield）**不在移植面内** | 换证**只放开 LGPL 一族**。逐上游判定表与本机检出的 commit 钉版见 `NOTICE.md`「移植政策」 |
 | **M1** | 🔴 **mixin 注入范围不限原版类**（2026-10-12 用户裁决废除「管线装配层」白名单）；仍**登记制 + 可关闭制 + 逐个开启**，且仍**禁止注入 Sodium / caffeinemc / 第三方区块渲染器**（X23） | 2026-10-02 放开数量、2026-10-12 放开类别。裁决口径：mixin 与官方 API 一样只是手段，**按工程收益（时序精度 / 删掉的原版复制量 / 升版改动面）择优**，不按「是不是官方」一票否决。官方 API 能达成同一结果时仍优先（省掉一个登记点，见 §1.4.2 `PipelineModifier`），但「优先」不再是闸门 |
 
 ### 1.4 M1 的落地尺度（2026-10-12 起：类别闸门已废，只留登记制）
@@ -225,7 +235,7 @@ grep -nE 'Mixin apply for mod |from phase \[|Critical injection failure|Failed t
 **正确顺序**（详见 `17-NATIVE.md` §1.1.1）：
 
 ```
-第 0 步（闸门）  许可证是什么？能不能合法用在我的 MIT 工程里？
+第 0 步（闸门）  许可证是什么？能不能合法用在我的 LGPL-3.0-or-later 工程里？
                 ├─ 不能 → 放弃这个参考，换下一个候选（不要再读它的代码）
                 └─ 能   → 继续
 第 1 步          它怎么做的？
@@ -234,7 +244,7 @@ grep -nE 'Mixin apply for mod |from phase \[|Critical injection failure|Failed t
 ```
 
 **为什么必须放第 0 步**：先读了代码再看许可证，就**无法自证**"实现没受影响"。
-这是本项目（MIT）最容易被抓的把柄，也是最容易避免的 —— 只要顺序对。
+这是本项目最容易被抓的把柄，也是最容易避免的 —— 只要顺序对。🔖 2026-10-17 换证**没有取消这道闸门**，只是把 LGPL-3.0 那一格从「不可」改成「可，但要记账」。
 
 **许可证判定表**：
 
@@ -242,8 +252,9 @@ grep -nE 'Mixin apply for mod |from phase \[|Critical injection failure|Failed t
 |---|---|---|---|
 | MIT / Apache-2.0 | ✅ 可以（保留署名） | 代码 + 思路 | 🔴 丢掉其 `LICENSE`/`NOTICE`；改了却不**声明改动**（Apache-2.0 §4(b)）|
 | BSD-2-Clause / BSD-3-Clause | ✅ 可以（保留署名） | 代码 + 思路 | 🔴 丢掉版权声明与条件列表；**用作者名义为衍生作品做广告/背书**（BSD-3 的第三条） |
-| LGPL-3.0 | ❌ 不可并入 | ✅ 思路、做法、事实 | ❌ 代码行 |
-| GPL-3.0 | ❌ 传染 | ✅ 思路、做法、事实 | ❌ 代码行 |
+| LGPL-3.0 | ✅ **可并入**（2026-10-17 换证） | 代码 + 思路 + 事实 | 🔴 丢掉来源声明；改了却不进 `NOTICE.md` 台账（§〇 P1）；把整片上游包名原样塞进我们的 jar（L 表 T7 那条 jar 判据仍然有效） |
+| GPL-3.0 | ❌ 仍然不可并入 | ✅ 思路、做法、事实 | ❌ 代码行 —— 吸 GPL 会把整个项目顶到 GPL-3.0，超出本轮裁决范围 |
+| **AGPL-3.0**（Iris 的 `pipeline/transform` 链 glsl-transformer） | ❌ **不引库**（2026-10-17 裁决） | ✅ 思路、**规则与取值**（照 Vitrail 的记账口径：「取的是规则不是代码」） | ❌ 代码行、❌ 依赖坐标 —— 引它 = 全项目升 AGPL |
 | PolyForm Shield / 非竞争类 | ❌ 不可 | ⚠️ 连"借鉴"都谨慎（L11） | ❌ 代码，且不得集成 |
 | All Rights Reserved | ❌ 完全不可 | ❌ 什么都别带走 | ❌ 全部 |
 | **无 LICENSE 文件** | ⚠️ **默认 ARR**，视为不可用 | ❌ 什么都别带走 | ❌ 全部 |
@@ -276,8 +287,8 @@ grep -nE 'Mixin apply for mod |from phase \[|Critical injection failure|Failed t
 
 **不可以**：复制「具体怎么写的代码」—— 一行都不落盘。
 
-> ⚠️ **MIT 下的实操尺度**：由于不能再并入 LGPL 内容，判断要更保守。
-> 拿不准的时候：**只用它告诉你的"该往哪打洞"，代码自己从零写。**
+> ⚠️ **换证后的实操尺度**：LGPL-3.0 一族现在能并了，代价是**每一行都要在 `NOTICE.md` 台账里留下来源与改动声明**；
+> AGPL / GPL / PolyForm / ARR 四族仍然只取事实。拿不准的时候：**只用它告诉你的"该往哪打洞"，代码自己从零写。**
 
 ---
 
@@ -522,14 +533,15 @@ mod_group_id             = dev.vkdisp
 
 ```
 [ ] gradlew build 通过，jar 含 class
-[ ] jar 含 LICENSE（MIT 署名要求）
+[ ] jar 含 LICENSE + GPL-3.0.txt + NOTICE.md（LGPL 再分发要求，§〇 P3）
 [ ] jar 不含 net/caffeinemc、net/minecraft、dev/vitrail、com/mojang
 [ ] mixins.json 是 JAVA_25，且 neoforge.mods.toml 的 [[mixins]] 已取消注释
 [ ] 无硬编码版本号（都走 gradle.properties）
-[ ] 无复制来的第三方代码（MIT 下尤其严格 —— 不许并入 LGPL/GPL/ARR）
-[ ] 🔴 若本轮并入了 **MIT / Apache-2.0 / BSD 族**的上游源码或依赖：产物内保留了它的 `LICENSE`（及 `NOTICE`，若有），
-    且**已声明改动**（§〇 / §1.3；Apache-2.0 §4(b)）—— 「许可证兼容」不等于「署名义务消失」
-[ ] 对外文字里没有「Sodium 替代品 / Iris 兼容 / OptiFine 官方」类表述
+[ ] 搬来的第三方代码**每一行**都能在 NOTICE.md 台账里指回「上游仓库@commit + 来源文件:行 + 读取日期 + 改动」
+    （🔴 GPL / AGPL / PolyForm Shield / ARR 四族仍然一行不许 —— 换证只放开 LGPL-3.0 这一族）
+[ ] 🔴 若本轮并入了 **LGPL-3.0 / MIT / Apache-2.0 / BSD 族**的上游源码或依赖：产物内保留了它的 `LICENSE`（及 `NOTICE`，若有），
+    且**已声明改动**（§〇 P1 / §1.3；Apache-2.0 §4(b)）—— 「许可证兼容」不等于「署名义务消失」
+[ ] 对外文字里没有「Sodium 替代品 / OptiFine 官方 / Iris 官方」类表述；🔖 2026-10-17 起**必须**写清「含 Iris / Vitrail 衍生代码，按 LGPL-3.0-or-later 分发」（那是 prominent notice 义务，不是可选的致谢）
 [ ] 构建脚本里没有任何 `sodium` / `caffeinemc` 坐标，也没有运行时探测/集成分支（X18 / L11）
 [ ] 代码里出现的 `sodium` 只可能出现在「划清界限」的否定式语句里（L11 §1.2 判据）
 [ ] 新增的 GPU 操作走的是 renderpearl

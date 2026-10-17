@@ -13,7 +13,7 @@ import java.util.Set;
  *    函数调用 {@code f(a, b, ...)}、括号。三元的优先级层次按本项目自有口径排列
  *    （与仓库内已有的 {@code ConditionalPreprocessor.BoolExpr} 同一套：比较 < 加减 < 乘除 < 一元）。
  *    零代码复制；Iris/OptiFine 的实现源码禁止阅读（07 L12 / X19-X21），故语法只能照文档搭。
- *    → 能否并入本项目（MIT）：可以
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以
  *    → 例外条款：无
  * 1. 官方/主实现：无外部可读实现 ⇒ 自研。
  * 2. 备选：把表达式交给 GLSL 侧转译（否决：这些表达式按 OF 语义在 **CPU** 上逐帧求值，
@@ -23,7 +23,7 @@ import java.util.Set;
  *    错误信息降级成「语法错」）；② 语法错误抛 {@link SyntaxException}（带原文），
  *    由 {@link PackUniformSet} 逐条转成诊断 —— 一条坏表达式不许连带整个包加载失败（T11）；
  *    ③ 数字一律 {@code double}：int 型 uniform 的取整在输出边界做（见 {@link PackUniformSet}）。
- * 4. 许可证核对结论：本项目 MIT；零第三方代码并入。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * 5. 性能基线：❄️ 冷路径（包激活时一次），清晰优先（18-PARALLEL §7.7）。
  */
 final class UniformExpressionParser {

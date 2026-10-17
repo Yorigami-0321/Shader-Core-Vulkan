@@ -6,14 +6,14 @@ package dev.vkdisp.pack;
  *    docs/08-TESTING.md（P2.4 验收：选项改变画面）与 docs/07-CONSTRAINTS.md T11（降级必须显式）。
  *    全部为仓库内文档事实，不受版权保护。
  *    外部候选 IrisShaders / glsl-transformer（GPL-3.0 + 例外）→ 按禁止处理（X21），零代码并入。
- *    → 能否并入本项目（MIT）：可以（测试用例全部 @TempDir 自造包，18-PARALLEL §7.6）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（测试用例全部 @TempDir 自造包，18-PARALLEL §7.6）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无外部实现可参考（两个参考模组都不做 OF 包加载器），按本项目契约自测。
  * 2. 备选：① 直接跑 runClient 验收 —— 否决（太慢且不能覆盖分支）；② 只测 diffAgainstDefaults 私有逻辑
  *    —— 否决（要测的是 generate 端到端编排）。两者都保留：本类冷路径 + runClient A/B（主线验收）。
  * 3. 我们的差异点：测**编排分支**（空库存兜底 / profile 生效 / 空 profile 走默认 / 未知 profile 显式 ERROR /
  *    无 composite 包跳过），不重复断言编译器与改写器自身（各自测试已覆盖）。
- * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，零代码并入（07-CONSTRAINTS X19-X21）。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；参考按禁止处理，零代码并入（07-CONSTRAINTS X19-X21）。
  * 5. 性能基线：❄️ 冷路径单测（毫秒级），无性能断言（X14）。
  */
 

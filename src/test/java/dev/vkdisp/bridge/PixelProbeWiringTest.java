@@ -7,14 +7,14 @@ package dev.vkdisp.bridge;
  *    {@code Close the existing render pass before performing additional commands}）、
  *    ② {@code RenderTarget#createBuffers} 的 usage = 15（必须含 COPY_SRC = 2）、
  *    ③ 本仓库自有 {@code evidence/h42-…} §4.3（「输出黑」与「没落到主目标」本轮没分开）。
- *    → 能否并入本项目（MIT）：可以（测试只做源码文本断言，不搬运任何代码）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（测试只做源码文本断言，不搬运任何代码）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无（这是本项目自定的接线纪律）。
  * 2. 备选：无。
  * 3. 我们的差异点：把四条**静默失效**（探针回读在 pass 内 → 抛异常刷屏；回读源缺 COPY_SRC
  *    → 一次性 ERROR 后每帧静默无数字；探针放在诊断视图之后 → 「主目标」那个数字其实是我们
  *    自己 blit 的 colortex ⇒ 两源对照完全失效；对照结论无去重 → 按探针间隔刷屏）做成构建期红灯。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 单测（扫源码）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

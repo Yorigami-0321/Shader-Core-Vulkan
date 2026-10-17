@@ -4,7 +4,7 @@ package dev.vkdisp;
  *
  * <p>0. 合规核对：参考对象 = 本仓库自有的 {@code glsl/translate/SampleFactorProbeAdapter}
  *    （它已经在探针档里做同一件事，锚点行也是同一条）。零外部实现（07-CONSTRAINTS L12）；
- *    许可证：本文件独立编写（MIT）。
+ *    许可证：本文件独立编写（LGPL-3.0-or-later）。
  *
  * <p>1. 为什么从 {@code VkDispVirtualPack} 抽出来：本类原来住在那个大方法的第 1199-1224 行，
  *    而 {@code ClassLineRatchetTest} 给那个类的上限是实测值 1573（只许降）。棘轮的指示一直是

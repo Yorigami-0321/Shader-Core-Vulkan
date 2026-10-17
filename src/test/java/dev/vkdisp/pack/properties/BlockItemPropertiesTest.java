@@ -13,11 +13,11 @@ import org.junit.jupiter.api.Test;
 /**
  * 【参考调研】A 线 BlockProperties / ItemProperties 单测 / OF block/item.properties 语法事实
  * 0. 合规核对：参考 = OptiFine 官方文档 ID 映射语法 + Iris IdMap（LGPL-3.0，只读事实）；零代码复制，ARR 不碰。
- *    → 能否并入本项目 MIT：可以。本测试期望值独立硬编码，不含第三方 pack 片段（§7.6）。
+ *    → 能否并入本项目 LGPL-3.0-or-later：可以。本测试期望值独立硬编码，不含第三方 pack 片段（§7.6）。
  * 1. 主实现：逐格式断言（短格式 / 长格式 namespace:path / 属性格式 :type=value / 条件编译 / 重复 ID 报错）。
  * 2. 备选：无。
  * 3. 差异点：无。
- * 4. 许可证核对结论：MIT；零第三方代码。
+ * 4. 许可证核对结论：LGPL-3.0-or-later（本项目）；零第三方代码。
  * 5. 性能基线：测试不进运行时。
  */
 class BlockItemPropertiesTest {

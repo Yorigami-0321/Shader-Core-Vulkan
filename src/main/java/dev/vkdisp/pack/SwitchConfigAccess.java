@@ -2,7 +2,7 @@ package dev.vkdisp.pack;
 /**
  * 【参考调研】四个 Switch 类共用的一句判据：本进程的 FML 配置加载了没有
  * 0. 合规核对（第 0 步闸门）：参考对象 = NeoForge {@code ModConfigSpec#isLoaded()}（公开方法，javap 核实）
- *    与本仓 {@link dev.vkdisp.VkDispConfig#SPEC}。→ 可并入本项目（MIT）：是，只调公开 API。
+ *    与本仓 {@link dev.vkdisp.VkDispConfig#SPEC}。→ 可并入本项目（LGPL-3.0-or-later）：是，只调公开 API。
  * 1. 官方/主实现：{@code ModConfigSpec.isLoaded()}。
  * 2. 备选：catch 那句 {@code IllegalStateException("Cannot get config value before config is loaded")}
  *    的**消息文本**（否决：本仓纪律 —— 针不许绑在别人的措辞上，见 {@code 07} §1.4.1bis 那条假绿针）。
@@ -10,7 +10,7 @@ package dev.vkdisp.pack;
  *    2026-10-14 把主源集构件接进测试类路径后，{@code ChainEnableGatingTest} 当场变红 ——
  *    {@code ConfigValue#get()} 抛 {@code IllegalStateException}，落进 {@code catch (Throwable)}
  *    ⇒ 留下假的 {@code reflectionFailure} 位（QD-14 那一族的第三个样本）。
- * 4. 许可证核对：本项目 MIT。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later。
  * 5. 性能基线：❄️ 只在链装配 / 生成期被读，不在每帧路径上。
  */
 final class SwitchConfigAccess {

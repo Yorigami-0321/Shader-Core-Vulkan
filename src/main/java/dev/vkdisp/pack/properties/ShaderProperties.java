@@ -12,7 +12,7 @@ import java.util.Set;
  * 0. 合规核对（第 0 步闸门，不通过就换参考）：
  *    参考对象 = OptiFine 官方文档 shaders.properties 语法（directive=value，指令顺序无关；支持 #ifdef/#ifndef/#if/#else/#endif
  *    条件编译；不支持 #define/#include）+ Iris 同语义（LGPL-3.0，只读事实）；零代码复制。ARR 项目不碰。
- *    → 能否并入本项目（MIT）：可以（仅含格式事实）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅含格式事实）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：指令族含屏幕布局（screen= / screen.<NAME>= / screen.columns / screen.<NAME>.columns）、
  *    全局唯一 sliders=、预设 profile.<NAME>=、程序开关 program.<NAME>.enabled=<布尔表达式>、以及大量管线/视口开关
@@ -22,7 +22,7 @@ import java.util.Set;
  * 3. 我们的差异点：① 只处理条件编译，不实现 #define 展开/#include（shaders.properties 不支持，见交接 §6.2）；
  *    ② 选项宏的真正发现（扫 .fsh/.vsh）属 C 线，本类仅消费调用方提供的已定义宏集合；
  *    ③ lang 标签层（option.NAME / value.NAME）按交接 §6.7 先不做，等 F2 落地后与主线确认范围。
- * 4. 许可证核对结论：本项目 MIT；零第三方代码。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；零第三方代码。
  * 5. 性能基线：❄️ 冷路径，不做优化（18-PARALLEL §7.7）。
  */
 public final class ShaderProperties {

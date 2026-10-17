@@ -6,14 +6,14 @@ package dev.vkdisp.render;
  *    {@link OfUniformManager#putCameraMatrices}（真实调用路径）/
  *    {@code evidence/h48w-gap022-real-matrices.md} §四 那张表。
  *    期望值全部由**独立算式**算出（joml 自己的 perspective/invert，不复用被测实现的中间量）。
- *    许可证：本文件为独立编写的测试代码（MIT），零第三方代码。
+ *    许可证：本文件为独立编写的测试代码（LGPL-3.0-or-later），零第三方代码。
  * 1. 官方/主实现：无。
  * 2. 备选：只跑 runClient 看画面 —— <b>不作为本类的证明</b>：画面能证明「生效了」，
  *    证不了「上一帧那一本没被翻两次」这种只在第二帧之后才出现的错（本项目被半翻口径烧的形态
  *    恰恰是「第一帧看着对」）。画面判据仍在主线（GAP-022 登记表）。
  * 3. 我们的差异点：测的是 {@code OfUniformManager.putCameraMatrices} 这条**产品调用路径**
  *    （纯 joml，配置值由参数传入），不是测试自己抄的一份镜像实现。
- * 4. 许可证核对结论：本项目 MIT。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later。
  * 5. 性能基线：❄️ 冷路径单测。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

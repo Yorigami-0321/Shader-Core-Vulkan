@@ -8,7 +8,7 @@ import java.util.function.BooleanSupplier;
  * <p>0. 合规核对（第 0 步闸门）：参考对象 = 本仓库既有同类桥接类 {@link PackPostVertexSwitch}
  *    与 {@link PackChainGatingSwitch} —— 它们把 h33 实测的「配置键名当 Java 字段名 ⇒
  *    {@code NoSuchFieldException} 被吞 ⇒ 开关恒为默认值且日志看起来完全正常」这条教训固化成
- *    两个分开的常量。全部为仓库内自有代码与自有文档事实 → 可并入本项目（MIT）；例外条款：无。
+ *    两个分开的常量。全部为仓库内自有代码与自有文档事实 → 可并入本项目（LGPL-3.0-or-later）；例外条款：无。
  *
  * <p>1. 官方/主实现：NeoForge {@code ModConfigSpec}（只用 {@code get()} 读值）。
  *
@@ -23,7 +23,7 @@ import java.util.function.BooleanSupplier;
  *    而本条的「关」是回到今天<b>已登记在案</b>的常量供值档（GAP-007），画面弱但不指鹿为马。
  *    ⇒ 本条按 M1「逐个开启」与 GAP-036 ④「坏包会崩帧」的既有裁决保持默认关，翻默认属 {@code 20} P5.1。
  *
- * <p>4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * <p>4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * <p>5. 性能基线：❄️ 冷路径（每条程序生成期读一次），不做优化（18-PARALLEL §7.7）。
  */
 public final class DerivativeTbnSwitch {

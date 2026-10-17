@@ -11,7 +11,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 0. 合规：参考对象 = 本仓库自有实现事实 —— {@link TerrainPipelineApi#bindPackGbufferUniforms}
  *    已经跑通的「按**声明类型**决定的 {@link SamplerDimensionPlan.ViewKind} 取视图」那张表，
  *    与 {@code FrameApi.chainResolver} 已经取证过的 colortex / depthtex / gaux / shadowtex 名字分派。
- *    本类不引入任何外部项目代码（本项目 MIT；{@code 07} L12 / X19 的第 0 步已过：无新参考对象）。
+ *    本类不引入任何外部项目代码（本项目 LGPL-3.0-or-later；{@code 07} L12 / X19 的第 0 步已过：无新参考对象）。
  * 1. 职责：把「某个 sampler 名这一帧该喂哪张图」从**按名字硬编码**（旧 {@code PipelineApi}
  *    只认 {@code gaux1}，其余 17 名一律 colorView 占位）改成**先看包声明的类型**。
  * 2. 差异点：只覆盖「{@code chainResolver} 没有分支、且类型要求特定维度」的那几类

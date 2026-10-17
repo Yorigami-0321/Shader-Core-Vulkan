@@ -8,7 +8,7 @@ package dev.vkdisp.pipeline.model;
  *    {@code evidence/h01-terrain-pipeline-wire.md} §2 的源码级核实表）。
  *    许可证：Mojang EULA（原版）。**只提取「有哪些 define / 什么混合模式」这类事实性参数**，
  *    不搬运任何 GLSL 源码、不复制任何 Java 实现语句 —— 本文件是参数表，不是原版管线的副本。
- *    → 能否并入本项目（MIT）：可以 —— 事实性参数不受版权保护，且本文件为独立编写的规格表
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 事实性参数不受版权保护，且本文件为独立编写的规格表
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码，也不含 Mojang 的着色器文本
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：原版 {@code RenderPipelines.TERRAIN_SNIPPET} 与
@@ -18,7 +18,7 @@ package dev.vkdisp.pipeline.model;
  *    无 GPU 的单测里核对「派生管线是否把原版的状态抄全了」，抄漏一项就是静默的画面差异）。
  * 3. 我们的差异点：把 6 条派生管线的差异**摊平成可单测的纯数据表**
  *    （层 × {普通, 多重绘制}），并给出 location 的**唯一生成式**（禁止散落字面量）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 冷路径（资源加载期一次性注册），不做性能优化（17-NATIVE.md §3.2）。
  */
 import java.util.ArrayList;

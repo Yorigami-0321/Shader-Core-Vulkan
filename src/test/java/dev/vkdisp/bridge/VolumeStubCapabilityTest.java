@@ -12,7 +12,7 @@ package dev.vkdisp.bridge;
  * 1. 官方/主实现：无（原版没有 3D 桩这个概念）。
  * 2. 备选：无。
  * 3. 我们的差异点：把「3D 桩建不出来**不许**炸掉整个 pass」变成构建期红灯。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 单测。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

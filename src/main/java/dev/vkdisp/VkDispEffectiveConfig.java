@@ -5,7 +5,7 @@ package dev.vkdisp;
  *    {@code net.neoforged.neoforge.common.ModConfigSpec.ConfigValue}（公开 API：
  *    {@code getPath()} / {@code get()} / {@code getDefault()}，javap 核实签名）与
  *    FML 的 {@code ModConfigEvent.Loading}/{@code Reloading}（本仓 {@link VkDispConfigHotReload} 已订阅）。
- *    → 能否并入本项目（MIT）：可以，只调公开 API，不复制其实现。
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以，只调公开 API，不复制其实现。
  *    → 例外条款：无；本文件不含 GPL / LGPL / ARR 内容。
  * 1. 官方/主实现：配置事件（官方）；自报本身官方没有 —— 官方只保证「值已加载」。
  * 2. 备选：① 手写键清单（否决：会漂 —— {@code VkDispVirtualPack} 那条「默认关」过期注释已经白骗过一轮归因）；
@@ -14,7 +14,7 @@ package dev.vkdisp;
  *    ③ 反射 {@code Class.forName} + 单字段名（否决：QD-14 那一族结构性脆弱）。
  * 3. 我们的差异点：枚举走 {@code VkDispConfig} 的 **public static {@code ConfigValue} 字段** ——
  *    编译期就绑在本类上、加键自动进表，不存在「忘了登记」这种失效模式。
- * 4. 许可证核对：本项目 MIT；参考仅观察公开签名。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；参考仅观察公开签名。
  * 5. 性能基线：❄️ 冷路径（启动一次 + 每次配置热重载一次，不在每帧路径上，T14）。
  */
 

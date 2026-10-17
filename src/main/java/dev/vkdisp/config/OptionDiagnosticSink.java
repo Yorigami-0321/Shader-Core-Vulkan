@@ -6,8 +6,8 @@ package dev.vkdisp.config;
  *    ② docs/18-PARALLEL.md §7.3（并行线证据：降级路径显式报错或 WARN）与 §2 并行判据
  *    （输入输出全是内存数据、不触碰 com.mojang.*、不需要 runClient、能用 JUnit 断言）；
  *    ③ docs/04-SPEC.md §3.5（config/ 组件职责）。
- *    许可证：本仓库自有文档（本项目 MIT）→ 可直接消费。第三方源码零接触（07-CONSTRAINTS L12）。
- *    → 能否并入本项目（MIT）：本文件为独立实现，可并入
+ *    许可证：本仓库自有文档（本项目 LGPL-3.0-or-later）→ 可直接消费。第三方源码零接触（07-CONSTRAINTS L12）。
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：函数式接口 + JDK 自带 java.lang.System.Logger（System.getLogger）作为默认实现。
  * 2. 备选：直接用 org.slf4j.LoggerFactory（本项目主线 VkDisp.LOGGER 用 LogUtils）—— 否决作为本线默认：
@@ -18,7 +18,7 @@ package dev.vkdisp.config;
  * 3. 我们的差异点：① 接口只收 OptionDiagnostic，由默认实现按 severity 选择 JDK 日志级别；
  *    ② 提供 systemLogger()（默认）与 collecting(...)（单测取证）两个静态工厂；
  *    ③ 不提供 noop()：静默降级违反 T11，需要静默的调用方只能自己写空 lambda 并自担后果。
- * 4. 许可证核对：本项目 MIT；只用 JDK 标准库类型，零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只用 JDK 标准库类型，零第三方代码复制。
  * 5. 性能基线：❄️ 冷路径（只在钳制 / 非法值 / 缺省这类边界上调用），不做任何性能优化（18-PARALLEL §7.7）。
  */
 import java.util.List;

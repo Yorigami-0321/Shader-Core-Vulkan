@@ -6,14 +6,14 @@ package dev.vkdisp.bridge;
  *    私有方法 {@code renderSkyDisc}/{@code renderStars}/{@code renderSunriseAndSunset} 各自那次
  *    {@code setPipeline}（{@code SkyRenderer.java:167/274/298}），零着色器文本搬运。
  *    外部候选（Iris / OptiFine / VulkanMod / Sulkan / Beryl）零接触（07-CONSTRAINTS L12）。
- *    许可证：独立编写（MIT）。
+ *    许可证：独立编写（LGPL-3.0-or-later）。
  * 1. 官方/主实现：官方没有「把包 gbuffer 程序接到原版某笔天空 draw」的钩子；走注 {@code setPipeline} 那一次
  *    （与 {@code SkyRendererCelestialPipelineMixin} 同形，注入点已登记）。
  * 2. 备选：自开 pass 画穹顶 —— 否决（穹顶几何/姿态由原版驱动，自开要重算；见 SkyCelestialPack 类注释第 2 条同族）。
  * 3. 我们的差异点：① <b>原版继续驱动 draw</b>（几何/顶点缓冲/拓扑全照旧），我方只换管线 + 绑块；
  *    ② 逐站 {@code renderStage}：穹顶/星点/晨昏喂同一片元、靠 {@link SkyGeometrySite#stageMacro} 分派（BSL 逐字）；
  *    ③ 闸门<b>默认关</b>：{@code mrt.skyPackTexturedShader=false} ⇒ 一笔都不换（不碰默认档画面）。
- * 4. 许可证核对：本项目 MIT；零第三方代码并入。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * 5. 性能基线：每站每帧一次「写块 + 一次 draw」（原版本来也发），不新建缓冲。
  */
 import com.mojang.blaze3d.systems.RenderSystem;

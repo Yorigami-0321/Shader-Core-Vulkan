@@ -20,7 +20,7 @@ package dev.vkdisp;
  *    </ul>
  * 3. 我们的差异点：把「登记表的结构契约」做成<b>带元测试的红灯</b> ——
  *    新增缺口时若忘写状态字段，构建会失败；补齐了则基线可同步缩小。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 单测（只读文档，不进渲染路径）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

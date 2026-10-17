@@ -6,10 +6,10 @@ package dev.vkdisp.config;
  *    OptionBinding = 选项 → 着色器 #define / uniform 的绑定）；② docs/18-PARALLEL.md §4 F 线（独占路径、不许写
  *    PackOptionsScreen、不许碰 GPU）与 §7.3（并行线证据规范）；③ docs/07-CONSTRAINTS.md T11
  *    （任何降级路径必须显式报错或打 WARN，不许静默）；④ docs/08-TESTING.md §4（选项枚举的解析验收）。
- *    许可证：本仓库自有文档（本项目 MIT）→ 可直接消费，不涉及第三方素材。
+ *    许可证：本仓库自有文档（本项目 LGPL-3.0-or-later）→ 可直接消费，不涉及第三方素材。
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）、OptiFine（无 LICENSE = ARR）与 Iris（LGPL-3.0）
  *    的源码一律零接触 —— 按 docs/07-CONSTRAINTS.md L12 / X20「判不过就换参考，不再读它的代码」。
- *    → 能否并入本项目（MIT）：本文件为独立实现，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：本仓库自身约束（T11）与 F2/F3 已冻结契约的 Javadoc 风格（severity / code / message 三字段）。
  * 2. 备选：直接抛异常 —— 否决（一次 set / 一次 profile 应用会同时产生多条诊断（例如越界钳制 + 未知选项），
@@ -19,7 +19,7 @@ package dev.vkdisp.config;
  * 3. 我们的差异点：只保留 severity / code / message 三字段，code 为稳定大写诊断码供单测逐条断言；
  *    不引入 i18n、不引入行号映射（F 线输入是内存里的选项值，不是源文件）；INFO 级只进诊断列表，
  *    WARN / ERROR 同时转发给 OptionDiagnosticSink（T11 的"不静默"落点）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制，仅含本仓库约束文档要求的结构。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制，仅含本仓库约束文档要求的结构。
  * 5. 性能基线：❄️ 冷路径小对象（切包 / 改选项时一次产出），不做任何性能优化（18-PARALLEL §7.7）。
  */
 import java.util.Objects;

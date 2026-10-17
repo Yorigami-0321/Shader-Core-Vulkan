@@ -6,7 +6,7 @@ package dev.vkdisp.bridge;
  *    （render pass 开着时新建 encoder 抛 {@code Close the existing render pass…}，Mojang EULA，
  *    只读行为事实、零代码复制）；② 本仓库 {@code ShadowStubs} 已经付过学费的同一条纪律
  *    （「阴影桩刻意不懒建 ⇒ 帧首建桩点」）与 {@code PixelProbeWiringTest} 的源码文本断言法。
- *    → 能否并入本项目（MIT）：可以（本测试只读源码文本，不搬运任何代码）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本测试只读源码文本，不搬运任何代码）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无（本项目自定的接线纪律）。
  * 2. 备选：① 运行时判「有 pass 开着就不写」并在 pass 内懒建 —— <b>否决</b>：那是把每帧异常
@@ -15,7 +15,7 @@ package dev.vkdisp.bridge;
  *          这正是 GAP-055 的实测形状。
  * 3. 我们的差异点：把「帧首预热点被删掉」「{@code view()} 又被改回懒建」这两条**静默失效**
  *    做成构建期红灯 —— 两者都不崩启动，只在真机上刷出每帧一条异常（实测一趟 106 998 条）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 单测（扫源码），不进渲染路径。
  */
 import static org.junit.jupiter.api.Assertions.assertTrue;

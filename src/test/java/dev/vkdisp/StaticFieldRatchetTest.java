@@ -11,7 +11,7 @@ package dev.vkdisp;
  *          ② 只写文档 —— 否决：QD-03 登记的「95」与实测 175 差了近一倍，正是「没人管会漂」的实例。
  * 3. 差异点：失败信息按**包分布**排序输出（`bridge` 是重灾区），直接指到该动手的地方；
  *    并带「扫描器自身必须能找到东西」的元测试（`MethodLengthRatchetTest:222` 同族）。
- * 4. 许可证：本项目 MIT；零复制。
+ * 4. 许可证：本项目 LGPL-3.0-or-later；零复制。
  * 5. 性能：❄️ 单测（扫源码）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

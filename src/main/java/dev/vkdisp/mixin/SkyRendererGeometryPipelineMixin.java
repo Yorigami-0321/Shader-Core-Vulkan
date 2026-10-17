@@ -9,7 +9,7 @@ package dev.vkdisp.mixin;
  * 2. 备选：自开 pass —— 否决（几何/姿态由原版驱动，见 {@code bridge/SkyGeometryPack} 类注释）。
  * 3. 我们的差异点：本体只做三件事 —— 判该不该换（{@link SkyGeometryPack#enabledFor}）、先备料（失败原样交回）、
  *    {@code original.call(self, 派生管线)} 之后交给 bridge 绑块。判定与绑定全在 bridge，本类不含业务（M1 ③）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：穹顶每帧一次，零分配路径外一律在 bridge 缓存。
  */
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;

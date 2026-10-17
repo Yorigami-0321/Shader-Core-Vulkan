@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * ShaderPackService（A+B 汇合入口 + C 线选项发现）行为测试。
  *
  * <p>全部用例用 {@code @TempDir} 自造包 —— 禁止把第三方 shaderpack 提进仓库当 fixture
- * （docs/18-PARALLEL.md §7.6：会污染本项目的 MIT 授权链）。
+ * （docs/18-PARALLEL.md §7.6：会污染本项目的 LGPL-3.0-or-later 授权链）。
  */
 class ShaderPackServiceTest {
 

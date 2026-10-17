@@ -21,7 +21,7 @@ package dev.vkdisp.bridge;
  *    </ul>
  * 3. 我们的差异点：把「`bridge/` 里没有未标注的可空返回值」做成**构建期红灯** ——
  *    新写一个会返回 null 的方法而忘了标注，`./gradlew test` 直接挂。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 单测。
  */
 import static org.junit.jupiter.api.Assertions.assertFalse;

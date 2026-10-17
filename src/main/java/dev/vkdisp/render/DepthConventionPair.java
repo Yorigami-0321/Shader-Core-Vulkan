@@ -7,7 +7,7 @@ package dev.vkdisp.render;
  *    ③ {@code evidence/h48w-gap022-real-matrices.md} §四那张「可写进实现的那一份」表
  *    （{@code gbufferProjection = D2·P} / {@code gbufferProjectionInverse = P⁻¹·D2inv} /
  *    {@code depthtex0 = 1 − z_engine} / previous 用**各自那一帧**的矩阵）。
- *    外部候选（Iris / OptiFine / VulkanMod）零接触；许可证：本文件为独立编写的纯 Java 实现（MIT），
+ *    外部候选（Iris / OptiFine / VulkanMod）零接触；许可证：本文件为独立编写的纯 Java 实现（LGPL-3.0-or-later），
  *    不含任何 GPL / LGPL / ARR 代码。
  * 1. 官方/主实现：{@link #forward} + {@link #backward} + {@link #takePreviousEngine}
  *    三个出口，配 {@link #reportLine} / {@link #reportThrottled} 那条自报。
@@ -18,7 +18,7 @@ package dev.vkdisp.render;
  *    而 {@code gather} 依赖原版运行态、单测跑不到 ⇒ 那条错构建期永远抓不住（QD-02 同族）。
  * 3. 我们的差异点：历史槽（<b>引擎口径</b>）搬进本类 ⇒「存什么」与「只在出口翻」在同一文件里可证，
  *    {@code DepthConventionPairTest} 因此能离线钉住双翻。
- * 4. 许可证核对结论：本项目 MIT；零第三方代码并入（07-CONSTRAINTS §〇 P1 / L5-L8）。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；零第三方代码并入（07-CONSTRAINTS §〇 P1 / L5-L8）。
  * 5. 性能基线：每帧一次 gather ⇒ 三个矩阵小对象 + 一次求逆（求逆本来就有）；
  *    开关关掉时只多一次 {@code new Matrix4f} 拷贝，与 gather 里既有的那几次同量级，不做结论（T14）。
  */

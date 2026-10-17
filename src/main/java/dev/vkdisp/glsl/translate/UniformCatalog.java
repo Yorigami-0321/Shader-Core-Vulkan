@@ -12,7 +12,7 @@ import java.util.Map;
  *    例外条款是否覆盖本项目未核实，一律按禁止处理（07-CONSTRAINTS L12 §1.3 陷阱 2 / X21），
  *    本任务不读其代码、零代码行并入（07-CONSTRAINTS §〇 P1 / L5 / X19）。
  *    许可证：本文件为独立编写的纯 Java 实现，不含任何外部项目代码。
- *    → 能否并入本项目（MIT）：可以 —— 只采纳不受版权保护的事实性信息（uniform 名/类型/语义）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 只采纳不受版权保护的事实性信息（uniform 名/类型/语义）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：04-SPEC §3.2 表逐条转写为 23 条 BuiltinUniform（顺序即表顺序）：
  *    gbufferModelView/gbufferProjection/gbufferModelViewInverse/gbufferProjectionInverse/
@@ -23,7 +23,7 @@ import java.util.Map;
  * 2. 备选：无 —— 不引入任何 uniform 反射 / 解析库；纯静态表（冷路径清晰优先）。
  * 3. 我们的差异点：表是**冻结在代码里的显式清单**而不是从文档运行时读取 —— 单测可逐条断言
  *    表与 04-SPEC §3.2 一致；注入顺序固定，保证幂等（跑两遍文本一致）。
- * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径；静态初始化一次建索引，查询为 O(1) 查表；不做任何预优化
  *    （18-PARALLEL §7.7、T14 达标即停）。

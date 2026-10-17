@@ -13,11 +13,11 @@ import java.util.zip.ZipFile;
 
 /**
  * 【参考调研】ShaderPackRepository（B 线：路径规划）
- * 0. 合规核对：原创设计，无任何第三方代码（handover §5.2）。MIT 不受影响。
+ * 0. 合规核对：原创设计，无任何第三方代码（handover §5.2）。本项目自有。
  * 1. 官方/主实现：无（不参考 LGPL/GPL 实现）。
  * 2. 备选：无。
  * 3. 我们的差异点：只做「解包索引 + 路径规划」，**不注册**虚拟资源包（注册需碰原版资源系统，属主线）。
- * 4. 许可证核对结论：原创，可并入 MIT。
+ * 4. 许可证核对结论：原创，可并入本项目（LGPL-3.0-or-later）。
  * 5. 性能基线：冷路径，清晰优先。
  */
 public final class ShaderPackRepository {

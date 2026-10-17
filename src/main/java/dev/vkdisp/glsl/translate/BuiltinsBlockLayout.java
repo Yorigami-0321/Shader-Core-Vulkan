@@ -9,7 +9,7 @@ package dev.vkdisp.glsl.translate;
  *    外部候选 IrisShaders/glsl-transformer（GPL-3.0+例外）→ 禁止处理，零代码并入
  *    （07-CONSTRAINTS L12 / X19-X21）。
  *    许可证：本文件为独立编写的纯 Java 实现，不含任何外部项目代码。
- *    → 能否并入本项目（MIT）：可以 —— 只采纳不受版权保护的事实性规则与本仓库自有格式
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 只采纳不受版权保护的事实性规则与本仓库自有格式
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：解析**转译终稿文本**（F3 冻结契约：TranslateResult 不外传 UniformInjector
  *    内部的 Result，终稿 = 驱动实际编译的真源）里的 `layout(std140) uniform VkDispBuiltins {`
@@ -20,7 +20,7 @@ package dev.vkdisp.glsl.translate;
  * 3. 我们的差异点：只认与 {@link UniformInjector#BLOCK_OPEN} 逐字节相同的开行（本类是
  *    该块的唯一合法解析器，不猜包作者的其它 std140 块）；解析失败（未知类型 / 非字面量
  *    数组长度）→ 空布局 + failure 原文（调用方 WARN，回退零填充 —— T11 显式不静默）。
- * 4. 许可证核对结论：本项目 MIT；零第三方代码并入（07-CONSTRAINTS §〇 P1 / L5-L8）。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；零第三方代码并入（07-CONSTRAINTS §〇 P1 / L5-L8）。
  * 5. 性能基线：❄️ 冷路径 —— 每次 generateSources 解析一次（~26 成员），帧路径只读索引；
  *    不做任何预优化（18-PARALLEL §7.7、T14 达标即停）。
  */

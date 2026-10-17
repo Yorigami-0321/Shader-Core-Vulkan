@@ -7,17 +7,17 @@ package dev.vkdisp.pipeline.model;
  *    ③ docs/18-PARALLEL.md §4 E 线「只产中间表示」与 §7.3 证据规范；
  *    ④ 公开图形事实：Vulkan 规范保证 maxVertexInputBindings >= 16，多绑定槽各自独立 stride，
  *      属性以其 (binding, offset) 定位，同一属性只能由一个槽提供。
- *    许可证：JUnit 5 = EPL-2.0（仅 testImplementation 依赖，不进分发 jar）；本仓库 docs 为 MIT 项目自有文档。
+ *    许可证：JUnit 5 = EPL-2.0（仅 testImplementation 依赖，不进分发 jar）；本仓库 docs 为 LGPL-3.0-or-later 项目自有文档。
  *    ⚠️ VulkanMod = LGPL-3.0 → 按 docs/07-CONSTRAINTS.md L12「判不过就换参考、不读它的代码」零接触；
  *    数值期望值全部来自 04-SPEC §4 与一期已冻结计算结果。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的测试）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的测试）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：JUnit 5 标准断言；槽 0 的期望值照抄一期数值（回归保护），
  *    槽 1 用 F2 的 at_tangent/at_velocity（OF 官方属性表事实，E 线二期多槽样本）。
  * 2. 备选：手写 main() 断言 —— 否决（F4 已接好 JUnit 5，失败要能在 ./gradlew test 里显式红）。
  * 3. 我们的差异点：除数值断言外，把「槽号越界 / 重复槽 / 空槽 / 属性归属不明」四类 ERROR 与
  *    canonical text 篡改检测逐条断言（T11 不静默）。
- * 4. 许可证核对：本项目 MIT；JUnit EPL-2.0 仅测试期依赖；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；JUnit EPL-2.0 仅测试期依赖；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时，无性能影响（18-PARALLEL §7.7）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

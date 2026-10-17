@@ -19,11 +19,11 @@ package dev.vkdisp.glsl.translate;
  * 0. 合规核对（第 0 步闸门）：
  *    参考对象 = ① 本仓库自有的 BSL v10.1.8 {@code shaders/program/gbuffers_terrain.glsl}
  *    第 164 行 {@code vec4 albedo = texture2D(texture, texCoord) * vec4(color.rgb, 1.0);}
- *    的**实测文本形态**（MIT 自有的实测观察，不搬运任何着色器文本到产品路径；
+ *    的**实测文本形态**（LGPL-3.0-or-later 自有的实测观察，不搬运任何着色器文本到产品路径；
  *    本类只做**通用语法形态**的匹配，包特有的标识符名一律从源里解析出来，不硬编码）；
  *    ② GLSL 公开语言事实：{@code vec4} 乘法逐分量；采样函数返回 {@code vec4}。
  *    以上事实均不受版权保护。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的纯 Java 行内改写器）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的纯 Java 行内改写器）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码，也不含任何 Mojang 着色器文本
  * 1. 官方/主实现：无（原版 core/terrain 没有这种乘法链；那是包自己的写法）。
  * 2. 备选：
@@ -41,7 +41,7 @@ package dev.vkdisp.glsl.translate;
  * 3. 我们的差异点：把「乘法链的左侧（采样结果）」与「右侧（乘子）」拆成两个可单独开启的
  *   探针，命中时<b>自报命中数与命中的那一行原文</b>（X45：不自报就分不清「开关没生效」
  *   与「结论不成立」）。等行数改写 ⇒ 行号映射不受影响（同 ⑦½ / 7.75 段口径）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 冷路径（包加载期一次，默认关 ⇒ 零开销）。
  */
 import dev.vkdisp.glsl.TranslateDiagnostic;

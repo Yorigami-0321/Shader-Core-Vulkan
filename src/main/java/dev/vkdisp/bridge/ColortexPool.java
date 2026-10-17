@@ -5,7 +5,7 @@ package dev.vkdisp.bridge;
  *    （Mojang EULA：只观察其「懒建 + resize 时整体重建 + close 旧资源」的公开做法与
  *    `device.createTexture(label, usage=15, format, w, h, 1, mipLevels)` 的调用形状，零源码搬运）；
  *    `GpuDevice#createTextureView(tex, baseMipLevel, mipLevels)`（字节码核实存在，javap 一致）。
- *    → 能否并入 MIT：可以（独立实现）。参考模组（VulkanMod/Sulkan）零接触。
+ *    → 能否并入 LGPL-3.0-or-later：可以（独立实现）。参考模组（VulkanMod/Sulkan）零接触。
  * 1. 官方/主实现：原版主目标/中间目标全部 **mipLevels=1**（源码逐字核实）—— 它从不需要给
  *    采样器暴露 mip 链；而 OF 语义要求包声明 `colortexNMipmapEnabled` 的目标带链 ⇒ 本类是
  *    「原版能力缺 + 包语义要」差集上的自行补充（GAP-017，先登记后编码 ✅）。
@@ -14,7 +14,7 @@ package dev.vkdisp.bridge;
  *    ② 每帧重建 —— 否决：GPU 对象 churn = h25/h33 那族资源问题的形状。resize 才重建（与原版同构）。
  * 3. 差异点：每槽一张多级纹理 + **一次性建全**每级的视图（级别数 ~10，视图数量有界；
  *    不每帧造视图）。引擎无 generateMips ⇒ 金字塔由 `FrameApi` 的降采样 pass 逐级填（本类只给能力）。
- * 4. 许可证：MIT，零第三方复制。
+ * 4. 许可证：LGPL-3.0-or-later，零第三方复制。
  * 5. 性能基线：止血路径（诊断档开着才画）；降采样 pass 每帧 O(槽 × 级) 个小 pass，
  *    lavapipe 上代价可忽略——按指令不做性能结论。
  */

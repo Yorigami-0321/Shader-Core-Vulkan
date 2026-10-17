@@ -8,7 +8,7 @@ package dev.vkdisp.bridge;
  *    ①–⑤ 与 docs/08-TESTING.md §5「地形/实体走自定义目标而非原版目标 | 调试视图」；
  *    ③ 合并 jar 内 vanilla `LevelRenderer` / `LevelTargetBundle` / `MainTarget` 源（Mojang 专有，
  *    仅 javap/源码**读行为事实**：触发时机、字段语义、硬编码清屏位置 —— 零代码复制）。
- *    → 能否并入本项目（MIT）：可以 —— 只调用事件与原版公开 API，本文件独立编写
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 只调用事件与原版公开 API，本文件独立编写
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：NeoForge 官方 `FrameGraphSetupEvent`（帧图装配期唯一官方扩展点，源
  *    LevelRenderer.java:249 实测触发于 bundle 初始化后、clear/sky/main pass 加入之前）。
@@ -24,7 +24,7 @@ package dev.vkdisp.bridge;
  *       参数（javap 核实），地形颜色/深度语义不因格式漂移；
  *    ③ **失败回退显式**：事件处理任意 Throwable → ERROR 原文 + 本帧不换目标（原版正常渲染，
  *       T11 不吞）；未启用（config off）或菜单 → 不换目标，帧链回退 fixture（来源埋点见 FrameApi）。
- * 4. 许可证核对结论：本项目 MIT；NeoForge 事件 LGPL-2.1 仅 API 观察（先例 FullscreenPassHook）；
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；NeoForge 事件 LGPL-2.1 仅 API 观察（先例 FullscreenPassHook）；
  *    Mojang 源仅行为核实，零代码并入（07-CONSTRAINTS X19-X21 / L5-L8）。
  * 5. 性能基线：每帧 1 次尺寸比对 + 必需清屏（清屏是接管语义的一部分，非优化对象）；
  *    无测量不做任何性能断言（18-PARALLEL §7.7、X14）。

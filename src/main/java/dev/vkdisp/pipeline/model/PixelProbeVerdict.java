@@ -3,10 +3,10 @@ package dev.vkdisp.pipeline.model;
  * 【参考调研】两源读数的**判读**（同一组数字在不同档位下含义相反 —— 本类的存在理由）
  * 0. 合规核对（第 0 步闸门）：
  *    参考对象 = ① 本仓库自有的 {@code dev.vkdisp.bridge.TargetReadback}（被本类取代的判读段，
- *    MIT 自有代码）；② BSL v10.1.8 {@code shaders/program/gbuffers_terrain.glsl} 424–442 行的
+ *    LGPL-3.0-or-later 自有代码）；② BSL v10.1.8 {@code shaders/program/gbuffers_terrain.glsl} 424–442 行的
  *    DRAWBUFFERS 活分支（本仓库自有实测；槽位语义取自 OptiFine 公开的注释约定）。
  *    全部为仓库内自有代码与自有实测事实，不受版权保护，不搬运任何第三方或 Mojang 源码。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的纯 Java 判读类）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的纯 Java 判读类）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码，也不含任何 Mojang 着色器文本
  * 1. 官方/主实现：无（Vulkan / 原版里都不存在「两个读数怎么判读」这个概念）。
  * 2. 备选：
@@ -26,7 +26,7 @@ package dev.vkdisp.pipeline.model;
  *    </ul>
  * 3. 我们的差异点：判读是<b>纯函数</b>，输入 = （档位、主目标是否全黑、该槽是否全黑、槽标签），
  *    输出 = （结论名 + 一句可直接进日志的解释 + 严重级）。⇒ 可单测，且**档位错配会当场变红**。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 冷路径（每探针轮、每槽一次；默认 300 帧一轮）。
  */
 

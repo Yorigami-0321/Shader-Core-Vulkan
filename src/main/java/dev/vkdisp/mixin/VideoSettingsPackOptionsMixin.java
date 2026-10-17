@@ -11,7 +11,7 @@ package dev.vkdisp.mixin;
  *    **注解签名**（javap 核实常量池，不读其实现）；
  *    ③ 本仓库自有的 {@code dev.vkdisp.screen.VanillaPackOptionsPage}（业务全在那边，本文件只转发）。
  *    许可证：Mixin = MIT；原版 = Mojang EULA（只观察语句与签名）。
- *    → 能否并入本项目（MIT）：可以；本文件为独立编写的注入类
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件为独立编写的注入类
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：原版的 {@code OptionsList} 就是官方装配面 —— 我们只往里<b>加行</b>，
@@ -24,7 +24,7 @@ package dev.vkdisp.mixin;
  * 3. 我们的差异点：这是<b>本仓第一个 GUI 屏幕注入点</b>（类别闸门已于 2026-10-12 废除，
  *    保留的是登记制 + 可关闭制 + 逐个开启）。方法体一行转发（X25），且<b>不改</b>原版任何一行行为：
  *    关掉 {@code mixin.packOptionsInVanilla} 就回到今天的原版视频设置页。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：每次打开视频设置页一趟（不是每帧），与旧 {@code PackOptionsScreen.init} 同量级。
  */
 import dev.vkdisp.bridge.MixinTargets;

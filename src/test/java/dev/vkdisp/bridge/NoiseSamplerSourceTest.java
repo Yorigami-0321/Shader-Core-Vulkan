@@ -16,7 +16,7 @@ package dev.vkdisp.bridge;
  *    </ul>
  * 3. 我们的差异点：额外用**真实 BSL zip** 走一遍「properties 文本 → 绑定解析 → 来源决策」全链，
  *    钉住别名表与真实包不放炮（合成用例挡不住「声明名写成 noise_」这种漂移）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 单测（读 zip 一次），不进渲染路径。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

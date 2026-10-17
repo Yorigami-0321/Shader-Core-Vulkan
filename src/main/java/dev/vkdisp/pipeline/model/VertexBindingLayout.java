@@ -8,11 +8,11 @@ package dev.vkdisp.pipeline.model;
  *    ② 公开图形事实：Vulkan 规范保证 maxVertexInputBindings >= 16（vkCmdBindVertexBuffers 的
  *      firstBinding/bindingCount + 每槽 VkVertexInputBindingDescription），每个绑定槽有独立 stride，
  *      属性以其 (binding, offset) 定位；同一属性只能由一个槽提供。
- *    许可证：本仓库自有文档（MIT 项目）+ 通用图形事实（不受版权保护）→ 可并入。
+ *    许可证：本仓库自有文档（LGPL-3.0-or-later 项目）+ 通用图形事实（不受版权保护）→ 可并入。
  *    ⚠️ VulkanMod（LGPL-3.0）按 docs/07-CONSTRAINTS.md L12「判不过就换参考、不读它的代码」零接触；
  *    事实来源 = 04-SPEC §4 + 公开图形事实。P-1d 未定稿项（mc_Entity 底层元素类型 → 是否影响 stride 47）
  *    本文件一律不改：槽 0 数值必须与一期逐位一致，定稿走 §3.2 由 env-1 统一改。
- *    → 能否并入本项目（MIT）：本文件为独立实现，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：多槽绑定布局 = 槽列表，每槽（binding index → 自身的 stride/offset 表）；
  *    槽内规则与一期 VertexLayout 完全一致（紧凑累加、无隐式对齐填充）。
@@ -22,7 +22,7 @@ package dev.vkdisp.pipeline.model;
  *    slot=<i> stride=<n>），解析时逐项重算并比对，篡改必报错；② 显式诊断补齐槽号越界 / 重复槽 /
  *    空槽 / 属性归属不明（跨槽同名属性）四类 ERROR（T11）；③ 空绑定集（无顶点缓冲的全屏管线）
  *    是 INFO 而非错误 —— 与一期 EMPTY_ATTRIBUTE_SET 口径一致；④ isConsistent() 按槽逐槽判定。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制，只含文档事实与公开图形事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制，只含文档事实与公开图形事实。
  * 5. 性能基线：❄️ 冷路径（构建顶点格式 / 切包时一次性计算），不做任何性能优化（18-PARALLEL §7.7）。
  */
 import java.util.ArrayList;

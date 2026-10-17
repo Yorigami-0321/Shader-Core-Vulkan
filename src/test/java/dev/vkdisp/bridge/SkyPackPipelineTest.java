@@ -8,7 +8,7 @@ package dev.vkdisp.bridge;
  *    编译失败本就该由混入侧既有兜底处理（SkyCelestialPack 同款「没落地就不换」）。本守卫只管「形状层对不对」。
  * 3. 我们的差异点：钉住两条<b>会静默错</b>的形状判据：① 三处都不该留 {@code SAMPLER0}（穹顶不采贴图）；
  *    ② 三处都喂同一条 {@code gbuffers_skybasic}（不是日月那条）。这两条写错都不会抛、只会画面错。
- * 4. 许可证：MIT；零第三方代码。
+ * 4. 许可证：LGPL-3.0-or-later；零第三方代码。
  * 5. 性能基线：❄️ 纯静态读，离线。
  */
 import dev.vkdisp.pack.PackTerrainSource;

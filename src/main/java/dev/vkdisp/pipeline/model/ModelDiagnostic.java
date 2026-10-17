@@ -5,8 +5,8 @@ package dev.vkdisp.pipeline.model;
  *    参考对象 = ① 本仓库 docs/07-CONSTRAINTS.md T11「任何降级路径必须显式报错或打 WARN」；
  *    ② docs/18-PARALLEL.md §7.3（并行线证据要求「降级路径显式报错或 WARN」）；
  *    ③ F3 已冻结的 dev.vkdisp.glsl.TranslateDiagnostic（同仓库既有诊断条目的字段风格，仅参考风格不复制代码）。
- *    许可证：本仓库自有文档（MIT）+ 本项目自己的 F3 文件 → 可直接消费。
- *    → 能否并入本项目（MIT）：本文件为独立实现，可并入
+ *    许可证：本仓库自有文档（LGPL-3.0-or-later）+ 本项目自己的 F3 文件 → 可直接消费。
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码；参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 /
  *      Beryl ARR）零接触 —— 按 docs/07-CONSTRAINTS.md L12「判不过就换参考，不再读它的代码」。
  * 1. 官方/主实现：本仓库自身约束（T11）与 F3 诊断风格（severity / code / message）。
@@ -15,7 +15,7 @@ package dev.vkdisp.pipeline.model;
  * 3. 我们的差异点：E 线只用三个字段（severity / code / message），code 是稳定的大写诊断码，
  *    供单测逐条断言（EMPTY_ATTRIBUTE_SET / UNKNOWN_ATTRIBUTE_TYPE 等），不引入 i18n 或行号映射
  *    （E 线输入是内存数据，不是源文件）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制，仅含本仓库约束文档要求的结构。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制，仅含本仓库约束文档要求的结构。
  * 5. 性能基线：冷路径上的小对象（构建期一次性产出），不做任何性能优化（18-PARALLEL §7.7）。
  */
 import java.util.Objects;

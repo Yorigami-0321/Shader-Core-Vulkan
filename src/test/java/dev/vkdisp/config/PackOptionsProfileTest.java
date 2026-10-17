@@ -7,15 +7,15 @@ package dev.vkdisp.config;
  *    ④ F2 冻结契约 dev.vkdisp.pack.ShaderPack#profiles（profile 名 → 原始条目 token 列表，顺序保留）及其
  *    【参考调研】第 1 条转述的 OF 条目语法事实（OPTION:值 / OPTION=值 / OPTION 开 / !OPTION 关 /
  *    profile.其他名 继承 / !program.名 禁程序）。
- *    许可证：本仓库自有文档与自有类型（MIT）→ 可直接消费；OF 侧只取不受版权保护的语法事实（经 F2 转述，不读源码）；
+ *    许可证：本仓库自有文档与自有类型（LGPL-3.0-or-later）→ 可直接消费；OF 侧只取不受版权保护的语法事实（经 F2 转述，不读源码）；
  *    JUnit 5 = EPL-2.0（仅测试期依赖）。第三方源码零接触（07-CONSTRAINTS L12）。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的测试）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的测试）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：JUnit 5 标准断言。
  * 2. 备选：只测正常 profile —— 否决（继承环 / 未定义 profile / 程序开关条目这些降级路径才是 T11 的证据点）。
  * 3. 我们的差异点：明确区分"选项值条目"与"程序开关条目"：后者不是选项值，必须显式 WARN 后跳过，
  *    而不是假装应用成功（静默失败第二定律，18-PARALLEL §7.3）。
- * 4. 许可证核对：本项目 MIT；JUnit EPL-2.0 仅测试期依赖；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；JUnit EPL-2.0 仅测试期依赖；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时，无性能影响（18-PARALLEL §7.7）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

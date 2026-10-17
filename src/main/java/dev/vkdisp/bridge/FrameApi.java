@@ -6,7 +6,7 @@ package dev.vkdisp.bridge;
  *    （CommandEncoder / RenderPass）与 com.mojang.blaze3d.systems.RenderSystem（运行平台与官方 API 提供方）。
  *    许可证：Mojang EULA（原版）→ 只观察 javap 签名与官方调用点（原版 PostPass 的 pass 执行序列），
  *    零源码文本搬运；参考模组（VulkanMod / Sulkan 等）零接触。
- *    → 能否并入本项目（MIT）：可以 —— 本文件是独立实现的薄封装，只调用公开 API，不含被参考方代码
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件是独立实现的薄封装，只调用公开 API，不含被参考方代码
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：原版 PostPass#addToFrame 的 pass 执行序列（createRenderPass(label, colorView,
  *    Optional.empty(), depth|null, OptionalDouble.empty()) → setPipeline(getCompiledPipeline) →
@@ -41,7 +41,7 @@ package dev.vkdisp.bridge;
  *    RenderPass / RenderPipeline / CompiledRenderPipeline / GpuTextureView 等原版类型全部封在方法体内，
  *    业务包零 com.mojang.renderpearl import；管线无 depthStencilState，故不挂 depth 附件；
  *    任何失败原样抛异常（不吞），由业务层打 ERROR 原文。
- * 4. 许可证核对：本项目 MIT；只调用公开 API 签名，无代码复制（07-CONSTRAINTS §〇 P1、L5-L8）。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只调用公开 API 签名，无代码复制（07-CONSTRAINTS §〇 P1、L5-L8）。
  * 5. 性能基线：每帧一次 draw，冷路径（按 task-2 要求）不做性能优化（17-NATIVE.md §3.2）。
  */
 import com.mojang.blaze3d.buffers.Std140Builder;

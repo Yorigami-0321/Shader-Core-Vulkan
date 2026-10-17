@@ -19,7 +19,7 @@ package dev.vkdisp.bridge;
  *    且原版 {@code RenderTarget} 建的纹理 usage = 15（含 COPY_SRC）⇒ 主目标与我们自建的
  *    colortex（{@code TextureTarget} 同样走那条构造）都可回读。
  *    许可证：Mojang EULA；**只调用公开 API，零源码搬运、零着色器文本搬运。**
- *    → 能否并入本项目（MIT）：可以 —— 本文件为独立编写的桥接封装
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件为独立编写的桥接封装
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：原版 {@code Screenshot#takeScreenshot} 本身就是「GPU 回读成像素数组」的官方范式；
@@ -50,7 +50,7 @@ package dev.vkdisp.bridge;
  *          每源一个缓冲的理由：两个源同时回读进<b>同一个</b>缓冲会互相覆盖（实测语义上必然发生），
  *          那会让「两个数字」变成「同一个数字的两份解读」。</li>
  *    </ul>
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 可关闭的诊断路径（默认关 ⇒ 常规帧零开销）。开启时的拷贝代价**未测**，
  *    按用户指令本轮不做性能结论。
  */

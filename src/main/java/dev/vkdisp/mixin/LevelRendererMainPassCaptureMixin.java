@@ -9,7 +9,7 @@ package dev.vkdisp.mixin;
  *    （随 MDG 分发的 {@code minecraft-patched-*-sources.jar}：方法体第 396-402 行，
  *    唯一调用点在第 **277** 行且<b>无条件</b>执行）。
  *    许可证：Mixin = MIT（FabricMC 官方 LICENSE）；原版 = Mojang EULA（只观察方法签名与语句顺序）。
- *    → 能否并入本项目（MIT）：可以 —— 同族可并入；且本文件不含任何被参考方代码
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 同族可并入；且本文件不含任何被参考方代码
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：Mixin 官方范式 {@code @Inject(method=…, at=@At("HEAD"))} +
@@ -22,7 +22,7 @@ package dev.vkdisp.mixin;
  *    {@code chunkSectionsToRender} 在第 271-275 行才创建 ⇒ 事件实参里没有它（X9 不猜，读源码得出）。
  * 3. 我们的差异点：**只转发、只捕获，不改任何行为**（X25）。方法体只有一句转发。
  *    🔖 与被它替代的 M-05 相同：关闭它，地形渲染与原版<b>逐字一致</b>。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：热路径但极轻（每帧 1 次 HEAD 命中 + 两次引用赋值，无分配）；不做性能优化。
  */
 import com.mojang.blaze3d.framegraph.FrameGraphBuilder;

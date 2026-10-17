@@ -8,7 +8,7 @@ package dev.vkdisp.bridge;
  *    接上去就是几何解释错 / 观感变，且没有报错 —— 必须拿原版的字面常量当尺子逐条比（X39：真包/真值对账）。
  * 3. 我们的差异点：① 三处<b>同一条</b> {@code gbuffers_skybasic}（BSL 靠 renderStage 分派，见 {@link SkyGeometrySite} 类注释第 3 条）；
  *    ② 顶点形状/拓扑/混合<b>各不相同</b>且必须与原版逐字相同；③ {@code renderStage} 宏名必须能被唯一真源解析（不是 -1）。
- * 4. 许可证：MIT；零第三方代码。
+ * 4. 许可证：LGPL-3.0-or-later；零第三方代码。
  * 5. 性能基线：❄️ 纯常量比对，离线。
  */
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;

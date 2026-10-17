@@ -21,7 +21,7 @@ package dev.vkdisp;
  *    做成构建期红灯。注意判据<b>不是「catch 了什么类型」</b>——
  *    窄类型 catch（`NumberFormatException` / `IOException`）大量是
  *    「降级到默认值并把原因记进诊断列表」的正当做法（`h35` 全仓审计已核实）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 单测（扫源码，不进渲染路径）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

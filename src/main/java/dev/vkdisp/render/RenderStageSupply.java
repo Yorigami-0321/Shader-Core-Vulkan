@@ -6,7 +6,7 @@ package dev.vkdisp.render;
  *    （宏名与编号口径都在那里，本类<b>不另立第二份编号</b>）；② 原版 26.3 的绘制时机事实
  *    （{@code SkyRenderer#renderSun} 第 218-222 行 / {@code renderMoon} 第 224-229 行：太阳与月亮
  *    是<b>两次独立 draw</b>，同一张 {@code RenderPipelines.CELESTIAL} 管线）。
- *    外部候选（Iris / OptiFine）零接触（07-CONSTRAINTS L12）；许可证：本文件独立编写（MIT）。
+ *    外部候选（Iris / OptiFine）零接触（07-CONSTRAINTS L12）；许可证：本文件独立编写（LGPL-3.0-or-later）。
  *
  * <p>1. 官方/主实现：OF/Iris 在每次 draw 前把「这一批几何是天空里的哪一层」写进 {@code renderStage}。
  *
@@ -26,7 +26,7 @@ package dev.vkdisp.render;
  *       ③ <b>不认识的名字 ⇒ NONE + 点名</b>（不猜，X9），并把失败原文留着给自报行打印；
  *       ④ <b>不参与判定</b>：计数只是仪器（记忆里「纯函数三态 + 计数不参与判定」那条口径）。
  *
- * <p>4. 许可证核对：本项目 MIT；零第三方代码并入。
+ * <p>4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * <p>5. 性能基线：渲染线程上一个 {@code int} 读写 + 一次对象分配（scope 只在<b>开 pass 时</b>分配，
  *    不是每顶点/每帧热路径）。
  */

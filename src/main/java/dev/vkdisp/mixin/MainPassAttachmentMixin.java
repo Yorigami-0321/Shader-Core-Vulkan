@@ -12,7 +12,7 @@ package dev.vkdisp.mixin;
  *    ③ MixinExtras（NeoForge 自带 0.5.5）的 {@code @WrapOperation} / {@code Operation} <b>契约</b>
  *    （只观察注解与接口签名，不读实现）。
  *    许可证：Mojang EULA（只观察语句）+ Mixin MIT + NeoForge/MixinExtras LGPL-2.1（只观察契约）。
- *    → 能否并入本项目（MIT）：可以；本文件为独立编写的注入类，零第三方代码复制
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件为独立编写的注入类，零第三方代码复制
  *    → 例外条款：无；不含任何 GPL / ARR 代码（参考模组零接触，07-CONSTRAINTS L12）
  * 1. 官方/主实现：把 {@code Operation} 当成「这一次调用」的一等公民交给我方 bridge，由它决定
  *    传哪条描述符 —— 我们<b>不</b>接管 render pass 的生命周期、不自己 new {@code RenderPass}。
@@ -24,7 +24,7 @@ package dev.vkdisp.mixin;
  * 3. 我们的差异点：方法体只有「一次转发 + 一次 original.call」（X25），判定与重建都在
  *    {@code bridge.MainPassTakeover}。⚠️ {@code require=1/expect=1}：这个点没包上的症状是
  *    「主 pass 一直是单附件、包读不到地形之外的那几槽」= 与今天逐字节相同 ⇒ 必须硬失败。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：每次建单颜色附件的 pass 多一次转发（判定是三次比较）；开关关着时只多读一次布尔。
  */
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;

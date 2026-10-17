@@ -4,12 +4,12 @@ package dev.vkdisp.pipeline.model;
  * 0. 合规核对（第 0 步闸门）：参考对象 = 本仓库 `docs/13-GAP-REGISTRY.md` GAP-003 条目
  *    （albedo / normal+lightmap / material 三槽）与原版 26.3 `ColorTargetState.MAX_COLOR_TARGETS = 8`
  *    这条**事实性上限**（Mojang EULA，只取数值，不搬运代码）。
- *    → 可并入本项目（MIT）：本文件只断言参数，不含被参考方代码。
+ *    → 可并入本项目（LGPL-3.0-or-later）：本文件只断言参数，不含被参考方代码。
  * 1. 官方/主实现：同被测类（纯数据表）。
  * 2. 备选：无（本就是单测）。
  * 3. 我们的差异点：期望值**独立于实现写死** —— 这样「实现改错了槽数/指纹」会当场变红，
  *    而不是跟着实现一起错。指纹的可量化性由 `fingerprintRIsDistinct` 单独锁住。
- * 4. 许可证核对：本项目 MIT。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later。
  * 5. 性能基线：❄️ 单测，不适用。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

@@ -2,7 +2,7 @@ package dev.vkdisp.pack;
 /**
  * 【自行补充】GAP-027 逐程序 gbuffer 源「到底落没落表」的判据 + 自报
  * 0. 合规核对：参考对象 = 本仓库自有 {@code GbufferVertexSources}（同一类「把 VkDispVirtualPack
- *    挤出去」的独立类形状，QD-10）。零外部实现。许可证：MIT；零第三方代码复制。
+ *    挤出去」的独立类形状，QD-10）。零外部实现。许可证：LGPL-3.0-or-later；零第三方代码复制。
  * 1. 官方/主实现：原版没有「半接线」这个概念 —— 只有我们自己那张虚拟包会逐程序配平两个源。
  * 2. 备选：留在 {@code VkDispVirtualPack} 里 —— <b>否决</b>：该类正压在 {@code ClassLineRatchetTest}
  *    的 1573 行实测上限（本轮加 11 行就被棘轮拦下），而棘轮的裁决一直是「新增内容落到独立类」。
@@ -11,7 +11,7 @@ package dev.vkdisp.pack;
  *    ⇒ 日志里没有任何一行说适配层在落表那一刻就已经是 null，于是「memo 被上一轮取空」与
  *    「生成器返回 null」两种完全不同的原因在日志里长得一模一样（只能靠猜 = 本仓反复付学费那一族）。
  *    两侧都不在 = 该条本来就不接线，那边已由 {@code not wired because ...} 的 WARN 点名 ⇒ 这里不重复。
- * 4. 许可证核对：本项目 MIT。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later。
  * 5. 性能基线：❄️ 冷路径 —— 只在 {@code openResources} 落表时逐程序调一次，渲染期零调用。
  */
 import dev.vkdisp.VkDisp;

@@ -6,7 +6,7 @@ package dev.vkdisp.pack;
  * {@link PackCapabilityGateSwitch}（它把 h33 实测的「反射用配置键名当 Java 字段名
  * ⇒ {@code NoSuchFieldException} 被 {@code catch (Throwable)} 吞掉 ⇒ 开关恒为默认值
  * 且日志看起来完全正常」这条教训固化成了两个分开的常量）。
- * 全部为仓库内自有代码与自有文档事实 → 可并入本项目（MIT）；例外条款：无。
+ * 全部为仓库内自有代码与自有文档事实 → 可并入本项目（LGPL-3.0-or-later）；例外条款：无。
  *
  * <p>1. 官方/主实现：NeoForge {@code ModConfigSpec}（只用 {@code get()} 读值）。
  *
@@ -27,7 +27,7 @@ package dev.vkdisp.pack;
  * 那才是需要用户显式开启的动作（X27 / 支柱①）。
  * 留这个键的唯一用途是 A/B 取证（同一二进制内单变量对照）。
  *
- * <p>4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * <p>4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * <p>5. 性能基线：❄️ 冷路径（每次链装配读一次），不做优化（18-PARALLEL §7.7）。
  */
 import java.util.function.BooleanSupplier;

@@ -7,7 +7,7 @@ package dev.vkdisp.bridge;
  *    （随 MDG 分发的 sources jar 逐行读出**签名与用法形状**，不搬运实现语句）；
  *    另有 {@code com.mojang.renderpearl.api.textures.GpuTexture} 的 {@code USAGE_*} 常量
  *    （字节码核实数值）。许可证：Mojang EULA —— 只调用公开 API。
- *    → 能否并入本项目（MIT）：可以 —— 独立编写的桥接封装，零源码搬运
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 独立编写的桥接封装，零源码搬运
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：原版没有「包材质贴图」这个概念（它没有包加载器）；
  *    OptiFine/Iris 的 `specular` / `normals` 是**资源包附带的逐方块材质贴图集**，
@@ -26,7 +26,7 @@ package dev.vkdisp.bridge;
  *    </pre>
  *    即「**这张方块没有材质覆盖、没有 AO、法线朝上**」—— 这是可解释的缺省，
  *    不是「随手找个贴图糊上去」。
- * 4. 许可证核对：本项目 MIT；只调用公开 API，无代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只调用公开 API，无代码复制。
  * 5. 性能基线：❄️ 懒建一次（4×4，非 1×1：规避部分驱动对 1×1 非二次幂 mip 链的限制），
  *    渲染期零分配（只读视图）。
  */

@@ -8,10 +8,10 @@ package dev.vkdisp.config;
  *    ② docs/18-PARALLEL.md §4 F 线（完成标准："#define 表生成结果可对比"）与 §7.3（并行线证据规范）；
  *    ③ docs/08-TESTING.md §4（"const int X = 0; // [0 1 2]" 型选项常量能被识别）；
  *    ④ F2 已冻结的 dev.vkdisp.pack.Option / OptionType（直接消费，不改）。
- *    许可证：本仓库自有文档与自有冻结契约（本项目 MIT）→ 可直接消费；
+ *    许可证：本仓库自有文档与自有冻结契约（本项目 LGPL-3.0-or-later）→ 可直接消费；
  *    OptiFine（无 LICENSE = ARR）只取不受版权保护的格式事实（#define 是宏名 + 替换文本这一语言事实）；
  *    Iris（LGPL-3.0）同口径；参考模组零接触 —— 按 07-CONSTRAINTS L12「判不过就换参考，不再读它的代码」。
- *    → 能否并入本项目（MIT）：本文件为独立实现，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：C 预处理器的语言事实 —— {@code #define NAME 替换文本}（有替换文本）与
  *    {@code #define NAME}（空替换文本）、{@code #undef NAME}；布尔选项在 OF 语境里既可能被写成
@@ -28,7 +28,7 @@ package dev.vkdisp.config;
  *    ③ 不是所有选项都能变成 #define —— 宏名不是 GLSL 标识符、自由文本含空白、值超出 32 位整数范围等情况
  *    一律"跳过 + 显式 WARN"（T11），绝不产出会编译失败的垃圾文本；④ TEXT 选项只接受单个 GLSL 标识符
  *    （自由文本怎么进 GLSL 属于包语义，留给后续按真实包决定，不在本类里猜）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制，只消费本项目 F2 冻结契约与自有文档事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制，只消费本项目 F2 冻结契约与自有文档事实。
  * 5. 性能基线：❄️ 冷路径（切包 / 改选项时构造一次，之后只读），不做任何性能优化（18-PARALLEL §7.7）。
  */
 import java.util.ArrayList;

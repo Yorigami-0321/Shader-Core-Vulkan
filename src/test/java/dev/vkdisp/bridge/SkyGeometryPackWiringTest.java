@@ -2,7 +2,7 @@ package dev.vkdisp.bridge;
 /**
  * 【自行补充】GAP-027 穹顶/星点/晨昏三站接线的守卫（注入点注册 + @WrapOperation 形参序）
  * 0. 合规核对：参考对象 = 本仓库自有 {@code SkyCelestialPackWiringTest} / {@code MainPassTakeoverTest}
- *    （源码针 + 计数针的形状）。零外部实现。许可证：MIT。
+ *    （源码针 + 计数针的形状）。零外部实现。许可证：LGPL-3.0-or-later。
  * 1..5. 同族：见 {@link SkyGeometryPack} 的头部。
  */
 import java.nio.file.Files;

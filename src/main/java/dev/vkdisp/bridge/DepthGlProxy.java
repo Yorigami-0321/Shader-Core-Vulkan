@@ -7,7 +7,7 @@ package dev.vkdisp.bridge;
  *    {@code FrameApi#generateMipPyramids}（同一形状：单颜色附件 + {@code InSampler} + 全屏三角形）。
  *    许可证：Mojang EULA（原版）→ 只观察公开 API 签名与调用形状，零源码文本搬运；
  *    参考模组（VulkanMod / Sulkan 等）零接触。
- *    → 能否并入本项目（MIT）：可以 —— 本文件是独立实现的薄封装，不含被参考方代码
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本文件是独立实现的薄封装，不含被参考方代码
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现（本轮逐条核实，全部带行号）：
  *    ① 颜色目标格式是**管线静态状态**，并且**逐附件核对**：
@@ -45,7 +45,7 @@ package dev.vkdisp.bridge;
  * 3. 我们的差异点：只补引擎缺的那一层（引擎里没有「深度约定转换」这件事）；
  *    渲染线程独占、无锁（与 {@code ColortexPool} 同口径）；任何前置条件不满足都走
  *    {@link #reportMissingOnce} 的**一次性自报**，绝不静默换绑（X11 / T11）。
- * 4. 许可证核对：本项目 MIT；只调用公开 API 签名，无代码复制（07-CONSTRAINTS §〇 P1、L5-L8）。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只调用公开 API 签名，无代码复制（07-CONSTRAINTS §〇 P1、L5-L8）。
  * 5. 性能基线：每帧一次全屏写（分辨率 × 4 B）+ 链内一次采样；开关默认关，
  *    关掉即零开销（连纹理都不留，见 {@link #release()}）。按指令不做性能结论（17-NATIVE.md §3.2）。
  */

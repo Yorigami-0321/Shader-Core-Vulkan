@@ -9,7 +9,7 @@ package dev.vkdisp.pack;
  *    许可证核对：sp614x/optifine 无 LICENSE 文件（GitHub license API 返回 404）→ ARR，按 07-CONSTRAINTS X20 其文本表达不可并入；
  *    仅使用不受版权保护的事实性信息（程序名、族名、执行顺序），零文本复制。
  *    Iris（IrisShaders/Iris，LGPL-3.0，已核仓库 LICENSE）同口径，只取格式事实；参考模组（VulkanMod / Sulkan / Beryl）零接触。
- *    → 能否并入本项目（MIT）：本文件为独立实现的枚举，只含格式事实，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现的枚举，只含格式事实，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：OF 官方「Shader Programs」表——shadow、shadowcomp[1-99]、prepare[1-99]、
  *    gbuffers_*(terrain/entities/water/...)、deferred[1-99]、composite[1-99]、final；程序名前缀即族名，数字后缀即族内序号。
@@ -18,7 +18,7 @@ package dev.vkdisp.pack;
  *    缺了会被归入 UNKNOWN 造成静默漏解析；② 只冻结"族"（枚举），族内编号由 Program.stageIndex 承载，避免枚举爆炸；
  *    ③ deferred_pre/composite_pre 是无文件的虚拟程序，不参与文件扫描（万一解析到则归对应族且 index=0，见 stageIndex 文档）；
  *    ④ 族级 order 是粗序——gbuffers_water 实际渲染于 deferred 之后，精确编排归 render/FrameComposer（04-SPEC §3.4）。
- * 4. 许可证核对：本项目 MIT；本文件零第三方代码复制，仅含文档事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；本文件零第三方代码复制，仅含文档事实。
  * 5. 性能基线：❄️ 冷路径（仅扫描/重载时调用），不做任何性能优化（18-PARALLEL §7.7）。
  */
 

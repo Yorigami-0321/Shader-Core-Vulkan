@@ -5,8 +5,8 @@ package dev.vkdisp.bridge;
  *    （今天自己开 pass 发 {@code renderGroup(OPAQUE/TRANSLUCENT)}）、
  *    {@code bridge/MainPassTakeover.java}（主 pass 有没有真被我方接管），以及本项目文档
  *    {@code docs/04-SPEC.md} §5.0.7 表 ⑤ 行 d（登记：{@code GAP-003} 的 M-04 分支）。
- *    许可证：本项目 MIT，零第三方代码。
- *    → 能否并入本项目（MIT）：可以，本文件独立编写
+ *    许可证：本项目 LGPL-3.0-or-later，零第三方代码。
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以，本文件独立编写
  *    → 例外条款：无；不含任何 GPL / ARR 代码（参考模组零接触，07-CONSTRAINTS L12）
  * 1. 官方/主实现：原版不需要这个判定 —— 地形本来就只有主 pass 画一次。「画两遍」是我方
  *    走 {@code GAP-003} 方案 A（自己的多附件 pass）时欠下的债，⑤-d 才还得掉。
@@ -16,7 +16,7 @@ package dev.vkdisp.bridge;
  *    就分不开归因，{@code 19} §3.1 / h48 那一族教训的形状）。
  * 3. 我们的差异点：判定是<b>两个条件</b>的与（开关 ∧ 真接管），且三种情形各有读数：
  *    跳过 / 开关开着但没接管（WARN 一次，仍照今天画） / 开关关着（默认档，逐字等于今天）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：每帧 2 次（两组各一次）：一次配置读 + 一次对象判空，零分配。
  */
 import dev.vkdisp.VkDisp;

@@ -6,7 +6,7 @@ package dev.vkdisp;
  *    定义类 —— 只观察事件签名与触发时机，不复制其实现）+ 本仓库自研 B 线 ShaderPackScanner /
  *    ShaderPackService（不参考任何第三方扫包实现；Iris shaderpack/parsing 仅曾作为格式语义的
  *    只读调研对象，其代码未并入，格式本身属事实性信息，18-PARALLEL §4 A 线口径）。
- *    → 能否并入本项目（MIT）：可以 —— 只调用事件公开 API 与本方 pack/ 纯 Java 入口
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 只调用事件公开 API 与本方 pack/ 纯 Java 入口
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：ClientResourceLoadFinishedEvent —— 「客户端资源加载/重载成功之后」触发
  *    （javadoc 原文），首启在资源加载之后、初始界面建立之前（与 FullscreenPassHook 的门闩同一事件，
@@ -25,7 +25,7 @@ package dev.vkdisp;
  *    并把最终源经 bridge/ShaderCompileApi 交给原版 GlslCompiler 做**驱动级 GLSL→SPIR-V 编译** ——
  *    每阶段 OK/FAIL 日志 + 汇总计数（"含 #include 的 program 能编译通过" 的验收证据）；
  *    编译失败打原版错误原文（含 file:line，T11），转译失败的阶段不进驱动编译但同样显式报错。
- * 4. 许可证核对：本项目 MIT；只调用公开 API 与本方代码，无代码复制（07-CONSTRAINTS L5-L8）。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只调用公开 API 与本方代码，无代码复制（07-CONSTRAINTS L5-L8）。
  * 5. 性能基线：启动/重载期一次性冷路径扫描（17-NATIVE §3.2），不做性能优化（T14 达标即停）。
  */
 

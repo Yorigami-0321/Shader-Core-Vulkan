@@ -19,7 +19,7 @@ package dev.vkdisp;
  *    </ul>
  * 3. 我们的差异点：把「`>60` 行方法数不得增加」做成构建期红灯；
  *    真要拆方法时，改基线是**有意为之**，会出现在 diff 里被人看见。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 单测（扫源码，不进渲染路径）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

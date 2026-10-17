@@ -10,7 +10,7 @@ package dev.vkdisp.render;
  *    外部候选 IrisShaders/OptiFine 源码 → 禁止（07-CONSTRAINTS L12 / X19-X21）；
  *    WebSearch 本环境无结果 → timeBrightness 等未取证项一律 0 + 登记（X9 拒猜）。
  *    许可证：本文件为独立编写的纯 Java 实现，不含任何外部项目代码。
- *    → 能否并入本项目（MIT）：可以 —— 只调用公开 API 语义；net.minecraft 引用与
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 只调用公开 API 语义；net.minecraft 引用与
  *      VkDispVirtualPack 同款（业务包允许；T5 红线只禁 com.mojang.renderpearl|blaze3d）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：{@link #gather}（游戏状态 → 名字→值 映射，语义 = 04-SPEC §3.2 上传注记
@@ -22,7 +22,7 @@ package dev.vkdisp.render;
  * 3. 我们的差异点：fill 集 = 23 目录 + aspectRatio/timeAngle/moonPhase（BSL 消费点实测），
  *    其余块成员恒 0 并一次性 INFO 列名（timeBrightness 等未取证项 X9 拒猜）；
  *    sun/moon/shadowLight = 原版天空链眼空间方向（非 BSL 包天空 sunPathRotation，P4.2 复审）。
- * 4. 许可证核对结论：本项目 MIT；零第三方代码并入（07-CONSTRAINTS §〇 P1 / L5-L8）。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；零第三方代码并入（07-CONSTRAINTS §〇 P1 / L5-L8）。
  * 5. 性能基线：每帧一次 gather（十几次 JOML 小对象 + 查表）+ 一次 write（~26 成员绝对 put），
  *    毫秒级以下；按 task-2 要求不做性能优化（17-NATIVE.md §3.2、T14 达标即停）。
  */

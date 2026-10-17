@@ -7,7 +7,7 @@ package dev.vkdisp.bridge;
  *    {@code RenderTarget#copyDepthFrom} 同一条 API
  *    （{@code blaze3d/pipeline/RenderTarget.java:75} 逐字就是这次调用）。
  *    许可证：Mojang EULA（原版）⇒ 只观察公开签名与调用形状，零源码搬运；参考模组零接触。
- *    → 能否并入本项目（MIT）：可以，本文件是独立实现。
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以，本文件是独立实现。
  *
  * <p>1. 要修的缺陷（{@code docs/13-GAP-REGISTRY.md} GAP-023）：
  *    {@code FrameApi.chainResolver} 里 {@code depthtex*} 一律回同一张
@@ -31,7 +31,7 @@ package dev.vkdisp.bridge;
  *      <b>render pass 打开期间不能发</b>（h10 实测规则：pass 开着时新建 encoder 被 RenderPearl 拒绝）。
  *      那一步登记在 GAP-023 的「下一步」，不在这里假装做过。
  *
- * <p>4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * <p>4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * <p>5. 性能基线：每帧 1~3 次全屏 D32 blit。按用户指令本轮不做性能结论（{@code 17-NATIVE.md} §3.2）。
  */
 import com.mojang.blaze3d.systems.RenderSystem;

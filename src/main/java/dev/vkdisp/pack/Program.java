@@ -16,7 +16,7 @@ import java.util.Map;
  *    许可证：sp614x/optifine 无 LICENSE（GitHub license API 404）→ ARR，按 07-CONSTRAINTS X20 不并入其文本表达，
  *    仅用不受版权保护的事实性信息（文件扩展名/键名/前缀规则），零文本复制；Iris（LGPL-3.0，已核 LICENSE）同口径；
  *    参考模组（VulkanMod / Sulkan / Beryl）零接触。
- *    → 能否并入本项目（MIT）：本文件为独立实现的 record，只含格式事实，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现的 record，只含格式事实，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：OF 官方事实——程序以名字命名，.vsh/.fsh 同名成对（另有 .gsh/.csh，本项目不冻结，见第 3 条）；
  *    程序可位于维度子目录（路径含维度前缀）；shaders.properties 可按程序配置 program.<名>.enabled、
@@ -28,7 +28,7 @@ import java.util.Map;
  *    需要时走 18-PARALLEL §3.2 增补；③ 路径统一约定为"相对 shaders/ 根、含维度前缀"（如 world-1/gbuffers_water.vsh），
  *    构造时校验维度前缀一致；④ 缺失的一侧允许为 null——这正是 08-TESTING §4"显式降级"的载体，
  *    两侧全缺直接抛异常（该程序必须被解析器丢弃并打 WARN）；⑤ settings 只做原样透传，未知键不丢弃（T11）。
- * 4. 许可证核对：本项目 MIT；本文件零第三方代码复制，仅含文档事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；本文件零第三方代码复制，仅含文档事实。
  * 5. 性能基线：❄️ 冷路径（加载/重载时构造，之后只读），不做任何性能优化（18-PARALLEL §7.7）。
  */
 

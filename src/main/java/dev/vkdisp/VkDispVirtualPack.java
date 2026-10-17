@@ -8,7 +8,7 @@ package dev.vkdisp;
  *    Pack/PackLocationInfo/Pack.Metadata/PackSelectionConfig/PackResources/PackResources$ResourceOutput，
  *    独立手写实现，零源码文本搬运）；③ 本仓库 docs/04-SPEC.md §2（命名空间 vkdisp_pack）/
  *    §3.1（不写 options.resourcePacks）与 docs/18-PARALLEL.md §5 P2.4 ①②③（设计与时序）。
- *    → 能否并入本项目（MIT）：可以 —— 只调用官方公开 API + 本方纯 Java 冷路径入口
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 只调用官方公开 API + 本方纯 Java 冷路径入口
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：AddPackFindersEvent.addRepositorySource（官方注册入口）+ Pack 强校验构造器
  *    （required=true 由 PackRepository.rebuildSelected 强制入选中集，字节码已核实 ——
@@ -25,7 +25,7 @@ package dev.vkdisp;
  *       （composite / deferred 都是 required 管线，抛穿会砸启动；T11 要求显式可见而非静默）；
  *    ③ PackResources 是内存实现（三资源：composite/deferred/final 三片元），
  *       无文件句柄，close 为空操作。
- * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只观察官方签名（07-CONSTRAINTS L5-L8 / X19-X21）。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；参考按禁止处理，只观察官方签名（07-CONSTRAINTS L5-L8 / X19-X21）。
  * 5. 性能基线：❄️ 冷路径（注册一次 + 每次资源加载生成一次），清晰优先不做优化（18-PARALLEL §7.7）。
  */
 

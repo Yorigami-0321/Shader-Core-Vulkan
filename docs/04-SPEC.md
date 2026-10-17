@@ -47,7 +47,7 @@ com.mojang.renderpearl.backend.vulkan.VulkanDevice  ← 原版实现，不碰
 
 | 组件 | 参考（只读思路） | 热度 | 影响的指标 | 语言 |
 |---|---|---|---|---|
-| `pack/` 格式解析 | **Iris** `shaderpack/parsing/` | ❄️ 冷 | **B3 / B4** | Java（Rust 实测候选 ②） |
+| `pack/` 格式解析 | **Iris** `shaderpack/parsing/`（🔖 2026-10-17 起**直接移植**，主源另有 Vitrail `dev.vitrail.pack.*`） | ❄️ 冷 | **B3 / B4** | Java（Rust 实测候选 ②） |
 | `glsl/` 预处理器（`#include`/`#define`） | **IrisShaders/glsl-preprocessor**（GPL+例外） | ❄️ 冷 | **B3 / B4** | Java（Rust 实测候选 ①） |
 | `glsl/` 转译（OF → M GLSL，8 段） | **IrisShaders/glsl-transformer**（自定义传染） | ❄️ 冷 | **B3 / B4** | Java（Rust 实测候选 ①） |
 | `pipeline/` 管线构建 | Sulkan `runtime/ShaderPipelines`（GPL） | ❄️ 冷（构建）+ 🔥 热（键查找） | B4 / **B1** | Java |
@@ -800,30 +800,35 @@ cargo → cbindgen → jextract → jar 内 /vkdisp/native/<platform>-<arch>/
 | OF GLSL 转译工作量被低估 | **高** | 分阶段，Phase 2 只做 composite；UBO 语义先硬编码一组常见 uniform；**先读 Iris 的解析器**（`17-NATIVE.md` §1.3） |
 | 原版对 render target 数量/格式有限制 | 中 | 复用 `colortex` 语义时按需降级；给足诊断日志 |
 | 老版本 MC 没有 `renderpearl.backend.api` | — | 本方案**锁定 26.3+**，不支持更早版本 |
-| 被误认为"又一个 Iris" | 低 | README 明确写"独立实现，与任何第三方着色器加载器/渲染优化模组均无关联" |
-| 误抄 GPL / LGPL 代码 | 中 | 本项目 MIT，见 `03-DIRECTION.md` §8 与 `07-CONSTRAINTS.md` §〇；VulkanMod/Sulkan 都只读思路不抄代码 |
+| 被误认为"又一个 Iris" | 🔴 **2026-10-17 起此风险作废** | 本项目**就是**含 Iris / Vitrail 衍生代码的 LGPL 作品，README 与 `NOTICE.md` 必须如实写明来源；仍**不得**写「Iris 官方 / OptiFine 官方 / Sodium 替代品」（07 L9 / §七） |
+| 误抄 **GPL / AGPL / PolyForm / ARR** 代码 | 中 | 本项目现为 **LGPL-3.0-or-later**（2026-10-17 换证）：这四族**仍一行不搬**，见本节 §8 与 `07-CONSTRAINTS.md` §〇/L13。LGPL 一族（Iris/Vitrail/VulkanMod）可搬，但欠台账与改动声明 |
 | **不装包也掉帧**（着色器模组最不可接受的失败） | **中** | `17-NATIVE.md` §2 把它列为 P0 必过；每阶段测帧时间 |
 | **误把冷路径当瓶颈，白写原生库** | **中** | `17-NATIVE.md` §3.2 热度分级 + §5 六问决策树 |
 | **原生库导致平台崩 / 缺库即挂** | 中 | `17-NATIVE.md` N1/N2：Java 保底必须始终可用，缺库自动降级 |
 
 ---
 
-## 8. 参考模组使用边界（MIT 下：全部只能读，不能抄）
+## 8. 参考模组使用边界（2026-10-17 换证后：LGPL-3.0 一族可搬，其余四族照旧）
 
-**前提**：本项目许可证 = **MIT**（`07-CONSTRAINTS.md` §〇）。MIT 与 LGPL / GPL 不同族，
-因此**三个参考模组的代码一个都不能用**。
+**前提**：本项目许可证 = **LGPL-3.0-or-later**（`07-CONSTRAINTS.md` §〇；2026-09-29 定为 MIT，2026-10-17 换证）。
+同族 ⇒ LGPL 的三个上游**可以搬代码**；GPL / AGPL / PolyForm Shield / ARR **仍然一行不搬**。
 
-1. **VulkanMod（LGPL-3.0）**：❌ **不得复制任何代码**。
-   只允许带走「**做法**」这类事实性信息：给 `RenderPipeline` 挂 mixin 扩展接口、
-   `ShaderManager.apply` 里有可注入的编译点、GL program id 需要一张映射表。
-   拿不准时的判断法：**它告诉你的"该往哪打洞"可以用，它的洞怎么挖的不能抄。**
-2. **Sulkan（GPL-3.0）**：❌ **只读架构思路，一行代码都不抄**（含 `.java` / `.glsl` / 资源文件）
-3. **Beryl（ARR）**：❌ 完全不可用
+1. **Iris（LGPL-3.0）** + **Vitrail（LGPL-3.0）**：✅ **光影包特性处理层的主移植源**（用户 2026-10-17 裁决：
+   「直接把 Vitrail 和 Iris 对光影包特性的处理移植过来，不要自己实现了」）。
+   搬一个文件就欠两条账：文件头（来源仓库@commit + `文件:行` + 读取日期 + 改动声明）与 `NOTICE.md` 台账一行。
+   🔴 **Vitrail `NOTICE` 已点名转录自 Iris 的那些文件**（`ProgramFallbacks` / `TargetFormat` /
+   `ConstDirectives` / `DrawBuffers` / `TargetDirectives` …）⇒ 搬它们时**两个上游都要记**，别只记 Vitrail。
+2. **VulkanMod（LGPL-3.0）**：✅ **可搬**（旧「只能读思路」的依据是 MIT 不同族，该前提已消失）。
+3. **Sulkan（GPL-3.0）**：❌ **只读架构思路，一行代码都不抄** —— 吸 GPL 会把整个项目顶到 GPL-3.0，超出裁决范围
+4. **Beryl（ARR）** / **OptiFine（ARR）**：❌ 完全不可用（包格式的**行为**是事实，照做即可）
+5. **glsl-transformer（AGPL-3.0，Iris 的 `pipeline/transform` 链它）**：❌ **不引库**（同轮裁决）。
+   那一层照 Vitrail 的口径办：**取的是规则不是代码**，在文件头写清读了哪个类哪几行
+6. **Sodium（PolyForm Shield 1.0.0）**：❌ 与我们的许可证无关，本来就不能搬；Iris 的 `compat/sodium/**` **不在移植面内**
 
 **判断标准**：可以借鉴"往哪个方法注入"「用什么 API」这类**事实性信息**（不受版权保护）；
 不可以复制"具体怎么写的代码"。前者写进笔记，后者一个字都不落盘。
 
-> ⚠️ **MIT 下的实操尺度比 LGPL 更严**：没有"逐文件标注 + 衍生部分同许可"这条退路。
-> 一旦并入就是全项目换证，所以宁可重写一遍，也不要"先抄再改"。
+> ⚠️ **换证后的实操尺度**：退路有了（LGPL 一族可搬），代价是**逐文件的署名与改动声明义务**——
+> 漏一个文件头就是一条 §4(a) 违约。**没有台账条目 = 不许落盘**（`NOTICE.md` 是台账唯一入口）。
 
-**自检**：提交前对照 `07-CONSTRAINTS.md` §七 —— 有 `[ ] 无复制来的第三方代码` 一项。
+**自检**：提交前对照 `07-CONSTRAINTS.md` §七 —— 有 `[ ] 搬来的第三方代码每一行都能在 NOTICE.md 台账里指回来源` 一项。

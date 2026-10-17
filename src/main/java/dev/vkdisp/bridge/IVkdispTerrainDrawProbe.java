@@ -13,7 +13,7 @@ import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
  *    与公开 record {@code ChunkSectionsToRender$GpuMultiDrawIndexedIndirect#drawCount()}
  *    （sources jar 第 96-188 行逐字核实）。
  *    许可证：Mixin = MIT；原版 = Mojang EULA（只观察字段与 record 访问器）。
- *    → 能否并入本项目（MIT）：可以 —— 本项目原创契约接口
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以 —— 本项目原创契约接口
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：{@code @Accessor} 交出**字段本体**（返回类型与字段声明逐字相同，不做放宽），
@@ -24,7 +24,7 @@ import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
  *    {@code drawCount()} 是它自己生成的公开访问器 ⇒ 旧反射里那次 {@code setAccessible} 是多余的。
  * 3. 我们的差异点：判据形状不变（层 → groups/draws 两个数），但取值路径改成
  *    「访问器 + 公开 record 访问器」，改名即**注入期硬失败**而不是运行期 WARN。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 只在诊断档、且只在第 300/1200 帧与水印那次被读（不在每帧热路径）。
  */
 public interface IVkdispTerrainDrawProbe {

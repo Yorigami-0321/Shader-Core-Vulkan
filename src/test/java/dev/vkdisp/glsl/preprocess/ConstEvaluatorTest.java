@@ -19,14 +19,14 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    不受版权保护。外部候选 IrisShaders/glsl-preprocessor（GPL-3.0 + 例外条款）→ 一律按禁止处理
  *    （handover §2.1 / 07-CONSTRAINTS X20/X21），本任务不读其代码、零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 测试，样本全部自造。
- *    → 能否并入本项目（MIT）：可以（仅采纳不受版权保护的事实性选项语法）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅采纳不受版权保护的事实性选项语法）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：handover §6.3 选项定义语法 + §5.3④（白名单 const 才可见、名单外默认不可见）
  *    + F3 的 SourceLineMap 契约（选项指回原文件行）。
  * 2. 备选：无 —— 断言识别出的 OptionConstant 字段。
  * 3. 我们的差异点：边界用例（白名单 / 非白名单不可见 / #define 无候选不识别 / 同名默认值冲突禁用
  *    + WARN）全部显式断言。
- * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：测试代码不进运行时（18-PARALLEL §7.7）。
  */

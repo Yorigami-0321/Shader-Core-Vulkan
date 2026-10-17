@@ -27,7 +27,7 @@ import dev.vkdisp.glsl.lexer.GlslTokens;
  *    外部候选 IrisShaders/glsl-transformer（GPL-3.0 + 例外条款，18-PARALLEL §4 D 线明示
  *    "按禁止处理"）→ 按禁止处理（07-CONSTRAINTS L12 §1.3 陷阱 2 / X21），零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 实现，不含任何外部项目代码。
- *    → 能否并入本项目（MIT）：可以（仅采纳不受版权保护的驱动报错事实与 GLSL 限定符语义）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅采纳不受版权保护的驱动报错事实与 GLSL 限定符语义）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：GLSL 公开语义 —— SPIR-V 用户 in/out 必须带 location；片元输入的 location
  *    与顶点输出按 location 链接（本仓库全屏 VS 的 {@code vUv} 在 location 0，见
@@ -47,7 +47,7 @@ import dev.vkdisp.glsl.lexer.GlslTokens;
  *    （保留原样交驱动显式报错，T11；跨行静默是因为函数参数折行以 {@code out vec3 x)} 形态出现，
  *    对它出 WARN 是误报）；⑥ 已带 layout 的声明原样跳过 → 第二遍逐字节不变（幂等）；
  *    ⑦ 成功补写不产生诊断（与 ①–③ 级行内变换同口径），行数恒等。
- * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载期一次）；两遍线性扫描（种子 + 改写），无缓存、无预优化
  *    （18-PARALLEL §7.7、T14 达标即停）。

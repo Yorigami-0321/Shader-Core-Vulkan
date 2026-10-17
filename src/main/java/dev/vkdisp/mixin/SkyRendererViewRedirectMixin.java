@@ -9,7 +9,7 @@ package dev.vkdisp.mixin;
  *    ② Mixin 0.8.7 的 {@code @Mixin} / {@code @Redirect} / {@code @At} **注解签名**（不读其实现）；
  *    ③ 本仓库自有的 {@code CloudRendererMatrixRedirectMixin}（M-10：同一形状，换实参不换全局状态）。
  *    许可证：Mixin = MIT；原版 = Mojang EULA（只观察语句与签名）。
- *    → 能否并入本项目（MIT）：可以；本文件为独立编写的注入类
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件为独立编写的注入类
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：NeoForge 给包天空的官方钩子（{@code LevelRenderer:385}）负责「包接管」那一档，
@@ -22,7 +22,7 @@ package dev.vkdisp.mixin;
  *    把「LOAD 语义」这一条从原版手里抢过来（改原版行为而不是喂它参数）。
  * 3. 我们的差异点：只换<b>两个实参</b>，原版的 pass、几何、管线、状态机全部照旧 ⇒ 天空的画质与
  *    原版逐字相同（星点那一族判据不因换代而回退），而 {@code GbufferTarget} 整类从仓库里消失。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：每帧两次方法替换（原本就是两次 getter 调用），零新增分配 —— 我方那两个视图是
  *    {@code ColortexPool} 里已有的对象，不是每帧新建。
  */

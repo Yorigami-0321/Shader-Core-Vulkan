@@ -4,12 +4,12 @@ package dev.vkdisp.render;
  *
  * <p>0. 合规核对：参考对象 = 本仓库自有的 {@link RenderStageSupply} 与
  *    {@code glsl/preprocess/RenderStages}（编号口径的唯一真源）。零外部实现（07-CONSTRAINTS L12）；
- *    许可证：本文件独立编写（MIT）。
+ *    许可证：本文件独立编写（LGPL-3.0-or-later）。
  * 1. 官方/主实现：OF/Iris 的逐 draw 供值（本类不声称与 Iris 数值一致 —— 那条未核实到源码，X9）。
  * 2. 备选：只在真机上靠画面反推「阶段有没有供上」—— 否决：包的分支写错与没供值在画面上<b>同形</b>
  *    （都是「日月盘不见了」），只能靠读数分开。
  * 3. 我们的差异点：判据落在「宏与供值必须同数、阶段之间必须互不相同、还原必须结构性保证」三件事上。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 纯函数 + 计数，无渲染。
  */
 import dev.vkdisp.glsl.preprocess.RenderStages;

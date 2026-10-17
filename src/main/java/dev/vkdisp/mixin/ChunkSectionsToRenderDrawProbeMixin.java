@@ -7,7 +7,7 @@ package dev.vkdisp.mixin;
  *    （{@code public static final class DrawIndirect} 与其 private 字段声明、
  *    {@code public record GpuMultiDrawIndexedIndirect(..., int drawCount)} 的公开访问器）。
  *    许可证：Mixin = MIT；原版 = Mojang EULA（只观察字段与 record 访问器）。
- *    → 能否并入本项目（MIT）：可以；本文件为独立编写的注入类
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件为独立编写的注入类
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：{@code @Accessor} 交出字段本体（返回类型与字段声明**逐字相同**，不做放宽），
@@ -18,7 +18,7 @@ package dev.vkdisp.mixin;
  *    {@code drawCount()} 是它自己生成的公开访问器，直接调就行。
  * 3. 我们的差异点：本类只做「取字段 + 一次 map.get」的转发，累加与自报文案在
  *    {@code MrtTerrainPass#probeDrawCounts}（X25）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 只在第 300/1200 帧与水那次自报被读；不在每帧热路径。
  */
 import dev.vkdisp.bridge.IVkdispTerrainDrawProbe;

@@ -15,7 +15,7 @@ import dev.vkdisp.glsl.TranslateResult;
  *    不修改它们）。外部候选 IrisShaders/glsl-preprocessor（GPL-3.0 + 例外条款）→ 一律按禁止处理
  *    （handover §2.1 / 07-CONSTRAINTS X20/X21），本任务不读其代码、零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 类，不含任何外部项目代码。
- *    → 能否并入本项目（MIT）：可以（仅依赖仓库内 F3 契约与自研 processor）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅依赖仓库内 F3 契约与自研 processor）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：handover §5.3 的串联顺序 "Include → Define → Const"，最终产出 F3 的
  *    TranslateResult（文本 + 诊断列表 + 行号映射），作为 D 线的输入契约。
@@ -23,7 +23,7 @@ import dev.vkdisp.glsl.TranslateResult;
  * 3. 我们的差异点：行号映射逐级 compose（define 阶段映射 compose include 阶段映射 → 端到端），
  *    选项识别结果通过 PreprocessReport 随 TranslateResult 一并交付（TranslateResult 字段冻结、
  *    不改；选项作为同包附加产物，D 线或调用方可按需取用）。
- * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载期一次性）；三次顺序扫描 + 一次映射 compose，清晰优先、无缓存、
  *    无性能优化（18-PARALLEL §7.7、T14 达标即停）。

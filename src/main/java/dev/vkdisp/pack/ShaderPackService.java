@@ -39,7 +39,7 @@ import java.util.zip.ZipFile;
  *    ③ 本仓库 A/B/C 三条线的既有产出（ShaderPackScanner / ShaderPackRepository / ShaderProperties /
  *    GlslPreprocessor），本类只做编排，不复制它们的逻辑。
  *    许可证：本文件为独立编写的纯 Java 编排层，不含任何第三方项目代码。
- *    → 能否并入本项目（MIT）：可以（仅编排本项目自研组件）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅编排本项目自研组件）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：无外部实现可参考 —— 两个参考模组（VulkanMod / Sulkan）都没有 OF/Iris 包加载器
  *    （AGENT_CONTEXT §1「也没有任何参考模组做过 OF 包加载器」），故本类按本项目契约自行编排。
@@ -53,7 +53,7 @@ import java.util.zip.ZipFile;
  *    ⑤ 跨文件同名选项默认值冲突 → 禁用该选项并打 WARN（OF 语义，Option 类 javadoc 差异点①）；
  *    ⑥ 本阶段不填 Program#uniforms / #vertexAttributes —— 二者需 GLSL 声明扫描，
  *       归 D 线（UniformInjector / UniformCatalog）与顶点属性解析，留待后续汇合（F2 文档明确「空 = 未解析出声明」）。
- * 4. 许可证核对结论：本项目 MIT；零第三方代码并入（07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；零第三方代码并入（07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（切包/重载时调用一次，之后只读），清晰优先，不做任何性能优化
  *    （18-PARALLEL §7.7、07-CONSTRAINTS T14 / X14）。
  */

@@ -9,7 +9,7 @@ package dev.vkdisp.pack;
  *    许可证：sp614x/optifine 无 LICENSE（GitHub license API 404）→ ARR，按 07-CONSTRAINTS X20 不并入其文本表达，
  *    仅用不受版权保护的事实（true|false / 数值列表 / 文本值这些取值形态），零文本复制；Iris（LGPL-3.0，已核 LICENSE）同口径；
  *    参考模组（VulkanMod / Sulkan / Beryl）零接触。
- *    → 能否并入本项目（MIT）：本文件为独立实现的枚举，只含格式事实，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现的枚举，只含格式事实，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：OF 官方事实——布尔选项值域为 true/false（shaders.properties 写法 clouds=fast|fancy|off 属"多值文本"，
  *    oldLighting=true|false 属布尔）；GLSL 注释选项 const int X = 0; // [0 1 2] 为整数列表、
@@ -18,7 +18,7 @@ package dev.vkdisp.pack;
  * 3. 我们的差异点：① 不引入"离散枚举 vs 连续区间"两个类型——二者都落在 INTEGER/FLOAT 上，
  *    "是否做成滑条"由 Option#slider（shaders.properties 的 sliders= 键）单独表达，GUI 侧自行决定渲染形态；
  *    ② 自由文本（值域为空列表）用 STRING 承载；③ 不在本枚举里编码默认值/标签，那些是 Option 的字段或 lang 层的事。
- * 4. 许可证核对：本项目 MIT；本文件零第三方代码复制，仅含文档事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；本文件零第三方代码复制，仅含文档事实。
  * 5. 性能基线：❄️ 冷路径（解析期一次性归类），不做任何性能优化（18-PARALLEL §7.7）。
  */
 

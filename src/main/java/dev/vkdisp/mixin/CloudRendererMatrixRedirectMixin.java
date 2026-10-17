@@ -9,7 +9,7 @@ package dev.vkdisp.mixin;
  *    以及 {@code RenderSystem} 第 296 行 {@code public static Matrix4f getModelViewMatrixCopy()}
  *    （sources jar 逐字核实：返回类型 {@code Matrix4f}，实现是 {@code new Matrix4f(modelViewStack)}）。
  *    许可证：Mixin = MIT；原版 = Mojang EULA（只观察语句与签名）。
- *    → 能否并入本项目（MIT）：可以；本文件为独立编写的注入类
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件为独立编写的注入类
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：{@code @Redirect} 替换**调用**（{@code SkyRenderer} 那一族的 M-11 用同一形状）。
@@ -19,7 +19,7 @@ package dev.vkdisp.mixin;
  *    它改的是已经写好的 UBO 切片，矩阵早在 {@code writeTransform} 里就被消费掉了，改不到源头。
  * 3. 我们的差异点：方法体只有一行转发（X25），矩阵取法与关档代价都写在
  *    {@code CloudsIntoGbuffer#onCloudModelViewRequest}。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：热路径 —— 每次云 draw 一次 {@code new Matrix4f(...)} 拷贝，
  *    与原版 {@code getModelViewMatrixCopy()} 自己那次拷贝同量级（不是新增分配类别）。
  */

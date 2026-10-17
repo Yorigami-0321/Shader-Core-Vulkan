@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
  *    （「一行可有多条声明」⇒ 行首锚定正则会**静默少认**）、{@code 19-IMPROVEMENT-PATHS.md} §2.2 病根 (a)
  *    （「没有单一词法源 ⇒ 每加一个阶段就自带一套判断逻辑」）与 §2.6-A1 的判据原文
  *    （「新守卫 {@code GlslLexerSingleSourceTest}：扫 {@code glsl/**} 里新出现的行首锚定正则声明并禁止增长」）。
- *    零第三方代码（本项目 MIT）。
+ *    零第三方代码（本项目 LGPL-3.0-or-later）。
  * 1. 做法：与 {@code MethodLengthRatchetTest} / {@code ClassLineRatchetTest} 同族 —— 基线 = 当前实测，
  *    只许降；并带「扫描器自身必须能找到东西」的元测试（那条先例的失败模式：基线永远满足不了的判据
  *    等于没有判据）。

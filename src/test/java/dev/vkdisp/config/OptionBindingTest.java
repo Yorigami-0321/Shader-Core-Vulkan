@@ -6,15 +6,15 @@ package dev.vkdisp.config;
  *    与 §3.1（GLSL 侧选项来源为 {#define NAME 值} 与 {const int NAME = 值}）；
  *    ② docs/18-PARALLEL.md §4 F 线（"#define 表生成结果可对比（单测快照式断言）"）、§7.3（并行线证据规范）；
  *    ③ docs/07-CONSTRAINTS.md T11（跳过必须显式 WARN）；④ F2 冻结契约 dev.vkdisp.pack.Option / OptionType。
- *    许可证：本仓库自有文档与自有类型（MIT）→ 可直接消费；C 预处理器的 #define / #undef 属语言事实；
+ *    许可证：本仓库自有文档与自有类型（LGPL-3.0-or-later）→ 可直接消费；C 预处理器的 #define / #undef 属语言事实；
  *    JUnit 5 = EPL-2.0（仅测试期依赖）。第三方源码零接触（07-CONSTRAINTS L12）。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的测试）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的测试）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：JUnit 5 标准断言；期望文本用 Java 文本块写死，逐字符比对（快照式断言）。
  * 2. 备选：断言"包含某几行" —— 已作为补充，但不足以覆盖顺序与遗漏，故主断言用整段文本相等。
  * 3. 我们的差异点：两种 DefineStyle 各有一份快照；"不能变成 #define"的四类情况（宏名非法 / 值非法 /
  *    自由文本 / 快照缺值）各有独立用例，且都要求有 WARN 与 sink 取证。
- * 4. 许可证核对：本项目 MIT；JUnit EPL-2.0 仅测试期依赖；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；JUnit EPL-2.0 仅测试期依赖；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时，无性能影响（18-PARALLEL §7.7）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

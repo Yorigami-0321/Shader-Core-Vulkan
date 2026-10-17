@@ -7,7 +7,7 @@ package dev.vkdisp.pack;
  * 1. 官方/主实现：无（纯文本断言）。
  * 2. 备选：无。
  * 3. 我们的差异点：把「反射字段名与配置键名必须是两个东西」变成构建期红灯。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：❄️ 单测。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

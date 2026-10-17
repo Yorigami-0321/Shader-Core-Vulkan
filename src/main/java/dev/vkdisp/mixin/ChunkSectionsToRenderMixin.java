@@ -6,7 +6,7 @@ package dev.vkdisp.mixin;
  *    注解签名（javap 核实常量池，不读实现）；② 原版 {@code ChunkSectionsToRender#renderLayers} 的源码
  *    （随 MDG 分发的 {@code minecraft-patched-26.3.0.41-beta-sources.jar}，第 73–94 行）。
  *    许可证：Mixin = MIT；原版 = Mojang EULA（只观察方法签名与语句顺序）。
- *    → 能否并入本项目（MIT）：可以；本文件为独立编写的注入类
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件为独立编写的注入类
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：Mixin 官方范式 —— private 方法用完整形参列表 + {@code CallbackInfo} 收尾。
@@ -15,7 +15,7 @@ package dev.vkdisp.mixin;
  *    上绑一个 uniform**，与形参无关）。
  * 3. 我们的差异点：**只转发，不写业务**（X25）。本类只做三件事：埋点、判断「两个 override 是否都为
  *    null」（与 M-01 的替换条件严格对称）、转发给 {@code bridge.TerrainPipelineApi}。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：热路径，每帧 2–3 次 {@code setUniform}（同一对象、无分配）；不做性能优化。
  */
 import com.mojang.renderpearl.api.commands.RenderPass;

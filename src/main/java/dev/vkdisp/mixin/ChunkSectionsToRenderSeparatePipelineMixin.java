@@ -12,7 +12,7 @@ package dev.vkdisp.mixin;
  *    {@code RenderSystem} 第 123 行 {@code public static CompiledRenderPipeline getCompiledPipeline(RenderPipeline)}
  *    （sources jar 逐字核实）。
  *    许可证：Mixin = MIT；MixinExtras/NeoForge = LGPL-2.1（只观察契约）；原版 = Mojang EULA（只观察语句）。
- *    → 能否并入本项目（MIT）：可以；本文件为独立编写的注入类，零第三方代码复制
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件为独立编写的注入类，零第三方代码复制
  *    → 例外条款：无；不含任何 GPL / ARR 代码
  *    参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触（07-CONSTRAINTS L12）
  * 1. 官方/主实现：{@code @WrapOperation} + {@code @Local(argsOnly = true)} ——
@@ -25,7 +25,7 @@ package dev.vkdisp.mixin;
  * 3. 我们的差异点：方法体只有「埋点 + 一次 bridge 判定 + 原样把结果交给 original」（X25）。
  *    判定本体 {@code TerrainPipelineApi.passAwarePipeline} 是<b>纯函数</b> ⇒ 不启动客户端就能单测
  *    「错配必须被拒」。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：🔴 热路径 —— 每次地形 draw 每组 1 次（本机每帧 2–6 次取管线 × 层数）。
  *    handler 只做一次对象引用比较 + 一次 map.get，无分配；埋点按 M-01 的节流口径（首次 + 每 600 次）。
  */

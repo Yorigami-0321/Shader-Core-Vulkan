@@ -18,7 +18,7 @@ import dev.vkdisp.glsl.TranslateResult;
  *    仓库内文档事实，不受版权保护。外部候选 IrisShaders/glsl-transformer（GPL-3.0 + 例外条款）→
  *    按禁止处理（07-CONSTRAINTS L12 §1.3 陷阱 2 / X21），本任务不读其代码、零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 测试，样本全部为本任务自造（18-PARALLEL §7.6）。
- *    → 能否并入本项目（MIT）：可以（仅采纳不受版权保护的事实性信息）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅采纳不受版权保护的事实性信息）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：JUnit 5 断言"注入完整（23 条全在）+ 不重复 + 幂等 + 注入点不越过 #version /
  *    #extension"这四件事，对应 04-SPEC §3.2 与 18-PARALLEL §4 D 线完成标准。
@@ -28,7 +28,7 @@ import dev.vkdisp.glsl.TranslateResult;
  *    8-a（X9 redefinition 修复）另立 8 组自造样本：顶层无关键字全局登记生效 + 幂等、
  *    函数体 / struct 体内同名仍注入、非 catalog 顶层同名不登记无假重复 WARN、uniform 混排、
  *    逗号多名全登记、类型不符 WARN、以及 dh 形态样本端到端转译无同名块成员。
- * 4. 许可证核对结论：本项目 MIT；参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：测试代码不进运行时；冷路径无性能要求（18-PARALLEL §7.7）。
  */

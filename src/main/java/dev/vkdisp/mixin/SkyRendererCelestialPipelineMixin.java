@@ -13,7 +13,7 @@ package dev.vkdisp.mixin;
  * 3. 我们的差异点：本体只做三件事 —— 判「该不该换」（含<b>按 label 排除末地闪烁</b>）、
  *    先备料（失败就原样交回，绝不半接）、{@code original.call(self, 派生管线)} 之后交给 bridge 补绑。
  *    判定与绑定全在 bridge，本类不含业务（M1 编码约束 ③）。
- * 4. 许可证核对：本项目 MIT；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码复制。
  * 5. 性能基线：每帧两次（日、月各一次），零分配路径外一律在 bridge 里缓存。
  */
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;

@@ -10,7 +10,7 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  *    外部候选 IrisShaders/glsl-transformer（GPL-3.0 + 例外条款）→ 按禁止处理
  *    （07-CONSTRAINTS L12 §1.3 陷阱 2 / X21），本任务不读其代码、零代码行并入。
  *    许可证：本文件为独立编写的纯 Java 辅助类，不含任何外部项目代码。
- *    → 能否并入本项目（MIT）：可以（仅采纳不受版权保护的事实性信息：注释优先剥离、行号从 1 起）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（仅采纳不受版权保护的事实性信息：注释优先剥离、行号从 1 起）
  *    → 例外条款：无；本文件不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：GLSL 预处理阶段"注释先于语法被移除"这一公开规则（// 行注释、不支持嵌套的块注释），
  *    以及 03-DIRECTION §3.2 记录的 OF 方言转译需求（attribute/varying 行内重写）。
@@ -19,7 +19,7 @@ import dev.vkdisp.glsl.TranslateDiagnostic;
  * 3. 我们的差异点：① 注释剥离时**保留字符位置**（注释替换为等长空格），使"剥离后的 code"与原始行
  *    下标一一对应，重写时可直接按列替换，且不破坏 C 线的行号映射；② 行号一律 1 起，0 = 未知，
  *    与 F3 契约（TranslateDiagnostic.UNKNOWN_LINE）一致。
- * 4. 许可证核对结论：本项目 MIT；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
+ * 4. 许可证核对结论：本项目 LGPL-3.0-or-later；GPL-3.0+例外参考按禁止处理，只读思路，零代码并入
  *    （07-CONSTRAINTS §〇 P1、L12 / X19 / X20 / X21）。
  * 5. 性能基线：❄️ 冷路径（包加载期一次）；逐字符线性扫描，无缓存、无预优化
  *    （18-PARALLEL §7.7、T14 达标即停）。

@@ -8,10 +8,10 @@ package dev.vkdisp.pipeline.model;
  *       mc_Entity 底层元素类型直接决定字节数与 stride，E 线现值 47，须在 P1.2 构建真实 VertexFormat 时
  *       与原版实测对齐后再走 §3.2 定稿，此前任何线不许私改）；③ docs/07-CONSTRAINTS.md X9（待确认项不许
  *       用猜的值填）与 X8 / T9（stride 必须断言）。
- *    许可证：本仓库 docs 与自有代码（本项目 MIT）→ 可直接消费；OptiFine（sp614x/optifine 无 LICENSE = ARR，
+ *    许可证：本仓库 docs 与自有代码（本项目 LGPL-3.0-or-later）→ 可直接消费；OptiFine（sp614x/optifine 无 LICENSE = ARR，
  *    按 X20 不并入其文本表达）与参考模组（VulkanMod LGPL-3.0 / Sulkan GPL-3.0 / Beryl ARR）零接触、未读任何
  *    代码（L12）——本文件只消费 04-SPEC §4 复核注记里已登记的事实与本仓库自己的代码。
- *    → 能否并入本项目（MIT）：可以（本文件为独立编写的测试）
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以（本文件为独立编写的测试）
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：JUnit 5 数值断言 —— 把"当前已知值"逐项钉死（offset / size / stride / 自洽性），
  *    把"未决项"写成显式常量 + 显式断言，并把"实测后要改哪几行"写成机器校验的行号清单。
@@ -20,7 +20,7 @@ package dev.vkdisp.pipeline.model;
  * 3. 我们的差异点：① 断言与"待改行清单"绑定，清单行号本身也机器校验（行号漂移即红，清单不会烂掉）；
  *    ② 未决项常量 = null（= 尚未实测），P1.2 一旦回填该常量，本文件必红 → 强制同步更新全部相关行并走 §3.2；
  *    ③ 不改任何值，只让未决项可见（X9）。
- * 4. 许可证核对：本项目 MIT；JUnit 5 = EPL-2.0（仅 testImplementation 依赖，不进分发 jar）；零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；JUnit 5 = EPL-2.0（仅 testImplementation 依赖，不进分发 jar）；零第三方代码复制。
  * 5. 性能基线：测试代码不进运行时，无性能影响（18-PARALLEL §7.7）。
  */
 import static org.junit.jupiter.api.Assertions.assertEquals;

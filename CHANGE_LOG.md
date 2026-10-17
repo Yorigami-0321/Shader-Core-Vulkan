@@ -4,6 +4,24 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-17（一百八十六）— 🔁 **换证：MIT → LGPL-3.0-or-later**，并把「光影包特性的处理」从自研改为**直接移植 Iris / Vitrail**（本轮零行并入）
+
+> **verdict = 这是一轮纯条款/许可轮，没动一行渲染代码。** 换证必须先于移植，因为 MIT 与 LGPL 不同族 ⇒ 在旧证下搬一行就违约一行。
+> 本轮产出的判据是「可搬性表」本身：三个上游的许可证是**本机检出 + `cmp`/`sha256` 核出来的**，不是回忆或平台页面。
+
+- **改了什么**：① `LICENSE` → LGPL-3.0 全文（与 gnu.org `lgpl-3.0.txt` **逐字节一致**，`sha256 e3a994d8…23118`），新增 `GPL-3.0.txt`（同样与 gnu.org 一致，`sha256 3972dc97…36986`）；② 新增 `NOTICE.md` = 许可声明 + 第三方构件清单 + **移植台账**（现为空表）；③ `gradle.properties` `mod_license=MIT` → `LGPL-3.0-or-later`（值保持纯 ASCII，`.properties` 按 ISO-8859-1 解码）；④ `build.gradle` 的 jar 打包输入由 `LICENSE` 扩为 `LICENSE + GPL-3.0.txt + NOTICE.md`；⑤ 条款面：`07` §〇 整节重写（P1/P2/P3 → **P1–P4**）、§一 L1/L7/L8/L9/L10 改写 + **新增 L13（移植面三条边界）**、§1.3 判定表加 **AGPL-3.0 行**、§七 自检三条；`03` §0 表与共同结论、`04` **§8 整节重写** + 风险表两行、`17` §1.1.1 判定表 + 【参考调研】模板、`19` §7-9 新裁决 + 判定表两行、`00`/`01`/`02`/`13`/`15`/`16`/`18`/`AGENT_CONTEXT`（新 §0.0）与 README。
+- **为什么改**：用户裁决「**更改协议**……现在直接把 Vitrail 和 Iris 对光影包特性的处理移植过来，不要自己实现了」。
+- **可搬性判定的来源**：Iris = LGPL-3.0（`Iris/LICENSE` + README §License，其 `LICENSE-DEPENDENCIES` 自己警告过 glsl-transformer 是 AGPL）；Vitrail = LGPL-3.0（`LICENSE` + `NOTICE` 逐文件记着它从 Iris 转录了哪些表与文法）；Sodium = **PolyForm Shield 1.0.0**；Sulkan = GPL-3.0；OptiFine / Beryl = ARR。本机钉版：Iris `bff1e69…`（干净）、Vitrail `4a45f44…`（🔴 工作树 12 处改动、`CHANGELOG.md` 冲突未解 ⇒ **台账只按 commit 记**）。
+- **两条收窄（同轮追问定下）**：① 许可证选 **LGPL-3.0-or-later**，不选 GPL / AGPL；② Iris 的 GLSL 转换层（链 AGPL-3.0 的 glsl-transformer）**只搬规则、不引库** ⇒ 项目不升 AGPL。Sulkan(GPL) 仍不搬：吸 GPL 会把整项目顶到 GPL-3.0，超出裁决范围。
+- **可单方改写的依据（核过，不是假设）**：`git log --format=%an` = **341 个 `Yorigami` + 2 个 `vkdisp <vkdisp@local>`**（机器人），无第三方 contributor ⇒ 不需要任何人点头。MIT 授予无限制再许可 ⇒ **已按 MIT 拿走副本的下游不受影响，改写不可撤回**。源码公开（`origin` = GitHub）⇒ LGPL 的"随附源码"义务现成满足，代价是**从此不能转私有再分发**（`07` §〇 P4）。
+- **三句话本轮起是假话，已逐处改掉**：「本项目 MIT」、「100% 自研」、「独立实现，与任何第三方着色器加载器/渲染优化模组均无关联」（`04` 风险表那条曾把它当缓解措施）。🔴 **带日期的历史条目与旧裁决不改写**（`CHANGE_LOG` 旧行、`review/`、§2 决策表的旧行、`19` §7-1 那段 10-10 记录）—— 只做原地标注或加新节。
+- **`src` 侧同步**：**267 个** java 文件的 javadoc 合规行 `本项目 MIT` / `项目（MIT）` / `独立编写（MIT）` / `MIT 项目自有` / `与 MIT 不同族` 等 → `LGPL-3.0-or-later`，逐行中性（`git diff --numstat -- src` = **+567 / −567**，无一个文件行数不对称）。🔴 **不动**那些讲**别人**许可证的行（`Mixin = MIT`、`MixinExtras/NeoForge = LGPL-2.1`、MDK 模板 `NeoForged，MIT`、slf4j/java-semver = MIT、glcpp/ANTLR/tree-sitter = MIT、naga = MIT/Apache-2.0）—— 按上下文逐条筛，不是全局 sed。第一轮的全局 `，MIT）` 确实误伤过 3 处 `TEMPLATE_LICENSE.txt（NeoForged，MIT）`，第二轮已改回。
+- **测试结果**：`./gradlew build` 全绿 = **1255 passed / 0 failed / 1 skipped**（与上一轮同数，本轮不新增测试）；打包实测 `unzip -l build/libs/vkdisp-0.1.0.jar` ⇒ **`LICENSE` 7652 B + `GPL-3.0.txt` 35149 B + `NOTICE.md` 5961 B 三个都在 jar 内**（P3 / L10 不再只是文档口径）。🔴 **两条守卫先红过一次，都归因到本轮改动并已修**：① `ClassLineRatchetTest` 报 `dev/vkdisp/VkDispConfig.java 长了：1048 > 上限 1047`（我把 javadoc 合规行拆成两行）⇒ 折回单行；② `VertexLayoutPendingAlignmentTest.alignmentChecklistLineNumbersAreStillAccurate` 报 `VertexElementFormat.java:46` 行号漂移（我在 `pipeline/model` 三个类的 javadoc 里插了一行）⇒ 并进上一行。修完**这 6 个文件的行数逐字等于 HEAD**。⇒ 这两条红是有用的仪器：它们证明「改注释不动行数」这条纪律在这个仓是真被机器看着的。🔴 **本轮不含任何渲染行为改动**，代码默认档与取证档画面均无新差异 ⇒ 不安排真机臂（`19` §7-4 的取证轮次照旧）。
+- **是否已提交**：是（单独提交并推送）。
+- **下一轮**：按 `19` §7-9 末列的移植面开工（`pack/model/*` + `pack/target/*` + `pack/source/*`，全为 Vitrail 已点名的 LGPL 干净件），每搬一个文件补台账两行（Vitrail + Iris）。
+
+---
+
 ## 2026-10-17（一百八十五）— ⬆️ NeoForge `26.3.0.51-beta` → `26.3.0.86`：同 MC 线跟进，顺带查实这条线已在 `.76` 转正（`05` §2.1 的一条事实前提是错的）
 
 > **verdict = 升版本身零 fallout：编译零错、1255 条测试全绿、真机一臂跑到 frame 2100+ 且 513 条 `/ERROR` 与 10-15 基线逐族同形同数；本轮唯一被证旧的是一条文口径 —— `05` §2.1 预测「26.3 正式版号 = 无第四段的 `26.3.0`」，实际是去掉 `-beta` 后缀、第四段继续加。**

@@ -6,8 +6,8 @@ package dev.vkdisp.config;
  *    与 §3.2（OF 内建 uniform 的类型语义：float/int/vec 等原版 GLSL 类型）；
  *    ② docs/18-PARALLEL.md §4 F 线（交付物：选项值 → #define 表 / uniform 值）与 §7.3（单测可打印比对）；
  *    ③ F2 已冻结的 dev.vkdisp.pack.OptionType（BOOLEAN / INTEGER / FLOAT / STRING）。
- *    许可证：本仓库自有文档与自有冻结契约（本项目 MIT）→ 可直接消费；第三方源码零接触（07-CONSTRAINTS L12）。
- *    → 能否并入本项目（MIT）：本文件为独立实现，可并入
+ *    许可证：本仓库自有文档与自有冻结契约（本项目 LGPL-3.0-or-later）→ 可直接消费；第三方源码零接触（07-CONSTRAINTS L12）。
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：GLSL uniform 的基本类型事实（不受版权保护的语言事实）：bool / int / float / 采样器等；
  *    文本选项在 GLSL 里没有对应标量类型，若要上传只能用字符串标签（本项目留给后续按包语义决定）。
@@ -17,7 +17,7 @@ package dev.vkdisp.config;
  *    共同实现本接口，调用方用模式匹配取类型化值；② 每个值都同时带 canonicalText（规范文本），
  *    保证同一份选项在 #define 表与 uniform 表里是可逐字符比对的同一文本；③ 不在这里做 uniform 上传
  *    （上传要真实 GPU 验证，属 18-PARALLEL §2.1 的关键路径）。
- * 4. 许可证核对：本项目 MIT；只用 JDK 标准库与自有 OptionType，零第三方代码复制。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；只用 JDK 标准库与自有 OptionType，零第三方代码复制。
  * 5. 性能基线：❄️ 冷路径小对象（绑定快照时一次构造），不做任何性能优化（18-PARALLEL §7.7）。
  */
 import java.util.Objects;

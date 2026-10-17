@@ -20,7 +20,7 @@ package dev.vkdisp.bridge;
  *    ④ {@code FrontendRenderPass} 第 107-121 行「pass 附件数与管线 color target 数、逐条格式必须相等」；
  *    ⑤ {@code RenderTarget} 第 26/105/129 行：{@code colorTextureView} 是<b>缓存字段</b>
  *    ⇒ 视图的对象身份可以直接当判据用（不是每次新建）。
- *    → 能否并入本项目（MIT）：可以；本文件独立编写
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件独立编写
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码（参考模组零接触，07-CONSTRAINTS L12）
  * 1. 官方/主实现：只借「描述符是自己造出来的」这一处公开结构 —— <b>不</b>替换 render pass 的生命周期、
  *    <b>不</b>动那 5 段各自独立的 GPU pass（§5.0.6 ①），只在这一次调用上换颜色附件，其余逐字转发。
@@ -36,7 +36,7 @@ package dev.vkdisp.bridge;
  *    抛了 = 注入真命中主 pass；没抛而接管计数为 0 = 判据没匹配（label 改名 / 视图不同源）。
  *    ⚠️ 因此这条路径<b>开着就是崩</b> ⇒ 开关 {@code mixin.ownTerrainPass} 默认<b>关</b>，
  *    且 ⑤-b（通用派生公式）之前不许把它写进任何取证档。
- * 4. 许可证核对：本项目 MIT；零第三方代码并入。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * 5. 性能基线：每帧若干次判定（一次 size + 一次 label + 一次引用比较）；接管命中时多建一个 builder。
  */
 import com.mojang.renderpearl.api.commands.RenderPass;

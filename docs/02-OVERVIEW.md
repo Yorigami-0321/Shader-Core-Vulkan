@@ -117,7 +117,7 @@ vkdisp
 | GLSL 转译 / AST | **IrisShaders/glsl-transformer**（⚠️ 自定义传染 → 只读思路） |
 | OF 格式语义 | **Iris** 的 `shaderpack/parsing/`（格式规范是事实性信息） |
 | OF pass 顺序 / 缓冲语义 | shaderlabs wiki「Rendering Pipeline」+ Iris 官方 docs |
-| 帧图 / 注入点 | Sulkan（GPL）/ Vitrail（LGPL）→ 只读思路 |
+| 帧图 / 注入点 | Sulkan（GPL）→ 只读思路；Vitrail（LGPL）→ 🔖 **2026-10-17 起可搬**（光影包特性层主源，逐文件进 `NOTICE.md` 台账） |
 | 管线挂载模式 | VulkanMod（LGPL）→ 只读思路 |
 
 > **Iris 是全世界唯一成熟的 OF 格式实现，它的解析器就是格式的事实标准。**
@@ -191,7 +191,7 @@ vkdisp
 | **先测后优** | 先跑通、先测量，超预算才优化；优化只做超预算的环节 | `17-NATIVE.md` §2–§3、§5 |
 
 > 🔴 **「参考先行」的第 0 步是核许可证，不是读代码。**
-> 先判「这份参考能不能合法用在我的 MIT 工程里」，判不过就换参考、**不再看它的代码**。
+> 先判「这份参考能不能合法用在我的 LGPL-3.0-or-later 工程里」，判不过就换参考、**不再看它的代码**。
 > 一旦先读了实现，就无法自证"没受影响"（`07-CONSTRAINTS.md` L12 / `17-NATIVE.md` §1.1.1）。
 
 > **顺序不可颠倒：合规 → 参考 → 测量 → 优化。**

@@ -12,7 +12,7 @@ package dev.vkdisp.bridge;
  *    逐条格式相等）；③ {@code RenderSystem} 第 106-120 行那条编译缓存（第一句是
  *    {@code PIPELINE_MODIFIERS.apply}，然后按入参管线查 {@code PipelineCache}）；
  *    ④ 本仓 {@code ColortexPool:179}（池的每一槽都是 {@code RGBA8_UNORM}）。
- *    → 能否并入本项目（MIT）：可以；本文件独立编写
+ *    → 能否并入本项目（LGPL-3.0-or-later）：可以；本文件独立编写
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码（参考模组零接触，07-CONSTRAINTS L12）
  * 1. 官方/主实现：不新造管线描述符的形状 —— 用原版自己的 {@code toBuilder()} +
  *    {@code withColorTargetState(index, …)}，只补没声明的那些槽。
@@ -24,7 +24,7 @@ package dev.vkdisp.bridge;
  * 3. 我们的差异点：判定与建表都是纯函数（{@link #padTargets} / {@link #refusalReason}）⇒
  *    不启动客户端就能把「target0 原样、补槽 RGBA8_UNORM/WRITE_NONE/无混合、装不下就交回原版」
  *    钉成单测。设备侧只剩一次 {@code toBuilder} 转发 + 一层按对象身份的记忆表。
- * 4. 许可证核对：本项目 MIT；零第三方代码并入。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；零第三方代码并入。
  * 5. 性能基线：🔴 热路径 —— ⑤-c 起 {@code derive} 会被<b>每一次 draw</b> 调用
  *    （{@code PreparedRenderType#draw} 是全部 RenderType 取管线的公共通路，本轮从 sources jar 数出来
  *    全游戏共 34 处取管线点，其中 20 余条渲染类型都过这一个方法）。原版的编译缓存

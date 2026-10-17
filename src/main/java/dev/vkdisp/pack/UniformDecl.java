@@ -9,7 +9,7 @@ package dev.vkdisp.pack;
  *    许可证：sp614x/optifine 无 LICENSE（GitHub license API 404）→ ARR，按 07-CONSTRAINTS X20 不并入其文本表达，
  *    仅用不受版权保护的事实（uniform 名/类型），零文本复制；Iris（LGPL-3.0，已核 LICENSE）同口径；
  *    参考模组（VulkanMod / Sulkan / Beryl）零接触。
- *    → 能否并入本项目（MIT）：本文件为独立实现的 record，只含格式事实，可并入
+ *    → 能否并入本项目（LGPL-3.0-or-later）：本文件为独立实现的 record，只含格式事实，可并入
  *    → 例外条款：无；不含任何 GPL / LGPL / ARR 代码
  * 1. 官方/主实现：04-SPEC §3.2 内建表的类型词汇（mat4 / vec3 / float / int / ivec2）+ OF 官方 uniform 表；
  *    声明由 GLSL 源扫描得到（C/D 线解析产物落进 Program#uniforms）。
@@ -19,7 +19,7 @@ package dev.vkdisp.pack;
  *    不区分内建/自定义——是否内建由 D 线对照 §3.2 表判定；② 不在此表达绑定组/槽位语义（那是 E 线 BindGroupLayout 中间表示）；
  *    ③ shaders.properties 的 uniform.&lt;type&gt;.&lt;name&gt;=表达式 属于自定义 uniform 运行时值（F 线 OptionBinding 范畴），
  *    不混进源码声明列表。
- * 4. 许可证核对：本项目 MIT；本文件零第三方代码复制，仅含文档事实。
+ * 4. 许可证核对：本项目 LGPL-3.0-or-later；本文件零第三方代码复制，仅含文档事实。
  * 5. 性能基线：❄️ 冷路径（解析期构造一次，管线构建/选项绑定只读），不做任何性能优化（18-PARALLEL §7.7）。
  */
 
