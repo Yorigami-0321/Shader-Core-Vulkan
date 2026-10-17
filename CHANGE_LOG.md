@@ -37,6 +37,7 @@
 - **测试结果**：`./gradlew build` 全绿 = **1278 passed / 0 failed / 1 skipped**（上轮 1271 + 本批 7）。本轮不改渲染行为
   ⇒ 不安排真机臂；但别名那条修正**改变了采样绑定的槽位**，属画面可见面 ⇒ 已在「未闭合」里点名要一臂复核。
 - **影响的文档**：`NOTICE.md`（台账 +2 行、生效状态更正）、`docs/19-IMPROVEMENT-PATHS.md` §7-9（闸门段 + 下一批次序改为「先接 alphaTest 注入」）、本条。
+- 🔖 **同日补记（仍在本条之内做完）**：上面「未闭合」第 ① 条**当场做掉了** —— 新增 `glsl/translate/AlphaTestEpilogue`（**取规则不取代码**：条件来自上游记载的 Iris `CommonTransformer:280`，那段链 AGPL-3.0 库故不搬），挂在 `pack/ShaderPackCompiler#compileStage`（唯一同时知道程序身份与片元源的地方，与 `h45` 采样探针同先例；阈值来源就是 `program.settings()` 里那条 `alphaTest`，不必从服务层再传一张表）。注入是**等行数**变换 ⇒ 行号映射与诊断归属不动。判据 +7（`AlphaTestEpilogueTest`：注入位置、main 后还有函数、三种「不注入」各出一条 WARN、NEVER、等行数、以及一条链上回归针「翻译链里不许出现 `AlphaTestEpilogue.apply(`」）；`./gradlew build` 全绿 **1285 passed / 0 failed / 1 skipped**（本批累计 +14）。缓存正确性核过：`PackCompileCache.Key = (packIdentity, overrides)`，而 `alphaTest` 来自包自己的 `shaders.properties` ⇒ 同一 packIdentity 下是常量，不必进键。🔴 **仍未做**：真机画面复核 —— 这条**会改像素**（草/叶从实心立方体变成带洞），下一批要么补臂要么别当已验。
 - **未闭合，别当做到了**：① `alphaTest` 的 discard 注入未做 ⇒ 未生效；② SSBO/自定义图像停在闸门前（需裁决）；
   ③ 别名修正的画面复核未跑（`gaux2/3/4` 现在会绑到与昨天不同的槽位，方向按上游表是对的，但**没看图**）；
   ④ 我方 `pack/ProgramStage`、`pipeline/model/VertexElementFormat` 与移植件的表仍是两处住 ⇒ 真源未定。

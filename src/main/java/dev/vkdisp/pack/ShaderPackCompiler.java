@@ -3,6 +3,8 @@ package dev.vkdisp.pack;
 import dev.vkdisp.config.OptionSourceRewriter;
 import dev.vkdisp.glsl.GlslPipeline;
 import dev.vkdisp.glsl.TranslateDiagnostic;
+import dev.vkdisp.glsl.translate.AlphaTestEpilogue;
+import dev.vkdisp.pack.model.AlphaTest;
 import dev.vkdisp.glsl.TranslateResult;
 import dev.vkdisp.glsl.preprocess.IncludeResolver;
 import dev.vkdisp.glsl.translate.ShaderStage;
@@ -201,10 +203,12 @@ public final class ShaderPackCompiler {
                     || GbufferVertexSources.postVertexRoute(program.name());
             compileStage(plan, resolver, qualifiedName, ShaderStage.VERTEX,
                     program.vertexShader(), overrides, appliedNames, stages, diagnostics,
-                    preprocessSink, postIdentity);
+                    preprocessSink, postIdentity, null);
+            // alphaTest.<程序> 是**按程序**声明的，而 OfGlslTranslator 不知道自己正在翻哪个程序
+            //   ⇒ 与采样因子探针同先例，挂在读 program.settings() 的这一层兑现（仅片元阶段生效）。
             compileStage(plan, resolver, qualifiedName, ShaderStage.FRAGMENT,
                     program.fragmentShader(), overrides, appliedNames, stages, diagnostics,
-                    preprocessSink, postIdentity);
+                    preprocessSink, postIdentity, alphaTestOf(program));
         }
         // 包级缺失（整包没有任何文件声明该选项名）→ 显式 WARN（T11）。
         for (String name : overrides.keySet()) {
@@ -259,6 +263,20 @@ public final class ShaderPackCompiler {
      * <p>{@code sourcePath} 为 null 表示该阶段文件缺失 —— 这是 {@link Program} 契约允许的显式降级
      * （08-TESTING §4），直接跳过，不算失败也不打噪音日志。
      */
+    /**
+     * 该程序的 alpha 测试：{@code shaders.properties} 的 {@code alphaTest.<程序>} 已在
+     * {@code ShaderPackService#deriveSettings} 归进 {@link Program#settings()} 的 {@code alphaTest} 键，
+     * 这里只把它读成 {@link AlphaTest}。读不懂（既不是 off/false 也不是「函数 + 参考值」）按
+     * <b>不注入</b>处理并交给 {@code AlphaTestEpilogue} 的口径 —— 不猜阈值。
+     */
+    private static AlphaTest alphaTestOf(Program program) {
+        String raw = program.settings().get("alphaTest");
+        if (raw == null) {
+            return null;
+        }
+        return AlphaTest.parse(raw).orElse(null);
+    }
+
     private static void compileStage(
             ShaderPackRepository.MountPlan plan,
             IncludeResolver resolver,
@@ -270,7 +288,8 @@ public final class ShaderPackCompiler {
             List<CompiledStage> sink,
             List<TranslateDiagnostic> diagnostics,
             Map<String, TranslateResult> preprocessSink,
-            boolean postIdentity) {
+            boolean postIdentity,
+            AlphaTest alphaTest) {
         if (sourcePath == null) {
             return;
         }
@@ -304,6 +323,14 @@ public final class ShaderPackCompiler {
                             + e.getMessage(),
                     sourcePath, TranslateDiagnostic.UNKNOWN_LINE));
             return;
+        }
+        // 🔴 兑现 alpha 测试：**等行数**变换（语句插在 main 收尾 } 的同一行前面），
+        //     故行号映射与诊断归属都不受这一眼影响；没声明/读不懂时原样返回，零行为变化。
+        AlphaTestEpilogue.Result alpha = AlphaTestEpilogue.apply(stage, result.text(), alphaTest);
+        if (!alpha.diagnostics().isEmpty()) {
+            List<TranslateDiagnostic> merged = new ArrayList<>(result.diagnostics());
+            merged.addAll(alpha.diagnostics());
+            result = TranslateResult.withDiagnostics(alpha.text(), result.lineMap(), merged);
         }
         diagnostics.addAll(result.diagnostics());
         sink.add(new CompiledStage(qualifiedName, stage, sourcePath, result));

@@ -189,6 +189,9 @@ public final class OfGlslTranslator {
         //   ⇒ 那一臂的**最终画面**被探针改过，该臂数字作废。
         //   ⇒ 改由 VkDispVirtualPack 在生成地形源之后直接对地形片元源调用（见 SampleFactorProbeAdapter）。
 
+        // 🔖 alpha 测试（alphaTest.<程序>）**不在本链里**：本方法不知道自己正在翻哪个程序，
+        //     而这条测试是**按程序**声明的 ⇒ 与采样因子探针同先例，挂在读 program.settings() 的
+        //     那一层（pack/ShaderPackCompiler#compileStage），见 glsl/translate/AlphaTestEpilogue。
         // ⑧ 内建 uniform 注入：运行在 ⑦½ 的输出上，诊断行号是 ⑦ 输出坐标系（⑦½ 等行数）。
         UniformInjector.Result injected = UniformInjector.inject(derProbe.text());
 

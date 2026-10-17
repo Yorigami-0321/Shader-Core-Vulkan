@@ -81,6 +81,7 @@ LGPL-3.0 §4 的"声明改动"义务逐文件落实在这里。**每个并入文
 
 | `src/main/java/dev/vkdisp/pack/model/TargetName.java` | Vitrail `4a45f44` `pack/model/TargetName.java:1-137` | Iris `bff1e69` `samplers/IrisImages.java:21`（`colorimg` 无别名那个形状） | 2026-10-17 | 包名/缩进/文件头；别名表 `gcolor0/gdepth1/gnormal2/composite3/gaux1..4=4..7`、上限 32、`split` 与 `imageIndex` 逐字保留。🔴 接线动机：我方 `bridge/FrameApi` 此前把所有 `gaux*` 一律绑 colortex4（注释写的却是 N+3）且四个 legacy 名不认 ⇒ 已换成这张表 |
 | `src/main/java/dev/vkdisp/pack/model/AlphaTest.java` | Vitrail `4a45f44` `pack/model/AlphaTest.java:1-138` | — | 2026-10-17 | 包名/缩进/文件头；四个默认阈值、八个比较名、`GL_` 前缀、第三词忽略、单空格分隔、取反 emit、BigDecimal 印阈值逐字保留。⚠️ 上游注释承诺印 `0.0001`，实现实际给 `0.00010`（数值等价）⇒ 本仓按实现断言，未作改动 |
+| `src/main/java/dev/vkdisp/glsl/translate/AlphaTestEpilogue.java` | — | 上游记载的规则：Vitrail `NOTICE` 转述的 Iris `pipeline/transform/transformer/CommonTransformer:280`（配合 `:239` 的 `gl_FragColor`→`gl_FragData[0]`），读取日期 2026-09-10（26.2 分支） | 2026-10-17 | **取的是规则不是代码**（07 L13 / §1.3）：那一段在 Iris 侧链 AGPL-3.0 的 glsl-transformer ⇒ 不引库、不搬代码，本文件独立实现。条件「该 stage 写 drawbuffer 0」在转译后的文本上以「存在 `layout(location = 0) out vec4`」为等价判据；注入是**等行数**的（写在 `main` 收尾 `}` 的同一行前面） |
 
 2026-10-17 第一批移植：`pack/model` 十个叶子文件 —— SSBO（`bufferObject.N`）与自定义图像（`image.NAME`）这两族此前**支持为零**。
 消费入口 = `pack/properties/ShaderProperties`（新增 `bufferObjects()` / `images()` 结构化视图与带 `defines` 的 parse 重载）+ `pack/ShaderPackService`（`[pack特性]` 自报行）。判据 = `src/test/java/dev/vkdisp/pack/model/PortedPackFeatureModelTest`（16 条）。
