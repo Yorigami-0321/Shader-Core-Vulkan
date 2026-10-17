@@ -4,6 +4,43 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-17（一百九十）— 🧱 每程序管线骨架的第一块砖：包写混合因子名 → 官方 BlendFunction（并证伪「要破 T2」的猜测）
+
+> **verdict = 混合这一族的阻塞点被证明不在官方 API，而在我们自己「整条链只用一条管线」的形状。**
+> 新增 `bridge/PackBlendState`（因子名→`BlendFunction`）+ 7 条判据，其中三条是**与游戏自带常量逐字相等**的断言，
+> 不是我方的近似。`blend.<程序>` 档位仍是 UNHONORED（没有消费方）—— 覆盖表的「表不许领先于代码」针就是为这种时候立着的。
+
+- **决定性的两条 API 事实（源码级，本机 sources jar，非回忆）**：
+  ① `renderpearl/api/pipeline/BlendFunction.java:26-33` 有 `BlendFunction(srcColor, dstColor, srcAlpha, dstAlpha)` 四因子构造，
+  `BlendFactor` 的名字集合就是包写的那些（`SRC_ALPHA`/`ONE`/`ZERO`/`ONE_MINUS_*`/`DST_*`/`SRC_COLOR`/`CONSTANT_*`），
+  `BlendOp` 是 `ADD/SUBTRACT/REVERSE_SUBTRACT/MIN/MAX` ⇒ **混合不需要破 T2**（与 SSBO/图像那条不同，后者是真的没有表达）；
+  ② 上游 Vitrail 就是在运行期建每程序管线：`render/GeometryProgram.java:742` 用 `RenderPipeline.builder()`、
+  `:441` 持 `Map<VertexFormat, RenderPipeline> reshaped` 作每程序缓存、`:1065-1068` 有 `precompilePipeline` 口径
+  ⇒ 「每程序一套管线」在官方 API 内**可做**，我方那条「整条后处理链共用一条 composite 管线」
+  （`bridge/PipelineApi#registerCompositePipeline`）是**我方选择**而不是官方限制。
+- **新增 `bridge/PackBlendState`**：`BlendMode`（移植件，四因子名原样存）→ 官方 `BlendFunction`。
+  三种结局分得开：`OFF`（包说不混合，能应用）、`MAPPED`、`UNRECOGNIZED_FACTOR`（**整条拒收并点名词名**，
+  不猜成 TRANSLUCENT —— 猜错的混合是画上一块半透明糊，比不混合更难查）；`MALFORMED` 专给
+  「双空格这种参考实现自己也会拒」的形态。`GL_` 前缀与大小写都收。
+  位置在 `bridge/` 不是凑巧：07 T5 规定业务包不许 import 原版渲染类型。
+- **判据 7 条**：`SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ONE_MINUS_SRC_ALPHA` **等于** `BlendFunction.TRANSLUCENT`、
+  `SRC_ALPHA ONE ONE ZERO` **等于** `BlendFunction.OVERLAY`（这两条同时把四因子的**顺序**钉死——写反不会报错，
+  只会得到另一种混合）、两因子形与四因子形同值、`off` 可应用且 blend 为 null、小写与 `GL_` 前缀、
+  认不出的词被点名且 `applies()==false`、双空格形态走 `MALFORMED` 而不被读成 `off`。
+- **覆盖表同步**：`blend.<程序>` 那族的说明改成「映射已就绪，卡的仍是每程序管线」——档位没升，
+  因为还没有消费方；这是 `PackFeatureCoverageTest.effectiveRowsNeedAConsumer` 要求的，不是客气。
+- **测试结果**：`./gradlew build` 全绿 = **passed=1297 failed=0 skipped=1**（上轮 1290 + 本批 7）。本轮不改渲染行为 ⇒ 不安排真机臂；
+  🔴 前两批欠的画面复核仍在（`gaux` 槽位变化 + `alphaTest` 改像素）。
+- **下一轮（已排好，不用再survey）**：骨架本体——`bridge/` 里做「按 (程序, 混合态, 附件格式) 缓存一套
+  `RenderPipeline`」的构造与预编译，把后处理链从「一条管线跑全部 step」改成「每 step 用它自己的管线」，
+  然后 `blend.<程序>` 才有落点；同一骨架顺带解锁 `filters.<目标>`（按名选 `FilterMode`，
+  需先把 `FrameApi` 的 sampler 选择从 `chainSampler()` 抽出来——它在 CAPS 名单里，1674/1675）与
+  `size.<目标>`（每目标分辨率仍撞 Vulkan 同尺寸规则 ⇒ 要连帧缓冲一起拆）。
+- **未闭合，别当做到了**：混合现在只是「能翻译」，不是「已生效」；SSBO/图像的 T2 例外仍等你在正文里点一次头
+  （问答界面那份回执权限层不认，见记忆「问答回执不算确认」）。
+
+---
+
 ## 2026-10-17（一百八十九）— 📊 覆盖仪器落地：把「包声明了什么 / 我方走到哪一步」变成按族计数，并实测出三条架构级阻碍
 
 > **verdict = 这一轮没有新增生效的特性，但把「还差哪些」从印象变成可核对的清单，并否掉了三条「搬完就能生效」的想当然。**

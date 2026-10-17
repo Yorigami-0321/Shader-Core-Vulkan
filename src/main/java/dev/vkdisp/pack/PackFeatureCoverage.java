@@ -66,8 +66,9 @@ public final class PackFeatureCoverage {
                     "同上：已按 Iris 文法读入，分配/绑定受官方 API 限制未接",
                     List.of("image.")),
             new Family("blend.<程序>[.<缓冲>]", Status.UNHONORED,
-                    "官方能表达（renderpearl BlendFunction 有四因子构造），"
-                            + "但我方整条后处理链只用一条管线 ⇒ 要先有「每程序一套管线/一段 pass」",
+                    "官方能表达，且因子名→BlendFunction 的映射已就绪（bridge/PackBlendState，"
+                            + "与官方 TRANSLUCENT/OVERLAY 常量逐字对过）；卡的仍是「整条链只用一条管线」"
+                            + "⇒ 要先有每程序一套管线/一段 pass",
                     List.of("blend.")),
             new Family("size.buffer.* / autoRes.* / relative.*", Status.UNHONORED,
                     "每目标独立分辨率与 Vulkan「同一帧缓冲附件同尺寸」冲突 ⇒ 需按程序分帧缓冲/分 pass",
