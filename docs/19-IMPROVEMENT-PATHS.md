@@ -760,6 +760,20 @@ C2a 不碰 GPU ⇒ 它的判据是**单测矩阵断言**，跑真机只会得到
 | 一百八十六 | 只换证与改条款 | 零行并入，台账为空 |
 | 一百八十七 | `pack/model` 十个叶子文件（`BlendMode`·`ProgramFallbacks`·`ProgramNames`·`TextureStage`·`PackTexture`·`PixelFormat`·`PixelType`·`TargetFormat`·`BufferObject`·`ImageInformation`）+ `ShaderProperties` 两族分派 + `ShaderPackService` 的 `[pack特性]` 自报 | 🔴 **只到「按 Iris 文法与上限读入模型」**：SSBO 与自定义图像的设备侧（分配/绑定/barrier 时机）一行未接 ⇒ 特性**尚未生效**；判据 16 条（`PortedPackFeatureModelTest`） |
 
+#### 🔴 三条架构级阻碍（2026-10-17 实测，不是猜测）：哪些族「不是搬代码就能生效」
+
+覆盖仪器（`pack/PackFeatureCoverage`，日志 `[pack特性覆盖]`）把「包声明了什么 / 我方走到哪一步」变成按族计数。
+据此排序后，三族**卡在架构而不是翻译**上，先记形状再动手：
+
+| 族 | 卡在哪 | 证据 |
+|---|---|---|
+| `size.buffer.*` / `autoRes.*` / `relative.*` | 每目标独立分辨率与「同一帧缓冲的附件必须同尺寸」冲突 ⇒ 我方单条 MRT gbuffer pass 给不出半分辨率的 colortex5；要么按程序分帧缓冲，要么把这些 pass 拆出去 | Vulkan framebuffer 规则 + 我方 `bridge/ColortexPool#ensure(slotCount, width, height, …)` 是**一个尺寸管全部槽位** |
+| `blend.<程序>` | 官方 API 能表达（`renderpearl/api/pipeline/BlendFunction.java:26-33` 有 `BlendFunction(srcColor, dstColor, srcAlpha, dstAlpha)` 四因子构造），但我方整条后处理链只注册**一条** composite 管线（`bridge/PipelineApi#registerCompositePipeline`）⇒ 没有「每程序一套管线/一段 pass」的位置 | 混合状态落点是 `ColorTargetState(Optional<BlendFunction>, format, mask)`，链上目前 `ColorTargetState.DEFAULT` |
+| `filters.<目标>` | 链上全部采样名共用一个 sampler（`bridge/FrameApi:1210` 的 `chainSampler()`，实现 1584），而 `filters.` 要求**按名**选 `FilterMode` | 官方侧无阻碍：`RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST/LINEAR)` 已在用；改的是「一次一条 ⇒ 每名一条」的绑定循环，而 FrameApi 在巨类 CAPS 里（1675，现 1674 ⇒ 必须先抽再接） |
+
+> 🔖 这三族的正确顺序是**先有「每程序一套 pass/管线/采样器」的骨架**，再让 `blend`/`filters`/`size` 三族一起落到那骨架上 ——
+> 单独接任何一族都会造出第二条形状不同的路（`07` X9「一个事实两处住」的同形风险）。
+
 #### 🔴 闸门事实（2026-10-17 源码级核实）：SSBO 与自定义图像**官方 API 表达不了**
 
 `bufferObject.N`（SSBO）与 `image.NAME`（storage image）这两族**不可能**只靠官方渲染 API 生效。逐字证据

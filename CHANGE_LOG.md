@@ -4,6 +4,45 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-17（一百八十九）— 📊 覆盖仪器落地：把「包声明了什么 / 我方走到哪一步」变成按族计数，并实测出三条架构级阻碍
+
+> **verdict = 这一轮没有新增生效的特性，但把「还差哪些」从印象变成可核对的清单，并否掉了三条「搬完就能生效」的想当然。**
+> 动机是目标口径：「所有光影包特性都正常生效」需要一张按族的账，而不是逐条感觉 ——  GAP-021 的教训正是
+> 「一条指令躺在通用表里没人读」与「这族已经生效」在日志和画面上**没有区别**。
+
+- **新增 `pack/PackFeatureCoverage`**：把包的通用指令 + 结构化视图按 16 个已知族归类，判成四档 ——
+  `EFFECTIVE`（渲染/编译路径上有消费方）、`MODEL_ONLY`（已按上游文法读进模型、设备侧未接）、
+  `UNHONORED`（只在通用表里当字符串）、`UNCLASSIFIED`（新键族，必须人来判档）。
+  🔴 结构化视图也要算数：`program.*.enabled` 与 `screen/sliders/profile` 在 `ShaderProperties#classify`
+  就离开通用表，只扫 `directives()` 会把**已兑现的两族读成 0 条** —— 那正是本类要消灭的不一致。
+- **接线**：`ShaderPackService#reportFeatureCoverage`（通用入口旁一条），出 `[pack特性覆盖] EFFECTIVE=… MODEL_ONLY=…`
+  一条 INFO + 每个未兑现族一条 WARN（含条数、首条原文、卡在哪）。`DROPPED_REPORT_LIMIT=16` 继续当限流。
+- **表不许领先于代码**：`PackFeatureCoverageTest.effectiveRowsNeedAConsumer` 是一条**源码回归针** ——
+  `alphaTest` 标 EFFECTIVE 就必须能在 `ShaderPackCompiler` 里读到 `AlphaTestEpilogue.apply(`，
+  `program.*.enabled` 标 EFFECTIVE 就必须能在 `PackPostChain` 里读到 `settings().get("enabled")`。
+  以后谁把某族升级成 EFFECTIVE 而没有真消费方，判据直接红。
+- **实测出的三条架构级阻碍**（详见 `19` §7-9 新表）：① `size./autoRes./relative.` 要每目标独立分辨率，
+  与「同一帧缓冲附件同尺寸」冲突，而我方 `ColortexPool#ensure(slotCount, width, height, …)` 是一个尺寸管全部槽位；
+  ② `blend.<程序>` 官方**能表达**（`renderpearl/api/pipeline/BlendFunction.java:26-33` 四因子构造），
+  但我方整条后处理链只注册一条 composite 管线（`PipelineApi#registerCompositePipeline`），没有「每程序一套管线」的位置；
+  ③ `filters.<目标>` 官方**能表达**（`FilterMode` + `getSamplerCache()` 已在用），但链上 1210/1584 是
+  **一个 sampler 服务全部采样名**，改成按名选要动 FrameApi —— 而它在巨类 CAPS 里（上限 1675、现 1674），
+  必须先抽再接。⇒ 结论：这三族要**先立「每程序一套 pass/管线/采样器」的骨架**再一起落，单接任何一族都会造出第二条形状不同的路（X9）。
+- **顺带核清两件事**：官方 `BlendFactor` 的名字集合覆盖包会写的所有因子（`SRC_ALPHA/ONE/ZERO/ONE_MINUS_*/DST_*/SRC_COLOR/CONSTANT_*`，
+  逐字取自 `renderpearl/api/pipeline/BlendFactor.java`）；`ColorTargetState` 是 `record(Optional<BlendFunction>, GpuFormat, int writeMask)`
+  ⇒ 混合与写掩码这一族**不需要**任何原生绕行。
+- **判据 +5**（`PackFeatureCoverageTest`）：16 族的归类与计数、汇总串（实测 `EFFECTIVE=5 MODEL_ONLY=2 UNHONORED=5 UNCLASSIFIED=1`，
+  我最初按 4 写是**算错了 blend/size/filters/shadow 的条数**，判据按实测改）、前缀路由（含未知键返回 null）、
+  `null` 输入不编数据、以及上面那条「表不领先于代码」的针。
+- **测试结果**：`./gradlew build` 全绿 = **1290 passed / 0 failed / 1 skipped**（上轮 1285 + 本批 5）。
+  本轮不改渲染行为 ⇒ 不安排真机臂；🔴 前两批留下的**画面复核仍欠**（`gaux` 别名槽位变化 + `alphaTest` 会改像素）。
+- **影响的文档**：`docs/19-IMPROVEMENT-PATHS.md` §7-9（新增「三条架构级阻碍」表）、`NOTICE.md`（未动 —— 本批无并入）、本条。
+- **未闭合，别当做到了**：① 覆盖表目前只证明「有消费方」，不证明「画面对」—— 每条 EFFECTIVE 仍欠真机判据；
+  ② SSBO/图像的 T2 闸门例外仍按「待你在消息里点一次头」写着（问答界面那份回执权限层不认）；
+  ③ 每程序 pass/管线骨架未立 ⇒ blend/filters/size 三族接不了；④ `docs/13` 的 GAP 条目本批未动（清单在 19 §7-9 与日志里）。
+
+---
+
 ## 2026-10-17（一百八十八）— 🩹 移植第二批：别名表与 alpha test 进引擎，并核出「SSBO/自定义图像官方 API 表达不了」这条闸门
 
 > **verdict = 一批真修 + 一条决定路线的事实。** 第二批搬 `TargetName`(137) 与 `AlphaTest`(138) 两个零依赖叶子件：

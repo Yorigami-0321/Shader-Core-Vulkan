@@ -176,6 +176,7 @@ public final class ShaderPackService {
         // programSwitches → Program#settings），故不在此重复收录。
         Map<String, String> directives = shaderProperties == null ? Map.of() : shaderProperties.directives();
         reportPortedFeatureReadings(shaderProperties, diagnostics);
+        reportFeatureCoverage(shaderProperties, diagnostics);
 
         Map<String, ProgramBlueprint> blueprints = collectPrograms(plan, diagnostics);
         Map<String, Map<String, String>> settings = deriveSettings(shaderProperties, blueprints.keySet());
@@ -293,6 +294,46 @@ public final class ShaderPackService {
      * <p>🔴 这里只证到「声明已按 Iris 的文法与上限读入模型」；SSBO / 自定义图像的分配与绑定
      * 尚未接进管线（移植面见 19 §7-9）⇒ 文案写明「不是已生效」，不许被读成生效。
      */
+    /**
+     * 按族自报「包声明了什么 / 我方走到哪一步」（{@link PackFeatureCoverage}）。
+     *
+     * <p>为什么值得单独一条：一条指令躺在通用表里没人读，与「这族特性已经生效」，
+     * 在今天既没有日志区别也没有画面区别 —— GAP-021 就是这么把包的问题查成了我的问题。
+     * 有了按族计数，「还差哪些」变成可核对的清单，而不是逐条印象。
+     *
+     * <p>🔴 这条**不判画面**：某一族标 {@code EFFECTIVE} 只代表「渲染/编译路径上有消费方」，
+     * 真机生效与否要另一套臂与判据（{@code 08-TESTING} §4/§6）。
+     */
+    private static void reportFeatureCoverage(ShaderProperties shaderProperties,
+            List<TranslateDiagnostic> diagnostics) {
+        if (shaderProperties == null) {
+            return;
+        }
+        List<PackFeatureCoverage.Reading> readings = PackFeatureCoverage.of(shaderProperties);
+        if (readings.isEmpty()) {
+            return;
+        }
+        diagnostics.add(TranslateDiagnostic.of(
+                TranslateDiagnostic.Severity.INFO,
+                "vkdisp: [pack特性覆盖] " + PackFeatureCoverage.summarize(readings),
+                PROPERTIES_FILE, TranslateDiagnostic.UNKNOWN_LINE));
+        int shown = 0;
+        for (PackFeatureCoverage.Reading reading : readings) {
+            if (reading.status() == PackFeatureCoverage.Status.EFFECTIVE
+                    || reading.status() == PackFeatureCoverage.Status.MODEL_ONLY) {
+                continue;
+            }
+            if (shown++ >= DROPPED_REPORT_LIMIT) {
+                continue;
+            }
+            diagnostics.add(TranslateDiagnostic.of(
+                    TranslateDiagnostic.Severity.WARN,
+                    "vkdisp: [pack特性覆盖] 未兑现 " + reading.family() + "=" + reading.count()
+                            + " 首条 " + reading.firstLine() + " —— " + reading.note(),
+                    PROPERTIES_FILE, TranslateDiagnostic.UNKNOWN_LINE));
+        }
+    }
+
     private static void reportPortedFeatureReadings(ShaderProperties shaderProperties,
             List<TranslateDiagnostic> diagnostics) {
         if (shaderProperties == null) {
