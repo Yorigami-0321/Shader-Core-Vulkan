@@ -1,6 +1,11 @@
 package dev.vkdisp.pack;
 
 import dev.vkdisp.pack.model.BlendMode;
+import dev.vkdisp.pack.model.ProgramNames;
+import dev.vkdisp.pack.model.TargetName;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import dev.vkdisp.pack.properties.ShaderProperties;
 import java.util.List;
 import java.util.Map;
@@ -74,6 +79,30 @@ public final class PackBlendDirectives {
             }
         }
         return Optional.empty();
+    }
+
+    /** 本包有没有声明任何混合。 */
+    public static boolean isEmpty() {
+        return SNAPSHOT.get().table().isEmpty();
+    }
+
+    /**
+     * 去重后的、属于后处理链程序（composite / deferred / final）的混合声明。
+     *
+     * <p>为什么要按族筛：post 槽的变体是「16 槽 × 每种混合」一条。给一个
+     * {@code gbuffers_water} 的声明建 16 条管线，是白烧 16 次着色器编译，而且那条声明
+     * 在这条路上根本走不到 —— gbuffers 各族的混合要等地形/实体路径走同一套派生通道，
+     * 那是另一半，别把账记到这一半上（{@code PackFeatureCoverage} 的 blend 行同此口径）。
+     */
+    public static List<BlendMode> chainModes() {
+        Set<BlendMode> distinct = new LinkedHashSet<>();
+        for (Map.Entry<String, BlendMode> entry : SNAPSHOT.get().table().entrySet()) {
+            String family = ProgramNames.familyOf(TargetName.bareName(entry.getKey()));
+            if (family.equals("composite") || family.equals("deferred") || family.equals("final")) {
+                distinct.add(entry.getValue());
+            }
+        }
+        return new ArrayList<>(distinct);
     }
 
     /** 本包声明了几条混合（日志与判据用）。 */

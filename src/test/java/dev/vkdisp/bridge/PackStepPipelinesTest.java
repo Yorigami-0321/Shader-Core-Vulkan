@@ -105,6 +105,25 @@ final class PackStepPipelinesTest {
     }
 
     @Test
+    @DisplayName("chainModes 只取链上程序（composite/deferred/final），且按值去重")
+    void chainModesFiltersByFamilyAndDedupes() {
+        PackBlendDirectives.publish(ShaderProperties.parse("""
+                blend.gbuffers_water=SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ONE_MINUS_SRC_ALPHA
+                blend.composite1=SRC_ALPHA ONE ONE ZERO
+                blend.deferred2=SRC_ALPHA ONE ONE ZERO
+                blend.world0/final=ONE ONE ONE ONE
+                """));
+        // composite1 与 deferred2 声明的是同一种混合 ⇒ 去重后一条；gbuffers_water 不走这条路 ⇒ 不算。
+        assertEquals(2, PackBlendDirectives.chainModes().size(), PackBlendDirectives.chainModes().toString());
+        assertTrue(PackBlendDirectives.chainModes().contains(
+                new BlendMode(false, "ONE", "ONE", "ONE", "ONE")), "final 也要算进链");
+        assertTrue(!PackBlendDirectives.isEmpty());
+        PackBlendDirectives.publish(null);
+        assertTrue(PackBlendDirectives.isEmpty());
+        assertEquals(0, PackBlendDirectives.chainModes().size());
+    }
+
+    @Test
     @DisplayName("没声明的程序原样交回入参管线（零行为变化），自报串可读")
     void undeclaredPassesThrough() {
         PackBlendDirectives.publish(null);

@@ -771,6 +771,25 @@ C2a 不碰 GPU ⇒ 它的判据是**单测矩阵断言**，跑真机只会得到
 ⇒ 结论：`blend` 与 `filters` **不需要破 T2、不需要原生绕行**，缺的是我方自己的「每程序一套管线 / 每名一个采样器」骨架；
 `size.<目标>` 仍撞 Vulkan 同尺寸规则（要连帧缓冲一起拆）。因子名→`BlendFunction` 的翻译已完成（`bridge/PackBlendState`）。
 
+#### 🔑 混合变体怎么进 `setPipeline`：走注册事件，不走运行期查缓存（2026-10-17 两条实测）
+
+- `RenderPass.setPipeline` **只收** `CompiledRenderPipeline`（`renderpearl/api/commands/RenderPass.java:32`），
+  而 `RenderSystem.getCompiledPipelineNullable`（`blaze3d/systems/RenderSystem.java:106-120`）是
+  `PIPELINE_MODIFIERS.apply` → 当前缓存 → 回落缓存的**纯查表**，不会顺手编译 ⇒ 拿未注册的变体去查必得 null。
+- 「注册事件里的管线会被编译」这一条**不必假设**，仓内已成事实：16 个 post 槽管线本来就是
+  `PipelineApi#registerPostPipelines(:282-306)` 在 `RegisterRenderPipelinesEvent` 里注册、
+  `FrameApi#runPostPass(:1294)` 再用 `getCompiledPipelineNullable` 取回来画的 —— 真机链一直在跑（`[route]`/post 计数有读数）。
+  ⇒ 混合变体的正确接法：同一次注册事件里按 **(槽, 该包链上程序声明的混合)** 多注册几条
+  （位置 `pipeline/postK@blend<hash>`），运行期只是**换一条已注册的管线**，不碰异步编译、不管
+  `UncheckedAutoCloseable` 的生命周期。上游自建自编译（`GeometryProgram.java:742` + `:1065-1099`
+  `GpuDevice.compilePipeline`，`api/device/GpuDevice.java:54`）是它的架构选择，我方不跟。
+- 已备好的件：`PackBlendDirectives.chainModes()`（**只取 composite/deferred/final**、按值去重 ——
+  给 `gbuffers_water` 的声明建 16 条是白烧 16 次编译，且那条声明在这条路上走不到）、
+  `PackStepPipelines.planTargets`（只动目标0、格式与写掩码原样）、`PackStepPipelines.pipelineFor` 的待建形态。
+- 🔴 欠的一步（下一轮）：`registerVariants(event)` 从 `FullscreenPipelineRegistrar:164` 之后挂上，
+  `runPostPass` 取管线处换成按程序查变体（FrameApi 1674/1675 ⇒ **同行替换**），同轮把 `blend` 升
+  `EFFECTIVE` 并跑一臂真机 —— 那是本目标里第一次真正改像素的接线，不能只靠离线判据。
+
 #### 🔴 一条待验的因果假设：`sampler3D` 会不会正在让整条管线建不起来
 
 移植件 `pack/target/SamplerTypes`（Vitrail）说清了一条属于**游戏**的规则：`GlslCompiler.addToBindGroup`

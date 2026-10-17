@@ -4,6 +4,37 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-17（一百九十四）— 🔑 混合变体的正确接法定死：走注册事件，并把「注册即编译」用仓内既有事实证掉
+
+> **verdict = 接线的最后一处不确定被消除，但本轮仍不改渲染行为。**
+> 上一轮撤回之后剩一个问题：变体到底怎么进 `setPipeline`。答案是**注册期多注册几条**，
+> 而这条路不需要任何假设 —— 16 个 post 槽管线本来就是这么来的。
+
+- **两条源码级事实**（逐字读原版）：`RenderPass.java:32` 只有 `setPipeline(CompiledRenderPipeline)`；
+  `RenderSystem.java:106-120` 的 `getCompiledPipelineNullable` = `PIPELINE_MODIFIERS.apply` → 当前缓存 → 回落缓存，
+  纯查表。⇒ 未注册的变体查不到，只会在 `runPostPass` 的硬抛上炸（上一轮实测的形状）。
+- **不需要假设「注册会被编译」**：`PipelineApi#registerPostPipelines(:282-306)` 在
+  `RegisterRenderPipelinesEvent` 里注册 16 条 post 管线，`FrameApi#runPostPass(:1294)` 就是拿
+  `getCompiledPipelineNullable` 取回来画的，而真机链一直在跑（`[route]`/post 计数有读数）
+  ⇒ 变体照同一条路注册，运行期只是「换一条已注册的管线」，不碰 `GpuDevice.compilePipeline` 的异步
+  与 `UncheckedAutoCloseable` 生命周期（上游自建自编译是它的架构选择，不跟）。
+- **新增 `PackBlendDirectives.chainModes()` / `isEmpty()`**：只取 `composite`/`deferred`/`final` 族的声明并按值去重 ——
+  给 `gbuffers_water` 的声明建 16 条变体是白烧 16 次着色器编译，而且那条声明在这条路上根本走不到。
+  族判定用移植件 `ProgramNames.familyOf(TargetName.bareName(...))`，不新写一张表（X9）。
+- **一次自伤，编译器当场抓住**：我给 `PackBlendDirectives` 加 `chainModes()` 时把
+  `/** …（日志与判据用）。 */` 的收尾 ` */` 吃掉了 ⇒ `declared()` 被卷进注释里，
+  `compileTestJava` 报「找不到符号 方法 declared()」两行。修法是补回收尾，不是改测试 ——
+  也再次说明**用脚本改源码时，锚点必须完整带回被截断的收尾**（本仓踩过 heredoc 吃反斜杠，这次吃的是 ` */`）。
+- **测试结果**：`./gradlew build` 全绿 = **passed=1308 failed=0 skipped=1**（上轮 1307 + 本批 `chainModes` 判据 1 条）。
+  本轮不改渲染行为 ⇒ 不安排真机臂；🔴 `blend` 在覆盖表里仍是 `UNHONORED`（差最后那一处替换）。
+- **下一轮**（已经很清楚，不再需要 survey）：`registerVariants(event)` 挂在
+  `FullscreenPipelineRegistrar:164` 之后；`runPostPass` 那行取管线改成按程序查变体（**同行替换**，
+  FrameApi 1674/1675）；同轮升 `blend` 档 + **跑一臂真机**（本目标里第一次真正改像素的接线）。
+  之后同一条注册通道再吃下 `filters.<目标>`（按名选 `FilterMode`）与地形/实体族的 `blend`。
+- **影响的文档**：`docs/19-IMPROVEMENT-PATHS.md` §7-9 新增「🔑 混合变体怎么进 setPipeline」段、本条。`NOTICE.md` 未动。
+
+---
+
 ## 2026-10-17（一百九十三）— ⛔ 混合族的接线试了、验明会抛、当场撤回：`setPipeline` 只收已编译对象，而那个 getter 只查缓存
 
 > **verdict = 一次负结果，按正向价值记。** 上一轮留下的「同行替换就能接」在源码级被证伪：
