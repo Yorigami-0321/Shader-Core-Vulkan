@@ -1,6 +1,7 @@
 package dev.vkdisp.pack.properties;
 
 import dev.vkdisp.pack.model.AlphaTest;
+import dev.vkdisp.pack.model.BlendMode;
 import dev.vkdisp.pack.model.BufferObject;
 import dev.vkdisp.pack.model.ImageInformation;
 import java.io.Reader;
@@ -44,6 +45,8 @@ public final class ShaderProperties {
     private final ImageInformation.Reading images;
     private final Map<String, AlphaTest> alphaTests;
     private final List<String> alphaTestDropped;
+    private final Map<String, BlendMode> blends;
+    private final List<String> blendDropped;
 
     private ShaderProperties(Builder b) {
         this.directives = Map.copyOf(b.directives);
@@ -57,6 +60,8 @@ public final class ShaderProperties {
         this.images = new ImageInformation.Reading(b.images, b.imageDropped);
         this.alphaTests = Map.copyOf(b.alphaTests);
         this.alphaTestDropped = List.copyOf(b.alphaTestDropped);
+        this.blends = Map.copyOf(b.blends);
+        this.blendDropped = List.copyOf(b.blendDropped);
     }
 
     public static ShaderProperties parse(Reader reader) {
@@ -106,6 +111,9 @@ public final class ShaderProperties {
     }
 
     private static void classify(Builder b, String key, String value, int idx) {
+        if (classifyFeatureDirective(b, key, value)) {
+            return;
+        }
         if (key.equals("sliders")) {
             if (!b.sliders.isEmpty()) {
                 throw new IllegalArgumentException("vkdisp: sliders= 全局只允许一行（T11，行 " + idx + "）");
@@ -129,32 +137,6 @@ public final class ShaderProperties {
         } else if (key.startsWith("program.") && key.endsWith(".enabled")) {
             String name = key.substring("program.".length(), key.length() - ".enabled".length());
             b.programSwitches.put(name, value);
-        } else if (key.startsWith("bufferObject.")) {
-            // 🔴 上限与词数都是 Iris 定的，本类不重算：读不出来就**丢弃并点名**（不是 log 一句然后当没事）。
-            String reason = BufferObject.parse(key.substring("bufferObject.".length()), value,
-                    b.bufferObjects);
-            if (reason != null) {
-                b.bufferObjectDropped.add(key + "=" + value + " : " + reason);
-            }
-            b.directives.put(key, value);
-        } else if (key.startsWith("alphaTest.")) {
-            // 🔴 这条测试是 pass 的属性而不是程序的：键按「真正服务该 pass 的文件名」写，与 Iris 同口径。
-            //   读不懂的行**丢弃并点名**，不猜 —— 错的阈值就是一张有洞的、或本该有洞却没有洞的画面。
-            String program = key.substring("alphaTest.".length());
-            Optional<AlphaTest> test = AlphaTest.parse(value);
-            if (test.isPresent()) {
-                b.alphaTests.put(program, test.get());
-            } else {
-                b.alphaTestDropped.add(key + "=" + value + " : 既不是 off/false，也不是「函数 + 参考值」");
-            }
-            b.directives.put(key, value);
-        } else if (key.startsWith("image.")) {
-            String reason = ImageInformation.parse(key.substring("image.".length()), value,
-                    b.defines, b.images);
-            if (reason != null) {
-                b.imageDropped.add(key + "=" + value + " : " + reason);
-            }
-            b.directives.put(key, value);
         } else {
             // 🔴 GAP-021：`uniform.<类型>.<名>=` / `variable.<类型>.<名>=` **故意**留在通用表里，
             //   不在这里开分支 —— 本类只负责分派，CPU 侧的表达式语法属
@@ -164,6 +146,59 @@ public final class ShaderProperties {
             //   而**没有任何消费方**，BSL 的 shadowFade / timeBrightness 才恒 0（GAP-021）。
             b.directives.put(key, value);
         }
+    }
+
+    /**
+     * 四条「有独立文法与上限」的特性指令（SSBO / 自定义图像 / alphaTest / blend）。
+     *
+     * <p>从 {@link #classify} 抽出来有两个理由：① 那段本来就顶着 60 行的方法长度基线（QD-04），
+     * 每接一族特性都往里加是直接把棘轮按下去；② 这四族共享同一个形状 —— 文法与上限由移植件判、
+     * 读不懂就**丢弃并点名**、原文一律仍留 {@code directives()}（T11 不丢键）。
+     *
+     * @return 这条键是否属于这四族
+     */
+    private static boolean classifyFeatureDirective(Builder b, String key, String value) {
+        if (key.startsWith("bufferObject.")) {
+            String reason = BufferObject.parse(key.substring("bufferObject.".length()), value,
+                    b.bufferObjects);
+            if (reason != null) {
+                b.bufferObjectDropped.add(key + "=" + value + " : " + reason);
+            }
+            b.directives.put(key, value);
+            return true;
+        }
+        if (key.startsWith("image.")) {
+            String reason = ImageInformation.parse(key.substring("image.".length()), value,
+                    b.defines, b.images);
+            if (reason != null) {
+                b.imageDropped.add(key + "=" + value + " : " + reason);
+            }
+            b.directives.put(key, value);
+            return true;
+        }
+        if (key.startsWith("alphaTest.")) {
+            // 这条测试是 pass 的属性而不是程序的：键按「真正服务该 pass 的文件名」写，与 Iris 同口径。
+            Optional<AlphaTest> test = AlphaTest.parse(value);
+            if (test.isPresent()) {
+                b.alphaTests.put(key.substring("alphaTest.".length()), test.get());
+            } else {
+                b.alphaTestDropped.add(key + "=" + value + " : 既不是 off/false，也不是「函数 + 参考值」");
+            }
+            b.directives.put(key, value);
+            return true;
+        }
+        if (key.startsWith("blend.")) {
+            // 键可以是裸程序名也可以是维度限定名 ⇒ 原样存，查表侧两种形态都试。
+            Optional<BlendMode> mode = BlendMode.parse(value);
+            if (mode.isPresent()) {
+                b.blends.put(key.substring("blend.".length()), mode.get());
+            } else {
+                b.blendDropped.add(key + "=" + value + " : 既不是 off/false，也不是 4 个（或 2 个）因子");
+            }
+            b.directives.put(key, value);
+            return true;
+        }
+        return false;
     }
 
     private static List<String> splitWs(String value) {
@@ -243,6 +278,21 @@ public final class ShaderProperties {
         return alphaTestDropped;
     }
 
+    /**
+     * {@code blend.<程序>} 的结构化读法：程序名（裸名或 {@code 维度/名}）→ 四个因子名。
+     *
+     * <p>🔴 档位同 {@code alphaTest} 当初的形状：读进来了不等于生效，消费方是
+     * {@code bridge/PackStepPipelines}（把链每一步的管线按该程序的混合派生成一条变体）。
+     */
+    public Map<String, BlendMode> blends() {
+        return blends;
+    }
+
+    /** 被丢弃的 {@code blend.} 行，逐条带原因。 */
+    public List<String> blendDropped() {
+        return blendDropped;
+    }
+
     private static final class Builder {
         final LinkedHashMap<String, String> directives = new LinkedHashMap<>();
         final List<String> sliders = new ArrayList<>();
@@ -256,6 +306,8 @@ public final class ShaderProperties {
         final List<String> imageDropped = new ArrayList<>();
         final LinkedHashMap<String, AlphaTest> alphaTests = new LinkedHashMap<>();
         final List<String> alphaTestDropped = new ArrayList<>();
+        final LinkedHashMap<String, BlendMode> blends = new LinkedHashMap<>();
+        final List<String> blendDropped = new ArrayList<>();
         /** {@code image.NAME} 尺寸位写选项名时用它落整数；由带 defines 的 parse 重载注入。 */
         Map<String, String> defines = Map.of();
     }

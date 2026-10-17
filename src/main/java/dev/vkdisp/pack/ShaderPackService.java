@@ -177,6 +177,11 @@ public final class ShaderPackService {
         Map<String, String> directives = shaderProperties == null ? Map.of() : shaderProperties.directives();
         reportPortedFeatureReadings(shaderProperties, diagnostics);
         reportFeatureCoverage(shaderProperties, diagnostics);
+        // 🔴 把包的 blend 声明发布给渲染侧（bridge/PackStepPipelines 查它派生每程序管线）；
+        //   shaderProperties 为 null（没 shaders.properties / 解析失败）时 publish 走清空分支 ——
+        //   宁可回到「没有混合声明」，也不许拿上一包的表画这一包。管线变体记忆表同时作废。
+        PackBlendDirectives.publish(shaderProperties);
+        dev.vkdisp.bridge.PackStepPipelines.clearCache();
 
         Map<String, ProgramBlueprint> blueprints = collectPrograms(plan, diagnostics);
         Map<String, Map<String, String>> settings = deriveSettings(shaderProperties, blueprints.keySet());

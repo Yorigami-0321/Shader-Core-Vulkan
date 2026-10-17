@@ -4,6 +4,44 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-17（一百九十二）— 🧩 混合族的「读表 + 派生 + 记忆」三件齐了，最后一步接线单独留下（并把两条棘轮按正规做法还回去）
+
+> **verdict = 桥这一头建完并测过，渲染那一头**没**接**：`blend.<程序>` 在覆盖表里仍是 `UNHONORED`，
+> 因为 `PackStepPipelines.forStep` 还没有 pass 站点调用它。档位不升是 `effectiveRowsNeedAConsumer` 那条针定的规矩，
+> 不是我客气。本轮另有价值：把「每程序管线」需要的官方形状（`toBuilder()` + 按对象身份记忆）在**不改渲染行为**的前提下先跑通、先测完。
+
+- **新增 `pack/PackBlendDirectives`（读表）**：`blend.<程序>` 的只读快照，加载期发布、渲染期查。
+  三种拼法都收（裸名 / `维度/名` / 包只写了限定名而渲染侧递来裸名），命中不到 = 「没声明」，与「声明了 off」分开。
+  🔴 **换包必清**（`publish(null)` / `clear()`）：拿上一包的表画这一包 = 又是 GAP-018/045 那一族「缓存没有包代次这一维」。
+- **新增 `bridge/PackStepPipelines`（派生 + 记忆）**：用原版自己的 `RenderPipeline.toBuilder()`
+  + `withColorTargetState(index, …)` 派生「目标0 带该混合」的变体（与 `MainPassPipelineDerivation` 同一形状，不新造描述符）；
+  按 **(入参管线对象身份, 混合值)** 记忆 —— 原版编译缓存按入参对象查，不记就是每帧每步新建一条管线
+  并把 `PipelineCache` 变成每帧长记录（该类头第 5 条的同一口径）。`clearCache()` 供重载调用。
+- **纯函数 `planTargets`**：只动第 0 槽，**格式与写掩码原样留着**（`FrontendRenderPass:119-121` 逐条比
+  「管线格式 == 附件纹理格式」，改格式就是当场抛），其余槽一个字不碰，原本为 null 的槽保持 null。
+- **`ShaderProperties.blends()` / `blendDropped()`**：四条特性指令（SSBO/图像/alphaTest/blend）从 `classify`
+  抽进 `classifyFeatureDirective` —— 一半是为 QD-04（那段已经顶着 60 行基线，每接一族都往里塞就是把棘轮按下去），
+  一半是因为这四族本来就共享同一个形状：文法与上限交给移植件判、读不懂**丢弃并点名**、原文仍留 `directives()`（T11）。
+- **两条棘轮我自己撞红了，都按正规做法修**（没有抬基线，也没有改测试口径）：
+  ① `MethodLengthRatchetTest` 23>22 ⇒ 就是 `classify` 被我撑长，抽出 helper 后回到基线内；
+  ② `StaticFieldRatchetTest` 176>175 ⇒ `PackBlendDirectives` 的两个 `volatile` 非 final 字段
+  换成「不可变 `record Snapshot` + 一个 final `AtomicReference`」。**顺带记下形状**：这个仓里「新增一个状态」
+  的正确姿势不是加一个静态可变字段，而是 final 容器 + 原子换快照（QD-03 的注释就是这么要求落地的）。
+- **判据 +5**（`PackStepPipelinesTest`）：只动第 0 槽且保留格式/写掩码、`off` 是真的摘掉混合、
+  没有可改目标时返回 null（空表 / 第 0 槽为 null / null 入参）、查表收三种拼法且没声明 ≠ 声明 off、
+  **分层断言**：`BlendMode.parse` 不看因子名（四条都算收进表），`BANANA` 这种在 `PackBlendState`
+  那一层以 `UNRECOGNIZED_FACTOR` 露头 —— 不许在任何一层被抹掉或被猜成 `TRANSLUCENT`。
+- **测试结果**：`./gradlew build` 全绿 = **passed=1307 failed=0 skipped=1**（上轮 1302，本批 +5）。本轮不改渲染行为 ⇒ 不安排真机臂。
+  🔴 一百八十八/一百九十两批的画面复核仍欠（`gaux` 槽位变化、`alphaTest` 会改像素）。
+- **下一轮那一步已经查清一半、剩一半待核**：pass 站点有三处 ——
+  `FrameApi:1012`（composite / compositeScene）、`:1037`（final）、`:958`（deferred），以及 `runPostPass` 内的 `:1320`；
+  但 1012 附近能拿到的 `compositeSource` 是**给人看的标签**（`"deferred output (P3.3)"`），不是程序名
+  ⇒ 接线前必须先确认 `PostPassContract`/链计划里程序名字段叫什么、拿得到哪个形态（裸名还是 `维度/名`）。
+  FrameApi 在 CAPS 名单（1674/1675）⇒ 这三处只能做**同行替换**（`setPipeline(PackStepPipelines.forStep(x, name))`），不许加行。
+- **影响的文档**：本条。`NOTICE.md` 未动（本批全部是我方代码，消费的是已登记的移植件，无新并入）。
+
+---
+
 ## 2026-10-17（一百九十一）— 🧱 移植 `SamplerTypes`，并把「骨架要不要破 T2」这个问题彻底问清了三把官方钥匙
 
 > **verdict = 本轮没有新增生效的特性，但把下一轮要做的东西从「可能违法」变成「全在官方 API 内」，并新立一条待验的因果假设。**
