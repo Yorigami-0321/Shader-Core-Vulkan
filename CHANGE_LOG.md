@@ -4,6 +4,40 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-17（一百九十一）— 🧱 移植 `SamplerTypes`，并把「骨架要不要破 T2」这个问题彻底问清了三把官方钥匙
+
+> **verdict = 本轮没有新增生效的特性，但把下一轮要做的东西从「可能违法」变成「全在官方 API 内」，并新立一条待验的因果假设。**
+> 移植件 `pack/target/SamplerTypes`（Vitrail 65 行）带出一条属于**游戏**的规则：任何一处 `sampler3D` 声明
+> 就让那个程序的整条管线建不起来 ⇒ 而我方给 `sampler3D` 造的是真 3D 桩视图 ⇒ 这两件事的交界没量过。
+
+- **移植第五批第三个文件**：`pack/target/SamplerTypes.java:1-65` @ `4a45f44`（LGPL 同族可搬，台账已记；
+  上游为放行 volume 另有 `GlslCompilerMixin` 把维度遍历读成 `SpvDim3D = SpvDim2D` —— 🔴 **本移植件不含那个绕行**，
+  要不要同样的注入是另一件事，走 mixin 登记制且欠真机判据）。判据 5 条：2D/Cube 全家族（含 shadow/array/MS 拼法）可绑、
+  `sampler3D`/`usampler3D`/`isampler3D` 拒、**`2DRect` 读起来像 2D 但它是 `SpvDimRect` 所以一样拒**、
+  光秃秃 `sampler` 的形状是空串而非 null、`image2D` 不在这张表管辖内。
+- **名字不是证据**（上游原话，且我方 `SamplerDimensionPlan` 早写过同一条否决）：Mellow 在共享 include 里写
+  `uniform sampler3D colortex6` ⇒ 按名字判会把它当颜色目标、递给它一张真 2D 视图。
+- **三把官方钥匙（逐字取自本机 sources jar，`19` §7-9 新增表）**：
+  ① `GpuDevice.java:54` `compilePipeline(RenderPipeline, ShaderSource, Executor)` + `RenderPipeline.toBuilder()`（`:135`）
+  ⇒ **运行期建每程序管线是官方能力**，`blend.<程序>` 不需要破 T2；
+  ② `GpuDevice.java:32` `createSampler(...)`（我方已在用 `getSamplerCache().getClampToEdge(FilterMode.…)`）
+  ⇒ `filters.<目标>` 也不需要破 T2；
+  ③ `ColorTargetState.java:13-21` = `record(Optional<BlendFunction>, GpuFormat, writeMask)`、`MAX_COLOR_TARGETS = 8`。
+  ⇒ 需要破 T2 的只有 SSBO/自定义图像两族（`GpuBuffer.Usage` 与 `UniformType` 里真的没有 storage）。
+- **新立一条待验假设（写进 `19` §7-9）**：`MainPassPipelineDerivation.STATS.refused` 的拒绝原因**可能与 `sampler3D` 同源**
+  —— 即某些程序的管线是**建不出来**而不是渲染错。判据先定死：把 `refused` 的原因按声明类型分桶计数（今天只给总数与名字），
+  一臂 BSL 冷启动读 `derived=/refused=` 分桶读数，再拿「3D 桩换成 2D 视图」做单变量对照臂。
+  成立 ⇒ `filters`/3D 噪声图/volume 一族全被这条压住；不成立 ⇒ 也顺手把「拒绝」从猜变成有数。
+- **测试结果**：`./gradlew build` 全绿 = **1302 passed / 0 failed / 1 skipped**（上轮 1297 + 本批 5）。
+  本轮不改渲染行为 ⇒ 不安排真机臂。🔴 欠账不变：一百八十八/一百九十两批的**画面复核仍未跑**
+  （`gaux` 槽位变化 + `alphaTest` 会改像素），且覆盖表里 `blend`/`filters`/`size` 仍是 `UNHONORED`（有砖没消费方）。
+- **影响的文档**：`NOTICE.md`（台账 +1 行）、`docs/19-IMPROVEMENT-PATHS.md` §7-9（官方解锁表 + `sampler3D` 待验假设）、本条。
+- **下一轮**：建骨架本体（`bridge/` 里按 `(程序, 混合态, 附件格式)` 缓存 `RenderPipeline` 并 `compilePipeline` 预编译，
+  后处理链从「一条管线跑全部 step」改成「每 step 自己的管线」），落地即解锁 `blend.<程序>`；
+  `filters.<目标>` 需先把 `FrameApi:chainSampler()` 抽成按名选（FrameApi 在 CAPS 名单 1674/1675 ⇒ 先抽再接）。
+
+---
+
 ## 2026-10-17（一百九十）— 🧱 每程序管线骨架的第一块砖：包写混合因子名 → 官方 BlendFunction（并证伪「要破 T2」的猜测）
 
 > **verdict = 混合这一族的阻塞点被证明不在官方 API，而在我们自己「整条链只用一条管线」的形状。**

@@ -760,6 +760,33 @@ C2a 不碰 GPU ⇒ 它的判据是**单测矩阵断言**，跑真机只会得到
 | 一百八十六 | 只换证与改条款 | 零行并入，台账为空 |
 | 一百八十七 | `pack/model` 十个叶子文件（`BlendMode`·`ProgramFallbacks`·`ProgramNames`·`TextureStage`·`PackTexture`·`PixelFormat`·`PixelType`·`TargetFormat`·`BufferObject`·`ImageInformation`）+ `ShaderProperties` 两族分派 + `ShaderPackService` 的 `[pack特性]` 自报 | 🔴 **只到「按 Iris 文法与上限读入模型」**：SSBO 与自定义图像的设备侧（分配/绑定/barrier 时机）一行未接 ⇒ 特性**尚未生效**；判据 16 条（`PortedPackFeatureModelTest`） |
 
+#### ✅ 骨架在官方 API 内可做（2026-10-17 逐字核过三把钥匙）
+
+| 能力 | 官方入口（本机 sources jar） | 解锁哪一族 |
+|---|---|---|
+| 运行期建管线并编译 | `renderpearl/api/device/GpuDevice.java:54` `compilePipeline(RenderPipeline, ShaderSource, Executor) → CompletableFuture<CompiledRenderPipeline.Pending>`；`RenderPipeline` 是普通类，有 `toBuilder()`（`api/pipeline/RenderPipeline.java:135`） | `blend.<程序>`（我方目前整条链只注册一条 composite 管线） |
+| 按类型建采样器 | `GpuDevice.java:32` `createSampler(...)`，且 `RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST/LINEAR)` 我方已在用 | `filters.<目标>`（我方目前一个 `chainSampler()` 服务全部采样名） |
+| 每附件混合/格式/写掩码 | `api/pipeline/ColorTargetState.java:13-21` = `record(Optional<BlendFunction>, GpuFormat, writeMask)`，`MAX_COLOR_TARGETS = 8`，`DEFAULT = (empty, RGBA8_UNORM, 15)` | 与「管线格式 == 附件纹理格式」那条硬约束同源（`FrontendRenderPass:119-121`） |
+
+⇒ 结论：`blend` 与 `filters` **不需要破 T2、不需要原生绕行**，缺的是我方自己的「每程序一套管线 / 每名一个采样器」骨架；
+`size.<目标>` 仍撞 Vulkan 同尺寸规则（要连帧缓冲一起拆）。因子名→`BlendFunction` 的翻译已完成（`bridge/PackBlendState`）。
+
+#### 🔴 一条待验的因果假设：`sampler3D` 会不会正在让整条管线建不起来
+
+移植件 `pack/target/SamplerTypes`（Vitrail）说清了一条属于**游戏**的规则：`GlslCompiler.addToBindGroup`
+遍历 SPIR-V 反射的每个 sampler，维度不是 `SpvDim2D`/`SpvDimCube` 就抛 ⇒ **程序里任何一处 `sampler3D`
+就让那条管线建不起来**，而且它只看声明、不看是否被读到（`IntermediaryShaderModule.createFromSpirv`
+取整个资源列表 + 编译优化级 0）。BSL 声明 4 个 `sampler3D`（`lighttex`/`lighttex0`/`lighttex1` 等）。
+
+我方目前的做法是**给 `sampler3D` 造一张真 3D 桩视图**（`pipeline/model/SamplerDimensionPlan` 的 3D 桩 ViewKind）。
+两件事不矛盾（描述符维度匹配是另一层），但有一个可判的推论要先验掉：
+
+> **假设**：`bridge/MainPassPipelineDerivation` 里那个 `STATS.refused` 计数（我方自己都在打「拒绝」）
+> 与 `sampler3D` 同源 —— 即某些程序管线被我方/游戏在建的阶段拒掉，而不是渲染错。
+> **判据**：把 `refused` 的**原因字符串**按声明类型分桶计数（现在的日志只给总数与名字），
+> 一臂 BSL 冷启动读 `[GAP-...] derived=… refused=…` 与分桶读数；再把 3D 桩换成 2D 视图作单变量对照臂。
+> 🔴 若成立：`filters`/`3D 噪声图`/volume 一族全部被这一条压住；若不成立，也顺手把「拒绝」从猜变成有数。
+
 #### 🔴 三条架构级阻碍（2026-10-17 实测，不是猜测）：哪些族「不是搬代码就能生效」
 
 覆盖仪器（`pack/PackFeatureCoverage`，日志 `[pack特性覆盖]`）把「包声明了什么 / 我方走到哪一步」变成按族计数。
