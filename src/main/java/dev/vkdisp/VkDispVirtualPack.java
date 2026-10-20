@@ -731,6 +731,7 @@ public final class VkDispVirtualPack {
             //   链与布局必须**同一份**——管线侧、执行侧、上传侧都从这里读，
             //   任何一处自己再算一遍就回到「两侧不一致而日志全正常」那一族（QD-02 第四例）。
             postChain = result.chain();
+            dev.vkdisp.pack.ActivePack.set(result.packName());
             String[] postSources = GeneratedSources.postSourcesFrom(result.chain());
             List<dev.vkdisp.pack.PackPostChain.Pass> chainPasses = result.chain().passes();
             for (int i = 0; i < POST_SLOT_COUNT; i++) {
@@ -809,6 +810,7 @@ public final class VkDispVirtualPack {
         deferredBuiltinsLayout = BuiltinsBlockLayout.empty();
         finalBuiltinsLayout = BuiltinsBlockLayout.empty();
         postChain = dev.vkdisp.pack.PackPostChain.Chain.EMPTY;
+        dev.vkdisp.pack.ActivePack.set(null);
         java.util.Arrays.fill(POST_BUILTINS_LAYOUTS, BuiltinsBlockLayout.empty());
         if (resetGbuffers) { resetGbufferPrograms(); }
         if (!keepPackResources) {

@@ -4,13 +4,16 @@ import dev.vkdisp.pack.model.AlphaTest;
 import dev.vkdisp.pack.model.BlendMode;
 import dev.vkdisp.pack.model.BufferObject;
 import dev.vkdisp.pack.model.ImageInformation;
+import dev.vkdisp.pack.model.TargetName;
 import java.io.Reader;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * 【参考调研】shaders.properties 解析（OF/Iris 主配置）
@@ -46,6 +49,7 @@ public final class ShaderProperties {
     private final Map<String, AlphaTest> alphaTests;
     private final List<String> alphaTestDropped;
     private final Map<String, BlendMode> blends;
+    private final Map<String, Map<Integer, BlendMode>> blendTargets;
     private final List<String> blendDropped;
 
     private ShaderProperties(Builder b) {
@@ -61,7 +65,16 @@ public final class ShaderProperties {
         this.alphaTests = Map.copyOf(b.alphaTests);
         this.alphaTestDropped = List.copyOf(b.alphaTestDropped);
         this.blends = Map.copyOf(b.blends);
+        this.blendTargets = deepCopyTargets(b.blendTargets);
         this.blendDropped = List.copyOf(b.blendDropped);
+    }
+
+    /** 逐缓冲表是「程序 → (槽 → 混合)」两层，外层 {@code Map.copyOf} 不会把内层也变不可变 ⇒ 自己走一层。 */
+    private static Map<String, Map<Integer, BlendMode>> deepCopyTargets(
+            Map<String, Map<Integer, BlendMode>> source) {
+        Map<String, Map<Integer, BlendMode>> out = new LinkedHashMap<>();
+        source.forEach((program, slots) -> out.put(program, Map.copyOf(slots)));
+        return Map.copyOf(out);
     }
 
     public static ShaderProperties parse(Reader reader) {
@@ -188,12 +201,23 @@ public final class ShaderProperties {
             return true;
         }
         if (key.startsWith("blend.")) {
-            // 键可以是裸程序名也可以是维度限定名 ⇒ 原样存，查表侧两种形态都试。
+            // 键有三种拼法：裸程序名、维度限定名（blend.world0/gbuffers_water），以及**逐缓冲**形态
+            // blend.<程序>.<缓冲> —— Complementary 的 35 条里 33 条是最后这一形，尾巴必须按移植件
+            // TargetName 解成槽号（gcolor/gaux 那族别名一起管），否则整条键会被当成程序名存进表里，
+            // 永远查不到却算在「已声明」的数上（上一版就是这个形状，本轮改掉）。
+            String named = key.substring("blend.".length());
+            int dot = named.lastIndexOf('.');
+            OptionalInt target = dot < 0 ? OptionalInt.empty()
+                    : TargetName.index(named.substring(dot + 1));
+            String program = target.isPresent() ? named.substring(0, dot) : named;
             Optional<BlendMode> mode = BlendMode.parse(value);
-            if (mode.isPresent()) {
-                b.blends.put(key.substring("blend.".length()), mode.get());
-            } else {
+            if (mode.isEmpty()) {
                 b.blendDropped.add(key + "=" + value + " : 既不是 off/false，也不是 4 个（或 2 个）因子");
+            } else if (target.isPresent()) {
+                b.blendTargets.computeIfAbsent(program, name -> new TreeMap<>())
+                        .put(target.getAsInt(), mode.get());
+            } else {
+                b.blends.put(program, mode.get());
             }
             b.directives.put(key, value);
             return true;
@@ -293,6 +317,17 @@ public final class ShaderProperties {
         return blendDropped;
     }
 
+    /**
+     * 逐缓冲形态 {@code blend.<程序>.<缓冲>} 的结构化读法：程序名 → (colortex 槽号 → 混合)。
+     *
+     * <p>槽号由移植件 {@link TargetName#index(String)} 解（{@code colortex4}、legacy 别名
+     * {@code gaux1}/{@code gcolor} 都认），解不出尾巴的键整个当程序名 ⇒ 落进 {@link #blends()}。
+     * Iris 的优先级是「逐缓冲盖过整程序」，那条判在消费方（{@code PackBlendDirectives#forTarget}）。
+     */
+    public Map<String, Map<Integer, BlendMode>> blendTargets() {
+        return blendTargets;
+    }
+
     private static final class Builder {
         final LinkedHashMap<String, String> directives = new LinkedHashMap<>();
         final List<String> sliders = new ArrayList<>();
@@ -307,6 +342,7 @@ public final class ShaderProperties {
         final LinkedHashMap<String, AlphaTest> alphaTests = new LinkedHashMap<>();
         final List<String> alphaTestDropped = new ArrayList<>();
         final LinkedHashMap<String, BlendMode> blends = new LinkedHashMap<>();
+        final LinkedHashMap<String, Map<Integer, BlendMode>> blendTargets = new LinkedHashMap<>();
         final List<String> blendDropped = new ArrayList<>();
         /** {@code image.NAME} 尺寸位写选项名时用它落整数；由带 defines 的 parse 重载注入。 */
         Map<String, String> defines = Map.of();

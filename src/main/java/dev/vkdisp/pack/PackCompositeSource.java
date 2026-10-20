@@ -432,6 +432,9 @@ public final class PackCompositeSource {
         //   （QD-12；症状是「关掉包之后视图还按上一张包的类型路由」）。
         installSamplerSuperset(FALLBACK_GLSL, FALLBACK_GLSL, FALLBACK_GLSL,
                 PackPostChain.Chain.EMPTY, Map.of(), diagnostics, null);
+        // 🔴 这里**不许**全局清混合表：generate 也会被后台预编译（目标包 ≠ 正在画的包）调用，
+        //   一次兜底就把在画的包的表抹掉 = 换了个方向的「没有包这一维」。
+        //   兜底语义由 ActivePack=null 表达（消费方按包名查，查不到 = 没有声明），旧格留着无害（上限 32）。
         return new Result(FALLBACK_GLSL, FALLBACK_GLSL, false, FALLBACK_GLSL, false,
                 null, true, profile, diagnostics, PackPostChain.Chain.EMPTY);
     }

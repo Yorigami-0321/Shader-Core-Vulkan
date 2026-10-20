@@ -70,8 +70,9 @@ public final class PackFeatureCoverage {
                             + "上一轮写的「进不了 setPipeline」是误判 —— RenderSystem.getCompiledPipelineNullable"
                             + "把入参交给 PipelineCache#get（blaze3d/pipeline/PipelineCache.java:29-38），"
                             + "那里未命中就当场用原版 ShaderSource 编译并按对象身份记结果。"
-                            + "🔴 半覆盖：只有链（composite/deferred/final）族接了，地形/实体等 gbuffers 族仍在族管线上；"
-                            + "逐缓冲形态 blend.<程序>.<缓冲> 仍未读",
+                            + "整程序形态对它写的每一格生效，逐缓冲形态 blend.<程序>.<colortexN> 单独盖过某一格"
+                            + "（Iris 的优先级；槽号含 gaux/gcolor 那族别名，由移植件 TargetName 解）。"
+                            + "🔴 半覆盖：只有链（composite/deferred/final）族接了，地形/实体等 gbuffers 族仍在族管线上",
                     List.of("blend.")),
             new Family("size.buffer.* / autoRes.* / relative.*", Status.UNHONORED,
                     "每目标独立分辨率与 Vulkan「同一帧缓冲附件同尺寸」冲突 ⇒ 需按程序分帧缓冲/分 pass",

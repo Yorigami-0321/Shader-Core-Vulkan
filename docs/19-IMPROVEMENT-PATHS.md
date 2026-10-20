@@ -762,6 +762,7 @@ C2a 不碰 GPU ⇒ 它的判据是**单测矩阵断言**，跑真机只会得到
 | 一百八十八–一百九十二 | 又搬 3 个叶子件（`TargetName`·`SamplerTypes`·`AlphaTest`）+ `glsl/translate/AlphaTestEpilogue`（**取规则不取代码**：Iris 的 `CommonTransformer:280/:239` 形状）+ `gaux*` 别名缺陷修复 | `alphaTest.<程序>` 走到**编译后的片元代码**（链上真注入）；SSBO/图像仍停在读入；`gaux` 那条改的是取槽，画面复核欠着 |
 | 一百九十三–一百九十四 | `blend` 三件套（读表 `PackBlendDirectives` / 派生 `PackStepPipelines` / 因子翻译 `PackBlendState`）+ `chainModes()` | 🔴 **零生效**：一百九十三接了又撤，撤的理由（「`getCompiledPipelineNullable` 只查表」）在一百九十五被逐字读源**证伪** |
 | 一百九十五 | 接线落地：`FrameApi#runPostPass` 同行替换成 `PackStepPipelines.compiled(...)`（变体走原版缓存的未命中就地编译） | 链（`composite*`/`deferred*`/`final`）族的 `blend.<程序>` **进到了绘制管线**；🔴 地形/实体等 `gbuffers_*` 族未接、逐缓冲形态 `blend.<程序>.<缓冲>` 未读；真机读数见 `CHANGE_LOG` 一百九十五 |
+| 一百九十六 | 逐缓冲 `blend.<程序>.<colortexN>` 读入（`ShaderProperties#blendTargets`，`TargetName.index` 解槽）+ 混合表**按包分格**（`PackBlendDirectives` 存 `Map<包名, 两张表>`，`ActivePack` 记正在画的包）+ `PackStepPipelines` 改成按该步实际写的槽逐格派生（入口只剩 `compiled(base, pass)`；`forStep`/`chainModes` 退役） | 链族的**逐缓冲**混合接到派生上（单测覆盖；真机读数未取）；多张包加载不再互相顶表；🔴 `gbuffers_*` 族仍未接 |
 
 #### ✅ 骨架在官方 API 内可做（2026-10-17 逐字核过三把钥匙）
 
@@ -788,17 +789,44 @@ C2a 不碰 GPU ⇒ 它的判据是**单测矩阵断言**，跑真机只会得到
   ② 变体编译失败 ⇒ `PackStepPipelines.compiled` 把它记进 `BROKEN` 并退回族管线（点名一次），
   绝不每帧重试；没声明混合的程序走的还是原来那一行 `getCompiledPipelineNullable(base)`，
   **连异常语义都没变**（族管线不见了仍然抛给调用方）。
-- **接法（已落地）**：`FrameApi#runPostPass` 取管线那一行同行替换成
-  `PackStepPipelines.compiled(PipelineApi.postPipeline(passSlot), passPlan.programName())`
-  （FrameApi 1674/1675 ⇒ 只许同行替换，不加行）；派生只动目标0 的 `BlendFunction`，
+- **接法（已落地，一百九十六改成按步计划）**：`FrameApi#runPostPass` 取管线那一行同行替换成
+  `PackStepPipelines.compiled(PipelineApi.postPipeline(passSlot), passPlan)`
+  （FrameApi 1674/1675 ⇒ 只许同行替换，不加行）；派生按该步**实际写入的槽**逐格算
+  （location i ↔ `passPlan.attachmentSlots().get(i)`），只改被声明到的格的 `BlendFunction`，
   格式与写掩码原样（`planTargets`），其余槽不碰。
 - **覆盖到哪儿为止**：只有**链**（`composite*`/`deferred*`/`final`）族接了 —— 地形/实体等 `gbuffers_*`
-  走的是主 pass 族管线，那条路要的是同一套按程序派生，还没接；逐缓冲形态 `blend.<程序>.<缓冲>` 仍未读。
-- 已备好的件：`PackBlendDirectives.chainModes()`（只取链上族、按值去重）、
-  `PackStepPipelines.planTargets`、`PackStepPipelines.forStep`（纯派生 + 身份记忆）、
-  `PackStepPipelines.compiled`（本轮新增的运行期入口）。
-- 🔴 欠的一步：`gbuffers_*` 族的 `blend` + 逐缓冲形态；同一条派生通道还要吃下 `filters.<目标>`
-  （按名选 `FilterMode`，`GpuDevice.createSampler` 已够用）。
+  走的是主 pass 族管线，那条路要的是同一套按程序派生，还没接。
+  🔖 逐缓冲形态 `blend.<程序>.<colortexN>` 一百九十六起**已读入并接到链的派生上**（单测覆盖；
+  真机画面读数未取）：整程序形态对该步写的每一格生效，逐缓冲那一格盖过它（Iris 优先级）；
+  槽号由移植件 `TargetName.index` 解（`gaux1`/`gcolor` 那族别名一起认）。
+  上一版把整条键当程序名存 ⇒ 33 条 Complementary 声明永远查不到却算在「已声明」的数上，本轮改掉。
+- 已备好的件：`PackStepPipelines.planTargets`（逐格计划：`null` = 不动、`Optional.empty()` = 摘掉混合）、
+  `PackStepPipelines.blendPlan`（按该步实际写的槽算计划）、`PackStepPipelines.forStep` 的
+  ~~（整程序形态）~~ 🔖 已随「注册期建变体」那条路一起退役（一百九十六），入口只剩 `compiled(base, passPlan)`。
+  🔖 `PackBlendDirectives.chainModes()` 同批退役 —— 它是为「注册期只给链上族建变体」写的，
+  那条路被改判掉之后没有消费方，留着就是第二张表（X9）。
+- 🔴 欠的一步：`gbuffers_*` 族的 `blend`（取用点在 `MrtTerrainPass`/主 pass 侧，不是 `runPostPass`）；
+  同一条派生通道还要吃下 `filters.<目标>`（按名选 `FilterMode`，`GpuDevice.createSampler` 已够用）。
+
+#### 🔴 加载期发布的表必须**按包分格**（2026-10-17 一百九十六，「没有包这一维」的第六次）
+
+- 症状（真机日志，不是推断）：`ShaderPackService#load` 对**扫描到的每一张包**各跑一次，
+  于是 `[blend] 发布混合表` 一行一行地出现 —— `vkdisp-blendC2-probe 1/1` → `BSL 0/0` →
+  `Complementary×2 0/0` → `vkdisp-blend-probe 1/0` → `vkdisp-blendC1-probe 1/0`。
+  链在 `composite5` 上派生时读到的就是**最后写进去的那张表** ⇒ 逐缓冲那一格静默丢掉，
+  而画面、日志、测试全都没有异常（GAP-018/045 那一族的形状）。
+- 第一版修法（盖戳 + 戳不符就不给）当场把症状从「拿错包的表」变成「谁的表都不用」——
+  真机上一行 `[blend]` 派生日志都不出了。**这就是它不对的证据**：静默失效换了个方向而已。
+- 正解是**按包分格**：`PackBlendDirectives` 存 `Map<包名, 两张表>`，每张包只写自己那一格；
+  消费方拿 `pack/ActivePack`（正在画的包，由生成期在装链的同一处写入）查。
+  别的包稍后加载不影响这张包的表 —— 单测把这条钉住（`tableFromAnotherPackIsIgnored` 的后半：
+  先发布 A、再发布 B，然后断言 A 仍然答得上来）。
+- 🔖 `ActivePack` 为什么是独立类而不是 `VkDispVirtualPack` 的一个字段：那条棘轮
+  （`ClassLineRatchetTest` 上限 1573）的口径就是「新增内容请落到独立类里」，本轮实测撞红一次。
+- 🔴 **反向纪律（同轮抓到的）**：`PackCompositeSource.fallbackResult` **不许**全局清表 ——
+  `generate` 也会被后台预编译（目标包 ≠ 正在画的包）调用，一次兜底就把在画的包的表抹掉，
+  又是「没有包这一维」换了个方向。兜底语义由 `ActivePack = null` 表达（消费方查不到 = 没有声明），
+  旧格留着无害（`PACK_CAP = 32`）。
 
 #### 🔴 一条待验的因果假设：`sampler3D` 会不会正在让整条管线建不起来
 

@@ -177,11 +177,16 @@ public final class ShaderPackService {
         Map<String, String> directives = shaderProperties == null ? Map.of() : shaderProperties.directives();
         reportPortedFeatureReadings(shaderProperties, diagnostics);
         reportFeatureCoverage(shaderProperties, diagnostics);
-        // 🔴 把包的 blend 声明发布给渲染侧（bridge/PackStepPipelines 查它派生每程序管线）；
-        //   shaderProperties 为 null（没 shaders.properties / 解析失败）时 publish 走清空分支 ——
-        //   宁可回到「没有混合声明」，也不许拿上一包的表画这一包。管线变体记忆表同时作废。
-        PackBlendDirectives.publish(shaderProperties);
+        // 🔴 发布必须**按包分格**：`load` 对扫描到的每一张包各跑一次，整表替换等于
+        //   「谁最后加载谁说了算」—— 2026-10-17 真机实测到的正是这个形状（链已按 composite5
+        //   派生，表却是另一张包的 1/0 ⇒ 逐缓冲那一格静默丢掉；GAP-018/045 同族第六次）。
+        //   消费方（bridge/PackStepPipelines）拿 pack/ActivePack#get() 查本包那一格，不在表里 = 没有声明。
+        PackBlendDirectives.publish(plan.packName(), shaderProperties);
         dev.vkdisp.bridge.PackStepPipelines.clearCache();
+        dev.vkdisp.VkDisp.LOGGER.info("vkdisp: [blend] 发布混合表: pack={} 整程序={} 逐缓冲={} 丢弃={}（表里 {} 张包）",
+                plan.packName(), PackBlendDirectives.declared(plan.packName()),
+                PackBlendDirectives.declaredTargets(plan.packName()),
+                PackBlendDirectives.dropped(plan.packName()).size(), PackBlendDirectives.packs());
 
         Map<String, ProgramBlueprint> blueprints = collectPrograms(plan, diagnostics);
         Map<String, Map<String, String>> settings = deriveSettings(shaderProperties, blueprints.keySet());

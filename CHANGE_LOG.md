@@ -4,6 +4,48 @@
 > 每轮迭代一条：改了什么 / 为什么改 / 影响的文档 / 测试结果 / 是否已提交。
 ---
 
+## 2026-10-17（一百九十六）— `blend.<程序>.<colortexN>` 逐缓冲形态入表并接到链的逐格派生；混合表改成按包分格（真机抓到「后加载的包顶掉表」）
+
+> **verdict = 上一轮遗留的两处静默缺口补上：逐缓冲声明不再被当成程序名吞掉，多包加载不再互相顶表。**
+> 本轮判据是**离线单测 + 旧真机日志的复现形状**；逐缓冲形态的**真机画面臂还没跑**（见「未闭合」）。
+
+- **缺口①：33/35 条逐缓冲声明从未进入派生。** `ShaderProperties` 原来把 `blend.<程序>.<缓冲>` 整条键
+  当程序名存（`blend.gbuffers_water.colortex4` 成了程序名）⇒ Complementary 35 条里 33 条永远查不到，
+  却仍被算在「已声明」的数上。现在按移植件 `TargetName.index` 把尾巴解成槽号，落进
+  `ShaderProperties#blendTargets`（程序 → 槽 → 混合）；解不出尾巴的键才当整程序名。
+  查表侧 `PackBlendDirectives#forTarget` 实现 Iris 优先级：逐缓冲那一格盖过整程序。
+- **缺口②：加载期发布的表没有「包」这一维（GAP-018/045 同族第六次）。** 真机日志逐行出现
+  `[blend] 发布混合表`：`vkdisp-blendC2-probe 1/1` → `BSL 0/0` → `Complementary×2 0/0` →
+  `vkdisp-blend-probe 1/0` → `vkdisp-blendC1-probe 1/0` —— `ShaderPackService#load` 对扫描到的每张包各跑一次，
+  整表替换 ⇒ 链在 `composite5` 派生时读到的是**最后加载那张包**的表，逐缓冲那一格静默丢掉。
+  第一版修法（盖戳、戳不符就不给）在真机上变成「谁的表都不用」（一行 `[blend]` 派生日志都不出），
+  按这条反证改成**按包分格**：`PackBlendDirectives` 存 `Map<包名, 两张表>`，新增 `pack/ActivePack`
+  记「正在画的包」（由生成期装链的同一处写入；不放 `VkDispVirtualPack` 字段是因为巨类棘轮上限 1573）。
+  包名来源已逐段核对同源：`discovered.name()` → `MountPlan.packName()` → `Result.packName()` → `ActivePack`。
+  同轮还抓到并修掉一个反向口子：`PackCompositeSource.fallbackResult` 原来会全局清表，而 `generate`
+  也会被后台预编译（目标包 ≠ 正在画的包）调用 ⇒ 一次兜底就能抹掉在画的包的表。现由
+  `ActivePack=null` 表达兜底语义，兜底路径不再碰任何包的表；`PackBlendDirectives.clear()`
+  这个全局入口同批删除（删完已无调用方，留着就是下一次误用的入口）。
+- **派生改成按步计划。** `FrameApi#runPostPass` 把整个 `passPlan` 交给
+  `PackStepPipelines.compiled(base, pass)`（仍是同行替换，FrameApi 1674/1675）；`blendPlan` 按该步
+  **实际写入的槽**逐格算（location i ↔ `attachmentSlots.get(i)`，超出写入槽数的 scratch 一格不动），
+  `planTargets` 只改被声明到的那几格、格式与写掩码原样。`forStep` 与 `chainModes()`（为已改判的
+  「注册期建变体」写的）同批退役，入口只剩 `compiled`；记忆表键从「单一混合值」换成「逐格计划」。
+- **测试结果**：`./gradlew --offline test` BUILD SUCCESSFUL（2m50s），
+  `./gradlew --offline build` BUILD SUCCESSFUL；`build/test-results/test/*.xml` 汇总
+  = **passed=1311 failed=0 errors=0 skipped=1**。新增/改写的针：逐缓冲盖过整程序（含 `gaux1` 别名解槽）、
+  逐格计划不改未指到的格、`chainModes` 不许长回来、**后加载另一张包不许顶掉正在画的包**。
+- **未闭合（如实列）**：① 逐缓冲形态的**真机画面读数未取** —— 本轮只到「单测 + 链上入口」；
+  ② `gbuffers_*` 族的 `blend` 仍未接（取用点在 `MrtTerrainPass`/主 pass 侧）；
+  ③ `filters.<目标>` 仍需「每名一个 sampler」的绑定循环（FrameApi 顶棘轮，先抽再接）；
+  ④ `size.*` 仍撞同帧缓冲同尺寸；⑤ SSBO/自定义图像的 A/B/C 分岔仍待用户裁决。
+- **影响的文档**：`docs/19-IMPROVEMENT-PATHS.md` §7-9「移植进度」补一百九十六行、
+  「已备好的件」与逐缓冲段按本轮改写（明确标注真机读数未取）。`docs/20-RELEASE-PLAN.md`
+  是另一条轨 10-15 的在途改动，**本轮不并入提交**。`NOTICE.md` 未动（零搬运）。
+- **是否已提交**：是（本条随代码同笔提交；`docs/20-RELEASE-PLAN.md` 的脏改动留在工作树）。
+
+---
+
 ## 2026-10-17（一百九十五）— 🔑 第一次真正改到像素的接线落地：`blend.<程序>` 在链上生效（A-B-A 三臂数值判据），上一轮的「纯查表」误判被源码改判
 
 > **verdict = 本目标里第一条「包声明 → 画面」的因果链取到了读数。**

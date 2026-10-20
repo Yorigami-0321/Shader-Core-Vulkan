@@ -1291,7 +1291,7 @@ public final class FrameApi {
             dev.vkdisp.pack.PackPostChain.Pass passPlan, GpuTextureView colorView,
             GpuTextureView fallbackView, GpuTextureView sceneView, GpuSampler sampler,
             PipelineApi.PostSamplerViewResolver resolver, Map<String, Object> builtinsValues) {
-        var compiled = PackStepPipelines.compiled(PipelineApi.postPipeline(passSlot), passPlan.programName());
+        var compiled = PackStepPipelines.compiled(PipelineApi.postPipeline(passSlot), passPlan);
         if (compiled == null) {
             throw new IllegalStateException("vkdisp: post pipeline slot " + passSlot + " vanished mid-frame");
         }
